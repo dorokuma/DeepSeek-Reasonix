@@ -2,7 +2,7 @@ import hljs from "highlight.js/lib/common";
 import htm from "htm";
 import { h } from "preact";
 import { useCallback, useEffect, useRef, useState } from "preact/hooks";
-import { ChatMessage, type ChatMsg, ToolCard } from "../components/chat-internals.js";
+import { ChatMessage, type ChatMsg, ToolCard, parseToolArgs } from "../components/chat-internals.js";
 import { t, useLang } from "../i18n/index.js";
 import { TOKEN, api } from "../lib/api.js";
 import { showToast } from "../lib/bus.js";
@@ -1460,12 +1460,23 @@ interface ChatPaneProps {
   deleteComment: (id: string) => void;
 }
 
+function summarizeTool(activeTool: ActiveToolState | null): string | null {
+  if (!activeTool) return null;
+  const name = activeTool.toolName ?? "tool";
+  const args = parseToolArgs(activeTool.args) as { path?: string; file_path?: string; filename?: string; content?: unknown; command?: unknown } | null;
+  const path = args?.path ?? args?.file_path ?? args?.filename;
+  if (path) return `${name} → ${path}`;
+  return name;
+}
+
 function ChatPane(props: ChatPaneProps) {
   useLang();
   const [messages, setMessages] = useState<ChatMsg[]>([]);
   const [streaming, setStreaming] = useState<StreamingState | null>(null);
   const [activeTool, setActiveTool] = useState<ActiveToolState | null>(null);
   const [busy, setBusy] = useState(false);
+  const [turnStartedAt, setTurnStartedAt] = useState<number | null>(null);
+  const [nowTick, setNowTick] = useState(0);
   const [input, setInput] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [statusLine, setStatusLine] = useState<string | null>(null);
@@ -1498,6 +1509,34 @@ function ChatPane(props: ChatPaneProps) {
       cancelled = true;
     };
   }, []);
+
+  // Track busy start time for InFlightRow elapsed display
+  useEffect(() => {
+    if (!busy) return;
+    const id = setInterval(() => setNowTick((n) => n + 1), 500);
+    return () => clearInterval(id);
+  }, [busy]);
+  useEffect(() => {
+    if (busy) {
+      if (!turnStartedAt) setTurnStartedAt(Date.now());
+    } else {
+      setTurnStartedAt(null);
+    }
+  }, [busy, turnStartedAt]);
+
+  // Global Esc interrupt — works even when textarea loses focus (user
+  // clicked on InflightRow / status bar / etc.)
+  useEffect(() => {
+    if (!busy) return;
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        api("/abort", { method: "POST" }).catch(() => undefined);
+      }
+    };
+    document.addEventListener("keydown", handler);
+    return () => document.removeEventListener("keydown", handler);
+  }, [busy]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1835,11 +1874,6 @@ function ChatPane(props: ChatPaneProps) {
           return;
         }
       }
-      if (e.key === "Escape" && busy) {
-        e.preventDefault();
-        abort();
-        return;
-      }
       if (e.key === "Enter" && !e.shiftKey) {
         e.preventDefault();
         send();
@@ -1939,13 +1973,14 @@ function ChatPane(props: ChatPaneProps) {
             <textarea
               class="input"
               style=${{ width: "100%", resize: "none", minHeight: "36px", fontFamily: "inherit", fontSize: "13px", padding: "8px 10px", lineHeight: "1.4", background: "var(--bg-input)", border: "1px solid var(--bd)", borderRadius: "4px", color: "var(--fg-0)" }}
-              placeholder=${props.comments.length > 0 ? "总结评论..." : t("changes.chatPlaceholder")}
+              placeholder=${busy ? t("chat.placeholderBusy") : props.comments.length > 0 ? "总结评论..." : t("changes.chatPlaceholder")}
               value=${input}
               onInput=${onInput}
               onKeyDown=${onKeyDown}
               onCompositionStart=${onCompositionStart}
               onCompositionEnd=${onCompositionEnd}
               onBlur=${() => setTimeout(() => setPopoverKind(null), 150)}
+              disabled=${busy}
               rows="2"
             />
           </div>
@@ -1958,6 +1993,50 @@ function ChatPane(props: ChatPaneProps) {
           </div>
         </div>
       </div>
+      ${
+        busy
+          ? (() => {
+            const elapsedMs = turnStartedAt ? Date.now() - turnStartedAt : 0;
+            const elapsed = (elapsedMs / 1000).toFixed(1);
+            const textLen = streaming?.text?.length ?? 0;
+            const reasoningLen = streaming?.reasoning?.length ?? 0;
+            const toolSummary = summarizeTool(activeTool);
+            const phase = toolSummary
+              ? t("chat.inflightRunning")
+              : reasoningLen > 0 && textLen === 0
+                ? t("chat.inflightThinking")
+                : textLen > 0
+                  ? t("chat.inflightStreaming")
+                  : t("chat.inflightWaiting");
+            return html`
+              <div class="chat-inflight">
+                <span class="spinner"></span>
+                <span class="chat-inflight-phase">${phase}</span>
+                <span class="chat-inflight-sep">·</span>
+                <span class="muted">${elapsed}s</span>
+                ${
+                  toolSummary
+                    ? html`<span class="chat-inflight-sep">·</span><span class="chat-inflight-tool" title=${toolSummary}>${toolSummary}</span>`
+                    : null
+                }
+                ${
+                  !toolSummary && (textLen > 0 || reasoningLen > 0)
+                    ? html`
+                      <span class="chat-inflight-sep">·</span>
+                      <span class="muted">
+                        ${reasoningLen > 0 ? t("chat.inflightReasoning", { count: reasoningLen.toLocaleString() }) : null}
+                        ${reasoningLen > 0 && textLen > 0 ? html`<span> · </span>` : null}
+                        ${textLen > 0 ? t("chat.inflightOut", { count: textLen.toLocaleString() }) : null}
+                      </span>
+                    `
+                    : null
+                }
+                <button class="chat-inflight-abort" onClick=${abort}>${t("chat.abortBtn")}</button>
+              </div>
+            `;
+          })()
+          : null
+      }
       <${ChatStatusBar} stats=${stats} model=${model} />
     </div>
   `;
