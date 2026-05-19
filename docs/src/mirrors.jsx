@@ -11,7 +11,7 @@ function buildMirrors(version) {
       name: "Cloudflare R2",
       region: "GLOBAL · CF Edge",
       icon: "Cloud",
-      base: `${R2_BASE}/v${version}`,
+      base: `${R2_BASE}/desktop-v${version}`,
       probe: `${R2_BASE}/latest/latest.json`,
     },
     {
@@ -19,8 +19,8 @@ function buildMirrors(version) {
       name: "GitHub Releases",
       region: "GLOBAL · US",
       icon: "Github",
-      base: `https://github.com/${GH_REPO}/releases/download/v${version}`,
-      probe: `https://github.com/${GH_REPO}/releases/download/v${version}/latest.json`,
+      base: `https://github.com/${GH_REPO}/releases/download/desktop-v${version}`,
+      probe: `https://github.com/${GH_REPO}/releases/download/desktop-v${version}/latest.json`,
     },
   ];
 }
