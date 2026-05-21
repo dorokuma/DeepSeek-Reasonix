@@ -14,7 +14,7 @@
     "@fontsource/geist": "^5.2.8",
     "@fontsource/geist-mono": "^5.2.7",
     "@fontsource/inter": "^5.2.8",
-    "@reasonix/core-utils": "workspace:*",
+    "@reasonix/core-utils": "file:../packages/core-utils",
     "@tauri-apps/api": "^2.1.1",
     "@tauri-apps/plugin-dialog": "^2.7.1",
     "@tauri-apps/plugin-opener": "^2.0.0",
