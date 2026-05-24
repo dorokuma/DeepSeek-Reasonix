@@ -1686,14 +1686,10 @@ html:not([data-platform="macos"]) .shortcut kbd[data-key="mod"] {
   flex: none;
   max-width: 82%;
   position: relative;
+  min-width: 0;
   background: var(--panel-2);
   border-radius: 12px;
   padding: 10px 14px;
-}
-
-.msg.user .msg-text,
-.msg.user .msg-text.user-pending {
-  white-space: pre-wrap;
 }
 
 .msg-text {
@@ -1701,9 +1697,17 @@ html:not([data-platform="macos"]) .shortcut kbd[data-key="mod"] {
   line-height: 1.72;
   color: var(--fg);
   text-wrap: pretty;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+.msg-text .markdown {
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 .msg-text p {
   margin: 0 0 12px;
+  overflow-wrap: anywhere;
 }
 .msg-text p:last-child {
   margin-bottom: 0;
@@ -1716,6 +1720,7 @@ html:not([data-platform="macos"]) .shortcut kbd[data-key="mod"] {
   padding: 1px 6px;
   border-radius: 4px;
   font-size: 0.875em;
+  overflow-wrap: anywhere;
 }
 .msg-text pre code,
 .markdown pre code {
@@ -1739,6 +1744,7 @@ html:not([data-platform="macos"]) .shortcut kbd[data-key="mod"] {
   color: var(--accent);
   text-decoration: none;
   border-bottom: 1px dotted currentColor;
+  overflow-wrap: anywhere;
 }
 .msg-text ul,
 .markdown ul {
