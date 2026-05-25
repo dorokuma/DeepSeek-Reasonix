@@ -199,14 +199,20 @@ export function processMultilineKey(
     return { next: null, cursor: null, submit: true, submitValue: value };
   }
 
-  // Backspace = delete the char BEFORE the cursor. We also accept
-  // `key.delete` and the raw DEL (0x7f) / BS (0x08) bytes as backspace
-  // for the same purpose — some Windows terminals (cmd.exe, certain
-  // winpty configs) report plain Backspace without setting
-  // `key.backspace`, which used to leave the user typing into a prompt
-  // where the Backspace key did nothing. Reasonix doesn't offer a
-  // separate forward-delete operation, so collapsing them is safe.
-  if (key.backspace || key.delete || key.input === "\x7f" || key.input === "\b") {
+  // Delete key = forward-delete: remove the char AT the cursor.
+  if (key.delete) {
+    if (cursor >= value.length) return NOOP;
+    return {
+      next: value.slice(0, cursor) + value.slice(cursor + 1),
+      cursor,
+      submit: false,
+    };
+  }
+
+  // Backspace = delete the char BEFORE the cursor. Raw DEL (0x7f) /
+  // BS (0x08) are treated as backspace too — some Windows terminals
+  // report Backspace without setting key.backspace.
+  if (key.backspace || key.input === "\x7f" || key.input === "\b") {
     if (cursor === 0) return NOOP;
     return {
       next: value.slice(0, cursor - 1) + value.slice(cursor),
