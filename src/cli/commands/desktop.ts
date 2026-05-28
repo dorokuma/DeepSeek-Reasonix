@@ -1343,6 +1343,68 @@ export async function desktopCommand(opts: DesktopOptions): Promise<void> {
               .catch(() => undefined);
           });
         return true;
+      case "retry": {
+        if (!tab.runtime) {
+          sendQQInfo("Desktop is not configured yet.", tab);
+          return true;
+        }
+        const prev = tab.runtime.loop.retryLastUser();
+        if (!prev) {
+          sendQQInfo(
+            "There is no previous local user message to retry in this desktop conversation.",
+            tab,
+          );
+          return true;
+        }
+        void runTurn(tab, prev, true);
+        return true;
+      }
+      case "model": {
+        if (!cmd.value) {
+          sendQQInfo(
+            `Current model: ${tab.currentModel}. Use /model flash, /model pro, /model deepseek-v4-flash, or /model deepseek-v4-pro.`,
+            tab,
+          );
+          return true;
+        }
+        const next = normalizeQQRemoteModel(cmd.value);
+        if (!next) {
+          sendQQInfo(
+            "Unsupported desktop model. Use /model flash, /model pro, /model deepseek-v4-flash, or /model deepseek-v4-pro.",
+            tab,
+          );
+          return true;
+        }
+        applyDesktopModel(tab, next);
+        sendQQInfo(`Switched desktop model to ${next}.`, tab);
+        return true;
+      }
+      case "effort":
+        if (!cmd.value) {
+          sendQQInfo(
+            `Current reasoning effort: ${loadReasoningEffort()}. Use /effort low, /effort medium, /effort high, or /effort max.`,
+            tab,
+          );
+          return true;
+        }
+        saveReasoningEffort(cmd.value);
+        tab.runtime?.loop.configure({ reasoningEffort: cmd.value });
+        emitSettings(tab);
+        sendQQInfo(`Switched desktop reasoning effort to ${cmd.value}.`, tab);
+        return true;
+      case "plan":
+        if (!cmd.value) {
+          sendQQInfo(
+            `Current plan mode: ${loadEditMode()}. Use /plan review, /plan auto, or /plan yolo.`,
+            tab,
+          );
+          return true;
+        }
+        saveEditMode(cmd.value);
+        if (tab.toolset) applyPlanMode(tab.toolset.tools, cmd.value);
+        emitSettings(tab);
+        sendQQInfo(`Switched desktop plan mode to ${cmd.value}.`, tab);
+        return true;
       case "btw":
         if (!tab.runtime) {
           sendQQInfo("Desktop is not configured yet.", tab);
@@ -1374,6 +1436,28 @@ export async function desktopCommand(opts: DesktopOptions): Promise<void> {
       default:
         return false;
     }
+  }
+
+  function normalizeQQRemoteModel(value: string): string | null {
+    const lower = value.trim().toLowerCase();
+    if (!lower) return null;
+    if (lower === "flash") return "deepseek-v4-flash";
+    if (lower === "pro") return "deepseek-v4-pro";
+    if (lower === "deepseek-v4-flash" || lower === "deepseek-v4-pro") return lower;
+    return null;
+  }
+
+  function applyDesktopModel(tab: Tab, next: string): void {
+    tab.currentModel = next;
+    saveModel(next);
+    if (tab.toolset) {
+      tab.system = codeSystemPrompt(tab.rootDir, {
+        hasSemanticSearch: tab.toolset.semantic.enabled,
+        modelId: tab.currentModel,
+      });
+      if (tab.runtime) tab.runtime = buildRuntimeFor(tab);
+    }
+    emitSettings(tab);
   }
 
   function parseIndexedChoice(text: string): number {
