@@ -110,6 +110,7 @@ export interface McpServerConfig {
   command?: string;
   args?: string[];
   env?: Record<string, string>;
+  cwd?: string;
   transport?: "stdio" | "sse" | "streamable-http";
   /** Claude `.mcp.json` alias for `transport`; `"http"` is treated as `"streamable-http"`. */
   type?: "stdio" | "sse" | "streamable-http" | "http";
@@ -673,6 +674,7 @@ export function normalizeMcpConfig(cfg: ReasonixConfig, extraLegacy?: string[]):
         command: (serverCfg as McpServerConfig).command ?? "",
         args: (serverCfg as McpServerConfig).args ?? [],
         env,
+        cwd: (serverCfg as McpServerConfig).cwd,
         disabled,
         requestTimeoutMs: (serverCfg as McpServerConfig).requestTimeoutMs,
       };

@@ -47,6 +47,7 @@ import type {
   ConfirmationChoice,
   ExternalSessionApp,
   ExternalSessionSource,
+  ImportedMcpServer,
   IncomingEvent,
   JobInfo,
   McpSpecInfo,
@@ -60,7 +61,7 @@ import type {
 } from "./protocol";
 import { type QQDesktopSettingsState } from "./qq-settings";
 import { Composer, type SlashCmd } from "./ui/composer";
-import { ContextPanel } from "./ui/context-panel";
+import { ContextPanel, type ContextPanelTab } from "./ui/context-panel";
 import { JobsPop } from "./ui/jobs-pop";
 import { useElapsed } from "./ui/live";
 import { AboutModal } from "./ui/about";
@@ -230,13 +231,26 @@ export type UsageStats = {
   liveLogTokens: number;
 };
 
-type WindowControls = Pick<ReturnType<typeof getCurrentWindow>, "isFullscreen" | "isMaximized" | "setFullscreen" | "toggleMaximize">;
+type CcSwitchImportResult = {
+  source: "db" | "config";
+  path: string;
+  servers: ImportedMcpServer[];
+};
+
+type WindowControls = Pick<
+  ReturnType<typeof getCurrentWindow>,
+  "isFullscreen" | "isMaximized" | "setFullscreen" | "toggleMaximize"
+>;
 
 export function readWindowExpanded(win: WindowControls, isMac: boolean): Promise<boolean> {
   return isMac ? win.isFullscreen() : win.isMaximized();
 }
 
-export function toggleWindowExpanded(win: WindowControls, isMac: boolean, expanded: boolean): Promise<void> {
+export function toggleWindowExpanded(
+  win: WindowControls,
+  isMac: boolean,
+  expanded: boolean,
+): Promise<void> {
   if (isMac) return win.setFullscreen(!expanded);
   return win.toggleMaximize();
 }
@@ -1429,8 +1443,13 @@ function TabRuntime({
   const virtuosoRef = useRef<VirtuosoHandle>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsPage, setSettingsPage] = useState<SettingsPageId>("general");
+  const [mcpEditTarget, setMcpEditTarget] = useState<{ raw: string; nonce: number } | null>(
+    null,
+  );
   const [jobsOpen, setJobsOpen] = useState(false);
   const [aboutOpen, setAboutOpen] = useState(false);
+  const [contextPanelTab, setContextPanelTab] = useState<ContextPanelTab>("files");
+  const [contextPanelTabNonce, setContextPanelTabNonce] = useState(0);
   const previousApprovalSnapshotRef = useRef<ApprovalSnapshot>({
     confirms: [],
     pathAccess: [],
@@ -1454,6 +1473,12 @@ function TabRuntime({
   }, []);
   const openSettingsAt = useCallback((page: SettingsPageId = "general") => {
     setSettingsPage(page);
+    setMcpEditTarget(null);
+    setSettingsOpen(true);
+  }, []);
+  const openMcpEditor = useCallback((spec: McpSpecInfo) => {
+    setSettingsPage("mcp");
+    setMcpEditTarget((prev) => ({ raw: spec.raw, nonce: (prev?.nonce ?? 0) + 1 }));
     setSettingsOpen(true);
   }, []);
   const palette = useCommandPalette(active);
@@ -1516,6 +1541,14 @@ function TabRuntime({
     (spec: string) => sendRpc({ cmd: "mcp_specs_remove", spec }),
     [sendRpc],
   );
+  const updateMcpSpec = useCallback(
+    (raw: string, server: ImportedMcpServer) => sendRpc({ cmd: "mcp_specs_update", raw, server }),
+    [sendRpc],
+  );
+  const retryMcpSpec = useCallback(
+    (raw: string) => sendRpc({ cmd: "mcp_specs_retry", raw }),
+    [sendRpc],
+  );
   const newChat = useCallback(() => {
     clearAbortDraft();
     sendRpc({ cmd: "new_chat" });
@@ -1545,6 +1578,77 @@ function TabRuntime({
       window.setTimeout(() => setToast(null), opts?.duration ?? 1600);
     },
     [],
+  );
+
+  const importCcSwitchMcp = useCallback(async () => {
+    try {
+      const result = await invoke<CcSwitchImportResult>("import_cc_switch_mcp");
+      const existingNames = new Set(
+        state.mcpSpecs
+          .map((spec) => spec.name)
+          .filter((name): name is string => typeof name === "string" && name.length > 0),
+      );
+      const pending = result.servers.filter((server) => !existingNames.has(server.name));
+      const skipped = result.servers.length - pending.length;
+      if (pending.length === 0) {
+        flashToast(t("toast.mcpImportNone"));
+        return;
+      }
+      await invoke("rpc_send", {
+        line: JSON.stringify({ tabId, cmd: "mcp_import_servers", servers: pending }),
+      });
+      flashToast(
+        skipped > 0
+          ? t("toast.mcpImportedWithSkipped", { imported: pending.length, skipped })
+          : t("toast.mcpImported", { imported: pending.length }),
+        { duration: 2600 },
+      );
+    } catch (err) {
+      flashToast(t("toast.mcpImportFailed", { error: String(err) }), { duration: 3200 });
+      throw err;
+    }
+  }, [flashToast, state.mcpSpecs, tabId]);
+
+  const openMcpStatus = useCallback(() => {
+    setContextPanelTab("tools");
+    setContextPanelTabNonce((nonce) => nonce + 1);
+    if (ctxCollapsed) onToggleCtx();
+    flashToast(t("toast.mcpStatusOpened"));
+  }, [ctxCollapsed, flashToast, onToggleCtx]);
+
+  const retryFailedMcpSpecs = useCallback(() => {
+    const failed = state.mcpSpecs.filter((spec) => spec.status === "failed");
+    if (failed.length === 0) {
+      flashToast(t("toast.mcpRetryNone"));
+      return;
+    }
+    for (const spec of failed) retryMcpSpec(spec.raw);
+    flashToast(t("toast.mcpRetryQueued", { count: failed.length }), { duration: 2200 });
+  }, [flashToast, retryMcpSpec, state.mcpSpecs]);
+
+  const runMcpSlashCommand = useCallback(
+    (arg?: string) => {
+      const subcommand = arg?.trim().toLowerCase() ?? "";
+      if (!subcommand || subcommand === "settings" || subcommand === "config") {
+        openSettingsAt("mcp");
+        return true;
+      }
+      if (subcommand === "status" || subcommand === "list" || subcommand === "ls") {
+        openMcpStatus();
+        return true;
+      }
+      if (subcommand === "retry" || subcommand === "reconnect") {
+        retryFailedMcpSpecs();
+        return true;
+      }
+      if (subcommand === "import" || subcommand === "cc-switch" || subcommand === "ccswitch") {
+        openSettingsAt("mcp");
+        void importCcSwitchMcp().catch(() => undefined);
+        return true;
+      }
+      return false;
+    },
+    [importCcSwitchMcp, openMcpStatus, openSettingsAt, retryFailedMcpSpecs],
   );
 
   const applyReasoningEffort = useCallback(
@@ -1684,6 +1788,12 @@ function TabRuntime({
           if (!override) setDraft("");
           return;
         }
+        if (name === "mcp") {
+          if (runMcpSlashCommand(args?.trim())) {
+            if (!override) setDraft("");
+            return;
+          }
+        }
         if (name === "skill" || name === "skills") {
           openSettingsAt("skills");
           if (!override) setDraft("");
@@ -1715,6 +1825,7 @@ function TabRuntime({
       recordAbortDraft,
       applySlashSettingsCommand,
       openSettingsAt,
+      runMcpSlashCommand,
     ],
   );
 
@@ -2103,6 +2214,17 @@ function TabRuntime({
       },
     },
     { cmd: "/model", desc: t("app.cmd.switchModel"), run: () => openSettingsAt("models") },
+    { cmd: "/mcp", desc: t("app.cmd.mcp"), run: () => openSettingsAt("mcp") },
+    { cmd: "/mcp status", desc: t("app.cmd.mcpStatus"), run: openMcpStatus },
+    { cmd: "/mcp retry", desc: t("app.cmd.mcpRetry"), run: retryFailedMcpSpecs },
+    {
+      cmd: "/mcp import",
+      desc: t("app.cmd.mcpImport"),
+      run: () => {
+        openSettingsAt("mcp");
+        void importCcSwitchMcp().catch(() => undefined);
+      },
+    },
     {
       cmd: "/search-engine",
       desc: t("app.cmd.searchEngine"),
@@ -2506,7 +2628,12 @@ function TabRuntime({
           sessionFiles={state.sessionFiles}
           memory={state.memory}
           memoryDetail={state.memoryDetail}
+          activeTab={contextPanelTab}
+          activeTabNonce={contextPanelTabNonce}
           onReadMemory={(path) => sendRpc({ cmd: "memory_read", path })}
+          onOpenMcpSettings={() => openSettingsAt("mcp")}
+          onEditMcpSpec={openMcpEditor}
+          onRetryMcpSpec={retryMcpSpec}
         />
 
         <StatusBar
@@ -2572,6 +2699,8 @@ function TabRuntime({
             customFontFamily={customFontFamily}
             onSetCustomFontFamily={onSetCustomFontFamily}
             initialPage={settingsPage}
+            initialMcpEditRaw={mcpEditTarget?.raw}
+            initialMcpEditNonce={mcpEditTarget?.nonce ?? 0}
             mcpSpecs={state.mcpSpecs}
             mcpBridged={state.mcpBridged}
             skills={state.skills}
@@ -2589,8 +2718,11 @@ function TabRuntime({
               openUrl("https://q.qq.com/qqbot/openclaw/login.html").catch(() => undefined)
             }
             onPickWorkspace={pickWorkspace}
+            onImportCcSwitchMcp={importCcSwitchMcp}
             onAddMcpSpec={addMcpSpec}
             onRemoveMcpSpec={removeMcpSpec}
+            onUpdateMcpSpec={updateMcpSpec}
+            onRetryMcpSpec={retryMcpSpec}
             onReadMemory={(path) => sendRpc({ cmd: "memory_read", path })}
           />
         ) : null}

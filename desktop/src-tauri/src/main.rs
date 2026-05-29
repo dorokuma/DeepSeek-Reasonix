@@ -1,7 +1,9 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod cc_switch;
 mod rpc;
 
+use cc_switch::import_cc_switch_mcp;
 use rpc::{rpc_kill, rpc_send, rpc_spawn, RpcState};
 use serde::Serialize;
 use std::path::{Path, PathBuf};
@@ -384,6 +386,7 @@ fn main() {
             rpc_spawn,
             rpc_send,
             rpc_kill,
+            import_cc_switch_mcp,
             open_in_editor,
             list_workspace_tree,
             git_status,

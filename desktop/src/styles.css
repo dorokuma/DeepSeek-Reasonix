@@ -48,6 +48,73 @@ body[data-drag-over="1"]::after {
   pointer-events: none;
 }
 
+/* ---------- SHARED TOOLTIP ---------- */
+
+.rx-tooltip-anchor {
+  display: inline-flex;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.rx-tooltip {
+  position: fixed;
+  z-index: 10000;
+  max-width: min(420px, calc(100vw - 24px));
+  padding: 8px 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  background: var(--panel);
+  box-shadow: var(--shadow-lg);
+  color: var(--fg);
+  font-family: var(--font-sans, "Geist", system-ui, sans-serif);
+  font-size: 12px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  pointer-events: none;
+  animation: tooltip-in 0.12s ease-out;
+}
+
+.rx-tooltip[data-placement="top"] {
+  transform: translate(-50%, -100%);
+}
+
+.rx-tooltip[data-placement="bottom"] {
+  transform: translateX(-50%);
+}
+
+.rx-tooltip::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  width: 8px;
+  height: 8px;
+  background: var(--panel);
+  border: solid var(--border-strong);
+  transform: translateX(-50%) rotate(45deg);
+}
+
+.rx-tooltip[data-placement="top"]::after {
+  bottom: -5px;
+  border-width: 0 1px 1px 0;
+}
+
+.rx-tooltip[data-placement="bottom"]::after {
+  top: -5px;
+  border-width: 1px 0 0 1px;
+}
+
+@keyframes tooltip-in {
+  from {
+    opacity: 0;
+    filter: blur(2px);
+  }
+  to {
+    opacity: 1;
+    filter: blur(0);
+  }
+}
+
 /* ---------- THEME TOKENS ---------- */
 
 :root,
@@ -4160,6 +4227,60 @@ html:not([data-platform="macos"]) .cmdk-row .kb .shortcut kbd[data-key="mod"] {
   background: var(--warning);
 }
 
+.mcp-health-strip {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+  margin-bottom: 8px;
+}
+.mcp-health-strip span {
+  min-width: 0;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel-2);
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.2;
+}
+.mcp-health-strip span[data-kind="ok"] {
+  color: var(--success);
+}
+.mcp-health-strip span[data-kind="failed"] {
+  color: var(--danger);
+}
+.mcp-filter-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+.mcp-filter-row .spacer {
+  flex: 1 1 auto;
+}
+.mcp-filter,
+.mcp-mini-action {
+  height: 26px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--muted);
+  padding: 0 9px;
+  font-size: 12px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+}
+.mcp-filter[data-active="true"],
+.mcp-filter:hover,
+.mcp-mini-action:hover {
+  color: var(--fg);
+  background: var(--panel-2);
+  border-color: var(--border-strong);
+}
+
 /* rules / approvals */
 .rule {
   padding: 8px;
@@ -5286,6 +5407,43 @@ html:not([data-platform="macos"]) .cmdk-row .kb .shortcut kbd[data-key="mod"] {
 }
 
 /* card list (mcp, skills) */
+.mcp-section-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+.mcp-section-head .stitle {
+  min-width: min(100%, 320px);
+  margin-bottom: 0;
+  line-height: 1.5;
+}
+.mcp-section-head .btn {
+  flex: 0 0 auto;
+  margin-left: auto;
+}
+.mcp-status-summary {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 8px;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.4;
+  text-transform: none;
+  letter-spacing: 0;
+}
+.mcp-status-summary[data-status="connected"] {
+  color: var(--success);
+}
+.mcp-status-summary[data-status="failed"] {
+  color: var(--danger);
+}
+.mcp-status-summary[data-status="connecting"] {
+  color: var(--accent);
+}
+
 .scard {
   border: 1px solid var(--border);
   background: var(--card);
@@ -5336,8 +5494,151 @@ html:not([data-platform="macos"]) .cmdk-row .kb .shortcut kbd[data-key="mod"] {
   overflow-wrap: anywhere;
   word-break: break-word;
 }
+.scard .mcp-spec-status {
+  display: block;
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--muted-2);
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+.scard .mcp-spec-status[data-status="connected"] {
+  color: var(--success);
+}
+.scard .mcp-spec-status[data-status="failed"] {
+  color: var(--danger);
+}
+.scard .mcp-spec-status[data-status="handshake"] {
+  color: var(--accent);
+}
 .scard .mcp-remove {
   flex: 0 0 auto;
+}
+.scard .mcp-card-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+}
+.scard .mcp-card-actions .btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  white-space: nowrap;
+}
+.mcp-server-card[data-mode="context"] {
+  padding: 10px 12px;
+}
+.mcp-server-card[data-mode="context"] .top {
+  align-items: flex-start;
+  flex-wrap: wrap;
+}
+.mcp-server-card[data-mode="context"] .ico {
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+}
+.mcp-server-card[data-mode="context"] .mcp-spec-body {
+  flex: 1 1 calc(100% - 36px);
+  min-width: 0;
+}
+.mcp-status-tooltip {
+  display: flex;
+  width: 100%;
+}
+.mcp-status-tooltip .mcp-spec-status {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+.mcp-server-card[data-mode="context"] .mcp-spec-summary,
+.mcp-server-card[data-mode="context"] .mcp-spec-status {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  overflow-wrap: normal;
+  word-break: normal;
+}
+.mcp-server-card[data-mode="context"] .mcp-card-actions {
+  width: 100%;
+  justify-content: flex-start;
+  padding-left: 34px;
+  margin-top: 6px;
+}
+.mcp-server-card[data-status="connected"] {
+  border-color: color-mix(in srgb, var(--success) 22%, var(--border));
+}
+.mcp-server-card[data-status="failed"] {
+  border-color: color-mix(in srgb, var(--danger) 32%, var(--border));
+}
+.mcp-server-card .rot {
+  transform: rotate(180deg);
+}
+.mcp-tools-detail {
+  margin-top: 10px;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-2);
+}
+.mcp-tools-detail-title {
+  font-size: 12px;
+  color: var(--muted);
+  margin-bottom: 8px;
+}
+.mcp-tools-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 6px;
+}
+.mcp-tool-chip {
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--card);
+  padding: 7px 8px;
+}
+.mcp-tool-name {
+  display: block;
+  min-width: 0;
+  color: var(--fg);
+  font-family: "Geist Mono", ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+.mcp-tool-desc {
+  display: -webkit-box;
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.35;
+  overflow: hidden;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+.mcp-error-detail {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-2);
+}
+.mcp-error-detail-title {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+.mcp-error-detail pre {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--fg-2);
+  font-family: "Geist Mono", ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.45;
 }
 .scard .desc {
   font-size: 14px;
@@ -5366,6 +5667,100 @@ html:not([data-platform="macos"]) .cmdk-row .kb .shortcut kbd[data-key="mod"] {
   padding: 1px 6px;
   border-radius: 4px;
   color: var(--fg-2);
+}
+
+.mcp-edit {
+  min-height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+.mcp-edit-top {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+.mcp-edit-top .stitle {
+  margin-bottom: 0;
+}
+.mcp-back-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.mcp-back-icon {
+  transform: rotate(180deg);
+}
+.mcp-edit-section {
+  border: 1px solid var(--border);
+  background: var(--card);
+  border-radius: 10px;
+  padding: 14px;
+}
+.mcp-edit-field {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+.mcp-edit-field:last-child {
+  margin-bottom: 0;
+}
+.mcp-edit-field span {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--fg);
+}
+.mcp-edit-field .field {
+  width: 100%;
+}
+.mcp-edit-json-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+.mcp-edit-json-head .stitle {
+  margin-bottom: 0;
+}
+.mcp-json-editor {
+  width: 100%;
+  min-height: 250px;
+  padding: 12px 14px;
+  color: var(--fg);
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-family: "Geist Mono", ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 13px;
+  line-height: 1.55;
+  resize: vertical;
+  tab-size: 2;
+}
+.mcp-json-editor:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-soft);
+}
+.mcp-edit-error {
+  margin-top: 8px;
+  color: var(--danger);
+  font-size: 13px;
+}
+.mcp-edit-footer {
+  position: sticky;
+  bottom: 0;
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: auto;
+  padding: 14px 0 2px;
+  background: var(--bg);
+}
+.mcp-edit-footer .btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
 }
 
 /* models grid */
