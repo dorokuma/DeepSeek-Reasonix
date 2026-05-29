@@ -22,6 +22,7 @@ import {
 import { homedir } from "node:os";
 import { dirname, join, posix as posixPath, win32 as win32Path } from "node:path";
 import { atomicWriteSync } from "../core/atomic-write.js";
+import type { CacheDiagnosticEntry } from "../telemetry/cache-diagnostics.js";
 import type { ChatMessage } from "../types.js";
 
 const SESSION_SIDECAR_EXTS = [
@@ -74,6 +75,8 @@ export interface SessionMeta {
   totalCompletionTokens?: number;
   /** Last turn's promptTokens — lets /status render the context bar before the next turn fires. */
   lastPromptTokens?: number;
+  /** Recent per-turn cache evidence. Backward-compatible: absent on sessions created before cache diagnostics. */
+  cacheDiagnostics?: CacheDiagnosticEntry[];
   /** True when the session filename/summary was generated from conversation content. */
   autoTitleGenerated?: boolean;
   /** Source app when the session was imported from another local AI client. */

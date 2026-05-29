@@ -322,6 +322,9 @@ export const zhCN: TranslationSchema = {
     doctor: {
       description: "健康检查（api / config / api-reach / index / hooks / project）",
     },
+    "cache-miss-report": {
+      description: "基于本地前缀证据解释最近的提示缓存未命中",
+    },
     context: { description: "显示上下文窗口分解（系统 / 工具 / 日志 / 输入）" },
     retry: { description: "截断并重发您的最后一条消息（重新采样）" },
     compact: {

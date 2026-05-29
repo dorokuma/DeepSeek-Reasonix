@@ -129,6 +129,12 @@ export const SLASH_COMMANDS: readonly SlashCommandSpec[] = [
       "cross-session cost dashboard (today / week / month / all-time · cache hit · vs Claude)",
   },
   {
+    cmd: "cache-miss-report",
+    group: "info",
+    summary: "explain recent prompt-cache misses from local prefix evidence",
+    aliases: ["cache-report", "cache"],
+  },
+  {
     cmd: "doctor",
     group: "info",
     summary: "health check (api / config / api-reach / index / hooks / project)",

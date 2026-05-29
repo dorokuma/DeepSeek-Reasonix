@@ -272,6 +272,10 @@ export const de: TranslationSchema = {
       ...EN.slash.doctor,
       description: "Gesundheitscheck (API / Config / API-Reichweite / Index / Hooks / Projekt)",
     },
+    "cache-miss-report": {
+      ...EN.slash["cache-miss-report"],
+      description: "Erklärt jüngste Prompt-Cache-Misses anhand lokaler Prefix-Evidenz",
+    },
     context: {
       ...EN.slash.context,
       description: "Context-Window-Aufschlüsselung (System / Tools / Log / Input)",

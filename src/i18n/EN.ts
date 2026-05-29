@@ -335,6 +335,9 @@ export const EN: TranslationSchema = {
       argsHint: "[text]",
     },
     doctor: { description: "health check (api / config / api-reach / index / hooks / project)" },
+    "cache-miss-report": {
+      description: "explain recent prompt-cache misses from local prefix evidence",
+    },
     context: { description: "show context-window breakdown (system / tools / log / input)" },
     retry: { description: "truncate & resend your last message (fresh sample)" },
     compact: {

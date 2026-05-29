@@ -11,7 +11,7 @@ import { CacheFirstLoop } from "../src/loop.js";
 import { ImmutablePrefix } from "../src/memory/runtime.js";
 import { DEEPSEEK_CONTEXT_TOKENS } from "../src/telemetry/stats.js";
 import { ToolRegistry } from "../src/tools.js";
-import type { ChatMessage } from "../src/types.js";
+import type { ChatMessage, ToolSpec } from "../src/types.js";
 
 const FOLD_TEST_MODEL = "test-fold-ctx";
 
@@ -60,6 +60,13 @@ function makeClient(responses: FakeResponseShape[]) {
     apiKey: "sk-test",
     fetch: fakeFetch(responses),
   });
+}
+
+function toolSpec(name: string): ToolSpec {
+  return {
+    type: "function",
+    function: { name, description: "", parameters: { type: "object", properties: {} } },
+  };
 }
 
 describe("CacheFirstLoop (non-streaming)", () => {
@@ -163,6 +170,51 @@ describe("CacheFirstLoop (non-streaming)", () => {
     expect(toolContent).toBe("5");
     expect(finalContent).toBe("The answer is 5.");
     expect(loop.stats.turns.length).toBe(2); // two model round-trips
+  });
+
+  it("records cache diagnostics from the tool snapshot actually sent", async () => {
+    const client = makeClient([
+      {
+        content: "",
+        tool_calls: [
+          {
+            id: "call_1",
+            type: "function",
+            function: { name: "probe", arguments: "{}" },
+          },
+        ],
+      },
+      { content: "done" },
+    ]);
+
+    const tools = new ToolRegistry();
+    tools.register({
+      name: "probe",
+      description: "hot-adds another tool while the turn is running",
+      parameters: { type: "object", properties: {} },
+      fn: async () => {
+        prefix.addTool(toolSpec("mcp_dynamic_tool"));
+        return "ok";
+      },
+    });
+    const prefix = new ImmutablePrefix({ system: "s", toolSpecs: tools.specs() });
+    const loop = new CacheFirstLoop({
+      client,
+      prefix,
+      tools,
+      stream: false,
+    });
+
+    await loop.run("go");
+
+    expect(prefix.toolSpecs.map((spec) => spec.function.name)).toEqual([
+      "probe",
+      "mcp_dynamic_tool",
+    ]);
+    expect(loop.stats.cacheDiagnostics).toHaveLength(2);
+    expect(loop.stats.cacheDiagnostics[0]?.toolNames).toEqual(["probe"]);
+    expect(loop.stats.cacheDiagnostics[1]?.toolNames).toEqual(["probe"]);
+    expect(loop.stats.cacheDiagnostics[1]?.missReason).not.toBe("mcp-tool-hot-add");
   });
 
   it("yields tool_start before each tool dispatch so the TUI can show 'running…'", async () => {
