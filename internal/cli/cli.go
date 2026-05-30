@@ -23,6 +23,7 @@ import (
 	"reasonix/internal/plugin"
 	"reasonix/internal/provider"
 	"reasonix/internal/sandbox"
+	"reasonix/internal/serve"
 	"reasonix/internal/tool"
 	"reasonix/internal/tool/builtin"
 
@@ -50,6 +51,8 @@ func Run(args []string, version string) int {
 		return runAgent(rest)
 	case "chat":
 		return chatREPL(rest)
+	case "serve":
+		return runServe(rest)
 	case "init":
 		return initConfig(rest)
 	case "version", "--version", "-v":
@@ -239,6 +242,49 @@ func runAgent(args []string) int {
 
 	if err := ctrl.Run(ctx, prompt); err != nil {
 		fmt.Fprintln(os.Stderr, "\n"+i18n.M.ErrorPrefix, err)
+		return 1
+	}
+	return 0
+}
+
+// runServe exposes the controller over HTTP+SSE: events stream to the browser,
+// commands arrive as JSON POSTs. The Broadcaster is the controller's event sink,
+// so the same typed stream the chat TUI consumes reaches web clients — the
+// transport-agnostic controller driven by a second frontend.
+func runServe(args []string) int {
+	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
+	model := fs.String("model", "", "provider name (default: config default_model)")
+	maxSteps := fs.Int("max-steps", 0, "max tool-call rounds (0 = use config/default)")
+	addr := fs.String("addr", "127.0.0.1:8787", "listen address")
+	resume := fs.String("resume", "", "resume a saved session file")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+
+	ctx := context.Background()
+	bc := serve.NewBroadcaster()
+	ctrl, err := setup(ctx, *model, *maxSteps, true, bc)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
+		return 1
+	}
+	defer ctrl.Close()
+
+	// Auto-save target: reuse the resumed file, else a fresh one — same as chat.
+	if *resume != "" {
+		loaded, err := agent.LoadSession(*resume)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
+			return 1
+		}
+		ctrl.Resume(loaded, *resume)
+	} else if ctrl.SessionDir() != "" {
+		ctrl.SetSessionPath(agent.NewSessionPath(ctrl.SessionDir(), ctrl.Label()))
+	}
+
+	fmt.Printf("reasonix serve — %s on http://%s\n", ctrl.Label(), *addr)
+	if err := serve.New(ctrl, bc).Run(*addr); err != nil {
+		fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
 		return 1
 	}
 	return 0

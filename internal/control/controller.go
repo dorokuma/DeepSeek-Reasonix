@@ -14,6 +14,7 @@ import (
 	"context"
 	"encoding/json"
 	"strconv"
+	"strings"
 	"sync"
 
 	"reasonix/internal/agent"
@@ -104,10 +105,11 @@ func New(opts Options) *Controller {
 
 // --- commands (frontend → controller) ---
 
-// Send starts a turn: it runs the agent on a background goroutine, streaming
-// events to the Sink and finishing with a TurnDone event (Err set on failure;
-// nil also for a user Cancel). A no-op if a turn is already in flight.
-func (c *Controller) Send(input string) {
+// runGuarded runs body on a background goroutine under a fresh cancellable
+// context, guarding against concurrent turns and emitting a TurnDone event when
+// it finishes (Err set on failure; nil also for a user Cancel). A no-op if a
+// turn is already in flight.
+func (c *Controller) runGuarded(body func(ctx context.Context) error) {
 	c.mu.Lock()
 	if c.running {
 		c.mu.Unlock()
@@ -119,13 +121,89 @@ func (c *Controller) Send(input string) {
 	c.mu.Unlock()
 
 	go func() {
-		err := c.runner.Run(ctx, input)
+		err := body(ctx)
 		c.mu.Lock()
 		c.running = false
 		c.cancel = nil
 		c.mu.Unlock()
 		c.sink.Emit(event.Event{Kind: event.TurnDone, Err: err})
 	}()
+}
+
+// Send starts a turn with an already-composed message (the caller applied any
+// plan-mode marker and @-ref expansion). Used by the chat TUI, which resolves
+// those itself for live UI feedback.
+func (c *Controller) Send(input string) {
+	c.runGuarded(func(ctx context.Context) error { return c.runner.Run(ctx, input) })
+}
+
+// Submit is the one-call entry for a simple frontend: it takes raw user input
+// and does everything — slash-command dispatch, @-reference expansion, plan-mode
+// composition — emitting all output as events. The HTTP/SSE server uses this so
+// a browser client only POSTs the typed line.
+//
+// Slash commands route to the matching primitive: /compact and /new run their
+// session op and emit a Notice; /mcp__server__prompt and custom /commands
+// resolve to a turn; an unknown slash emits a Notice. Anything else is a normal
+// turn with its @-references resolved first.
+func (c *Controller) Submit(input string) {
+	trimmed := strings.TrimSpace(input)
+	switch {
+	case trimmed == "/compact":
+		go func() {
+			if err := c.Compact(context.Background()); err != nil {
+				c.notice("compaction failed: " + err.Error())
+			} else {
+				c.notice("compacted")
+				_ = c.Snapshot()
+			}
+		}()
+	case trimmed == "/new":
+		go func() {
+			if err := c.NewSession(); err != nil {
+				c.notice("new session failed: " + err.Error())
+			} else {
+				c.notice("new session")
+			}
+		}()
+	case strings.HasPrefix(trimmed, "/mcp__"):
+		c.runGuarded(func(ctx context.Context) error {
+			sent, found, err := c.MCPPrompt(ctx, trimmed)
+			if err != nil {
+				return err
+			}
+			if !found {
+				c.notice("unknown command: " + trimmed)
+				return nil
+			}
+			return c.runner.Run(ctx, c.Compose(sent))
+		})
+	case strings.HasPrefix(trimmed, "/"):
+		if sent, ok := c.CustomCommand(trimmed); ok {
+			c.runGuarded(func(ctx context.Context) error {
+				return c.runner.Run(ctx, c.Compose(sent))
+			})
+			return
+		}
+		c.notice("unknown command: " + trimmed)
+	default:
+		c.runGuarded(func(ctx context.Context) error {
+			block, errs := c.ResolveRefs(ctx, input)
+			for _, e := range errs {
+				c.notice(e)
+			}
+			sent := input
+			if block != "" {
+				sent = "Referenced context:\n\n" + block + "\n\n" + input
+			}
+			return c.runner.Run(ctx, c.Compose(sent))
+		})
+	}
+}
+
+// notice emits an informational Notice event.
+func (c *Controller) notice(text string) {
+	c.sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelInfo, Text: text})
 }
 
 // Run executes a turn synchronously, returning the agent's error. Used by the

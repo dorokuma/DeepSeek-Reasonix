@@ -74,6 +74,7 @@ var Chinese = Messages{
 用法：
   reasonix chat [--model NAME]                          交互式会话（多轮）
   reasonix run  [--model NAME] [--max-steps N] <task>   执行单次任务后退出
+  reasonix serve [--model NAME] [--addr HOST:PORT]      通过 HTTP+SSE 提供会话（浏览器客户端在 /）
   reasonix init [path]                                  交互式设置；生成 reasonix.toml（及 .env）
   reasonix version
   reasonix help

@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>reasonix</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { font: 14px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; margin: 0; }
+  #log { padding: 1rem; height: calc(100vh - 5rem); overflow-y: auto; white-space: pre-wrap; }
+  .reason { opacity: .6; }
+  .tool { color: #2563eb; }
+  .notice { opacity: .7; }
+  .err { color: #dc2626; }
+  .user { font-weight: 600; margin-top: .75rem; }
+  .usage { opacity: .55; font-size: 12px; }
+  #bar { display: flex; gap: .5rem; padding: .5rem; border-top: 1px solid #8884; }
+  #in { flex: 1; padding: .4rem; font: inherit; }
+  button { font: inherit; padding: .4rem .7rem; }
+  #approval { display: none; padding: .5rem 1rem; background: #fde68a44; }
+</style>
+</head>
+<body>
+<div id="log"></div>
+<div id="approval"></div>
+<div id="bar">
+  <input id="in" placeholder="message, or /compact /new /mcp__… — Enter to send" autofocus />
+  <button onclick="send()">Send</button>
+  <button onclick="post('/cancel')">Cancel</button>
+</div>
+<script>
+const log = document.getElementById('log');
+const input = document.getElementById('in');
+const approval = document.getElementById('approval');
+let asst = null; // current assistant text node being streamed
+
+function line(cls, text) {
+  const el = document.createElement('div');
+  if (cls) el.className = cls;
+  el.textContent = text;
+  log.appendChild(el);
+  log.scrollTop = log.scrollHeight;
+  return el;
+}
+function post(path, body) {
+  return fetch(path, { method: 'POST', headers: { 'content-type': 'application/json' },
+    body: body ? JSON.stringify(body) : undefined });
+}
+function send() {
+  const v = input.value.trim();
+  if (!v) return;
+  line('user', '› ' + v);
+  input.value = '';
+  post('/submit', { input: v });
+}
+input.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); send(); } });
+
+function showApproval(a) {
+  approval.style.display = 'block';
+  approval.textContent = `approve ${a.tool} — ${a.subject || ''}?  [y] allow  [a] session  [n] deny`;
+  const answer = (allow, session) => { post('/approve', { id: a.id, allow, session }); approval.style.display = 'none'; document.removeEventListener('keydown', onkey); };
+  const onkey = e => {
+    if (e.key === 'y') answer(true, false);
+    else if (e.key === 'a') answer(true, true);
+    else if (e.key === 'n') answer(false, false);
+  };
+  document.addEventListener('keydown', onkey);
+}
+
+const es = new EventSource('/events');
+es.onmessage = ev => {
+  const e = JSON.parse(ev.data);
+  switch (e.kind) {
+    case 'reasoning': (asst && asst.dataset.r ? asst : (asst = line('reason', ''), asst.dataset.r = '1')); asst.textContent += e.text; break;
+    case 'text':
+      if (!asst || asst.dataset.r) { asst = line('', ''); }
+      asst.textContent += e.text; break;
+    case 'message': asst = null; break;
+    case 'tool_dispatch': asst = null; line('tool', '→ ' + e.tool.name + ' ' + (e.tool.args || '')); break;
+    case 'tool_result': if (e.tool && e.tool.err) line('err', '⊘ ' + e.tool.name + ' ' + e.tool.err); break;
+    case 'usage': if (e.usage) line('usage', `· ${e.usage.totalTokens} tok · in ${e.usage.promptTokens} (${e.usage.cacheHitTokens} cached) · out ${e.usage.completionTokens}` + (e.usage.costUsd ? ` · $${e.usage.costUsd.toFixed(4)}` : '')); break;
+    case 'notice': line(e.level === 'warn' ? 'err' : 'notice', (e.level === 'warn' ? '! ' : '· ') + e.text); break;
+    case 'phase': asst = null; line('notice', '[' + e.text + ']'); break;
+    case 'approval_request': showApproval(e.approval); break;
+    case 'turn_done': asst = null; if (e.err) line('err', '! ' + e.err); break;
+  }
+};
+es.onerror = () => line('err', '· disconnected — retrying…');
+
+// Repopulate a resumed session's transcript.
+fetch('/history').then(r => r.json()).then(ms => {
+  (ms || []).forEach(m => { if (m.content) line(m.role === 'user' ? 'user' : '', (m.role === 'user' ? '› ' : '') + m.content); });
+});
+</script>
+</body>
+</html>

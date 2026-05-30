@@ -73,6 +73,7 @@ var English = Messages{
 Usage:
   reasonix chat [--model NAME]                          interactive session (multi-turn)
   reasonix run  [--model NAME] [--max-steps N] <task>   run one task and exit
+  reasonix serve [--model NAME] [--addr HOST:PORT]      serve the session over HTTP+SSE (browser client at /)
   reasonix init [path]                                  interactive setup; writes reasonix.toml (+ .env)
   reasonix version
   reasonix help
