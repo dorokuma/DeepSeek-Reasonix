@@ -40,8 +40,8 @@ func TestTaskToolReturnsSubAgentFinalAnswer(t *testing.T) {
 }
 
 // TestTaskToolFiltersTools verifies the whitelist behaviour: when the caller
-// names a subset of tools, the sub-agent's registry contains exactly that
-// set (with "task" stripped to prevent recursion).
+// names a subset of tools, the sub-agent's registry contains exactly that set
+// with subagent/skill meta-tools stripped to prevent recursive delegation.
 func TestTaskToolFiltersTools(t *testing.T) {
 	sub := &mockProvider{name: "sub", chunks: []provider.Chunk{
 		{Type: provider.ChunkText, Text: "ok"},
@@ -53,24 +53,26 @@ func TestTaskToolFiltersTools(t *testing.T) {
 	parentReg.Add(fakeTool{name: "bash", readOnly: false})
 	task := NewTaskTool(sub, nil, parentReg, 20, 0, 0.0, "", "sys", nil)
 	parentReg.Add(task) // simulate the wiring in cli.setup
+	parentReg.Add(fakeTool{name: "run_skill", readOnly: false})
+	parentReg.Add(fakeTool{name: "research", readOnly: false})
 
-	args := []byte(`{"prompt":"x","tools":["read_file","task","write_file"]}`)
+	args := []byte(`{"prompt":"x","tools":["read_file","task","write_file","run_skill","research"]}`)
 	if _, err := task.Execute(context.Background(), args); err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
-	// The sub-agent's tool schemas should reflect the whitelist minus task.
+	// The sub-agent's tool schemas should reflect the whitelist minus meta-tools.
 	got := map[string]bool{}
 	for _, s := range sub.lastReq.Tools {
 		got[s.Name] = true
 	}
-	if !got["read_file"] || !got["write_file"] || got["task"] || got["bash"] {
-		t.Errorf("sub-agent tools = %v, want {read_file, write_file} (task stripped, bash not requested)", got)
+	if !got["read_file"] || !got["write_file"] || got["task"] || got["run_skill"] || got["research"] || got["bash"] {
+		t.Errorf("sub-agent tools = %v, want {read_file, write_file} (meta-tools stripped, bash not requested)", got)
 	}
 }
 
-// TestTaskToolDefaultsToParentToolsWithoutTask covers the no-whitelist path:
-// the sub-agent inherits every parent tool except the task tool itself.
-func TestTaskToolDefaultsToParentToolsWithoutTask(t *testing.T) {
+// TestTaskToolDefaultsToParentToolsWithoutMetaTools covers the no-whitelist
+// path: the sub-agent inherits parent tools except subagent/skill meta-tools.
+func TestTaskToolDefaultsToParentToolsWithoutMetaTools(t *testing.T) {
 	sub := &mockProvider{name: "sub", chunks: []provider.Chunk{
 		{Type: provider.ChunkText, Text: "ok"},
 		{Type: provider.ChunkDone},
@@ -80,6 +82,12 @@ func TestTaskToolDefaultsToParentToolsWithoutTask(t *testing.T) {
 	parentReg.Add(fakeTool{name: "grep", readOnly: true})
 	task := NewTaskTool(sub, nil, parentReg, 20, 0, 0.0, "", "sys", nil)
 	parentReg.Add(task)
+	parentReg.Add(fakeTool{name: "run_skill", readOnly: false})
+	parentReg.Add(fakeTool{name: "explore", readOnly: false})
+	parentReg.Add(fakeTool{name: "research", readOnly: false})
+	parentReg.Add(fakeTool{name: "review", readOnly: false})
+	parentReg.Add(fakeTool{name: "security_review", readOnly: false})
+	parentReg.Add(fakeTool{name: "remember", readOnly: false})
 
 	if _, err := task.Execute(context.Background(), []byte(`{"prompt":"x"}`)); err != nil {
 		t.Fatalf("Execute: %v", err)
@@ -88,7 +96,8 @@ func TestTaskToolDefaultsToParentToolsWithoutTask(t *testing.T) {
 	for _, s := range sub.lastReq.Tools {
 		got[s.Name] = true
 	}
-	if !got["read_file"] || !got["grep"] || got["task"] {
-		t.Errorf("default sub-agent tools = %v, want {read_file, grep} only", got)
+	if !got["read_file"] || !got["grep"] || !got["remember"] ||
+		got["task"] || got["run_skill"] || got["explore"] || got["research"] || got["review"] || got["security_review"] {
+		t.Errorf("default sub-agent tools = %v, want normal tools inherited and meta-tools stripped", got)
 	}
 }

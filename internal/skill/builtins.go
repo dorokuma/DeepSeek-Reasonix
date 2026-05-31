@@ -151,6 +151,8 @@ Rules:
 // builtinSkills returns the shipped skills. A fresh slice each call so callers
 // can't mutate the shared set.
 func builtinSkills() []Skill {
+	readCodeTools := []string{"read_file", "ls", "glob", "grep"}
+	reviewTools := []string{"read_file", "ls", "glob", "grep", "bash"}
 	return []Skill{
 		{
 			Name:        "init",
@@ -161,36 +163,40 @@ func builtinSkills() []Skill {
 			RunAs:       RunInline,
 		},
 		{
-			Name:        "explore",
-			Description: "Explore the codebase in an isolated subagent — wide-net read-only investigation that returns one distilled answer. Best for: 'find all places that...', 'how does X work across the project', 'survey the code for Y'.",
-			Body:        builtinExploreBody,
-			Scope:       ScopeBuiltin,
-			Path:        "(builtin)",
-			RunAs:       RunSubagent,
+			Name:         "explore",
+			Description:  "Explore the codebase in an isolated subagent — wide-net read-only investigation that returns one distilled answer. Best for: 'find all places that...', 'how does X work across the project', 'survey the code for Y'.",
+			Body:         builtinExploreBody,
+			Scope:        ScopeBuiltin,
+			Path:         "(builtin)",
+			RunAs:        RunSubagent,
+			AllowedTools: append([]string(nil), readCodeTools...),
 		},
 		{
-			Name:        "research",
-			Description: "Research a question by combining web_fetch + code reading in an isolated subagent. Best for: 'is X supported by lib Y', 'what's the canonical way to do Z', 'compare our impl against the spec'.",
-			Body:        builtinResearchBody,
-			Scope:       ScopeBuiltin,
-			Path:        "(builtin)",
-			RunAs:       RunSubagent,
+			Name:         "research",
+			Description:  "Research a question by combining web_fetch + code reading in an isolated subagent. Best for: 'is X supported by lib Y', 'what's the canonical way to do Z', 'compare our impl against the spec'.",
+			Body:         builtinResearchBody,
+			Scope:        ScopeBuiltin,
+			Path:         "(builtin)",
+			RunAs:        RunSubagent,
+			AllowedTools: append(append([]string(nil), readCodeTools...), "web_fetch"),
 		},
 		{
-			Name:        "review",
-			Description: "Review the pending changes (current branch diff by default) in an isolated subagent — flags correctness, security, missing tests, hidden behavior changes; reports a verdict + per-issue file:line. Read-only.",
-			Body:        builtinReviewBody,
-			Scope:       ScopeBuiltin,
-			Path:        "(builtin)",
-			RunAs:       RunSubagent,
+			Name:         "review",
+			Description:  "Review the pending changes (current branch diff by default) in an isolated subagent — flags correctness, security, missing tests, hidden behavior changes; reports a verdict + per-issue file:line. Read-only.",
+			Body:         builtinReviewBody,
+			Scope:        ScopeBuiltin,
+			Path:         "(builtin)",
+			RunAs:        RunSubagent,
+			AllowedTools: append([]string(nil), reviewTools...),
 		},
 		{
-			Name:        "security-review",
-			Description: "Security-focused review of the current branch diff in an isolated subagent — flags injection/authz/secrets/deserialization/path-traversal/crypto issues, severity-tagged. Read-only.",
-			Body:        builtinSecurityReviewBody,
-			Scope:       ScopeBuiltin,
-			Path:        "(builtin)",
-			RunAs:       RunSubagent,
+			Name:         "security-review",
+			Description:  "Security-focused review of the current branch diff in an isolated subagent — flags injection/authz/secrets/deserialization/path-traversal/crypto issues, severity-tagged. Read-only.",
+			Body:         builtinSecurityReviewBody,
+			Scope:        ScopeBuiltin,
+			Path:         "(builtin)",
+			RunAs:        RunSubagent,
+			AllowedTools: append([]string(nil), reviewTools...),
 		},
 		{
 			Name:        "test",

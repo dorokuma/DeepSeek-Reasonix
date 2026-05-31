@@ -20,6 +20,26 @@ Use the provided tools to investigate or act. Return a single final answer that 
 and self-contained — the parent will see only that answer, not your tool calls or reasoning.
 If you need to ask for clarification, fail with a precise question instead of guessing.`
 
+var subagentMetaTools = []string{
+	"task",
+	"run_skill",
+	"install_skill",
+	"explore",
+	"research",
+	"review",
+	"security_review",
+}
+
+// SubagentMetaTools returns the tool names that spawned agents should not inherit
+// from the parent registry unless a future call site deliberately opts into a
+// different boundary. They can spawn or author more agent work, so excluding them
+// preserves one layer of delegation without adding a spawn-count cap.
+func SubagentMetaTools() []string {
+	out := make([]string, len(subagentMetaTools))
+	copy(out, subagentMetaTools)
+	return out
+}
+
 // TaskTool spawns a sub-agent in its own session for a focused sub-task. The
 // sub-agent runs with a filtered tool whitelist and the same step budget shape
 // as the parent (see Execute); its tool calls are forwarded to the parent's
@@ -67,7 +87,7 @@ func NewTaskTool(prov provider.Provider, pricing *provider.Pricing, parentReg *t
 func (t *TaskTool) Name() string { return "task" }
 
 func (t *TaskTool) Description() string {
-	return "Spawn a sub-agent for a focused sub-task. The sub-agent runs in its own session with the same provider and a filtered tool list (defaults to every parent tool except 'task' — no recursive nesting). Only its final answer is returned. Use this to (a) keep long exploration sequences out of the parent's context budget, or (b) delegate self-contained work like 'find every place that calls X and summarise the patterns'."
+	return "Spawn a sub-agent for a focused sub-task. The sub-agent runs in its own session with the same provider and a filtered tool list (defaults to every parent tool except subagent/skill meta-tools, so delegation stays one layer deep). Only its final answer is returned. Use this to (a) keep long exploration sequences out of the parent's context budget, or (b) delegate self-contained work like 'find every place that calls X and summarise the patterns'."
 }
 
 func (t *TaskTool) Schema() json.RawMessage {
@@ -76,7 +96,7 @@ func (t *TaskTool) Schema() json.RawMessage {
 "properties":{
   "prompt":{"type":"string","description":"What the sub-agent should accomplish. Be specific about the deliverable — the sub-agent does not see this conversation."},
   "description":{"type":"string","description":"Short label for the sub-task (3-7 words). Surfaced in the dispatch line so the user sees what's running."},
-  "tools":{"type":"array","items":{"type":"string"},"description":"Optional tool whitelist. Defaults to every parent tool except 'task'."},
+  "tools":{"type":"array","items":{"type":"string"},"description":"Optional tool whitelist. Subagent/skill meta-tools are still excluded so delegation stays one layer deep."},
   "max_steps":{"type":"integer","description":"Optional cap on tool-call rounds. Defaults to half the parent's cap (min 5).","minimum":1},
   "run_in_background":{"type":"boolean","description":"Run the sub-agent asynchronously: returns a job id immediately and keeps working across turns. Collect its final answer with wait, and you'll be notified when it finishes. Use for long, independent sub-tasks you don't need to block on right now."}
 },
@@ -147,9 +167,10 @@ func (t *TaskTool) Execute(ctx context.Context, args json.RawMessage) (string, e
 }
 
 // buildSubReg returns the sub-agent's tool set: the named whitelist (minus
-// `task`, to bar recursive nesting), or every parent tool except `task`.
+// subagent/skill meta-tools, to bar recursive nesting), or every parent tool
+// except those meta-tools.
 func (t *TaskTool) buildSubReg(names []string) *tool.Registry {
-	return FilterRegistry(t.parentReg, names, t.Name())
+	return FilterRegistry(t.parentReg, names, SubagentMetaTools()...)
 }
 
 // FilterRegistry builds a sub-registry from parent: the named whitelist (empty =

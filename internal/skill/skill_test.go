@@ -147,6 +147,33 @@ func TestBuiltinInitIsInlineSkill(t *testing.T) {
 	}
 }
 
+func TestBuiltinSubagentSkillsDeclareAllowedTools(t *testing.T) {
+	st := New(Options{HomeDir: t.TempDir()})
+	cases := map[string][]string{
+		"explore":         {"read_file", "ls", "glob", "grep"},
+		"research":        {"read_file", "ls", "glob", "grep", "web_fetch"},
+		"review":          {"read_file", "ls", "glob", "grep", "bash"},
+		"security-review": {"read_file", "ls", "glob", "grep", "bash"},
+	}
+	for name, want := range cases {
+		sk, ok := st.Read(name)
+		if !ok {
+			t.Fatalf("built-in %s skill not found", name)
+		}
+		if sk.RunAs != RunSubagent {
+			t.Fatalf("%s RunAs = %s, want subagent", name, sk.RunAs)
+		}
+		if !sameStrings(sk.AllowedTools, want) {
+			t.Errorf("%s AllowedTools = %v, want %v", name, sk.AllowedTools, want)
+		}
+		for _, meta := range []string{"task", "run_skill", "install_skill", "explore", "research", "review", "security_review"} {
+			if containsString(sk.AllowedTools, meta) {
+				t.Errorf("%s AllowedTools should not include meta-tool %q: %v", name, meta, sk.AllowedTools)
+			}
+		}
+	}
+}
+
 func TestBuiltinsPresentAndOverridable(t *testing.T) {
 	st := New(Options{HomeDir: t.TempDir()})
 	if _, ok := find(st.List(), "explore"); !ok {
@@ -160,6 +187,27 @@ func TestBuiltinsPresentAndOverridable(t *testing.T) {
 	if ex.Scope == ScopeBuiltin || ex.Description != "mine" {
 		t.Errorf("user explore should override builtin: scope=%s desc=%q", ex.Scope, ex.Description)
 	}
+}
+
+func sameStrings(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func containsString(ss []string, want string) bool {
+	for _, s := range ss {
+		if s == want {
+			return true
+		}
+	}
+	return false
 }
 
 func TestInvalidNamesSkipped(t *testing.T) {

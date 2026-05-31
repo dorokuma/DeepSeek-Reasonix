@@ -223,8 +223,7 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 				}
 			}
 		}
-		subReg := agent.FilterRegistry(reg, sk.AllowedTools,
-			"task", "run_skill", "install_skill", "explore", "research", "review", "security_review")
+		subReg := agent.FilterRegistry(reg, sk.AllowedTools, agent.SubagentMetaTools()...)
 		steps := maxSteps
 		if steps > 0 {
 			if steps /= 2; steps < 5 {
