@@ -1,24 +1,18 @@
 package cli
 
 import (
-	"regexp"
 	"strings"
 
-	"github.com/rivo/uniseg"
+	"github.com/charmbracelet/x/ansi"
 )
 
-// ansiSGR matches ANSI Select-Graphic-Rendition sequences (\e[…m). Width
-// measurement strips these so colored content lines fit the box correctly.
-var ansiSGR = regexp.MustCompile("\x1b\\[[0-9;]*m")
-
-// visibleWidth returns the printable column width of s after stripping ANSI
-// SGR codes. It goes through rivo/uniseg, which measures by *grapheme cluster*
-// rather than by rune: emoji ZWJ sequences (👨‍👩‍👧‍👦), keycaps (1️⃣), flags, and
-// skin-tone modifiers each occupy one cell-pair, where a rune-by-rune sum (the
-// old go-runewidth path) over-counted them and drifted the box/table rails.
-// uniseg is already in the dep tree via bubbletea/lipgloss.
+// visibleWidth returns the printable column width of s: ANSI SGR codes are
+// ignored and wide / grapheme-cluster characters (CJK, emoji ZWJ sequences,
+// keycaps, flags) are each counted as the cells they occupy. Thin wrapper over
+// x/ansi (already in the dep tree via bubbletea/lipgloss) so call sites read
+// intent rather than re-deriving the strip-and-measure dance.
 func visibleWidth(s string) int {
-	return uniseg.StringWidth(ansiSGR.ReplaceAllString(s, ""))
+	return ansi.StringWidth(s)
 }
 
 // padRight returns s padded with spaces on the right until it occupies w

@@ -13,6 +13,7 @@ import (
 	"charm.land/bubbles/v2/textarea"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
 
 	"reasonix/internal/agent"
 	"reasonix/internal/command"
@@ -561,18 +562,10 @@ func clampWidth(s string, width int) string {
 	if width <= 0 {
 		return s
 	}
-	var b strings.Builder
-	for i, line := range strings.Split(s, "\n") {
-		if i > 0 {
-			b.WriteByte('\n')
-		}
-		if visibleWidth(line) > width {
-			b.WriteString(strings.Join(chunkByWidth(line, width), "\n"))
-		} else {
-			b.WriteString(line)
-		}
-	}
-	return b.String()
+	// ansi.Hardwrap breaks any line over `width` visible cols on grapheme
+	// boundaries, preserving ANSI and counting wide chars — exactly what we want,
+	// and lines already within width pass through unchanged.
+	return ansi.Hardwrap(s, width, false)
 }
 
 // commitLine queues one finalized block for the next scrollback flush.
@@ -968,14 +961,9 @@ func truncateSubject(s string, width int) string {
 // history. Truncating (not wrapping) keeps it one row regardless of how many tags
 // (ctx · cache · avg · jobs · balance) it carries on a narrow terminal.
 func clampStatusLine(s string, width int) string {
-	if width <= 1 || visibleWidth(s) <= width {
-		return s
-	}
-	head := chunkByWidth(s, width-1)
-	if len(head) == 0 {
-		return s
-	}
-	return head[0] + "…\x1b[0m"
+	// ansi.Truncate is ANSI-aware, counts wide chars, and appends the tail when
+	// it actually clips — one row regardless of how many tags the status carries.
+	return ansi.Truncate(s, width, "…")
 }
 
 // growInputToFit resizes the textarea to the number of lines its value spans,

@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/rivo/uniseg"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/yuin/goldmark"
 	"github.com/yuin/goldmark/ast"
 	"github.com/yuin/goldmark/extension"
@@ -401,128 +401,13 @@ func inlineCarrier(n ast.Node) ast.Node {
 	return nil
 }
 
-// wrapAnsi wraps text to width columns. ANSI SGR escapes are treated as zero-
-// width when counting, and CJK runes count as two columns (matches the box
-// helper). Lines already split with `\n` keep their breaks. A single "word"
-// wider than width is hard-broken at character boundaries — this is how CJK
-// text (no inter-word spaces) reflows correctly.
+// wrapAnsi word-wraps text to width columns, hard-breaking any single word too
+// wide to fit on its own line — the path CJK takes, having no inter-word spaces.
+// ANSI SGR escapes are preserved and counted as zero width; wide chars count as
+// two columns. Thin wrapper over x/ansi's Wrap (already in the dep tree).
 func wrapAnsi(text string, width int) string {
 	if width < 4 {
 		width = 4
 	}
-	var out strings.Builder
-	for li, line := range strings.Split(text, "\n") {
-		if li > 0 {
-			out.WriteByte('\n')
-		}
-		words := splitWords(line)
-		curW := 0
-		for _, w := range words {
-			wWidth := visibleWidth(w)
-			// Word doesn't fit and is too wide to fit alone — hard-break it
-			// at character boundaries. This is the path CJK takes (no spaces
-			// to break on).
-			if wWidth > width {
-				if curW > 0 {
-					out.WriteByte('\n')
-					curW = 0
-				}
-				chunks := chunkByWidth(w, width)
-				for ci, ch := range chunks {
-					if ci > 0 {
-						out.WriteByte('\n')
-					}
-					out.WriteString(ch)
-				}
-				curW = visibleWidth(chunks[len(chunks)-1])
-				continue
-			}
-			if curW == 0 {
-				out.WriteString(w)
-				curW = wWidth
-			} else if curW+1+wWidth > width {
-				out.WriteByte('\n')
-				out.WriteString(w)
-				curW = wWidth
-			} else {
-				out.WriteByte(' ')
-				out.WriteString(w)
-				curW += 1 + wWidth
-			}
-		}
-	}
-	return out.String()
-}
-
-// chunkByWidth splits s into pieces each at most `width` visible columns,
-// preserving ANSI SGR sequences (which contribute no width). It breaks on
-// *grapheme cluster* boundaries (via uniseg), so an emoji ZWJ sequence, keycap,
-// or flag is never split across a line and its width is counted as one unit —
-// a rune-by-rune break would both miscount and tear the cluster apart. Used to
-// hard-break a long word, typically CJK or emoji-dense text, when wrapping.
-func chunkByWidth(s string, width int) []string {
-	var chunks []string
-	var cur strings.Builder
-	curW := 0
-	state := -1
-	for i := 0; i < len(s); {
-		// ANSI SGR escapes carry no width and must stay intact: copy verbatim
-		// and reset the grapheme state (an escape ends any pending cluster).
-		if s[i] == 0x1b {
-			j := i + 1
-			for j < len(s) && s[j] != 'm' {
-				j++
-			}
-			if j < len(s) {
-				j++ // include the terminating 'm'
-			}
-			cur.WriteString(s[i:j])
-			i = j
-			state = -1
-			continue
-		}
-		cluster, _, w, newState := uniseg.FirstGraphemeClusterInString(s[i:], state)
-		if curW+w > width && cur.Len() > 0 {
-			chunks = append(chunks, cur.String())
-			cur.Reset()
-			curW = 0
-		}
-		cur.WriteString(cluster)
-		curW += w
-		i += len(cluster)
-		state = newState
-	}
-	if cur.Len() > 0 {
-		chunks = append(chunks, cur.String())
-	}
-	return chunks
-}
-
-// splitWords splits s on whitespace while keeping any ANSI SGR escape inside
-// the word that contains it. Words that begin with an escape (e.g. styled
-// punctuation) keep the escape attached to the next visible run.
-func splitWords(s string) []string {
-	var out []string
-	var cur strings.Builder
-	inEsc := false
-	for _, r := range s {
-		if r == 0x1b {
-			inEsc = true
-		}
-		if r == ' ' && !inEsc {
-			if cur.Len() > 0 {
-				out = append(out, cur.String())
-				cur.Reset()
-			}
-			continue
-		}
-		cur.WriteRune(r)
-		if inEsc && r == 'm' {
-			inEsc = false
-		}
-	}
-	if cur.Len() > 0 {
-		out = append(out, cur.String())
-	}
-	return out
+	return ansi.Wrap(text, width, "")
 }

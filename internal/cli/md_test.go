@@ -114,16 +114,3 @@ func TestWrapAnsiCJK(t *testing.T) {
 		t.Errorf("first line exceeds width: %d > 10", visibleWidth(lines[0]))
 	}
 }
-
-// TestSplitWordsKeepsAnsiAttached ensures word boundaries don't split through
-// an ANSI escape that styles a single word.
-func TestSplitWordsKeepsAnsiAttached(t *testing.T) {
-	in := "alpha \x1b[1mbeta\x1b[0m gamma"
-	got := splitWords(in)
-	if len(got) != 3 {
-		t.Fatalf("words = %v (want 3)", got)
-	}
-	if !strings.Contains(got[1], "beta") || !strings.Contains(got[1], "\x1b[1m") {
-		t.Errorf("styled word lost its escape: %q", got[1])
-	}
-}

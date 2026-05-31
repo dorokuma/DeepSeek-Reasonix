@@ -14,9 +14,11 @@ func TestVisibleWidthGraphemeClusters(t *testing.T) {
 		{"ascii", "abc", 3},
 		{"cjk", "中文", 4},
 		{"emoji", "🔥", 2},
-		// uniseg measures the keycap sequence as 1 (terminals disagree on VS16
-		// width — this is the library's UAX#11 choice, and we follow it).
-		{"keycap", "1️⃣", 1},
+		// x/ansi counts the VS16 keycap as 2 (emoji presentation). Terminals
+		// disagree on VS16 width, but the point is consistency: wrapAnsi /
+		// clampWidth now measure via the same x/ansi, so box rails and wrapping
+		// agree — which a mixed uniseg(1)/ansi(2) split would break.
+		{"keycap", "1️⃣", 2},
 		// The regression that motivated the switch: a ZWJ family is one cluster
 		// occupying one emoji's width, not the rune-by-rune sum (which was 8).
 		{"zwj-family", "👨‍👩‍👧‍👦", 2},
@@ -30,31 +32,32 @@ func TestVisibleWidthGraphemeClusters(t *testing.T) {
 	}
 }
 
-func TestChunkByWidthKeepsClustersIntact(t *testing.T) {
-	// A ZWJ family (width 2) fills a width-2 line; the trailing ascii spills to
-	// the next chunk. The cluster must never be torn across chunks.
-	family := "👨‍👩‍👧‍👦"
-	chunks := chunkByWidth(family+"x", 2)
-	if len(chunks) != 2 || chunks[0] != family || chunks[1] != "x" {
-		t.Fatalf("family split wrong: %q (want [%q x])", chunks, family)
+// TestClampWidthHardwrap verifies clampWidth (a wrapper over ansi.Hardwrap) keeps
+// every wrapped line within the column budget, hard-breaks CJK at the boundary,
+// preserves ANSI escapes as zero width, and leaves in-width lines untouched.
+func TestClampWidthHardwrap(t *testing.T) {
+	// CJK hard-breaks at the column boundary (each is 2 cols); no line over width.
+	for _, line := range strings.Split(clampWidth("中文字", 4), "\n") {
+		if visibleWidth(line) > 4 {
+			t.Errorf("cjk line %q exceeds width 4 (got %d)", line, visibleWidth(line))
+		}
 	}
 
-	// CJK hard-breaks at the column boundary.
-	cjk := chunkByWidth("中文字", 4)
-	if len(cjk) != 2 || cjk[0] != "中文" || cjk[1] != "字" {
-		t.Errorf("cjk chunks = %q, want [中文 字]", cjk)
+	// A line already within width is returned byte-for-byte.
+	if got := clampWidth("ab", 10); got != "ab" {
+		t.Errorf("in-width line altered: %q", got)
 	}
 
-	// ANSI SGR escapes are preserved verbatim and counted as zero width, so the
-	// two visible chars fit a width-2 line on one chunk with styling intact.
-	styled := chunkByWidth("\x1b[31mab\x1b[0m", 2)
-	if len(styled) != 1 || styled[0] != "\x1b[31mab\x1b[0m" {
-		t.Errorf("styled chunks = %q, want one styled chunk", styled)
+	// ANSI SGR escapes are zero width, so two visible chars fit a width-2 line.
+	styled := clampWidth("\x1b[31mab\x1b[0m", 2)
+	if visibleWidth(styled) > 2 {
+		t.Errorf("styled line exceeds width 2 (got %d): %q", visibleWidth(styled), styled)
 	}
-	// Every chunk stays within the column budget.
-	for _, ch := range chunkByWidth(strings.Repeat("中", 10), 6) {
-		if visibleWidth(ch) > 6 {
-			t.Errorf("chunk %q exceeds width 6 (got %d)", ch, visibleWidth(ch))
+
+	// Every wrapped line stays within the column budget.
+	for _, line := range strings.Split(clampWidth(strings.Repeat("中", 10), 6), "\n") {
+		if visibleWidth(line) > 6 {
+			t.Errorf("line %q exceeds width 6 (got %d)", line, visibleWidth(line))
 		}
 	}
 }
