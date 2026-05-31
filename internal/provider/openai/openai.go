@@ -152,12 +152,16 @@ func isTransientErr(err error) bool {
 func (c *client) buildRequest(req provider.Request) chatRequest {
 	msgs := make([]chatMessage, len(req.Messages))
 	for i, m := range req.Messages {
+		// reasoning_content is deliberately NOT sent back: it's a response-only
+		// field. DeepSeek accepts it but counts it as ordinary prompt input
+		// (measured ~500 extra tokens per turn on a reasoner chain), and the
+		// OpenAI-compatible convention is not to echo it. The session still keeps
+		// it (for display/archive); we just don't pay to re-upload it every turn.
 		cm := chatMessage{
-			Role:             string(m.Role),
-			Content:          m.Content,
-			ReasoningContent: m.ReasoningContent,
-			ToolCallID:       m.ToolCallID,
-			Name:             m.Name,
+			Role:       string(m.Role),
+			Content:    m.Content,
+			ToolCallID: m.ToolCallID,
+			Name:       m.Name,
 		}
 		for _, tc := range m.ToolCalls {
 			wire := chatToolCall{ID: tc.ID, Type: "function"}
@@ -329,11 +333,12 @@ type chatMessage struct {
 	// `content`"). An empty string satisfies presence and is accepted by every
 	// OpenAI-compatible backend for all roles (unlike null, which some reject
 	// for a tool message).
-	Content          string         `json:"content"`
-	ReasoningContent string         `json:"reasoning_content,omitempty"`
-	ToolCalls        []chatToolCall `json:"tool_calls,omitempty"`
-	ToolCallID       string         `json:"tool_call_id,omitempty"`
-	Name             string         `json:"name,omitempty"`
+	Content    string         `json:"content"`
+	ToolCalls  []chatToolCall `json:"tool_calls,omitempty"`
+	ToolCallID string         `json:"tool_call_id,omitempty"`
+	Name       string         `json:"name,omitempty"`
+	// no reasoning_content field: it is a response-only signal and is never sent
+	// back upstream (see buildRequest) — re-uploading it is paid prompt input.
 }
 
 type chatTool struct {

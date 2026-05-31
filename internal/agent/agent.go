@@ -262,8 +262,10 @@ func (a *Agent) Run(ctx context.Context, input string) error {
 			a.sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelWarn, Text: msg})
 		}
 
-		// Round-trip reasoning_content on the assistant turn so multi-turn
-		// thinking chains stay coherent (MiMo / DeepSeek-reasoner ask for this).
+		// Keep reasoning_content on the assistant turn for display and session
+		// archive. It is NOT re-uploaded to the API: the openai provider drops it
+		// when building the request, since DeepSeek bills re-sent reasoning as
+		// ordinary prompt input (~500 tok/turn) for no cache or coherence gain.
 		a.session.Add(provider.Message{
 			Role:             provider.RoleAssistant,
 			Content:          text,
