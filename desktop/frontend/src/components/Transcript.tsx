@@ -6,7 +6,15 @@ import { Welcome } from "./Welcome";
 
 type ToolItem = Extract<Item, { kind: "tool" }>;
 
-export function Transcript({ items, onPrompt }: { items: Item[]; onPrompt: (text: string) => void }) {
+export function Transcript({
+  items,
+  onPrompt,
+  onRewind,
+}: {
+  items: Item[];
+  onPrompt: (text: string) => void;
+  onRewind?: (turn: number, scope: string) => void;
+}) {
   const scrollRef = useRef<HTMLDivElement>(null);
   // stick tracks whether the view is pinned to the bottom; once the user scrolls
   // up to read, we stop yanking them back down.
@@ -41,6 +49,14 @@ export function Transcript({ items, onPrompt }: { items: Item[]; onPrompt: (text
     }
   }
 
+  // Each user message's turn = its ordinal among user messages, so a rewind
+  // targets the matching checkpoint.
+  const userTurn = new Map<string, number>();
+  let nt = 0;
+  for (const it of items) {
+    if (it.kind === "user") userTurn.set(it.id, nt++);
+  }
+
   return (
     <div className="transcript" ref={scrollRef} onScroll={onScroll}>
       {items.length === 0 && <Welcome onPrompt={onPrompt} />}
@@ -48,7 +64,14 @@ export function Transcript({ items, onPrompt }: { items: Item[]; onPrompt: (text
       {items.map((it) => {
         switch (it.kind) {
           case "user":
-            return <UserMessage key={it.id} text={it.text} />;
+            return (
+              <UserMessage
+                key={it.id}
+                text={it.text}
+                turn={userTurn.get(it.id)}
+                onRewind={onRewind}
+              />
+            );
           case "assistant":
             return <AssistantMessage key={it.id} item={it} />;
           case "tool":

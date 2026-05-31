@@ -525,6 +525,21 @@ export function useController() {
     await app.SaveDoc(path, body).catch(() => {});
   }, []);
 
+  // rewind restores the session to the start of a turn (scope "code" |
+  // "conversation" | "both"), then reloads the transcript from the truncated
+  // history so the view reflects the rewound state (unlike the CLI, the desktop
+  // can re-render).
+  const rewind = useCallback(async (turn: number, scope: string) => {
+    await app.Rewind(turn, scope).catch(() => {});
+    const messages = await app.History().catch(() => [] as HistoryMessage[]);
+    dispatch({ type: "reset" });
+    if (messages.length) dispatch({ type: "history", messages });
+    app
+      .ContextUsage()
+      .then((context) => dispatch({ type: "context", context }))
+      .catch(() => {});
+  }, []);
+
   return {
     state,
     send,
@@ -541,6 +556,7 @@ export function useController() {
     refreshMeta,
     pickWorkspace,
     compact,
+    rewind,
     setModel,
     fetchMemory,
     remember,

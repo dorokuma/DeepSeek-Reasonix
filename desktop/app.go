@@ -168,6 +168,44 @@ func (a *App) NewSession() error {
 	return a.ctrl.NewSession()
 }
 
+// CheckpointMeta summarises one rewind point (a user turn) for the desktop.
+type CheckpointMeta struct {
+	Turn   int      `json:"turn"`
+	Prompt string   `json:"prompt"`
+	Files  []string `json:"files"` // paths changed during the turn
+	Time   int64    `json:"time"`  // unix milliseconds
+}
+
+// Checkpoints lists the session's rewind points, oldest first, for the rewind UI.
+func (a *App) Checkpoints() []CheckpointMeta {
+	if a.ctrl == nil {
+		return []CheckpointMeta{}
+	}
+	metas := a.ctrl.Checkpoints()
+	out := make([]CheckpointMeta, 0, len(metas))
+	for _, m := range metas {
+		out = append(out, CheckpointMeta{Turn: m.Turn, Prompt: m.Prompt, Files: m.Paths, Time: m.Time.UnixMilli()})
+	}
+	return out
+}
+
+// Rewind restores the session to the start of turn. scope is "code",
+// "conversation", or "both" (anything else is treated as "both"). The frontend
+// re-reads History after this resolves.
+func (a *App) Rewind(turn int, scope string) error {
+	if a.ctrl == nil {
+		return nil
+	}
+	s := control.RewindBoth
+	switch scope {
+	case "code":
+		s = control.RewindCode
+	case "conversation":
+		s = control.RewindConversation
+	}
+	return a.ctrl.Rewind(turn, s)
+}
+
 // SessionMeta summarises one saved session for the history panel.
 type SessionMeta struct {
 	Path    string `json:"path"`

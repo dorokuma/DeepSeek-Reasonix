@@ -7,6 +7,7 @@
 
 import type {
   BalanceInfo,
+  CheckpointMeta,
   CommandInfo,
   ContextInfo,
   DirEntry,
@@ -34,6 +35,10 @@ export interface AppBindings {
   Compact(): Promise<void>;
   NewSession(): Promise<void>;
   History(): Promise<HistoryMessage[]>;
+  // Checkpoints lists the session's rewind points; Rewind restores one (scope
+  // "code" | "conversation" | "both"), after which the caller re-reads History.
+  Checkpoints(): Promise<CheckpointMeta[]>;
+  Rewind(turn: number, scope: string): Promise<void>;
   // Session history: list saved sessions, resume one (returns its transcript),
   // delete one, or give one a custom display name ("" clears it).
   ListSessions(): Promise<SessionMeta[]>;
@@ -243,6 +248,10 @@ function makeMockApp(): AppBindings {
     async SetPlanMode() {},
     async Compact() {},
     async NewSession() {},
+    async Checkpoints() {
+      return [];
+    },
+    async Rewind() {},
     async History() {
       return [];
     },

@@ -7,11 +7,41 @@ import type { Item } from "../lib/useController";
 
 type AssistantItem = Extract<Item, { kind: "assistant" }>;
 
-export function UserMessage({ text }: { text: string }) {
+export function UserMessage({
+  text,
+  turn,
+  onRewind,
+}: {
+  text: string;
+  turn?: number;
+  onRewind?: (turn: number, scope: string) => void;
+}) {
+  const t = useT();
+  const [menu, setMenu] = useState(false);
+  const canRewind = onRewind != null && turn != null;
+  const rewind = (scope: string) => {
+    onRewind?.(turn as number, scope);
+    setMenu(false);
+  };
   return (
     <div className="msg msg--user">
       <span className="msg__caret">›</span>
       <div className="msg__text">{text}</div>
+      {canRewind &&
+        (menu ? (
+          <div className="rewind__menu">
+            <button onClick={() => rewind("both")}>{t("rewind.both")}</button>
+            <button onClick={() => rewind("conversation")}>{t("rewind.conversation")}</button>
+            <button onClick={() => rewind("code")}>{t("rewind.code")}</button>
+            <button className="rewind__cancel" onClick={() => setMenu(false)}>
+              ✕
+            </button>
+          </div>
+        ) : (
+          <button className="rewind__btn" title={t("rewind.label")} onClick={() => setMenu(true)}>
+            ⟲
+          </button>
+        ))}
     </div>
   );
 }

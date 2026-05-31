@@ -89,6 +89,14 @@ export interface HistoryMessage {
   content: string;
 }
 
+// CheckpointMeta is one rewind point (a user turn) for the rewind UI.
+export interface CheckpointMeta {
+  turn: number;
+  prompt: string;
+  files: string[];
+  time: number; // unix ms
+}
+
 // SessionMeta is one saved session for the history panel.
 export interface SessionMeta {
   path: string;

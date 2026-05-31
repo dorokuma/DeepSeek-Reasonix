@@ -171,6 +171,10 @@ export const en = {
   // assistant message
   "msg.thinking": "thinking",
   "msg.copy": "Copy",
+  "rewind.label": "Rewind to here",
+  "rewind.both": "Code + conversation",
+  "rewind.conversation": "Conversation only",
+  "rewind.code": "Code only",
   "msg.copied": "Copied",
 
   // tool card summaries

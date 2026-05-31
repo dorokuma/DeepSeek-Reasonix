@@ -30,6 +30,7 @@ export default function App() {
     renameSession,
     refreshMeta,
     pickWorkspace,
+    rewind,
     setModel,
     fetchMemory,
     remember,
@@ -206,7 +207,7 @@ export default function App() {
       )}
 
       <main className="main">
-        <Transcript items={state.items} onPrompt={send} />
+        <Transcript items={state.items} onPrompt={send} onRewind={rewind} />
       </main>
 
       <footer className="footer">
