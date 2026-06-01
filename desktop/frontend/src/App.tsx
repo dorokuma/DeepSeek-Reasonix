@@ -152,6 +152,7 @@ export default function App() {
   const [workspacePanelMaximized, setWorkspacePanelMaximized] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [capsOpen, setCapsOpen] = useState(false);
+  const [pendingPlanRevision, setPendingPlanRevision] = useState<string | null>(null);
   const [viewportWidth, setViewportWidth] = useState(() => (typeof window === "undefined" ? 1440 : window.innerWidth));
   const effectiveSidebarWidth = sidebarCollapsed ? SIDEBAR_COLLAPSED_WIDTH : sidebarWidth;
   const effectiveWorkspacePanelWidth = useMemo(
@@ -206,6 +207,13 @@ export default function App() {
     todoItem.id !== dismissedTodo &&
     todos.length > 0 &&
     todos.some((t) => t.status !== "completed");
+
+  useEffect(() => {
+    if (!pendingPlanRevision || state.running) return;
+    const text = pendingPlanRevision;
+    setPendingPlanRevision(null);
+    send(text);
+  }, [pendingPlanRevision, send, state.running]);
 
   // Memory drawer: opening fetches a fresh snapshot; writes re-fetch so the
   // panel reflects what landed on disk.
@@ -651,6 +659,21 @@ export default function App() {
 
           <footer className="footer">
             {showTodos && <TodoPanel todos={todos} onDismiss={() => setDismissedTodo(todoItem!.id)} />}
+            {state.approval && (
+              <ApprovalModal
+                approval={state.approval}
+                onAnswer={(allow, session) => {
+                  // Approving an exit_plan_mode plan leaves plan mode (the controller
+                  // flips the executor; mirror it here for the indicator).
+                  if (state.approval!.tool === "exit_plan_mode" && allow) setMode("normal");
+                  approve(state.approval!.id, allow, session);
+                }}
+                onRevisePlan={(text) => {
+                  setPendingPlanRevision(text);
+                  approve(state.approval!.id, false, false);
+                }}
+              />
+            )}
             <Composer
               running={state.running}
               mode={mode}
@@ -703,18 +726,6 @@ export default function App() {
           onToggleMaximized={() => setWorkspacePanelMaximized((value) => !value)}
         />
       </div>
-
-      {state.approval && (
-        <ApprovalModal
-          approval={state.approval}
-          onAnswer={(allow, session) => {
-            // Approving an exit_plan_mode plan leaves plan mode (the controller
-            // flips the executor; mirror it here for the indicator).
-            if (state.approval!.tool === "exit_plan_mode" && allow) setMode("normal");
-            approve(state.approval!.id, allow, session);
-          }}
-        />
-      )}
 
       {state.ask && (
         <AskCard
