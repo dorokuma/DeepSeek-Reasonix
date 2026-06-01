@@ -79,6 +79,26 @@ func TestTailStart(t *testing.T) {
 	}
 }
 
+func TestTailStartSmallSession(t *testing.T) {
+	sys := provider.Message{Role: provider.RoleSystem}
+	usr := provider.Message{Role: provider.RoleUser, Content: "hi"}
+	for i, msgs := range [][]provider.Message{
+		{sys, usr}, // system + one message: nothing fits the tail; must not index msgs[len]
+		{sys},
+		{usr},
+		{},
+	} {
+		head := 0
+		if len(msgs) > 0 && msgs[0].Role == provider.RoleSystem {
+			head = 1
+		}
+		start := tailStart(msgs, head, 16384, 0.25, 2)
+		if start < head || start > len(msgs) {
+			t.Errorf("case %d: start=%d out of bounds [%d,%d]", i, start, head, len(msgs))
+		}
+	}
+}
+
 func TestCompactReplacesHistory(t *testing.T) {
 	prov := &fakeProvider{reply: "- goal: do X\n- changed file Y"}
 	sess := &Session{Messages: []provider.Message{

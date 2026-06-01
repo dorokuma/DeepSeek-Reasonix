@@ -279,7 +279,10 @@ func tailStart(msgs []provider.Message, head, budgetTokens int, tokPerChar float
 		acc += c
 		start = i
 	}
-	for start > head && msgs[start].Role == provider.RoleTool {
+	// start == len(msgs) when nothing fit the tail (a session too small to have a
+	// message after head); there is no msgs[start] to align off, and the caller's
+	// minCompactMessages check then no-ops the pass.
+	for start > head && start < len(msgs) && msgs[start].Role == provider.RoleTool {
 		start--
 	}
 	return start
