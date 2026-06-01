@@ -461,7 +461,13 @@ func (m chatTUI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.MouseClickMsg:
-		// Left-press in the transcript region begins a text selection.
+		// Right-click copies the active selection (Windows Terminal convention);
+		// left-press in the transcript region begins a text selection.
+		if msg.Button == tea.MouseRight && m.sel.active && !m.sel.empty() {
+			text := m.selectedText()
+			m.sel = selection{}
+			return m, tea.Batch(copyToClipboard(text), finalize(m, cmds))
+		}
 		if msg.Button == tea.MouseLeft && msg.Y < m.viewport.Height() {
 			at := m.transcriptCaret(msg.X, msg.Y)
 			m.sel = selection{active: true, anchor: at, head: at}
@@ -509,8 +515,8 @@ func (m chatTUI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.MouseReleaseMsg:
 		// Release finalizes the selection; the highlight stays on as the visual
-		// "what's selected" cue and Ctrl+C copies it. A plain click (no drag)
-		// clears any prior selection.
+		// "what's selected" cue and a right-click copies it. A plain click (no
+		// drag) clears any prior selection.
 		m.autoScroll = 0 // stop edge auto-scroll
 		if msg.Button == tea.MouseLeft && m.sel.active && m.sel.empty() {
 			m.sel = selection{}
@@ -529,14 +535,7 @@ func (m chatTUI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case tea.KeyPressMsg:
-		// Ctrl+C copies the active selection (terminal convention: copy when
-		// something is selected, otherwise interrupt/quit below).
-		if msg.String() == "ctrl+c" && m.sel.active && !m.sel.empty() {
-			text := m.selectedText()
-			m.sel = selection{}
-			return m, tea.Batch(copyToClipboard(text), finalize(m, cmds))
-		}
-		// Any other keystroke dismisses a finished selection.
+		// Any keystroke dismisses a finished selection (copy is a right-click).
 		m.sel = selection{}
 		// Transcript scroll keys work in any state (PgUp/PgDn are never text).
 		switch msg.String() {
