@@ -249,13 +249,24 @@ func (c *Controller) hookListText() string {
 }
 
 func (c *Controller) mcpListText() string {
-	if c.host == nil || len(c.host.ServerNames()) == 0 {
+	if c.host == nil || (len(c.host.ServerNames()) == 0 && len(c.host.Failures()) == 0) {
 		return i18n.M.ListMcpNone
 	}
 	var b strings.Builder
-	b.WriteString(i18n.M.ListMcpHeader + "\n")
-	for _, name := range c.host.ServerNames() {
-		fmt.Fprintf(&b, "  %s\n", name)
+	if len(c.host.ServerNames()) > 0 {
+		b.WriteString(i18n.M.ListMcpHeader + "\n")
+		for _, name := range c.host.ServerNames() {
+			fmt.Fprintf(&b, "  %s\n", name)
+		}
+	}
+	if failures := c.host.Failures(); len(failures) > 0 {
+		if b.Len() > 0 {
+			b.WriteString("\n")
+		}
+		b.WriteString("MCP startup failures:\n")
+		for _, f := range failures {
+			fmt.Fprintf(&b, "  %s (%s): %s\n", f.Name, f.Transport, f.Error)
+		}
 	}
 	return strings.TrimRight(b.String(), "\n")
 }

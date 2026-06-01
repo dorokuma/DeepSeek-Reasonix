@@ -175,13 +175,13 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 				specs[i].Stderr = opts.Stderr
 			}
 		}
-		host, ptools, err := plugin.StartAll(ctx, specs)
-		if err != nil {
-			return nil, fmt.Errorf("plugin: %w", err)
-		}
+		host, ptools := plugin.StartAvailable(ctx, specs)
 		pluginHost = host
 		for _, t := range ptools {
 			reg.Add(t)
+		}
+		if text, ok := MCPStartupNotice(host.Failures()); ok {
+			sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelWarn, Text: text})
 		}
 	}
 	cleanup := pluginHost.Close
@@ -466,6 +466,27 @@ func PluginSpecs(entries []config.PluginEntry) []plugin.Spec {
 		}
 	}
 	return specs
+}
+
+// MCPStartupNotice formats the warning shown when configured MCP servers failed
+// to connect, naming the first few; ok is false when none failed.
+func MCPStartupNotice(failures []plugin.Failure) (text string, ok bool) {
+	if len(failures) == 0 {
+		return "", false
+	}
+	names := make([]string, 0, min(len(failures), 3))
+	for i, f := range failures {
+		if i >= 3 {
+			break
+		}
+		names = append(names, f.Name)
+	}
+	more := ""
+	if len(failures) > len(names) {
+		more = fmt.Sprintf(" (+%d more)", len(failures)-len(names))
+	}
+	return fmt.Sprintf("%d MCP server(s) failed to start: %s%s — run /mcp for details",
+		len(failures), strings.Join(names, ", "), more), true
 }
 
 func providerNames(cfg *config.Config) string {

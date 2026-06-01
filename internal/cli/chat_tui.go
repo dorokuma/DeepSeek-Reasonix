@@ -1955,7 +1955,7 @@ func (m *chatTUI) runMCPSubcommand(input string) {
 // showMCPStatus queues the connected MCP servers, their counts, and the prompt
 // commands / resource refs they expose — the discovery surface for /mcp.
 func (m *chatTUI) showMCPStatus() {
-	if m.host == nil || len(m.host.Servers()) == 0 {
+	if m.host == nil || (len(m.host.Servers()) == 0 && len(m.host.Failures()) == 0) {
 		m.notice(i18n.M.SlashMCPNone)
 		return
 	}
@@ -1975,6 +1975,9 @@ func (m *chatTUI) showMCPStatus() {
 			label = r.Description
 		}
 		fmt.Fprintf(&b, "      %s  %s\n", "@"+r.Server+":"+r.URI, dim(label))
+	}
+	for _, f := range m.host.Failures() {
+		fmt.Fprintf(&b, "    %s %s %s\n", yellow("!"), bold(f.Name), dim(fmt.Sprintf("(%s) — %s", f.Transport, f.Error)))
 	}
 	m.commitLine(strings.TrimRight(b.String(), "\n"))
 }
