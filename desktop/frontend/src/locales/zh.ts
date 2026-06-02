@@ -197,6 +197,11 @@ export const zh: Record<DictKey, string> = {
   "history.turnOther": "{n} 轮",
   "history.confirmDelete": "确认删除",
   "history.rename": "重命名",
+  "history.preview": "预览",
+  "history.previewEmpty": "这个会话没有可见消息。",
+  "history.readOnlyHint": "模型正在输出，历史仅可查看，暂不能切换或修改会话。",
+  "history.searchPlaceholder": "搜索会话…",
+  "history.noResults": "没有匹配的会话。",
   "history.today": "今天",
   "history.yesterday": "昨天",
 

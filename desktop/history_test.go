@@ -1,8 +1,10 @@
 package main
 
 import (
+	"path/filepath"
 	"testing"
 
+	"reasonix/internal/agent"
 	"reasonix/internal/provider"
 )
 
@@ -35,5 +37,27 @@ func TestHistoryMessagesIncludeAssistantReasoning(t *testing.T) {
 	}
 	if got[3].Reasoning != "tool-call-only thinking" {
 		t.Fatalf("empty-content assistant reasoning = %q, want tool-call-only thinking", got[3].Reasoning)
+	}
+}
+
+func TestPreviewSessionMessagesLoadsWithoutResuming(t *testing.T) {
+	dir := t.TempDir()
+	session := agent.NewSession("")
+	session.Add(provider.Message{Role: provider.RoleUser, Content: "show history"})
+	session.Add(provider.Message{Role: provider.RoleAssistant, Content: "answer", ReasoningContent: "saved reasoning"})
+	path := filepath.Join(dir, "session.jsonl")
+	if err := session.Save(path); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	got, err := previewSessionMessages(dir, path)
+	if err != nil {
+		t.Fatalf("previewSessionMessages: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("preview history length = %d, want 2", len(got))
+	}
+	if got[1].Reasoning != "saved reasoning" {
+		t.Fatalf("preview reasoning = %q, want saved reasoning", got[1].Reasoning)
 	}
 }

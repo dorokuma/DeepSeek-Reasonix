@@ -552,6 +552,10 @@ export function useController() {
     app.ContextUsage().then((context) => dispatch({ type: "context", context })).catch(() => {});
   }, []);
 
+  const previewSession = useCallback((path: string): Promise<HistoryMessage[]> => {
+    return app.PreviewSession(path).catch(() => []);
+  }, []);
+
   // Manage saved sessions: delete one, or give it a custom name (""=clear). Both
   // only touch on-disk state; the caller re-fetches the list to reflect the change.
   const deleteSession = useCallback((path: string) => {
@@ -671,6 +675,7 @@ export function useController() {
     newSession,
     listSessions,
     resumeSession,
+    previewSession,
     deleteSession,
     renameSession,
     refreshMeta,

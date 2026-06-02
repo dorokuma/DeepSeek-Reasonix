@@ -134,6 +134,7 @@ export default function App() {
     newSession,
     listSessions,
     resumeSession,
+    previewSession,
     deleteSession,
     renameSession,
     refreshMeta,
@@ -468,34 +469,37 @@ export default function App() {
     });
   }, []);
 
-  // History drawer: opening fetches the saved-session list; picking one resumes it
-  // (the transcript swaps in; the model/folder are unchanged).
+  // History drawer: opening fetches the saved-session list. Idle row clicks resume;
+  // running row clicks only preview through PreviewSession.
   const openHistory = useCallback(async () => {
     setHistView(await refreshSessions());
   }, [refreshSessions]);
   const closeHistory = useCallback(() => setHistView(null), []);
   const onResumeSession = useCallback(
     async (path: string) => {
+      if (state.running) return;
       setHistView(null);
       await resumeSession(path);
       await refreshSessions();
     },
-    [resumeSession, refreshSessions],
+    [state.running, resumeSession, refreshSessions],
   );
   // Delete / rename act on disk, then re-fetch so the panel reflects the change.
   const onDeleteSession = useCallback(
     async (path: string) => {
+      if (state.running) return;
       await deleteSession(path);
       setHistView(await refreshSessions());
     },
-    [deleteSession, refreshSessions],
+    [state.running, deleteSession, refreshSessions],
   );
   const onRenameSession = useCallback(
     async (path: string, title: string) => {
+      if (state.running) return;
       await renameSession(path, title);
       setHistView(await refreshSessions());
     },
-    [renameSession, refreshSessions],
+    [state.running, renameSession, refreshSessions],
   );
 
   // Workspace: open the folder chooser and switch projects. The hook resets the
@@ -581,12 +585,7 @@ export default function App() {
           <section className="sidebar__section">
             <div className="sidebar__section-head">
               <div className="sidebar__section-title">{t("sidebar.conversations")}</div>
-              <button
-                className="sidebar__view-all"
-                onClick={() => void openHistory()}
-                disabled={state.running}
-                title={state.running ? t("common.busyHint") : t("topbar.history")}
-              >
+              <button className="sidebar__view-all" onClick={() => void openHistory()} title={t("topbar.history")}>
                 {t("sidebar.viewAll")}
               </button>
             </div>
@@ -619,8 +618,7 @@ export default function App() {
             <button
               className="sidebar__navitem sidebar__navitem--sessions"
               onClick={() => void openHistory()}
-              disabled={state.running}
-              title={state.running ? t("common.busyHint") : t("topbar.history")}
+              title={t("topbar.history")}
             >
               <History size={15} />
               <span>{t("topbar.history")}</span>
@@ -675,12 +673,7 @@ export default function App() {
               {workspacePanelOpen ? <PanelRightClose size={13} /> : <PanelRightOpen size={13} />}
             </button>
             <div className="topbar__actions">
-              <button
-                className="chip chip--icon"
-                onClick={() => void openHistory()}
-                disabled={state.running}
-                title={state.running ? t("common.busyHint") : t("topbar.history")}
-              >
+              <button className="chip chip--icon" onClick={() => void openHistory()} title={t("topbar.history")}>
                 <History size={13} />
               </button>
               <button className="chip chip--icon" onClick={() => void openMemory()} title={t("topbar.memory")}>
@@ -825,7 +818,9 @@ export default function App() {
       {histView !== null && (
         <HistoryPanel
           sessions={histView}
+          running={state.running}
           onResume={onResumeSession}
+          onPreview={previewSession}
           onDelete={onDeleteSession}
           onRename={onRenameSession}
           onClose={closeHistory}

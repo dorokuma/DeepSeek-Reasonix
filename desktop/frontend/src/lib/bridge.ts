@@ -54,9 +54,10 @@ export interface AppBindings {
   SummarizeFrom(turn: number): Promise<void>;
   SummarizeUpTo(turn: number): Promise<void>;
   // Session history: list saved sessions, resume one (returns its transcript),
-  // delete one, or give one a custom display name ("" clears it).
+  // preview one read-only, delete one, or give one a custom display name ("" clears it).
   ListSessions(): Promise<SessionMeta[]>;
   ResumeSession(path: string): Promise<HistoryMessage[]>;
+  PreviewSession(path: string): Promise<HistoryMessage[]>;
   DeleteSession(path: string): Promise<void>;
   RenameSession(path: string, title: string): Promise<void>;
   // Workspace: open a folder chooser and switch to that project (fresh session);
@@ -388,6 +389,17 @@ function makeMockApp(): AppBindings {
       return [
         { role: "user", content: `(mock) resumed ${path}` },
         { role: "assistant", content: "This is a mock resumed transcript — the real one comes from the kernel." },
+      ];
+    },
+    async PreviewSession(path: string) {
+      const s = sessions.find((x) => x.path === path);
+      return [
+        { role: "user", content: s?.preview || `(mock) preview ${path}` },
+        {
+          role: "assistant",
+          content: "This is a read-only mock preview. The active conversation is unchanged.",
+          reasoning: "Preview reads the saved session without resuming it.",
+        },
       ];
     },
     async DeleteSession(path: string) {

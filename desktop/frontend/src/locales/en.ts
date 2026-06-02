@@ -196,6 +196,11 @@ export const en = {
   "history.turnOther": "{n} turns",
   "history.confirmDelete": "Confirm delete",
   "history.rename": "Rename",
+  "history.preview": "preview",
+  "history.previewEmpty": "No visible messages in this session.",
+  "history.readOnlyHint": "Model output is running. History is read-only until the turn finishes.",
+  "history.searchPlaceholder": "Search sessions…",
+  "history.noResults": "No matching sessions.",
   "history.today": "Today",
   "history.yesterday": "Yesterday",
 

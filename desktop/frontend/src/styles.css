@@ -3890,7 +3890,66 @@ body {
   opacity: 0.5;
 }
 
-/* ── history drawer: click-to-resume rows with rename/delete actions ────────── */
+/* ── history drawer: click-to-resume rows with read-only preview ────────────── */
+.history-drawer {
+  min-height: 0;
+}
+.history-drawer--preview {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(220px, 0.44fr) minmax(0, 0.56fr);
+  gap: 12px;
+  overflow: hidden;
+}
+.history-list {
+  min-width: 0;
+  overflow-y: auto;
+  padding-right: 2px;
+}
+.history-search {
+  margin-bottom: 12px;
+}
+.history-preview {
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+}
+.history-preview__head {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border-soft);
+  background: var(--bg-soft);
+}
+.history-preview__title {
+  overflow: hidden;
+  color: var(--fg);
+  font-size: 13px;
+  font-weight: 650;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.history-preview__meta {
+  margin-top: 3px;
+  color: var(--fg-faint);
+  font-size: 11px;
+}
+.history-preview__body {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+.history-preview__body .transcript {
+  padding: 14px 14px 18px;
+}
+.history-preview__body .transcript > * {
+  max-width: none;
+}
 .hist-item {
   display: flex;
   align-items: stretch;
@@ -3907,6 +3966,10 @@ body {
 }
 .hist-item--current {
   border-color: var(--accent-soft);
+}
+.hist-item--selected {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent-soft);
 }
 .hist-item__main {
   --wails-draggable: no-drag;
@@ -3971,6 +4034,14 @@ body {
 .hist-act:hover {
   color: var(--fg);
   background: var(--bg);
+}
+.hist-act:disabled {
+  opacity: 0.42;
+  cursor: not-allowed;
+}
+.hist-act:disabled:hover {
+  color: var(--fg-faint);
+  background: transparent;
 }
 .hist-act--danger,
 .hist-act--danger:hover {
@@ -4330,6 +4401,10 @@ body {
 @media (max-width: 760px) {
   .drawer--wide {
     width: min(620px, 96vw);
+  }
+  .history-drawer--preview {
+    grid-template-columns: 1fr;
+    grid-template-rows: minmax(180px, 0.42fr) minmax(0, 0.58fr);
   }
   .settings-shell {
     grid-template-columns: 1fr;

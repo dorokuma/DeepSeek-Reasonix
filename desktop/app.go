@@ -425,6 +425,12 @@ func (a *App) ResumeSession(path string) ([]HistoryMessage, error) {
 	return a.History(), nil
 }
 
+// PreviewSession reads a saved session for display only. It does not snapshot or
+// swap the active controller, so the history drawer can call it while a turn runs.
+func (a *App) PreviewSession(path string) ([]HistoryMessage, error) {
+	return previewSessionMessages(config.SessionDir(), path)
+}
+
 // PickWorkspace opens a folder chooser and, on a pick, switches the agent to that
 // project: it re-roots the process there, rebuilds the controller from that
 // folder's reasonix.toml + REASONIX.md, and starts a fresh session — the desktop
@@ -583,6 +589,14 @@ func historyMessages(msgs []provider.Message, resolveUserContent func(string) st
 		out = append(out, HistoryMessage{Role: string(m.Role), Content: content, Reasoning: reasoning})
 	}
 	return out
+}
+
+func previewSessionMessages(sessionDir, path string) ([]HistoryMessage, error) {
+	loaded, err := agent.LoadSession(path)
+	if err != nil {
+		return nil, err
+	}
+	return historyMessages(loaded.Snapshot(), sessionDisplayResolver(sessionDir, path)), nil
 }
 
 // ContextInfo is the prompt-vs-window gauge payload. Both zero means no data yet.
