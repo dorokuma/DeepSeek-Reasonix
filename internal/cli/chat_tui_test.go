@@ -1,12 +1,15 @@
 package cli
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
 
+	"reasonix/internal/config"
 	"reasonix/internal/control"
 	"reasonix/internal/event"
 	"reasonix/internal/provider"
@@ -202,6 +205,58 @@ func TestInsertNewlineKeyBinding(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("newChatTUI InsertNewline should include shift+enter, got %v", keys)
+	}
+}
+
+func isolateUserConfig(t *testing.T) {
+	t.Helper()
+	root := t.TempDir()
+	t.Setenv("HOME", root)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(root, "config"))
+	t.Setenv("AppData", filepath.Join(root, "AppData")) // os.UserConfigDir reads AppData on Windows
+	t.Chdir(root)
+}
+
+func TestThinkingCommandWritesCurrentDeepSeekProvider(t *testing.T) {
+	isolateUserConfig(t)
+
+	m := newTestChatTUI()
+	m.ctrl = control.New(control.Options{Label: "deepseek-flash"})
+	m.modelRef = "deepseek-flash/deepseek-v4-flash"
+	m.buildController = func(_ string, _ []provider.Message) (*control.Controller, error) {
+		return control.New(control.Options{Label: "deepseek-flash"}), nil
+	}
+
+	cmd := m.runThinkingCommand("/thinking max")
+	if cmd == nil {
+		t.Fatal("/thinking max should return a rebuild command")
+	}
+
+	configPath := config.UserConfigPath()
+	body, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("read saved config: %v", err)
+	}
+	if !strings.Contains(string(body), `effort      = "max"`) {
+		t.Fatalf("saved config missing effort=max:\n%s", body)
+	}
+}
+
+func TestThinkingCommandRejectsNonDeepSeekProvider(t *testing.T) {
+	isolateUserConfig(t)
+
+	m := newTestChatTUI()
+	m.ctrl = control.New(control.Options{Label: "mimo-pro"})
+	m.modelRef = "mimo-pro/mimo-v2.5-pro"
+	m.buildController = func(_ string, _ []provider.Message) (*control.Controller, error) {
+		return control.New(control.Options{Label: "mimo-pro"}), nil
+	}
+
+	if cmd := m.runThinkingCommand("/thinking max"); cmd != nil {
+		t.Fatal("non-DeepSeek provider should not rebuild")
+	}
+	if _, err := os.Stat(config.UserConfigPath()); !os.IsNotExist(err) {
+		t.Fatalf("non-DeepSeek provider should not write config, stat err=%v", err)
 	}
 }
 
