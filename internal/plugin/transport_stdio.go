@@ -9,8 +9,11 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
+	"time"
 )
 
 // stdioTransport speaks newline-delimited JSON-RPC 2.0 over a subprocess's
@@ -38,11 +41,16 @@ type stdioTransport struct {
 }
 
 func newStdioTransport(ctx context.Context, s Spec) (*stdioTransport, error) {
-	if s.Command == "" {
+	if strings.TrimSpace(s.Command) == "" {
 		return nil, fmt.Errorf("stdio plugin %q: command is required", s.Name)
 	}
-	cmd := exec.CommandContext(ctx, s.Command, s.Args...)
-	cmd.Env = append(os.Environ(), envSlice(s.Env)...)
+	env := mergeEnv(os.Environ(), s.Env)
+	exe, env, err := resolveStdioExecutable(ctx, s, env)
+	if err != nil {
+		return nil, err
+	}
+	cmd := exec.CommandContext(ctx, exe, s.Args...)
+	cmd.Env = env
 	if s.Dir != "" {
 		cmd.Dir = s.Dir // pin cwd-aware servers (e.g. CodeGraph) to the project root
 	}
@@ -73,6 +81,212 @@ func newStdioTransport(ctx context.Context, s Spec) (*stdioTransport, error) {
 	}
 	go t.readLoop()
 	return t, nil
+}
+
+var stdioShellPATH = defaultStdioShellPATH
+
+func resolveStdioExecutable(ctx context.Context, s Spec, env []string) (string, []string, error) {
+	if hasPathSeparator(s.Command) {
+		return s.Command, env, nil
+	}
+	if exe, ok := lookPathInEnv(s.Command, env); ok {
+		return exe, env, nil
+	}
+
+	currentPath, _ := envValue(env, "PATH")
+	if shellPath := strings.TrimSpace(stdioShellPATH(ctx)); shellPath != "" {
+		fallbackPath := mergePathLists(shellPath, currentPath)
+		if fallbackPath != currentPath {
+			fallbackEnv := setEnvValue(env, "PATH", fallbackPath)
+			if exe, ok := lookPathInEnv(s.Command, fallbackEnv); ok {
+				return exe, fallbackEnv, nil
+			}
+			env = fallbackEnv
+			currentPath = fallbackPath
+		}
+	}
+
+	return "", env, fmt.Errorf("stdio plugin %q: command %q not found on PATH; GUI launches and non-interactive sessions may not inherit your shell PATH. Use an absolute command path or set PATH in the MCP server env. PATH=%q",
+		s.Name, s.Command, currentPath)
+}
+
+func hasPathSeparator(s string) bool {
+	return strings.ContainsAny(s, `/\`)
+}
+
+func lookPathInEnv(command string, env []string) (string, bool) {
+	path, _ := envValue(env, "PATH")
+	pathext, _ := envValue(env, "PATHEXT")
+	for _, dir := range filepath.SplitList(path) {
+		if dir == "" || !filepath.IsAbs(dir) {
+			continue
+		}
+		for _, name := range executableNames(command, pathext) {
+			candidate := filepath.Join(dir, name)
+			if isExecutableFile(candidate) {
+				return candidate, true
+			}
+		}
+	}
+	return "", false
+}
+
+func executableNames(command, pathext string) []string {
+	if runtime.GOOS != "windows" || filepath.Ext(command) != "" {
+		return []string{command}
+	}
+	if strings.TrimSpace(pathext) == "" {
+		pathext = ".COM;.EXE;.BAT;.CMD"
+	}
+	names := []string{command}
+	seen := map[string]bool{strings.ToLower(command): true}
+	for _, ext := range strings.Split(pathext, ";") {
+		ext = strings.TrimSpace(ext)
+		if ext == "" {
+			continue
+		}
+		if !strings.HasPrefix(ext, ".") {
+			ext = "." + ext
+		}
+		name := command + ext
+		key := strings.ToLower(name)
+		if !seen[key] {
+			seen[key] = true
+			names = append(names, name)
+		}
+	}
+	return names
+}
+
+func isExecutableFile(path string) bool {
+	info, err := os.Stat(path)
+	if err != nil || info.IsDir() {
+		return false
+	}
+	if runtime.GOOS == "windows" {
+		return true
+	}
+	return info.Mode().Perm()&0o111 != 0
+}
+
+func defaultStdioShellPATH(ctx context.Context) string {
+	if runtime.GOOS == "windows" {
+		return ""
+	}
+	shell := stdioShell()
+	if shell == "" {
+		return ""
+	}
+	const marker = "__REASONIX_PATH__="
+	script := "printf '\\n" + marker + "%s\\n' \"$PATH\""
+	for _, args := range [][]string{
+		{"-l", "-i", "-c", script},
+		{"-l", "-c", script},
+		{"-c", script},
+	} {
+		out := runShellPATHCommand(ctx, shell, args)
+		if path := parseShellPATH(out, marker); path != "" {
+			return path
+		}
+	}
+	return ""
+}
+
+func stdioShell() string {
+	if shell := strings.TrimSpace(os.Getenv("SHELL")); shell != "" {
+		if hasPathSeparator(shell) {
+			if isExecutableFile(shell) {
+				return shell
+			}
+		} else if exe, ok := lookPathInEnv(shell, os.Environ()); ok {
+			return exe
+		}
+	}
+	for _, shell := range []string{"/bin/zsh", "/bin/bash", "/bin/sh"} {
+		if isExecutableFile(shell) {
+			return shell
+		}
+	}
+	return ""
+}
+
+func runShellPATHCommand(parent context.Context, shell string, args []string) []byte {
+	ctx, cancel := context.WithTimeout(parent, 2*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, shell, args...)
+	cmd.Stdin = strings.NewReader("")
+	out, _ := cmd.CombinedOutput()
+	return out
+}
+
+func parseShellPATH(out []byte, marker string) string {
+	lines := strings.Split(strings.ReplaceAll(string(out), "\r\n", "\n"), "\n")
+	for i := len(lines) - 1; i >= 0; i-- {
+		if strings.HasPrefix(lines[i], marker) {
+			return strings.TrimSpace(strings.TrimPrefix(lines[i], marker))
+		}
+	}
+	return ""
+}
+
+func mergeEnv(base []string, overrides map[string]string) []string {
+	out := append([]string(nil), base...)
+	for k, v := range overrides {
+		out = setEnvValue(out, k, v)
+	}
+	return out
+}
+
+func setEnvValue(env []string, key, value string) []string {
+	out := make([]string, 0, len(env)+1)
+	replaced := false
+	for _, kv := range env {
+		k, _, ok := strings.Cut(kv, "=")
+		if ok && envKeyEqual(k, key) {
+			if !replaced {
+				out = append(out, key+"="+value)
+				replaced = true
+			}
+			continue
+		}
+		out = append(out, kv)
+	}
+	if !replaced {
+		out = append(out, key+"="+value)
+	}
+	return out
+}
+
+func envValue(env []string, key string) (string, bool) {
+	for i := len(env) - 1; i >= 0; i-- {
+		k, v, ok := strings.Cut(env[i], "=")
+		if ok && envKeyEqual(k, key) {
+			return v, true
+		}
+	}
+	return "", false
+}
+
+func envKeyEqual(a, b string) bool {
+	if runtime.GOOS == "windows" {
+		return strings.EqualFold(a, b)
+	}
+	return a == b
+}
+
+func mergePathLists(primary, secondary string) string {
+	var out []string
+	seen := map[string]bool{}
+	for _, path := range []string{primary, secondary} {
+		for _, dir := range filepath.SplitList(path) {
+			if dir == "" || seen[dir] {
+				continue
+			}
+			seen[dir] = true
+			out = append(out, dir)
+		}
+	}
+	return strings.Join(out, string(os.PathListSeparator))
 }
 
 // readLoop owns stdout for the transport's lifetime: it reads one JSON-RPC

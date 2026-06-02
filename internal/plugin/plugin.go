@@ -690,11 +690,3 @@ func parseToolResult(res json.RawMessage) (string, error) {
 	}
 	return text, nil
 }
-
-func envSlice(m map[string]string) []string {
-	out := make([]string, 0, len(m))
-	for k, v := range m {
-		out = append(out, k+"="+v)
-	}
-	return out
-}
