@@ -586,13 +586,18 @@ export function useController() {
     app.AnswerQuestion(id, answers).catch(() => {});
   }, []);
 
-  const setPlan = useCallback((on: boolean) => {
-    app.SetPlanMode(on).catch(() => {});
+  const setPlan = useCallback((on: boolean): Promise<void> => {
+    return app.SetPlanMode(on).catch(() => {});
   }, []);
 
   // setBypass toggles YOLO mode (auto-approve every tool call this session).
-  const setBypass = useCallback((on: boolean) => {
-    app.SetBypass(on).catch(() => {});
+  const setBypass = useCallback((on: boolean): Promise<void> => {
+    return app
+      .SetBypass(on)
+      .then(() => {
+        if (on) dispatch({ type: "clearApproval" });
+      })
+      .catch(() => {});
   }, []);
 
   const newSession = useCallback(async () => {

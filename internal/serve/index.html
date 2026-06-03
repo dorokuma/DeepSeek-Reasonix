@@ -672,7 +672,11 @@ function loadSessions(){
 loadSessions();
 
 // ── input handling ──
-function send(){ const v=input.value.trim(); if(!v)return; addUserMsg(v); post('/submit',{input:v}).then(r=>{if(r.ok&&r.status===204){fetchStatus();loadSessions();}}); input.value='';input.style.height='';closeSlashMenu(); }
+async function syncModeBeforeSubmit(){
+  if(planMode){ await post('/bypass',{on:false}); await post('/plan',{on:true}); }
+  else if(bypassMode){ await post('/plan',{on:false}); await post('/bypass',{on:true}); }
+}
+async function send(){ const v=input.value.trim(); if(!v)return; await syncModeBeforeSubmit(); addUserMsg(v); post('/submit',{input:v}).then(r=>{if(r.ok&&r.status===204){fetchStatus();loadSessions();}}); input.value='';input.style.height='';closeSlashMenu(); }
 
 input.addEventListener('input',()=>{input.style.height='auto';input.style.height=Math.min(input.scrollHeight,140)+'px';updateSlashMenu();});
 input.addEventListener('keydown',e=>{
@@ -705,17 +709,17 @@ function updateModeButtons(){
   $('#btn-plan').classList.toggle('toolbar__btn--active',planMode);
   $('#btn-bypass').classList.toggle('toolbar__btn--danger',bypassMode);
 }
-function setPlan(on){planMode=on;if(on){bypassMode=false;post('/bypass',{on:false});}post('/plan',{on});updateModeButtons();}
-function setBypass(on){bypassMode=on;if(on){planMode=false;post('/plan',{on:false});}post('/bypass',{on});updateModeButtons();}
-function cycleMode(){if(!planMode&&!bypassMode)setPlan(true);else if(planMode){setPlan(false);setBypass(true);}else setBypass(false);setTimeout(fetchStatus,200);}
-function setMode(m){if(m==='auto'){if(planMode)setPlan(false);if(bypassMode)setBypass(false);}else if(m==='plan'){setPlan(true);}else if(m==='yolo'){setBypass(true);}}
+async function setPlan(on){planMode=on;if(on){bypassMode=false;}updateModeButtons();if(on){await post('/bypass',{on:false});}await post('/plan',{on});}
+async function setBypass(on){bypassMode=on;if(on){planMode=false;}updateModeButtons();if(on){await post('/plan',{on:false});}await post('/bypass',{on});}
+async function cycleMode(){if(!planMode&&!bypassMode)await setPlan(true);else if(planMode){await setPlan(false);await setBypass(true);}else await setBypass(false);setTimeout(fetchStatus,200);}
+async function setMode(m){if(m==='auto'){if(planMode)await setPlan(false);if(bypassMode)await setBypass(false);}else if(m==='plan'){await setPlan(true);}else if(m==='yolo'){await setBypass(true);}}
 
 // toolbar buttons
-btnSend.onclick=send;
+btnSend.onclick=()=>void send();
 btnStop.onclick=()=>post('/cancel');
-$('#btn-auto').onclick=()=>setMode('auto');
-$('#btn-plan').onclick=()=>setPlan(!planMode);
-$('#btn-bypass').onclick=()=>setBypass(!bypassMode);
+$('#btn-auto').onclick=()=>void setMode('auto');
+$('#btn-plan').onclick=()=>void setPlan(!planMode);
+$('#btn-bypass').onclick=()=>void setBypass(!bypassMode);
 $('#btn-new').onclick=()=>{if(running)return;post('/new').then(()=>{log.innerHTML='';log.appendChild(welcome);welcome.style.display='';loadSessions();});};
 $('#btn-compact').onclick=()=>{if(!running)post('/compact');};
 $('#btn-rewind').onclick=()=>openRewindPicker();

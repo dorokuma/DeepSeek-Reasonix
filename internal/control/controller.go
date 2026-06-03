@@ -1404,9 +1404,22 @@ func (c *Controller) Jobs() []jobs.View {
 // approval prompt is auto-allowed (writers and bash run without asking). Deny
 // rules still block. Runtime-only — never written to config.
 func (c *Controller) SetBypass(on bool) {
+	var pending []chan approvalReply
+
 	c.mu.Lock()
 	c.bypass = on
+	if on {
+		pending = make([]chan approvalReply, 0, len(c.approvals))
+		for id, reply := range c.approvals {
+			delete(c.approvals, id)
+			pending = append(pending, reply)
+		}
+	}
 	c.mu.Unlock()
+
+	for _, reply := range pending {
+		reply <- approvalReply{allow: true}
+	}
 }
 
 // Bypass reports whether YOLO/bypass mode is on, for the status-bar indicator.
@@ -1682,7 +1695,7 @@ func (c *Controller) requestApproval(ctx context.Context, tool, subject string) 
 	// Re-check the grant: a session grant may have landed while we queued behind
 	// another prompt for the same subject.
 	c.mu.Lock()
-	if c.granted[key] {
+	if c.bypass || c.autoApprove || c.granted[key] {
 		c.mu.Unlock()
 		return true, false, nil
 	}
