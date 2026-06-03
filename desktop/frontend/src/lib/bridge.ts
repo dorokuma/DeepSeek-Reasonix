@@ -100,6 +100,7 @@ export interface AppBindings {
   SetMCPServerTier(name: string, tier: string): Promise<void>;
   SlashArgs(input: string): Promise<SlashArgsResult>;
   ListDir(rel: string): Promise<DirEntry[]>;
+  SearchFileRefs(query: string): Promise<DirEntry[]>;
   ReadFile(rel: string): Promise<FilePreview>;
   WorkspaceChanges(): Promise<WorkspaceChangesView>;
   OpenWorkspacePath(rel: string): Promise<void>;
@@ -807,6 +808,12 @@ function makeMockApp(): AppBindings {
         ];
       }
       return [{ name: "file.go", isDir: false }];
+    },
+    async SearchFileRefs(query: string) {
+      const q = query.toLowerCase();
+      return ["desktop/frontend/src/lib/bridge.ts", "frontend/wailsjs/runtime/runtime.js", "internal/control/refs.go"]
+        .filter((path) => path.split("/").pop()?.toLowerCase().includes(q))
+        .map((name) => ({ name, isDir: false }));
     },
     async ReadFile(rel: string) {
       const samples: Record<string, string> = {
