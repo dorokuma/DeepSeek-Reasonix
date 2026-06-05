@@ -1432,9 +1432,8 @@ func readStdin() string {
 func welcome(version string) int {
 	src := config.SourcePath()
 
-	// Load early: config.Load merges the cwd-local and user-global sources, so a
-	// successful load means the user has configured before — even when run from a
-	// directory without a local reasonix.toml (SourcePath is then "").
+	// Load early for the welcome/status view. config.Load also succeeds with the
+	// built-in defaults, so SourcePath is the actual "user has configured" signal.
 	cfg, cfgErr := config.Load()
 	if cfgErr != nil {
 		cfg = config.Default()
@@ -1443,9 +1442,8 @@ func welcome(version string) int {
 	// First run on an interactive terminal: actively guide setup rather than
 	// printing a static screen and exiting. interactiveSetup owns the language
 	// prompt and welcome banner so every prompt the user sees is already
-	// localized to their choice. Only when no config loads from ANY source — not
-	// merely when the cwd lacks a local file.
-	if src == "" && cfgErr != nil && isInteractive() {
+	// localized to their choice.
+	if src == "" && isInteractive() {
 		if rc := interactiveSetup(defaultConfigTarget(), defaultEnvTarget()); rc != 0 {
 			return rc
 		}
@@ -1462,12 +1460,14 @@ func welcome(version string) int {
 		return 0
 	}
 
-	// Config loads from any source (cwd-local or user-global) on a terminal: go
-	// into chat. If any enabled provider's key isn't set yet, re-run the wizard's
-	// key-entry step inline — first run already chose language and providers, so
-	// we don't re-ask those. Skipping the prompts is still fine; the chat banner
-	// falls back to a one-line warning.
-	if cfgErr == nil && isInteractive() {
+	// A real config source exists (cwd-local or user-global) on a terminal: go into
+	// chat. If any enabled provider's key isn't set yet, re-run the wizard's key-entry
+	// step inline — first run already chose language and providers, so we don't
+	// re-ask those. Skipping the prompts is still fine; the chat banner falls back
+	// to a one-line warning. Do not do this for the built-in defaults alone: that
+	// would ask for every default provider key even though the user has not opted
+	// into those providers yet.
+	if welcomeShouldPromptMissingKeys(src, cfgErr) && isInteractive() {
 		if rc := promptMissingKeys(cfg); rc != 0 {
 			return rc
 		}
@@ -1522,6 +1522,10 @@ func welcome(version string) int {
 
 	fmt.Print(b.String())
 	return 0
+}
+
+func welcomeShouldPromptMissingKeys(src string, cfgErr error) bool {
+	return strings.TrimSpace(src) != "" && cfgErr == nil
 }
 
 func usage() {
