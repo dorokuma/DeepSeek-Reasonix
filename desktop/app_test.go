@@ -404,14 +404,25 @@ func TestDeleteSessionRejectsInactiveOpenTab(t *testing.T) {
 
 	sessions := app.ListSessions()
 	current := map[string]bool{}
+	open := map[string]bool{}
 	for _, s := range sessions {
 		current[filepath.Base(s.Path)] = s.Current
+		open[filepath.Base(s.Path)] = s.Open
 	}
-	if !current[filepath.Base(activePath)] || !current[filepath.Base(inactivePath)] {
-		t.Fatalf("ListSessions should mark active and inactive open sessions current, got %#v", current)
+	if !current[filepath.Base(activePath)] {
+		t.Fatalf("ListSessions should mark active session current, got %#v", current)
+	}
+	if current[filepath.Base(inactivePath)] {
+		t.Fatalf("ListSessions should not mark inactive open session current, got %#v", current)
 	}
 	if current[filepath.Base(otherPath)] {
 		t.Fatalf("ListSessions marked unopened session current, got %#v", current)
+	}
+	if !open[filepath.Base(activePath)] || !open[filepath.Base(inactivePath)] {
+		t.Fatalf("ListSessions should mark active and inactive open sessions open, got %#v", open)
+	}
+	if open[filepath.Base(otherPath)] {
+		t.Fatalf("ListSessions marked unopened session open, got %#v", open)
 	}
 }
 

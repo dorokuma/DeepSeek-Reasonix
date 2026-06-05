@@ -1,9 +1,12 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -26,6 +29,35 @@ func writeTopicSession(t *testing.T, dir, name, topicID, topicTitle, workspaceRo
 		TopicTitle:    topicTitle,
 	}); err != nil {
 		t.Fatalf("save branch meta: %v", err)
+	}
+	return path
+}
+
+func writeLegacySession(t *testing.T, dir, name, prompt string, modTime time.Time) string {
+	t.Helper()
+	path := filepath.Join(dir, name)
+	if err := os.WriteFile(path, []byte(`{"role":"user","content":`+strconv.Quote(prompt)+`}`+"\n"), 0o644); err != nil {
+		t.Fatalf("write legacy session: %v", err)
+	}
+	if err := os.Chtimes(path, modTime, modTime); err != nil {
+		t.Fatalf("chtimes legacy session: %v", err)
+	}
+	return path
+}
+
+func writeLegacyEventSession(t *testing.T, dir, name, prompt, reply string, modTime time.Time) string {
+	t.Helper()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir legacy sessions: %v", err)
+	}
+	path := filepath.Join(dir, name)
+	body := `{"type":"user.message","id":1,"ts":"t","turn":0,"text":` + strconv.Quote(prompt) + `}` + "\n" +
+		`{"type":"model.final","id":2,"ts":"t","turn":0,"content":` + strconv.Quote(reply) + `,"toolCalls":[],"usage":{},"costUsd":0}` + "\n"
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatalf("write legacy event session: %v", err)
+	}
+	if err := os.Chtimes(path, modTime, modTime); err != nil {
+		t.Fatalf("chtimes legacy event session: %v", err)
 	}
 	return path
 }
@@ -122,6 +154,159 @@ func TestListWorkspacesMigratesLegacyWorkspaceList(t *testing.T) {
 	projects := loadProjectsFile().Projects
 	if len(projects) != 1 || projects[0].Root != legacyRoot {
 		t.Fatalf("legacy workspace was not migrated into projects: %+v", projects)
+	}
+}
+
+func TestLegacySessionsMigrateIntoGlobalTopics(t *testing.T) {
+	isolateDesktopUserDirs(t)
+
+	dir := config.SessionDir()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir sessions: %v", err)
+	}
+	older := writeLegacySession(t, dir, "older.jsonl", "older imported prompt", time.Now().Add(-2*time.Hour))
+	newer := writeLegacySession(t, dir, "newer.jsonl", "newer imported prompt", time.Now().Add(-time.Hour))
+
+	nodes := NewApp().ListProjectTree()
+	if len(nodes) != 1 || nodes[0].Kind != "global_folder" {
+		t.Fatalf("project tree = %#v, want global folder", nodes)
+	}
+	if got := len(nodes[0].Children); got != 2 {
+		t.Fatalf("global migrated topics = %d, want 2: %#v", got, nodes[0].Children)
+	}
+	if got, want := nodes[0].Children[0].TopicID, legacySessionTopicID(newer); got != want {
+		t.Fatalf("newest topic first = %q, want %q", got, want)
+	}
+	if got, want := nodes[0].Children[1].TopicID, legacySessionTopicID(older); got != want {
+		t.Fatalf("older topic second = %q, want %q", got, want)
+	}
+
+	meta, ok, err := agent.LoadBranchMeta(newer)
+	if err != nil || !ok {
+		t.Fatalf("load migrated meta: ok=%v err=%v", ok, err)
+	}
+	if meta.Scope != "global" || meta.WorkspaceRoot != "" || meta.TopicID != legacySessionTopicID(newer) {
+		t.Fatalf("migrated meta = %+v", meta)
+	}
+
+	nodes = NewApp().ListProjectTree()
+	if got := len(nodes[0].Children); got != 2 {
+		t.Fatalf("migration should be idempotent, global topics = %d", got)
+	}
+}
+
+func TestV05LegacyEventSessionsImportIntoGlobalTopic(t *testing.T) {
+	home := isolateDesktopUserDirs(t)
+
+	legacyDir := filepath.Join(home, ".reasonix", "sessions")
+	destDir := config.SessionDir()
+	writeLegacyEventSession(t, legacyDir, "v053-chat.events.jsonl", "hello from v0.53", "hi from v0.53", time.Now().Add(-time.Hour))
+
+	imported, err := agent.MigrateLegacySessions(legacyDir, destDir)
+	if err != nil {
+		t.Fatalf("migrate legacy sessions: %v", err)
+	}
+	if imported != 1 {
+		t.Fatalf("imported legacy sessions = %d, want 1", imported)
+	}
+	migratedSession := filepath.Join(destDir, "v053-chat.jsonl")
+	if _, err := os.Stat(migratedSession); err != nil {
+		t.Fatalf("legacy v0.5 session was not imported to %s: %v", migratedSession, err)
+	}
+
+	wantTopicID := legacySessionTopicID(migratedSession)
+	migratedTopics := migrateLegacySessionsIntoGlobalTopics(destDir)
+	if len(migratedTopics) != 1 || migratedTopics[0] != wantTopicID {
+		t.Fatalf("migrated topics = %#v, want imported v0.5 topic %q", migratedTopics, wantTopicID)
+	}
+
+	nodes := NewApp().ListProjectTree()
+	if len(nodes) != 1 || nodes[0].Kind != "global_folder" {
+		t.Fatalf("project tree = %#v, want global folder", nodes)
+	}
+	if len(nodes[0].Children) != 1 || nodes[0].Children[0].TopicID != wantTopicID {
+		t.Fatalf("global topics = %#v, want imported v0.5 topic %q", nodes[0].Children, wantTopicID)
+	}
+	meta, ok, err := agent.LoadBranchMeta(migratedSession)
+	if err != nil || !ok {
+		t.Fatalf("load imported v0.5 meta: ok=%v err=%v", ok, err)
+	}
+	if meta.Scope != "global" || meta.TopicID != wantTopicID {
+		t.Fatalf("imported v0.5 meta = %+v", meta)
+	}
+}
+
+func TestLegacySessionTopicIDsKeepNormalizedNameCollisionsDistinct(t *testing.T) {
+	isolateDesktopUserDirs(t)
+
+	dir := config.SessionDir()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir sessions: %v", err)
+	}
+	dotted := writeLegacySession(t, dir, "chat.1.jsonl", "dotted prompt", time.Now().Add(-2*time.Hour))
+	underscored := writeLegacySession(t, dir, "chat_1.jsonl", "underscored prompt", time.Now().Add(-time.Hour))
+
+	dottedTopic := legacySessionTopicID(dotted)
+	underscoredTopic := legacySessionTopicID(underscored)
+	if dottedTopic == underscoredTopic {
+		t.Fatalf("normalized legacy topic IDs collided: %q", dottedTopic)
+	}
+
+	nodes := NewApp().ListProjectTree()
+	if len(nodes) != 1 || nodes[0].Kind != "global_folder" {
+		t.Fatalf("project tree = %#v, want global folder", nodes)
+	}
+	if got := len(nodes[0].Children); got != 2 {
+		t.Fatalf("global migrated topics = %d, want 2: %#v", got, nodes[0].Children)
+	}
+	seen := map[string]bool{}
+	for _, child := range nodes[0].Children {
+		seen[child.TopicID] = true
+	}
+	if !seen[dottedTopic] || !seen[underscoredTopic] {
+		t.Fatalf("global topics = %#v, want %q and %q", nodes[0].Children, dottedTopic, underscoredTopic)
+	}
+}
+
+func TestDefaultGlobalTabGetsMigratedTopicID(t *testing.T) {
+	isolateDesktopUserDirs(t)
+
+	dir := config.SessionDir()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir sessions: %v", err)
+	}
+	sessionPath := writeLegacySession(t, dir, "legacy-tab.jsonl", "resume this legacy tab", time.Now().Add(-time.Hour))
+
+	tab := &WorkspaceTab{
+		ID:            "tab_legacy",
+		Scope:         "global",
+		WorkspaceRoot: globalTabWorkspaceRoot(),
+		Ready:         false,
+		disabledMCP:   map[string]ServerView{},
+	}
+	app := &App{
+		tabs:        map[string]*WorkspaceTab{"tab_legacy": tab},
+		tabOrder:    []string{"tab_legacy"},
+		activeTabID: "tab_legacy",
+	}
+	app.buildTabController(tab)
+	if tab.Ctrl != nil {
+		defer tab.Ctrl.Close()
+	}
+
+	wantTopicID := legacySessionTopicID(sessionPath)
+	if tab.TopicID != wantTopicID {
+		t.Fatalf("tab topicID = %q, want %q", tab.TopicID, wantTopicID)
+	}
+	if tab.Ctrl == nil {
+		t.Fatalf("tab controller was not built")
+	}
+	if tab.Ctrl.SessionPath() != sessionPath {
+		t.Fatalf("tab session path = %q, want %q", tab.Ctrl.SessionPath(), sessionPath)
+	}
+	f := loadTabsFile()
+	if len(f.Tabs) != 1 || f.Tabs[0].ID != "tab_legacy" || f.Tabs[0].TopicID != wantTopicID {
+		t.Fatalf("desktop tabs file = %+v, want tab id and migrated topic", f)
 	}
 }
 
@@ -522,6 +707,109 @@ func TestTrashTopicMovesRelatedSessionsToTrash(t *testing.T) {
 	}
 }
 
+func TestRestoreGlobalTopicSessionReindexesProjectTree(t *testing.T) {
+	isolateDesktopUserDirs(t)
+
+	dir := config.SessionDir()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir sessions: %v", err)
+	}
+	sessionPath := writeLegacySession(t, dir, "restore-global.jsonl", "restore global history", time.Now().Add(-time.Hour))
+	topicID := legacySessionTopicID(sessionPath)
+	app := NewApp()
+
+	nodes := app.ListProjectTree()
+	if len(nodes) != 1 || len(nodes[0].Children) != 1 || nodes[0].Children[0].TopicID != topicID {
+		t.Fatalf("legacy session should start in Global, got %#v", nodes)
+	}
+	if err := app.TrashTopic(topicID); err != nil {
+		t.Fatalf("trash global topic: %v", err)
+	}
+	trashPath := filepath.Join(dir, sessionTrashDir, "restore-global.jsonl", "restore-global.jsonl")
+	if _, err := os.Stat(trashPath); err != nil {
+		t.Fatalf("global session should be in trash: %v", err)
+	}
+	if got := app.ListProjectTree(); len(got) != 0 {
+		t.Fatalf("trashed global topic should leave project tree, got %#v", got)
+	}
+
+	if err := app.RestoreSession(trashPath); err != nil {
+		t.Fatalf("restore global session: %v", err)
+	}
+	if got := app.ListTrashedSessions(); len(got) != 0 {
+		t.Fatalf("trash should be empty after restore, got %#v", got)
+	}
+	nodes = app.ListProjectTree()
+	if len(nodes) != 1 || nodes[0].Kind != "global_folder" || len(nodes[0].Children) != 1 || nodes[0].Children[0].TopicID != topicID {
+		t.Fatalf("restored global session should reappear in Global, got %#v", nodes)
+	}
+}
+
+func TestRestoreProjectTopicSessionReindexesProjectTree(t *testing.T) {
+	isolateDesktopUserDirs(t)
+
+	projectRoot := t.TempDir()
+	topicID := "topic_restore_project"
+	if err := addProject(projectRoot, ""); err != nil {
+		t.Fatalf("add project: %v", err)
+	}
+	if err := setTopicTitle(projectRoot, topicID, "Project restore"); err != nil {
+		t.Fatalf("set topic title: %v", err)
+	}
+	dir := config.SessionDir()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir sessions: %v", err)
+	}
+	writeTopicSession(t, dir, "restore-project.jsonl", topicID, "Project restore", projectRoot)
+	app := NewApp()
+
+	if err := app.TrashTopic(topicID); err != nil {
+		t.Fatalf("trash project topic: %v", err)
+	}
+	trashPath := filepath.Join(dir, sessionTrashDir, "restore-project.jsonl", "restore-project.jsonl")
+	if _, err := os.Stat(trashPath); err != nil {
+		t.Fatalf("project session should be in trash: %v", err)
+	}
+	if got := loadTopicTitle(projectRoot, topicID); got != "" {
+		t.Fatalf("topic title should be removed while trashed, got %q", got)
+	}
+
+	if err := app.RestoreSession(trashPath); err != nil {
+		t.Fatalf("restore project session: %v", err)
+	}
+	nodes := app.ListProjectTree()
+	if len(nodes) != 1 || nodes[0].Kind != "project" || len(nodes[0].Children) != 1 || nodes[0].Children[0].TopicID != topicID {
+		t.Fatalf("restored project session should reappear in project tree, got %#v", nodes)
+	}
+	if got := loadTopicTitle(projectRoot, topicID); got != "Project restore" {
+		t.Fatalf("restored topic title = %q, want Project restore", got)
+	}
+}
+
+func TestRestoreSessionWithoutTopicMetadataFallsBackToGlobal(t *testing.T) {
+	isolateDesktopUserDirs(t)
+
+	dir := config.SessionDir()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir sessions: %v", err)
+	}
+	sessionPath := writeLegacySession(t, dir, "restore-orphan.jsonl", "restore orphan history", time.Now().Add(-time.Hour))
+	topicID := legacySessionTopicID(sessionPath)
+	app := NewApp()
+	if err := app.DeleteSession(sessionPath); err != nil {
+		t.Fatalf("delete orphan session: %v", err)
+	}
+	trashPath := filepath.Join(dir, sessionTrashDir, "restore-orphan.jsonl", "restore-orphan.jsonl")
+
+	if err := app.RestoreSession(trashPath); err != nil {
+		t.Fatalf("restore orphan session: %v", err)
+	}
+	nodes := app.ListProjectTree()
+	if len(nodes) != 1 || nodes[0].Kind != "global_folder" || len(nodes[0].Children) != 1 || nodes[0].Children[0].TopicID != topicID {
+		t.Fatalf("restored orphan session should fall back to Global, got %#v", nodes)
+	}
+}
+
 func TestTrashTopicMovesOpenSessionToTrash(t *testing.T) {
 	isolateDesktopUserDirs(t)
 
@@ -595,5 +883,68 @@ func TestTrashTopicMovesOpenSessionToTrash(t *testing.T) {
 	}
 	if got := loadTopicTitle(projectRoot, topicID); got != "" {
 		t.Fatalf("topic title should be removed, got %q", got)
+	}
+}
+
+func TestLegacyMigrationSkipsProjectScopedSessions(t *testing.T) {
+	isolateDesktopUserDirs(t)
+	dir := config.SessionDir()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := writeLegacySession(t, dir, "scoped.jsonl", "hello", time.Now())
+	meta, err := agent.EnsureBranchMeta(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	meta.Scope = "project"
+	meta.WorkspaceRoot = filepath.Join(t.TempDir(), "proj")
+	meta.TopicID = ""
+	if err := agent.SaveBranchMeta(path, meta); err != nil {
+		t.Fatal(err)
+	}
+
+	migrateLegacySessionsIntoGlobalTopics(dir)
+
+	got, err := agent.EnsureBranchMeta(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Scope != "project" || got.WorkspaceRoot != meta.WorkspaceRoot {
+		t.Fatalf("project-scoped legacy session must not be forced into Global: %+v", got)
+	}
+}
+
+func TestLegacyMigrationConcurrentRunsHaveNoLostUpdates(t *testing.T) {
+	isolateDesktopUserDirs(t)
+	dir := config.SessionDir()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	const n = 8
+	want := make(map[string]bool, n)
+	for i := 0; i < n; i++ {
+		p := writeLegacySession(t, dir, fmt.Sprintf("legacy-%d.jsonl", i), "hi", time.Now())
+		want[legacySessionTopicID(p)] = true
+	}
+
+	var wg sync.WaitGroup
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			migrateLegacySessionsIntoGlobalTopics(dir)
+		}()
+	}
+	wg.Wait()
+
+	gotSet := map[string]bool{}
+	for _, id := range loadProjectsFile().GlobalTopics {
+		gotSet[id] = true
+	}
+	for id := range want {
+		if !gotSet[id] {
+			t.Fatalf("concurrent migration lost topic %q; GlobalTopics=%v", id, loadProjectsFile().GlobalTopics)
+		}
 	}
 }

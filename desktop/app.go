@@ -599,6 +599,7 @@ type SessionMeta struct {
 	ModTime        int64  `json:"modTime"`        // compatibility alias for lastActivityAt
 	DeletedAt      int64  `json:"deletedAt,omitempty"`
 	Current        bool   `json:"current"`
+	Open           bool   `json:"open"`
 	Scope          string `json:"scope,omitempty"`
 	WorkspaceRoot  string `json:"workspaceRoot,omitempty"`
 	TopicID        string `json:"topicId,omitempty"`
@@ -622,10 +623,11 @@ func (a *App) ListSessions() []SessionMeta {
 	}
 	titles := loadSessionTitles(dir)
 	open := a.openSessionPaths(dir)
+	active := a.activeSessionPath(dir)
 	out := make([]SessionMeta, 0, len(infos))
 	for _, s := range infos {
-		_, current := open[s.Path]
-		out = append(out, sessionMetaFromInfo(s, titles[filepath.Base(s.Path)], current, 0))
+		_, isOpen := open[s.Path]
+		out = append(out, sessionMetaFromInfo(s, titles[filepath.Base(s.Path)], s.Path == active, isOpen, 0))
 	}
 	return out
 }
@@ -646,7 +648,7 @@ func (a *App) ListTrashedSessions() []SessionMeta {
 			continue
 		}
 		deletedAt := trashedSessionDeletedAt(path)
-		out = append(out, sessionMetaFromInfo(infos[0], titles[filepath.Base(path)], false, deletedAt))
+		out = append(out, sessionMetaFromInfo(infos[0], titles[filepath.Base(path)], false, false, deletedAt))
 	}
 	sort.Slice(out, func(i, j int) bool {
 		if out[i].DeletedAt == out[j].DeletedAt {
@@ -657,7 +659,7 @@ func (a *App) ListTrashedSessions() []SessionMeta {
 	return out
 }
 
-func sessionMetaFromInfo(s agent.SessionInfo, title string, current bool, deletedAt int64) SessionMeta {
+func sessionMetaFromInfo(s agent.SessionInfo, title string, current, open bool, deletedAt int64) SessionMeta {
 	return SessionMeta{
 		Path:           s.Path,
 		Preview:        s.Preview,
@@ -668,6 +670,7 @@ func sessionMetaFromInfo(s agent.SessionInfo, title string, current bool, delete
 		ModTime:        s.LastActivityAt.UnixMilli(),
 		DeletedAt:      deletedAt,
 		Current:        current,
+		Open:           open,
 		Scope:          s.Scope,
 		WorkspaceRoot:  s.WorkspaceRoot,
 		TopicID:        s.TopicID,
@@ -709,9 +712,31 @@ func (a *App) openSessionPaths(dir string) map[string]struct{} {
 	return out
 }
 
+func (a *App) activeSessionPath(dir string) string {
+	a.mu.RLock()
+	var path string
+	if tab := a.tabs[a.activeTabID]; tab != nil && tab.Ctrl != nil {
+		path = tab.Ctrl.SessionPath()
+	}
+	a.mu.RUnlock()
+	currentPath, _, err := validateSessionPath(dir, path)
+	if err != nil {
+		return ""
+	}
+	return currentPath
+}
+
 // RestoreSession moves a trashed session back into the saved-session list.
 func (a *App) RestoreSession(path string) error {
-	return restoreTrashedSessionFile(config.SessionDir(), path)
+	dir := config.SessionDir()
+	_, key, _, err := validateTrashedSessionPath(dir, path)
+	if err != nil {
+		return err
+	}
+	if err := restoreTrashedSessionFile(dir, path); err != nil {
+		return err
+	}
+	return restoreSessionTopicIndex(dir, filepath.Join(dir, key))
 }
 
 // PurgeTrashedSession permanently removes a trashed session and its title/display

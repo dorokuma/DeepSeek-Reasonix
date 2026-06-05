@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -21,6 +22,7 @@ import (
 	"reasonix/internal/config"
 	"reasonix/internal/control"
 	"reasonix/internal/event"
+	"reasonix/internal/provider"
 )
 
 // --- WorkspaceTab -----------------------------------------------------------
@@ -529,6 +531,19 @@ func (a *App) buildTabController(tab *WorkspaceTab) {
 	applyTabModeToController(ctrl, tab.mode)
 
 	if dir := ctrl.SessionDir(); dir != "" {
+		migratedTopics := migrateLegacySessionsIntoGlobalTopics(dir)
+		if len(migratedTopics) > 0 {
+			a.emitProjectTreeChanged()
+		}
+		if tab.Scope == "global" && strings.TrimSpace(tab.TopicID) == "" && len(migratedTopics) > 0 {
+			topicID := migratedTopics[0]
+			topicTitle := topicTitleForTab("global", "", topicID)
+			a.mu.Lock()
+			tab.TopicID = topicID
+			tab.TopicTitle = topicTitle
+			a.saveTabsLocked()
+			a.mu.Unlock()
+		}
 		var path string
 		// When the tab has a TopicID, look for an existing session for this topic
 		// so the user continues the conversation rather than starting fresh.
@@ -1365,6 +1380,210 @@ type ProjectNode struct {
 	Children       []ProjectNode `json:"children,omitempty"`
 }
 
+// migrateLegacySessionsIntoGlobalTopics makes pre-topic desktop history visible
+// in the v2 sidebar. Imported v0.x sessions and older desktop sessions are plain
+// .jsonl files, sometimes with branch metadata but no topic metadata; the
+// history panel can list them, but the project tree cannot. Give each such
+// session a deterministic Global topic so every old conversation has a direct
+// sidebar entry without guessing a project workspace.
+// legacyMigrationMu serializes the lockless load-modify-save of the projects /
+// topic-title files: this migration runs from every concurrent buildTabController
+// and from ListProjectTree, so without it parallel runs lose each other's appends.
+var legacyMigrationMu sync.Mutex
+
+func migrateLegacySessionsIntoGlobalTopics(dir string) []string {
+	if strings.TrimSpace(dir) == "" {
+		return nil
+	}
+	legacyMigrationMu.Lock()
+	defer legacyMigrationMu.Unlock()
+	infos, err := agent.ListSessions(dir)
+	if err != nil || len(infos) == 0 {
+		return nil
+	}
+	titles := loadSessionTitles(dir)
+	topicTitles := loadTopicTitles("")
+	topicSources := loadTopicTitleSources("")
+	f := loadProjectsFile()
+
+	var migratedTopicIDs []string
+	for _, info := range infos {
+		if strings.TrimSpace(info.TopicID) != "" {
+			continue
+		}
+		topicID := legacySessionTopicID(info.Path)
+		if topicID == "" {
+			continue
+		}
+		title := strings.TrimSpace(titles[filepath.Base(info.Path)])
+		if title == "" {
+			title = topicTitleFromText(info.Preview)
+		} else if normalized := topicTitleFromText(title); normalized != "" {
+			title = normalized
+		}
+		if title == "" {
+			when := info.LastActivityAt
+			if when.IsZero() {
+				when = info.ModTime
+			}
+			if when.IsZero() {
+				title = "历史会话"
+			} else {
+				title = "历史会话 " + when.Local().Format("2006-01-02")
+			}
+		}
+
+		meta, err := agent.EnsureBranchMeta(info.Path)
+		if err != nil {
+			continue
+		}
+		// Only adopt genuinely-global, unscoped legacy sessions. A session that
+		// already carries a project scope or workspace root is not legacy — never
+		// strip its binding into Global.
+		if meta.Scope == "project" || strings.TrimSpace(meta.WorkspaceRoot) != "" {
+			continue
+		}
+		meta.Scope = "global"
+		meta.WorkspaceRoot = ""
+		meta.TopicID = topicID
+		meta.TopicTitle = title
+		if err := agent.SaveBranchMetaPreserveUpdated(info.Path, meta); err != nil {
+			continue
+		}
+		if strings.TrimSpace(topicTitles[topicID]) == "" {
+			topicTitles[topicID] = title
+			topicSources[topicID] = topicTitleSourceManual
+		}
+		migratedTopicIDs = append(migratedTopicIDs, topicID)
+	}
+	if len(migratedTopicIDs) == 0 {
+		return nil
+	}
+	f.GlobalTopics = uniqueStrings(append(migratedTopicIDs, f.GlobalTopics...))
+	_ = saveProjectsFile(f)
+	_ = saveTopicTitles("", topicTitles)
+	_ = saveTopicTitleSources("", topicSources)
+	return migratedTopicIDs
+}
+
+func restoreSessionTopicIndex(dir, sessionPath string) error {
+	sessionPath = strings.TrimSpace(sessionPath)
+	if sessionPath == "" {
+		return nil
+	}
+	meta, ok, err := agent.LoadBranchMeta(sessionPath)
+	if err != nil {
+		return err
+	}
+	if !ok || strings.TrimSpace(meta.TopicID) == "" {
+		migrateLegacySessionsIntoGlobalTopics(dir)
+		return nil
+	}
+
+	topicID := strings.TrimSpace(meta.TopicID)
+	scope := strings.TrimSpace(meta.Scope)
+	workspaceRoot := strings.TrimSpace(meta.WorkspaceRoot)
+	if scope != "global" && scope != "project" {
+		if workspaceRoot == "" {
+			scope = "global"
+		} else {
+			scope = "project"
+		}
+	}
+	if scope == "global" {
+		workspaceRoot = ""
+	} else {
+		workspaceRoot = normalizeProjectRoot(workspaceRoot)
+		if workspaceRoot == "" {
+			scope = "global"
+		}
+	}
+
+	title := restoredSessionTopicTitle(dir, sessionPath, meta)
+	if title == "" {
+		title = defaultTopicTitle
+	}
+	if err := setTopicTitleWithSource(workspaceRoot, topicID, title, topicTitleSourceManual); err != nil {
+		return err
+	}
+
+	f := loadProjectsFile()
+	if scope == "global" {
+		f.GlobalTopics = prependUniqueString(f.GlobalTopics, topicID)
+		meta.Scope = "global"
+		meta.WorkspaceRoot = ""
+	} else {
+		found := false
+		for i, p := range f.Projects {
+			if p.Root != workspaceRoot {
+				continue
+			}
+			f.Projects[i].Topics = prependUniqueString(p.Topics, topicID)
+			found = true
+			break
+		}
+		if !found {
+			f.Projects = append(f.Projects, desktopProject{
+				Root:   workspaceRoot,
+				Topics: []string{topicID},
+			})
+		}
+		meta.Scope = "project"
+		meta.WorkspaceRoot = workspaceRoot
+	}
+	meta.TopicID = topicID
+	meta.TopicTitle = title
+	if err := saveProjectsFile(f); err != nil {
+		return err
+	}
+	return agent.SaveBranchMetaPreserveUpdated(sessionPath, meta)
+}
+
+func restoredSessionTopicTitle(dir, sessionPath string, meta agent.BranchMeta) string {
+	if title := topicTitleFromText(meta.TopicTitle); title != "" {
+		return title
+	}
+	if title := topicTitleFromText(loadSessionTitles(dir)[filepath.Base(sessionPath)]); title != "" {
+		return title
+	}
+	if s, err := agent.LoadSession(sessionPath); err == nil {
+		for _, msg := range s.Messages {
+			if msg.Role == provider.RoleUser {
+				if title := topicTitleFromText(msg.Content); title != "" {
+					return title
+				}
+			}
+		}
+	}
+	return ""
+}
+
+func legacySessionTopicID(path string) string {
+	id := agent.BranchID(path)
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return ""
+	}
+	sum := sha256.Sum256([]byte(id))
+	var b strings.Builder
+	b.WriteString("legacy_")
+	for _, r := range id {
+		switch {
+		case unicode.IsLetter(r), unicode.IsDigit(r):
+			b.WriteRune(r)
+		case r == '-', r == '_':
+			b.WriteRune(r)
+		default:
+			b.WriteByte('_')
+		}
+	}
+	prefix := strings.TrimRight(b.String(), "_")
+	if prefix == "legacy" {
+		prefix = "legacy_session"
+	}
+	return prefix + "_" + hex.EncodeToString(sum[:])[:12]
+}
+
 // TopicMeta describes a topic for the project tree.
 type TopicMeta struct {
 	ID        string `json:"id"`
@@ -1692,6 +1911,7 @@ func (a *App) TrashTopic(topicID string) error {
 // ListProjectTree builds the sidebar tree: project folders each containing
 // their topics, plus a Global section.
 func (a *App) ListProjectTree() []ProjectNode {
+	migrateLegacySessionsIntoGlobalTopics(config.SessionDir())
 	f := loadProjectsFile()
 	out := []ProjectNode{}
 	type topicSummary struct {
