@@ -50,15 +50,13 @@ func New(cfg provider.Config) (provider.Provider, error) {
 		}
 	} else if effort != "" {
 		// Non-DeepSeek backends use OpenAI's reasoning_effort scale (low/medium/
-		// high); "max" is a DeepSeek-ism MiMo et al. reject with 400, so clamp it
-		// to the OpenAI ceiling and reject other values at boot, not at request time.
+		// high/max); pass the value through as-is so endpoints that proxy DeepSeek
+		// (e.g. opencode.ai) can request the max depth.
 		effort = strings.ToLower(strings.TrimSpace(effort))
 		switch effort {
-		case "max":
-			effort = "high"
-		case "low", "medium", "high":
+		case "low", "medium", "high", "max":
 		default:
-			return nil, fmt.Errorf("openai: provider %q: effort must be low, medium, or high", name)
+			return nil, fmt.Errorf("openai: provider %q: effort must be low, medium, high, or max", name)
 		}
 	}
 	httpClient, err := newHTTPClient(cfg)
