@@ -21,13 +21,13 @@ import { InlineConfirmButton } from "./InlineConfirmButton";
 import { ResizableDrawer } from "./ResizableDrawer";
 import { Tooltip } from "./Tooltip";
 
-type SettingsTab = "general" | "models" | "providers" | "network" | "permissions" | "sandbox" | "agent" | "appearance" | "updates";
+type SettingsTab = "general" | "models" | "providers" | "network" | "permissions" | "sandbox" | "appearance" | "updates";
 
-const SETTINGS_TABS: SettingsTab[] = ["general", "models", "providers", "network", "permissions", "sandbox", "agent", "appearance", "updates"];
+const SETTINGS_TABS: SettingsTab[] = ["general", "models", "providers", "network", "permissions", "sandbox", "appearance", "updates"];
 
 // SettingsPanel is the desktop settings surface, aligning with Claude Code's
-// settings: model & providers (incl. API keys), permissions, sandbox, agent
-// params, and appearance. Every change writes reasonix.toml (or .env for keys)
+// settings: model & providers (incl. API keys), permissions, sandbox, and
+// appearance. Every change writes reasonix.toml (or .env for keys)
 // through the kernel's config edit API and rebuilds the controller live.
 export function SettingsPanel({ onClose, onChanged }: { onClose: () => void; onChanged: () => void }) {
   const t = useT();
@@ -102,7 +102,6 @@ export function SettingsPanel({ onClose, onChanged }: { onClose: () => void; onC
                 {tab === "network" && <NetworkSection s={s} busy={busy} apply={apply} />}
                 {tab === "permissions" && <PermissionsSection s={s} busy={busy} apply={apply} />}
                 {tab === "sandbox" && <SandboxSection s={s} busy={busy} apply={apply} />}
-                {tab === "agent" && <AgentSection s={s} busy={busy} apply={apply} />}
                 {tab === "appearance" && (
                   <AppearanceSection
                     theme={theme}
@@ -152,8 +151,6 @@ function settingsTabLabel(id: SettingsTab, t: ReturnType<typeof useT>): string {
       return t("settings.tab.permissions");
     case "sandbox":
       return t("settings.tab.sandbox");
-    case "agent":
-      return t("settings.tab.agent");
     case "appearance":
       return t("settings.tab.appearance");
     case "updates":
@@ -175,8 +172,6 @@ function settingsTabMeta(id: SettingsTab, s: SettingsView, t: ReturnType<typeof 
       return s.permissions.mode;
     case "sandbox":
       return s.sandbox.bash;
-    case "agent":
-      return t("settings.agentMeta", { temp: s.agent.temperature, steps: s.agent.maxSteps || "∞" });
     case "appearance":
       return t("settings.appearanceMeta");
     case "updates":
@@ -982,38 +977,6 @@ function SandboxSection({ s, busy, apply }: SectionProps) {
         onAdd={(d) => set({ allowWrite: [...sb.allowWrite, d] })}
         onRemove={(d) => set({ allowWrite: sb.allowWrite.filter((x) => x !== d) })}
       />
-    </section>
-  );
-}
-
-function AgentSection({ s, busy, apply }: SectionProps) {
-  const t = useT();
-  const [temp, setTemp] = useState(String(s.agent.temperature));
-  const [steps, setSteps] = useState(String(s.agent.maxSteps));
-  const [prompt, setPrompt] = useState(s.agent.systemPrompt);
-  const dirty = temp !== String(s.agent.temperature) || steps !== String(s.agent.maxSteps) || prompt !== s.agent.systemPrompt;
-
-  return (
-    <section className="mem-section">
-      <div className="mem-section__title">{t("settings.agent")}</div>
-      <div className="set-row">
-        <label className="set-label">{t("settings.temperature")}</label>
-        <input className="mem-input set-narrow" value={temp} onChange={(e) => setTemp(e.target.value)} disabled={busy} inputMode="decimal" />
-        <label className="set-label">{t("settings.maxSteps")}</label>
-        <input className="mem-input set-narrow" value={steps} onChange={(e) => setSteps(e.target.value)} disabled={busy} inputMode="numeric" />
-        <span className="mem-hint">{t("settings.unlimited")}</span>
-      </div>
-      <div className="set-rules__label">{t("settings.systemPrompt")}</div>
-      <textarea className="mem-textarea" value={prompt} onChange={(e) => setPrompt(e.target.value)} disabled={busy} spellCheck={false} />
-      <div className="prov-card__actions">
-        <button
-          className="btn btn--primary btn--small"
-          disabled={busy || !dirty}
-          onClick={() => void apply(() => app.SetAgentParams(Number(temp) || 0, Number(steps) || 0, prompt))}
-        >
-          {t("settings.saveAgent")}
-        </button>
-      </div>
     </section>
   );
 }
