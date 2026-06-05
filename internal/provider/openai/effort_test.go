@@ -27,11 +27,11 @@ func TestEffortNormalization(t *testing.T) {
 	tests := []struct {
 		base, effort, want string
 	}{
-		{mimo, "max", "max"},   // pass through as-is (no longer clamped to high)
+		{mimo, "max", "high"}, // DeepSeek-ism clamped to the OpenAI ceiling — MiMo 400s on "max"
 		{mimo, "high", "high"},
 		{mimo, "medium", "medium"},
 		{mimo, "low", "low"},
-		{mimo, "MAX", "max"},   // case-insensitive
+		{mimo, "MAX", "high"}, // case-insensitive
 		{mimo, "", ""},        // unset stays omitted
 		{deepseek, "max", "max"},
 		{deepseek, "high", "high"},
@@ -49,7 +49,7 @@ func TestEffortInvalidRejected(t *testing.T) {
 		Name: "p", BaseURL: "https://api.xiaomimimo.com/v1", Model: "m", APIKey: "k",
 		Extra: map[string]any{"effort": "turbo"},
 	})
-	if err == nil || !strings.Contains(err.Error(), "low, medium, high, or max") {
-		t.Fatalf("expected a low/medium/high/max validation error, got: %v", err)
+	if err == nil || !strings.Contains(err.Error(), "low, medium, or high") {
+		t.Fatalf("expected a low/medium/high validation error, got: %v", err)
 	}
 }
