@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -206,6 +207,18 @@ func TestConfigAutoPlanLocalCreatesMinimalProjectOverride(t *testing.T) {
 	}
 	if cfg.Agent.AutoPlan != "on" {
 		t.Fatalf("auto_plan = %q, want local on", cfg.Agent.AutoPlan)
+	}
+}
+
+func TestWelcomePromptMissingKeysRequiresConfigSource(t *testing.T) {
+	if welcomeShouldPromptMissingKeys("", nil) {
+		t.Fatal("built-in defaults without a config source should not prompt for missing provider keys")
+	}
+	if welcomeShouldPromptMissingKeys("reasonix.toml", errors.New("bad config")) {
+		t.Fatal("invalid config should not enter the missing-key prompt path")
+	}
+	if !welcomeShouldPromptMissingKeys("reasonix.toml", nil) {
+		t.Fatal("valid config source should enter the missing-key prompt path")
 	}
 }
 

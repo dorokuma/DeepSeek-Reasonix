@@ -47,6 +47,21 @@ func waitForFile(t *testing.T, path, want string) {
 	t.Fatalf("session file %q never contained %q", path, want)
 }
 
+func waitForAutosaveIdle(t *testing.T, tab *WorkspaceTab) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		tab.saveMu.Lock()
+		idle := !tab.saving && !tab.saveAgain
+		tab.saveMu.Unlock()
+		if idle {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatal("autosave loop did not become idle")
+}
+
 func appWithTab(t *testing.T, path string) (*App, *WorkspaceTab) {
 	t.Helper()
 	ctrl := controllerWithContent(t, path)
@@ -114,4 +129,5 @@ func TestScheduleSnapshotCoalesces(t *testing.T) {
 	wg.Wait()
 
 	waitForFile(t, path, "acknowledged")
+	waitForAutosaveIdle(t, tab)
 }
