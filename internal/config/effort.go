@@ -34,6 +34,8 @@ func EffortCapabilityForEntry(e *ProviderEntry) EffortCapability {
 		return EffortCapability{Supported: true, Levels: []string{"auto", "high", "max"}, Default: "high"}
 	case e != nil && e.Kind == "anthropic":
 		return EffortCapability{Supported: true, Levels: []string{"auto", "low", "medium", "high", "xhigh", "max"}, Default: "auto"}
+	case e != nil && e.Kind == "openai":
+		return EffortCapability{Supported: true, Levels: []string{"auto", "low", "medium", "high", "max"}, Default: "high"}
 	default:
 		return EffortCapability{}
 	}
@@ -74,6 +76,13 @@ func NormalizeEffort(e *ProviderEntry, raw string) (string, error) {
 			return level, nil
 		default:
 			return "", fmt.Errorf("usage: /effort auto|low|medium|high|xhigh|max")
+		}
+	case e != nil && e.Kind == "openai":
+		switch level {
+		case "low", "medium", "high", "max":
+			return level, nil
+		default:
+			return "", fmt.Errorf("usage: /effort auto|low|medium|high|max")
 		}
 	default:
 		name := ""
