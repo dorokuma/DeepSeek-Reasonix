@@ -1933,6 +1933,12 @@ func (m chatTUI) View() tea.View {
 	default:
 		status = "  " + modeTag + " · " + i18n.M.ChatStatusIdle + " " + dim("("+i18n.M.ChatStatusCycleHint+")")
 	}
+	if et := m.effortTag(); et != "" {
+		status += " · " + et
+	}
+	if gt := m.gitTag(boxW - visibleWidth(status) - visibleWidth(" · ")); gt != "" {
+		status += " · " + gt
+	}
 	// The spinning "thinking…" indicator is its own line ABOVE the input box (shown
 	// only while a turn runs); the status/data rows stay below. This mirrors Claude
 	// Code: live progress over the composer, shortcuts + stats under it.
@@ -1954,26 +1960,17 @@ func (m chatTUI) View() tea.View {
 			}
 		}
 	}
-	// Second status row: the live data (model, git, effort, context gauge, cache
-	// rates, jobs, balance). It lives on its own fixed row so it's always shown in
-	// full rather than being truncated off the end of the status line. Two rows is
-	// a fixed height, so unlike a wrap-when-long status it doesn't reintroduce
-	// resize ghosting.
+	// Cache rates get their own fixed second row so they're never truncated off
+	// the status line; a fixed height also avoids wrap-induced resize ghosting.
 	var data []string
 	if mt := m.modelTag(); mt != "" {
 		data = append(data, mt)
 	}
-	if gt := m.gitTag(); gt != "" {
-		data = append(data, gt)
-	}
-	if et := m.effortTag(); et != "" {
-		data = append(data, et)
+	if cache := m.cacheTag(); cache != "" {
+		data = append(data, cache)
 	}
 	if ctxTag != "" {
 		data = append(data, ctxTag)
-	}
-	if cache := m.cacheTag(); cache != "" {
-		data = append(data, cache)
 	}
 	if jt := m.jobsTag(); jt != "" {
 		data = append(data, jt)
@@ -2017,7 +2014,7 @@ func (m chatTUI) View() tea.View {
 		rowsAboveBox += strings.Count(menu, "\n") + 1
 	}
 	// Layout: the working spinner (when running), then the composer when visible,
-	// then the two status rows (line 1 = mode + shortcuts/state, line 2 = live data).
+	// then the two status rows (line 1 = mode + run config + worktree identity, line 2 = live run data).
 	// Each row is clamped to width independently so neither wraps; padding to full
 	// width keeps a short row from leaving stale cells from the prior frame.
 	if working != "" {
@@ -3201,7 +3198,9 @@ func wrapForViewport(text string, width int, fg cliColor) string {
 	return themeStyle(fg).Width(width).Render(text)
 }
 
-// renderUserBubble styles the just-submitted line with a filled dim background.
+// renderUserBubble renders the just-submitted prompt as a transcript line. Keep
+// it visually lighter than the real bottom composer so a fresh session does not
+// look like it has a second input box in the transcript.
 func renderUserBubble(line string, width int, planMode bool) string {
 	line = displayLineForImageRefs(line)
 	prefix := "› "
@@ -3211,12 +3210,7 @@ func renderUserBubble(line string, width int, planMode bool) string {
 	if !colorEnabled {
 		return "│ " + prefix + line
 	}
-	w := width - 4
-	if w < 10 {
-		w = 10
-	}
-	bubble := themeBGStyle(activeCLITheme.userBubbleBG).Width(w).Padding(0, 1)
-	return bubble.Render(prefix + line)
+	return "  " + accent(prefix+line)
 }
 
 var cliImageRefRe = regexp.MustCompile(`(?:^|\s)@\.reasonix/attachments/clipboard-\d{8}-\d{6}\.\d+(?:-(?:\d{6}|[a-f0-9]{8}))?\.(?:png|jpg|jpeg|gif|webp)`)
