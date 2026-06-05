@@ -7321,8 +7321,19 @@ a[href] {
 
 .project-tree__topic--active {
   background: color-mix(in srgb, var(--project-accent, var(--accent)) 10%, var(--sidebar-hover));
-  box-shadow: inset 2px 0 0 color-mix(in srgb, var(--project-accent, var(--accent)) 72%, transparent);
+  border-radius: 0;
   color: var(--fg);
+}
+
+.project-tree__topic--active::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 4px;
+  background: color-mix(in srgb, var(--project-accent, var(--accent)) 88%, #ff9d22);
+  pointer-events: none;
 }
 
 .project-tree__topic--menu-open {
