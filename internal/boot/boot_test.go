@@ -20,12 +20,13 @@ import (
 	"reasonix/internal/event"
 	"reasonix/internal/plugin"
 	"reasonix/internal/provider"
+	"reasonix/internal/sandbox"
+	"reasonix/internal/tool"
+	"reasonix/internal/tool/builtin"
 
-	// Blank imports register the provider kind and built-in tools the same way
-	// cmd/reasonix's main does; without them Build sees an empty provider
-	// registry and a bare tool set.
+	// Blank import registers the provider kind the same way cmd/reasonix's main
+	// does; importing builtin above registers the built-in tools.
 	_ "reasonix/internal/provider/openai"
-	_ "reasonix/internal/tool/builtin"
 )
 
 // TestBuildFoldsProjectMemoryIntoSystemPrompt is the end-to-end proof of the
@@ -169,6 +170,24 @@ api_key_env = "REASONIX_TEST_KEY_UNSET"
 	}
 	if !strings.Contains(sys, "projskill") || !strings.Contains(sys, "explore") {
 		t.Fatalf("skill names missing from index:\n%s", sys)
+	}
+}
+
+func TestAddBuiltinsWithWorkspaceRootKeepsSessionTools(t *testing.T) {
+	reg := tool.NewRegistry()
+	var stderr bytes.Buffer
+	addBuiltins(reg, nil, []string{t.TempDir()}, sandbox.Spec{}, builtin.SearchSpec{}, &stderr, t.TempDir())
+	for _, name := range []string{
+		"todo_write",
+		"complete_step",
+		"bash_output",
+		"kill_shell",
+		"wait",
+		"notebook_edit",
+	} {
+		if _, ok := reg.Get(name); !ok {
+			t.Fatalf("workspace builtins missing %q; got %v", name, reg.Names())
+		}
 	}
 }
 
