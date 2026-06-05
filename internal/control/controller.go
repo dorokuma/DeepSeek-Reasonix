@@ -1930,9 +1930,11 @@ func listItem(line string) (content string, level int, ok bool) {
 // answers or ctx is cancelled. A prior session grant for the same tool+subject
 // short-circuits. promptMu serialises outstanding prompts.
 // parseRewind parses the arguments after "/rewind". The user may provide:
-//   /rewind              → latest checkpoint, both
-//   /rewind <turn>       → that turn, both
-//   /rewind <turn> <scope> → that turn, code|conversation|both
+//
+//	/rewind              → latest checkpoint, both
+//	/rewind <turn>       → that turn, both
+//	/rewind <turn> <scope> → that turn, code|conversation|both
+//
 // If no turn is given, the latest checkpoint is used. If no scope is given, Both is assumed.
 func parseRewind(args string, cps []checkpoint.Meta) (int, RewindScope, error) {
 	fields := strings.Fields(args)
