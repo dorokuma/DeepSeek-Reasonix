@@ -152,12 +152,23 @@ func isDeepSeekEntry(e *ProviderEntry) bool {
 	if e == nil || e.Kind != "openai" {
 		return false
 	}
-	u, err := url.Parse(e.BaseURL)
+	if isDeepSeekBaseURL(e.BaseURL) {
+		return true
+	}
+	return isDeepSeekModel(e.Model)
+}
+
+func isDeepSeekBaseURL(raw string) bool {
+	u, err := url.Parse(raw)
 	if err != nil {
 		return false
 	}
 	host := strings.ToLower(u.Hostname())
 	return host == "api.deepseek.com" || strings.HasSuffix(host, ".deepseek.com")
+}
+
+func isDeepSeekModel(model string) bool {
+	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(model)), "deepseek")
 }
 
 func containsString(haystack []string, needle string) bool {
