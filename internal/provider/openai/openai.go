@@ -186,17 +186,18 @@ func (c *client) buildRequest(req provider.Request) chatRequest {
 	src := provider.SanitizeToolPairing(req.Messages)
 	msgs := make([]chatMessage, len(src))
 	for i, m := range src {
-		// reasoning_content is deliberately NOT sent back: it's a response-only
-		// field. DeepSeek counts re-sent reasoning as billable prompt input
-		// (measured ~500 extra tokens per turn on a reasoner chain); MiMo accepts
-		// it but does not require it (verified empirically: multi-turn tool-call
-		// sessions work fine without it, saving ~18 tokens/turn). The session
-		// still keeps it (for display/archive); we just don't pay to re-upload it.
 		cm := chatMessage{
 			Role:       string(m.Role),
 			Content:    m.Content,
 			ToolCallID: m.ToolCallID,
 			Name:       m.Name,
+		}
+		// DeepSeek requires reasoning_content to be passed back on every turn
+		// when the model made a tool call in the previous turn (400 error
+		// otherwise). Non-DeepSeek endpoints may or may not need it; skip sending
+		// for them to avoid unnecessary prompt tokens.
+		if c.deepseek && m.ReasoningContent != "" {
+			cm.ReasoningContent = m.ReasoningContent
 		}
 		for _, tc := range m.ToolCalls {
 			wire := chatToolCall{ID: tc.ID, Type: "function"}
@@ -423,8 +424,11 @@ type chatMessage struct {
 	ToolCalls  []chatToolCall `json:"tool_calls,omitempty"`
 	ToolCallID string         `json:"tool_call_id,omitempty"`
 	Name       string         `json:"name,omitempty"`
-	// no reasoning_content field: it is a response-only signal and is never sent
-	// back upstream — re-uploading it is paid prompt input.
+	// reasoning_content is sent back to DeepSeek on every turn because DeepSeek
+	// requires it on multi-turn sessions where the model made a tool call
+	// (otherwise returns 400). Re-uploading it costs ~500 tokens/turn but is
+	// mandatory for correct multi-turn agent behavior.
+	ReasoningContent string `json:"reasoning_content,omitempty"`
 }
 
 type chatTool struct {
