@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, KeyboardEvent, PointerEvent as ReactPointerEvent } from "react";
 import { ShellExpandProvider, useShellExpand } from "./lib/shellExpand";
 import {
@@ -505,6 +505,12 @@ export default function App() {
     const staleByTime = state.running && todoSeenRef.current?.id === todoEntry.item.id && todoNow - todoSeenRef.current.at > 90_000;
     return completedToolsAfter >= 2 || finalAssistantAfter || readinessNoticeAfter || staleByTime;
   }, [showTodos, state.items, state.running, todoEntry, todoNow]);
+
+  // useDeferredValue lets React prioritise Composer input (high-priority) over
+  // Transcript re-renders (low-priority) during streaming. When a keystroke
+  // and a transcript update collide, the keystroke is processed immediately
+  // and the transcript re-render is deferred to idle time.
+  const deferredItems = useDeferredValue(state.items);
 
   useEffect(() => {
     if (!pendingPlanRevision || state.running) return;
@@ -1354,7 +1360,7 @@ export default function App() {
               </div>
             ) : (
 	              <Transcript
-	                items={state.items}
+	                items={deferredItems}
 	                live={state.live}
 	                footerHeight={footerHeight}
 	                onPrompt={send}
