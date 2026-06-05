@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -18,6 +19,41 @@ import (
 	"reasonix/internal/sandbox"
 	"reasonix/internal/tool"
 )
+
+// rtkBinPath caches the resolved RTK binary path so we don't look it up per call.
+var rtkBinPath string
+
+func init() {
+	if p, err := exec.LookPath("rtk"); err == nil {
+		rtkBinPath = p
+	}
+}
+
+// rtkRewrite runs "rtk rewrite <cmd>" and returns the rewritten command when
+// RTK supports a dedicated filter for it, or "" with a nil error when it
+// doesn't. The caller falls back to the original command when this returns "".
+func rtkRewrite(cmd string) string {
+	if rtkBinPath == "" {
+		return ""
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, rtkBinPath, "rewrite", cmd).Output()
+	if err != nil {
+		// rtk rewrite exits non-zero for unsupported commands (exit 1) and also
+		// for supported ones (exit 3 with the rewritten cmd on stdout). The
+		// distinction is stdout content, not exit code.
+		var exitErr *exec.ExitError
+		if !errors.As(err, &exitErr) {
+			return "" // not found, timeout, etc.
+		}
+	}
+	rewritten := strings.TrimSpace(string(out))
+	if rewritten == "" {
+		return ""
+	}
+	return rewritten
+}
 
 const (
 	bashTimeout   = 120 * time.Second
@@ -115,6 +151,16 @@ func (b bash) Execute(ctx context.Context, args json.RawMessage) (string, error)
 	}
 	if p.Command == "" {
 		return "", fmt.Errorf("command is required")
+	}
+
+	// Transparent RTK proxy: when RTK has a compact filter for this command,
+	// rewrite transparently so the model's token budget isn't burned on verbose
+	// output. Skipped for background jobs — their output is incremental and
+	// streamed, not a single-shot result that benefits from compaction.
+	if !p.RunInBackground {
+		if r := rtkRewrite(p.Command); r != "" {
+			p.Command = r
+		}
 	}
 
 	sh := b.resolved()
