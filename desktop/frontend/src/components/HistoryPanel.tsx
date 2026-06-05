@@ -343,6 +343,7 @@ export function HistoryPanel({
                           <div className="hist-item__preview">{sessionDisplayTitle(s, tr("history.emptySession"))}</div>
                           <div className="hist-item__meta">
                             {!isTrash && s.current && <span className="hist-item__badge">{tr("history.current")}</span>}
+                            {!isTrash && !s.current && s.open && <span className="hist-item__badge">{tr("history.open")}</span>}
                             <span>{tr(s.turns === 1 ? "history.turnOne" : "history.turnOther", { n: s.turns })}</span>
                             <span>·</span>
                             <span>{timeLabel(isTrash ? s.deletedAt || sessionActivityTime(s) : sessionActivityTime(s))}</span>

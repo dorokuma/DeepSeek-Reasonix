@@ -318,6 +318,7 @@ export const zh: Record<DictKey, string> = {
   "history.namePlaceholder": "会话名称…",
   "history.emptySession": "（空会话）",
   "history.current": "当前",
+  "history.open": "已打开",
   "history.deleted": "已删除",
   "history.turnOne": "{n} 轮",
   "history.turnOther": "{n} 轮",

@@ -212,6 +212,7 @@ export interface SessionMeta {
   modTime: number; // compatibility alias for lastActivityAt
   deletedAt?: number; // unix milliseconds, present for trashed sessions
   current: boolean;
+  open: boolean;
   scope?: string;       // "project" | "global"; empty for legacy → treated as "global"
   workspaceRoot?: string;
   topicId?: string;

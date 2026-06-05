@@ -317,6 +317,7 @@ export const en = {
   "history.namePlaceholder": "Session name…",
   "history.emptySession": "(empty session)",
   "history.current": "current",
+  "history.open": "open",
   "history.deleted": "deleted",
   "history.turnOne": "{n} turn",
   "history.turnOther": "{n} turns",

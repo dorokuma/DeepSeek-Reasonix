@@ -455,10 +455,10 @@ function makeMockApp(): AppBindings {
   };
   // Mutable so delete/rename are observable in browser dev.
   const sessions: SessionMeta[] = [
-    { path: "/mock/sessions/a.jsonl", preview: "fix the login bug in auth.go", turns: 12, createdAt: t0 - 2 * day, lastActivityAt: t0 - 3_600_000, modTime: t0 - 3_600_000, current: true },
-    { path: "/mock/sessions/b.jsonl", preview: "refactor the payment module", turns: 5, createdAt: t0 - 3 * day, lastActivityAt: t0 - 6 * 3_600_000, modTime: t0 - 6 * 3_600_000, current: false },
-    { path: "/mock/sessions/c.jsonl", preview: "write the README and badges", turns: 8, createdAt: t0 - 4 * day, lastActivityAt: t0 - day - 3_600_000, modTime: t0 - day - 3_600_000, current: false },
-    { path: "/mock/sessions/d.jsonl", preview: "explain the plugin host design", turns: 3, createdAt: t0 - 5 * day, lastActivityAt: t0 - 4 * day, modTime: t0 - 4 * day, current: false },
+    { path: "/mock/sessions/a.jsonl", preview: "fix the login bug in auth.go", turns: 12, createdAt: t0 - 2 * day, lastActivityAt: t0 - 3_600_000, modTime: t0 - 3_600_000, current: true, open: true },
+    { path: "/mock/sessions/b.jsonl", preview: "refactor the payment module", turns: 5, createdAt: t0 - 3 * day, lastActivityAt: t0 - 6 * 3_600_000, modTime: t0 - 6 * 3_600_000, current: false, open: true },
+    { path: "/mock/sessions/c.jsonl", preview: "write the README and badges", turns: 8, createdAt: t0 - 4 * day, lastActivityAt: t0 - day - 3_600_000, modTime: t0 - day - 3_600_000, current: false, open: false },
+    { path: "/mock/sessions/d.jsonl", preview: "explain the plugin host design", turns: 3, createdAt: t0 - 5 * day, lastActivityAt: t0 - 4 * day, modTime: t0 - 4 * day, current: false, open: false },
   ];
   const trashedSessions: SessionMeta[] = [
     {
@@ -471,6 +471,7 @@ function makeMockApp(): AppBindings {
       modTime: t0 - 7 * day,
       deletedAt: t0 - 20 * 60_000,
       current: false,
+      open: false,
       scope: "project",
       workspaceRoot: "~/projects/joyquant-db",
       topicId: "topic_dev_standard",
@@ -486,6 +487,7 @@ function makeMockApp(): AppBindings {
       modTime: t0 - 5 * day,
       deletedAt: t0 - 2 * 3_600_000,
       current: false,
+      open: false,
       scope: "project",
       workspaceRoot: "~/projects/joyquant-sys",
       topicId: "topic_p3a_pd",
@@ -501,6 +503,7 @@ function makeMockApp(): AppBindings {
       modTime: t0 - 3 * day,
       deletedAt: t0 - day,
       current: false,
+      open: false,
       scope: "global",
       topicId: "topic_product",
       topicTitle: t("mock.trashGlobalProductTitle"),
@@ -904,6 +907,7 @@ function makeMockApp(): AppBindings {
     async ResumeSession(path: string) {
       sessions.forEach((s) => {
         s.current = s.path === path;
+        s.open = s.open || s.path === path;
       });
       return [
         { role: "user", content: `(mock) resumed ${path}` },
@@ -931,6 +935,7 @@ function makeMockApp(): AppBindings {
         trashedSessions.unshift({
           ...s,
           current: false,
+          open: false,
           path: s.path.replace("/mock/sessions/", "/mock/sessions/.trash/"),
           deletedAt: Date.now(),
         });
