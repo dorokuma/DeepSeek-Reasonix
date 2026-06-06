@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -16,142 +15,10 @@ import (
 	"time"
 
 	"reasonix/internal/jobs"
+	"reasonix/internal/rtk"
 	"reasonix/internal/sandbox"
 	"reasonix/internal/tool"
 )
-
-// rtkBinPath caches the resolved RTK binary path so we don't look it up per call.
-var rtkBinPath string
-
-// rtkRewriteCache memoizes rtk rewrite results per command string.
-// Both "supported → rewritten" and "unsupported → empty" are cached so
-// repeated commands (ls -la, git status, etc.) skip the subprocess entirely.
-var rtkRewriteCache sync.Map
-
-func init() {
-	if p, err := exec.LookPath("rtk"); err == nil {
-		rtkBinPath = p
-	}
-}
-
-// rtkRewrite runs "rtk rewrite <cmd>" and returns the rewritten command when
-// RTK supports a dedicated filter for it, or "" when it doesn't. Results are
-// cached so repeated commands skip the subprocess.
-func rtkRewrite(cmd string) string {
-	if rtkBinPath == "" {
-		return ""
-	}
-	// Check cache first.
-	if v, ok := rtkRewriteCache.Load(cmd); ok {
-		s, _ := v.(string)
-		return s
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer cancel()
-	out, err := exec.CommandContext(ctx, rtkBinPath, "rewrite", cmd).Output()
-	if err != nil {
-		var exitErr *exec.ExitError
-		if !errors.As(err, &exitErr) {
-			rtkRewriteCache.Store(cmd, "") // cache miss so we don't retry
-			return ""
-		}
-	}
-	rewritten := strings.TrimSpace(string(out))
-	if rewritten == "" {
-		rtkRewriteCache.Store(cmd, "") // cache miss
-		return ""
-	}
-	rtkRewriteCache.Store(cmd, rewritten) // cache hit
-	return rewritten
-}
-
-// rtkRewriteSegments rewrites each segment of a compound command individually.
-// When rtkRewrite on the full command returns empty (e.g. due to shell redirects
-// confusing the parser), this fallback splits by shell chaining operators and
-// rewrites segment by segment, so supported commands inside compounds still get
-// the rtk treatment.
-func rtkRewriteSegments(cmd string) string {
-	if rtkBinPath == "" {
-		return cmd
-	}
-	// Try the full command first.
-	if r := rtkRewrite(cmd); r != "" {
-		return r
-	}
-	// Fallback: split and rewrite per segment.
-	segs := splitShellPipeline(cmd)
-	if len(segs) <= 1 {
-		return cmd // nothing to split
-	}
-	var out []string
-	for _, s := range segs {
-		if r := rtkRewrite(s.text); r != "" {
-			out = append(out, r)
-		} else {
-			out = append(out, s.text)
-		}
-	}
-	// Rebuild preserving original separators.
-	var b strings.Builder
-	b.WriteString(out[0])
-	for i := 1; i < len(segs); i++ {
-		b.WriteByte(' ')
-		b.WriteString(segs[i].sep)
-		b.WriteByte(' ')
-		b.WriteString(out[i])
-	}
-	return b.String()
-}
-
-// segSep is a shell-pipeline segment with its trailing separator.
-type segSep struct {
-	text string // the command segment
-	sep  string // the separator that follows (";", "&&", "||", "|", or "")
-}
-
-// splitShellPipeline splits a shell command on unquoted ";", "&&", "||", "|".
-// Each returned segment carries its original trailing separator so the caller
-// can reconstruct the command verbatim (minus whitespace around separators).
-func splitShellPipeline(cmd string) []segSep {
-	var segs []segSep
-	start := 0
-	quote := byte(0)
-	for i := 0; i < len(cmd); i++ {
-		c := cmd[i]
-		if quote != 0 {
-			if c == quote {
-				quote = 0
-			}
-			continue
-		}
-		if c == '\'' || c == '"' {
-			quote = c
-			continue
-		}
-		if i+1 < len(cmd) {
-			two := cmd[i : i+2]
-			if two == "&&" || two == "||" {
-				segs = append(segs, segSep{text: strings.TrimSpace(cmd[start:i]), sep: two})
-				i++ // skip second char of the two-char separator
-				start = i + 1
-				continue
-			}
-		}
-		if c == ';' || c == '|' {
-			segs = append(segs, segSep{text: strings.TrimSpace(cmd[start:i]), sep: string(c)})
-			start = i + 1
-			continue
-		}
-	}
-	remain := strings.TrimSpace(cmd[start:])
-	if remain != "" || len(segs) == 0 {
-		segs = append(segs, segSep{text: remain, sep: ""})
-	} else {
-		// Trailing separator after last segment is rare but valid (e.g. "ls;")
-		// — keep the last seg sep as-is.
-	}
-	return segs
-}
 
 const (
 	bashTimeout   = 120 * time.Second
@@ -251,13 +118,10 @@ func (b bash) Execute(ctx context.Context, args json.RawMessage) (string, error)
 		return "", fmt.Errorf("command is required")
 	}
 
-	// Transparent RTK proxy: when RTK has a compact filter for this command,
-	// rewrite transparently so the model's token budget isn't burned on verbose
-	// output. Skipped for background jobs — their output is incremental and
-	// streamed, not a single-shot result that benefits from compaction.
-	if !p.RunInBackground {
-		p.Command = rtkRewriteSegments(p.Command)
-	}
+	// Transparent RTK proxy: rewrite the command when RTK has a compact filter.
+	// Background jobs still benefit from compact command output; only the
+	// incremental bash_output polling path is unchanged.
+	p.Command = rtk.ApplySegments(p.Command)
 
 	sh := b.resolved()
 	if !sh.SupportsChaining() && (hasUnquotedSeq(p.Command, "&&") || hasUnquotedSeq(p.Command, "||")) {
