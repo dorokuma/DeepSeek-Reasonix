@@ -44,6 +44,7 @@ func TestRenderTOMLRoundTrips(t *testing.T) {
 	}
 	orig.Skills.Paths = []string{"~/my-skills", "../shared/skills"}
 	orig.Skills.DisabledSkills = []string{"review", "explore"}
+	orig.Skills.MaxDepth = 2
 	orig.Codegraph = CodegraphConfig{Enabled: true, AutoInstall: false, Path: "/opt/codegraph", Tier: "background"}
 	orig.Plugins = []PluginEntry{
 		{Name: "example", Command: "reasonix-plugin-example"},
@@ -159,6 +160,9 @@ func TestRenderTOMLRoundTrips(t *testing.T) {
 	}
 	if len(got.Skills.DisabledSkills) != 2 || got.Skills.DisabledSkills[0] != "review" || got.Skills.DisabledSkills[1] != "explore" {
 		t.Errorf("skills.disabled_skills = %v", got.Skills.DisabledSkills)
+	}
+	if got.SkillMaxDepth() != 2 {
+		t.Errorf("skills.max_depth = %d, want 2", got.SkillMaxDepth())
 	}
 	if len(got.Plugins) != 2 {
 		t.Fatalf("plugins count = %d, want 2", len(got.Plugins))

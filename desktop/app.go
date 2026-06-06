@@ -1673,14 +1673,17 @@ func skillRootsView() []SkillRootView {
 	cfg, _ := config.Load()
 	userCfg := config.LoadForEdit(config.UserConfigPath())
 	var custom []string
+	maxDepth := 3
 	if cfg != nil {
 		custom = cfg.SkillCustomPaths()
+		maxDepth = cfg.SkillMaxDepth()
 	}
-	st := skill.New(skill.Options{ProjectRoot: cwd, CustomPaths: custom, DisableBuiltins: true, Stderr: io.Discard})
+	st := skill.New(skill.Options{ProjectRoot: cwd, CustomPaths: custom, MaxDepth: maxDepth, DisableBuiltins: true, Stderr: io.Discard})
 	counts := map[string]int{}
 	skillItems := map[string][]SkillRootSkillView{}
+	roots := st.Roots()
 	for _, sk := range st.List() {
-		root := config.CanonicalSkillPath(filepath.Dir(skillRootPath(sk.Path)))
+		root := skillDisplayRoot(sk, roots)
 		counts[root]++
 		skillItems[root] = append(skillItems[root], SkillRootSkillView{
 			Name:        sk.Name,
@@ -1701,7 +1704,7 @@ func skillRootsView() []SkillRootView {
 		}
 	}
 	out := []SkillRootView{}
-	for _, r := range st.Roots() {
+	for _, r := range roots {
 		dir := config.CanonicalSkillPath(r.Dir)
 		view := SkillRootView{
 			Dir:        r.Dir,
@@ -1830,6 +1833,21 @@ func skillRootPath(path string) string {
 		return filepath.Dir(path)
 	}
 	return path
+}
+
+func skillDisplayRoot(sk skill.Skill, roots []skill.Root) string {
+	cleanPath := filepath.Clean(sk.Path)
+	for _, r := range roots {
+		if r.Scope != sk.Scope {
+			continue
+		}
+		cleanRoot := filepath.Clean(r.Dir)
+		prefix := cleanRoot + string(filepath.Separator)
+		if cleanPath == cleanRoot || strings.HasPrefix(cleanPath, prefix) {
+			return config.CanonicalSkillPath(r.Dir)
+		}
+	}
+	return config.CanonicalSkillPath(filepath.Dir(skillRootPath(sk.Path)))
 }
 
 // MCPServerInput is the drawer's "add server" form. Transport is "stdio" (Command

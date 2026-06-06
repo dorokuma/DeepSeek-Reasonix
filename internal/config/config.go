@@ -305,6 +305,7 @@ func (c *Config) NetworkProxyMode() string {
 type SkillsConfig struct {
 	Paths          []string `toml:"paths"`
 	DisabledSkills []string `toml:"disabled_skills"`
+	MaxDepth       int      `toml:"max_depth"`
 }
 
 // SkillCustomPaths returns the configured custom skill roots with ${VAR}
@@ -317,6 +318,25 @@ func (c *Config) SkillCustomPaths() []string {
 		}
 	}
 	return out
+}
+
+// SkillMaxDepth bounds nested skill discovery. Depth 3 favors bundled skill
+// packs while Store keeps nested markdown safe by requiring descriptions.
+func (c *Config) SkillMaxDepth() int {
+	const (
+		defaultDepth = 3
+		maxDepth     = 5
+	)
+	if c == nil || c.Skills.MaxDepth == 0 {
+		return defaultDepth
+	}
+	if c.Skills.MaxDepth < 1 {
+		return 1
+	}
+	if c.Skills.MaxDepth > maxDepth {
+		return maxDepth
+	}
+	return c.Skills.MaxDepth
 }
 
 // DisabledSkillNames returns valid disabled skill identifiers, preserving the

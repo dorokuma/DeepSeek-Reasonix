@@ -267,6 +267,11 @@ func RenderTOMLForScope(c *Config, scope RenderScope) string {
 	} else {
 		b.WriteString("# paths = [\"~/my-skills\", \"../shared/skills\"]   # extra custom skill roots\n")
 	}
+	if c.Skills.MaxDepth != 0 {
+		fmt.Fprintf(&b, "max_depth = %d   # nested scan depth; default 3, set 1 for legacy root-only discovery\n", c.SkillMaxDepth())
+	} else {
+		b.WriteString("# max_depth = 3   # nested scan depth; set 1 for legacy root-only discovery\n")
+	}
 	if disabled := c.DisabledSkillNames(); len(disabled) > 0 {
 		fmt.Fprintf(&b, "disabled_skills = %s   # hidden from the prompt, slash invocation, and skill tools\n\n", renderStringArray(disabled))
 	} else {
