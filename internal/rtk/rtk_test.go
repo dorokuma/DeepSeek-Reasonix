@@ -116,4 +116,15 @@ func TestCollectProbe_smoke(t *testing.T) {
 	if !p.RewriteOK {
 		t.Fatalf("rewrite smoke failed: %+v", p)
 	}
+	if p.Timeout == "" {
+		t.Fatalf("probe missing timeout: %+v", p)
+	}
+	if p.Env == nil || p.Env["REASONIX_RTK"] == "" {
+		t.Fatalf("probe missing env snapshot: %+v", p)
+	}
+	t.Setenv("REASONIX_RTK", "rewrite")
+	p = CollectProbe()
+	if !p.PipeOK {
+		t.Fatalf("pipe smoke failed: %+v", p)
+	}
 }

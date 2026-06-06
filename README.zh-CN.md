@@ -91,6 +91,8 @@ echo "解释这段代码" | reasonix run
 优先级：**flag > `./reasonix.toml` > `~/.config/reasonix/config.toml` > 内置默认值**。
 密钥经环境变量通过 `api_key_env` 注入，绝不写入配置文件。
 
+可选的 RTK 输出压缩见 [docs/RTK.md](./docs/RTK.md)（`REASONIX_RTK*` 环境变量与 `reasonix doctor` 自检）。
+
 ```toml
 default_model = "deepseek-flash"   # 执行器；设 [agent].planner_model 可加规划器
 # language    = "zh"               # 界面语言；为空则按 $LANG / $REASONIX_LANG 自动检测

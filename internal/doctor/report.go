@@ -87,14 +87,17 @@ type SessionsReport struct {
 }
 
 type RTKReport struct {
-	Mode      string `json:"mode"`
-	Path      string `json:"path,omitempty"`
-	Version   string `json:"version,omitempty"`
-	RewriteOK bool   `json:"rewrite_ok"`
-	GrepOK    bool   `json:"grep_ok"`
-	ReadLimit int    `json:"read_limit,omitempty"`
-	Sample    string `json:"sample,omitempty"`
-	Warning   string `json:"warning,omitempty"`
+	Mode      string            `json:"mode"`
+	Path      string            `json:"path,omitempty"`
+	Version   string            `json:"version,omitempty"`
+	RewriteOK bool              `json:"rewrite_ok"`
+	GrepOK    bool              `json:"grep_ok"`
+	PipeOK    bool              `json:"pipe_ok"`
+	ReadLimit int               `json:"read_limit,omitempty"`
+	Timeout   string            `json:"timeout,omitempty"`
+	Env       map[string]string `json:"env,omitempty"`
+	Sample    string            `json:"sample,omitempty"`
+	Warning   string            `json:"warning,omitempty"`
 }
 
 type SandboxReport struct {
@@ -288,8 +291,22 @@ func RenderText(r Report) string {
 	if r.RTK.GrepOK {
 		fmt.Fprintf(&b, "  grep         ok (builtin → rtk grep)\n")
 	}
+	if r.RTK.PipeOK {
+		fmt.Fprintf(&b, "  pipe         ok (large output compaction)\n")
+	}
+	if r.RTK.Timeout != "" {
+		fmt.Fprintf(&b, "  timeout      %s\n", r.RTK.Timeout)
+	}
 	if r.RTK.ReadLimit > 0 && r.RTK.ReadLimit != 2000 {
 		fmt.Fprintf(&b, "  read_limit   %d lines (rtk mode)\n", r.RTK.ReadLimit)
+	}
+	for _, key := range []string{"REASONIX_RTK", "REASONIX_RTK_TIMEOUT", "REASONIX_RTK_READ_LIMIT", "REASONIX_RTK_LOG"} {
+		if r.RTK.Env == nil {
+			break
+		}
+		if v, ok := r.RTK.Env[key]; ok {
+			fmt.Fprintf(&b, "  %-14s %s\n", key, v)
+		}
 	}
 
 	fmt.Fprintf(&b, "\nsandbox\n")
@@ -320,7 +337,10 @@ func collectRTK() RTKReport {
 		Version:   p.Version,
 		RewriteOK: p.RewriteOK,
 		GrepOK:    p.GrepOK,
+		PipeOK:    p.PipeOK,
 		ReadLimit: p.ReadLimit,
+		Timeout:   p.Timeout,
+		Env:       p.Env,
 		Sample:    p.Sample,
 		Warning:   p.Warning,
 	}

@@ -95,6 +95,9 @@ Resolution order: **flag > `./reasonix.toml` > `~/.config/reasonix/config.toml` 
 built-in defaults**. Secrets come from the environment via `api_key_env` and are
 never stored in config files.
 
+Optional shell output compaction via RTK: see [docs/RTK.md](./docs/RTK.md) for
+`REASONIX_RTK*` environment variables and `reasonix doctor` checks.
+
 ```toml
 default_model = "deepseek-flash"   # executor; set [agent].planner_model to add a planner
 # language    = "zh"               # ui language; empty = auto-detect from $LANG / $REASONIX_LANG
