@@ -1859,7 +1859,6 @@ type MCPServerInput struct {
 	Args      []string          `json:"args"`
 	URL       string            `json:"url"`
 	Env       map[string]string `json:"env"`
-	Tier      string            `json:"tier"`
 }
 
 // AddMCPServer connects a server live and persists it to config (Customize → MCP →
@@ -1876,7 +1875,6 @@ func (a *App) AddMCPServer(in MCPServerInput) (int, error) {
 		Args:    in.Args,
 		URL:     in.URL,
 		Env:     in.Env,
-		Tier:    normalizeMCPTier(in.Tier),
 	}
 	if err := a.saveDesktopMCPServer(entry); err != nil {
 		return 0, err
@@ -1908,7 +1906,7 @@ func (a *App) UpdateMCPServer(name string, in MCPServerInput) error {
 	updated.Command = strings.TrimSpace(in.Command)
 	updated.Args = append([]string(nil), in.Args...)
 	updated.URL = strings.TrimSpace(in.URL)
-	updated.Tier = normalizeMCPTier(in.Tier)
+	updated.Tier = ""
 	if in.Env != nil {
 		updated.Env = in.Env
 	}
@@ -1967,15 +1965,26 @@ func (a *App) RemoveMCPServer(name string) error {
 	return fmt.Errorf("no MCP server named %q", name)
 }
 
-// RetryMCPServer reconnects a configured server that failed or was disconnected,
-// without touching config (the failed row's retry button).
-func (a *App) RetryMCPServer(name string) error {
+// ReconnectMCPServer disconnects the server if it is already connected (to force
+// a fresh handshake and tool re-registration), then reconnects.  Failures are
+// recorded on the Host so the UI can render them.
+func (a *App) ReconnectMCPServer(name string) error {
 	tab := a.activeTab()
 	if tab == nil || tab.Ctrl == nil {
 		return fmt.Errorf("no active session")
 	}
+	if mcpConnected(tab.Ctrl, name) {
+		tab.Ctrl.DisconnectMCPServer(name)
+	}
 	_, err := a.connectConfiguredMCPServerForTab(tab, name)
-	return err
+	if err != nil {
+		recordMCPFailure(tab.Ctrl, config.PluginEntry{Name: name}, err)
+		return err
+	}
+	a.mu.Lock()
+	delete(tab.disabledMCP, name)
+	a.mu.Unlock()
+	return nil
 }
 
 // ClearMCPServerAuthentication removes local auth-like config for one MCP and
@@ -2053,9 +2062,9 @@ func (a *App) connectConfiguredMCPServerForTab(tab *WorkspaceTab, name string) (
 	return 0, fmt.Errorf("no configured MCP server named %q", name)
 }
 
-// SetMCPServerTier persists how a configured MCP server should start on future
-// sessions. It does not tear down a connected server; the per-session toggle and
-// "connect now" remain separate controls.
+// SetMCPServerTier is kept for old desktop bindings. New config writes drop the
+// retired tier field, so this only affects the active session before the next
+// config reload.
 func (a *App) SetMCPServerTier(name, tier string) error {
 	if name == "codegraph" {
 		return a.setCodegraphTier(tier)
@@ -2263,6 +2272,8 @@ func normalizeMCPTier(tier string) string {
 	case "eager":
 		return "eager"
 	case "background":
+		return "background"
+	case "":
 		return "background"
 	default:
 		return "lazy"

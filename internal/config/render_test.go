@@ -125,8 +125,8 @@ func TestRenderTOMLRoundTrips(t *testing.T) {
 	if got.Codegraph.Path != "/opt/codegraph" {
 		t.Errorf("codegraph.path = %q, want /opt/codegraph", got.Codegraph.Path)
 	}
-	if got.Codegraph.Tier != "background" {
-		t.Errorf("codegraph.tier = %q, want background", got.Codegraph.Tier)
+	if got.Codegraph.Tier != "" {
+		t.Errorf("codegraph.tier = %q, want migrated empty", got.Codegraph.Tier)
 	}
 	if got.Agent.SubagentModel != "mimo-pro" {
 		t.Errorf("subagent_model = %q, want mimo-pro", got.Agent.SubagentModel)
@@ -177,8 +177,11 @@ func TestRenderTOMLRoundTrips(t *testing.T) {
 	if stripe.AutoStart == nil || *stripe.AutoStart {
 		t.Errorf("auto_start should render and parse as false, got %+v", stripe.AutoStart)
 	}
-	if stripe.Tier != "background" {
-		t.Errorf("plugin tier should render and parse as background, got %q", stripe.Tier)
+	if stripe.Tier != "" {
+		t.Errorf("plugin tier should be omitted from new config, got %q", stripe.Tier)
+	}
+	if strings.Contains(rendered, "\ntier") {
+		t.Errorf("rendered config should not contain MCP tier fields:\n%s", rendered)
 	}
 }
 
