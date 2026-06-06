@@ -62,6 +62,7 @@ type Skill struct {
 	AllowedTools []string
 	RunAs        RunAs  // inline | subagent
 	Model        string // optional model override for runAs=subagent (frontmatter `model:`)
+	Effort       string // optional effort for runAs=subagent (frontmatter `effort:`)
 }
 
 // IsValidName reports whether name is a usable skill identifier.
@@ -417,6 +418,7 @@ func (s *Store) parse(path, stem string, scope Scope) (Skill, bool) {
 		AllowedTools: parseAllowedTools(fm["allowed-tools"]),
 		RunAs:        parseRunAs(fm["runas"], fm["context"], fm["agent"]),
 		Model:        strings.TrimSpace(fm["model"]),
+		Effort:       strings.TrimSpace(fm["effort"]),
 	}, true
 }
 

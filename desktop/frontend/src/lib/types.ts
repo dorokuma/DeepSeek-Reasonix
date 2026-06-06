@@ -26,6 +26,11 @@ export interface WireCompaction {
   archive?: string; // done: archive path, if any
 }
 
+export interface WireProfile {
+  model?: string;
+  effort?: string;
+}
+
 export interface WireTool {
   id?: string;
   name: string;
@@ -36,6 +41,7 @@ export interface WireTool {
   truncated?: boolean;
   partial?: boolean; // an early dispatch (name only) — a full one with args follows
   parentId?: string; // set on a sub-agent's calls — the parent `task` call's id
+  profile?: WireProfile; // subagent model/effort resolved for this call
 }
 
 export interface WireUsage {
@@ -495,6 +501,8 @@ export interface AgentView {
 export interface SettingsView {
   defaultModel: string;
   plannerModel: string;
+  subagentModel: string;
+  subagentEffort: string;
   autoPlan: string;
   providers: ProviderView[];
   permissions: PermissionsView;

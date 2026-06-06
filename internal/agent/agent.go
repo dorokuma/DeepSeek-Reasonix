@@ -678,6 +678,11 @@ func (a *Agent) executeBatch(ctx context.Context, calls []provider.ToolCall) []s
 			if ch, ok := tool.PreviewChange(t, json.RawMessage(c.Arguments)); ok {
 				ev.FileDiff = event.FileDiff{Diff: ch.Diff, Added: ch.Added, Removed: ch.Removed}
 			}
+			if pr, ok := t.(interface {
+				ResolveProfile(json.RawMessage) *event.Profile
+			}); ok {
+				ev.Profile = pr.ResolveProfile(json.RawMessage(c.Arguments))
+			}
 		}
 		a.sink.Emit(event.Event{Kind: event.ToolDispatch, Tool: ev})
 	}

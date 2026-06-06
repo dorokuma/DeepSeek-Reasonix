@@ -401,9 +401,37 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	// sub-agents inherit the full tool set (minus `task` itself, to keep
 	// nesting out of the picture). It registers into the same reg the
 	// executor uses, so the model surfaces it like any other tool.
+	resolveSubagentProvider := func(modelRef, effort string) (provider.Provider, *provider.Pricing, int, error) {
+		me := *entry
+		if strings.TrimSpace(modelRef) != "" {
+			resolved, ok := cfg.ResolveModel(modelRef)
+			if !ok {
+				return nil, nil, 0, fmt.Errorf("unknown model %q", modelRef)
+			}
+			me = *resolved
+		}
+		if strings.TrimSpace(effort) != "" {
+			normalized, err := config.NormalizeEffort(&me, effort)
+			if err != nil {
+				return nil, nil, 0, err
+			}
+			me.Effort = normalized
+			if me.Kind == "anthropic" && strings.TrimSpace(me.Effort) != "" && strings.TrimSpace(me.Thinking) == "" {
+				me.Thinking = "adaptive"
+			}
+		}
+		p, err := NewProviderWithProxy(&me, proxySpec)
+		if err != nil {
+			return nil, nil, 0, err
+		}
+		return p, me.Price, me.ContextWindow, nil
+	}
+	taskModel := firstNonEmpty(cfg.Agent.SubagentModels["task"], cfg.Agent.SubagentModel)
+	taskEffort := firstNonEmpty(cfg.Agent.SubagentEfforts["task"], cfg.Agent.SubagentEffort)
 	reg.Add(agent.NewTaskTool(execProv, entry.Price, reg, maxSteps,
 		entry.ContextWindow, cfg.Agent.SoftCompactRatio, cfg.Agent.CompactRatio, cfg.Agent.CompactForceRatio,
-		cfg.Agent.Temperature, config.ArchiveDir(), "", headlessGate))
+		cfg.Agent.Temperature, config.ArchiveDir(), "", headlessGate,
+		taskModel, taskEffort, resolveSubagentProvider))
 
 	// The `remember` tool lets the model persist durable facts to the project's
 	// auto-memory store; `forget` prunes ones that turn out wrong. The saved index
@@ -425,12 +453,14 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	// Its tool activity nests under the invoking call, like `task`.
 	skillRunner := func(sctx context.Context, sk skill.Skill, task string) (string, error) {
 		prov, price, ctxWin := execProv, entry.Price, entry.ContextWindow
-		if modelRef := subagentModelRef(cfg, sk); modelRef != "" {
-			if me, ok := cfg.ResolveModel(modelRef); ok {
-				if p, err := NewProviderWithProxy(me, proxySpec); err == nil {
-					prov, price, ctxWin = p, me.Price, me.ContextWindow
-				}
+		modelRef := subagentModelRef(cfg, sk)
+		effortRef := subagentEffortRef(cfg, sk)
+		if modelRef != "" || effortRef != "" {
+			p, pr, cw, err := resolveSubagentProvider(modelRef, effortRef)
+			if err != nil {
+				return "", fmt.Errorf("subagent skill %q profile: %w", sk.Name, err)
 			}
+			prov, price, ctxWin = p, pr, cw
 		}
 		subReg := agent.FilterRegistry(reg, sk.AllowedTools, agent.SubagentMetaTools()...)
 		steps := maxSteps
@@ -448,9 +478,16 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 			ArchiveDir:    config.ArchiveDir(),
 		}, agent.NestedSink(sctx, event.Discard))
 	}
-	reg.Add(skill.NewRunSkillTool(skillStore, skillRunner))
+	skillProfile := func(sk skill.Skill) *event.Profile {
+		model, effort := subagentModelRef(cfg, sk), subagentEffortRef(cfg, sk)
+		if model == "" && effort == "" {
+			return nil
+		}
+		return &event.Profile{Model: model, Effort: effort}
+	}
+	reg.Add(skill.NewRunSkillTool(skillStore, skillRunner, skillProfile))
 	reg.Add(skill.NewInstallSkillTool(skillStore, nil))
-	for _, t := range skill.BuiltinSubagentTools(skillStore, skillRunner) {
+	for _, t := range skill.BuiltinSubagentTools(skillStore, skillRunner, skillProfile) {
 		reg.Add(t)
 	}
 
@@ -632,6 +669,15 @@ func rememberPermissionConfigPath(workspaceRoot string) string {
 	return path
 }
 
+func firstNonEmpty(vals ...string) string {
+	for _, v := range vals {
+		if strings.TrimSpace(v) != "" {
+			return strings.TrimSpace(v)
+		}
+	}
+	return ""
+}
+
 func subagentModelRef(cfg *config.Config, sk skill.Skill) string {
 	if cfg != nil {
 		for _, key := range subagentModelKeys(sk.Name) {
@@ -647,6 +693,23 @@ func subagentModelRef(cfg *config.Config, sk skill.Skill) string {
 		return ""
 	}
 	return strings.TrimSpace(cfg.Agent.SubagentModel)
+}
+
+func subagentEffortRef(cfg *config.Config, sk skill.Skill) string {
+	if cfg != nil {
+		for _, key := range subagentModelKeys(sk.Name) {
+			if e := strings.TrimSpace(cfg.Agent.SubagentEfforts[key]); e != "" {
+				return e
+			}
+		}
+	}
+	if e := strings.TrimSpace(sk.Effort); e != "" {
+		return e
+	}
+	if cfg == nil {
+		return ""
+	}
+	return strings.TrimSpace(cfg.Agent.SubagentEffort)
 }
 
 func subagentModelKeys(name string) []string {

@@ -1509,6 +1509,15 @@ a[href] {
   white-space: nowrap;
   min-width: 0;
 }
+.tool__profile {
+  font-family: var(--mono);
+  font-size: var(--font-caption);
+  color: var(--fg-faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
 .tool__meta {
   margin-left: auto;
   display: flex;

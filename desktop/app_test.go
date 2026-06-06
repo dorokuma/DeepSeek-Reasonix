@@ -233,6 +233,42 @@ close_behavior = "quit"
 	}
 }
 
+func TestSettingsSubagentDefaultsRoundTrip(t *testing.T) {
+	isolateDesktopUserDirs(t)
+	if err := os.MkdirAll(filepath.Dir(config.UserConfigPath()), 0o755); err != nil {
+		t.Fatalf("mkdir config dir: %v", err)
+	}
+	if err := os.WriteFile(config.UserConfigPath(), []byte(`
+default_model = "deepseek/deepseek-v4-flash"
+
+[[providers]]
+name = "deepseek"
+kind = "openai"
+base_url = "https://api.deepseek.com"
+models = ["deepseek-v4-flash", "deepseek-v4-pro"]
+default = "deepseek-v4-flash"
+`), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	app := NewApp()
+	if err := app.SetSubagentModel("deepseek/deepseek-v4-pro"); err != nil {
+		t.Fatalf("SetSubagentModel: %v", err)
+	}
+	if err := app.SetSubagentEffort("max"); err != nil {
+		t.Fatalf("SetSubagentEffort: %v", err)
+	}
+
+	got := app.Settings()
+	if got.SubagentModel != "deepseek/deepseek-v4-pro" || got.SubagentEffort != "max" {
+		t.Fatalf("subagent settings = model:%q effort:%q", got.SubagentModel, got.SubagentEffort)
+	}
+	cfg := config.LoadForEdit(config.UserConfigPath())
+	if cfg.Agent.SubagentModel != "deepseek/deepseek-v4-pro" || cfg.Agent.SubagentEffort != "max" {
+		t.Fatalf("saved config = model:%q effort:%q", cfg.Agent.SubagentModel, cfg.Agent.SubagentEffort)
+	}
+}
+
 func TestMigrateDesktopPreferencesDoesNotOverwriteExistingConfig(t *testing.T) {
 	isolateDesktopUserDirs(t)
 

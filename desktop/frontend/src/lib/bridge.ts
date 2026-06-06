@@ -163,6 +163,8 @@ export interface AppBindings {
   Settings(): Promise<SettingsView>;
   SetDefaultModel(ref: string): Promise<void>;
   SetPlannerModel(ref: string): Promise<void>;
+  SetSubagentModel(ref: string): Promise<void>;
+  SetSubagentEffort(level: string): Promise<void>;
   SetAutoPlan(mode: string): Promise<void>;
   SaveProvider(p: ProviderView): Promise<void>;
   DeleteProvider(name: string): Promise<void>;
@@ -517,6 +519,8 @@ function makeMockApp(): AppBindings {
   const settings: SettingsView = {
     defaultModel: "deepseek-flash",
     plannerModel: "",
+    subagentModel: "",
+    subagentEffort: "",
     autoPlan: "off",
     providers: [
       { name: "deepseek-flash", kind: "openai", baseUrl: "https://api.deepseek.com", models: ["deepseek-v4-flash"], default: "deepseek-v4-flash", apiKeyEnv: "DEEPSEEK_API_KEY", keySet: true, balanceUrl: "https://api.deepseek.com/user/balance", contextWindow: 1_000_000, supportedEfforts: [], defaultEffort: "" },
@@ -1352,6 +1356,12 @@ function makeMockApp(): AppBindings {
     },
     async SetPlannerModel(ref: string) {
       settings.plannerModel = ref;
+    },
+    async SetSubagentModel(ref: string) {
+      settings.subagentModel = ref;
+    },
+    async SetSubagentEffort(level: string) {
+      settings.subagentEffort = level;
     },
     async SetAutoPlan(mode: string) {
       settings.autoPlan = mode;
