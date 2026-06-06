@@ -136,10 +136,10 @@ func (m chatTUI) statusModeColor() cliColor {
 	switch {
 	case m.ctrl != nil && m.ctrl.Bypass():
 		return statusYoloColor
-	case m.permMode == "allow":
-		return statusAllowColor
 	case m.planMode:
 		return statusPlanColor
+	case m.permMode == "allow":
+		return statusAllowColor
 	default:
 		return statusAutoColor
 	}
