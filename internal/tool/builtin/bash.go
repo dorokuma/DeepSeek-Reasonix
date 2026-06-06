@@ -22,7 +22,6 @@ import (
 
 // rtkBinPath caches the resolved RTK binary path so we don't look it up per call.
 var rtkBinPath string
-var rtkOnce sync.Once
 
 // rtkRewriteCache memoizes rtk rewrite results per command string.
 // Both "supported → rewritten" and "unsupported → empty" are cached so
