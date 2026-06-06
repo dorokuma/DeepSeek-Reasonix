@@ -36,8 +36,8 @@ type grepTool struct {
 func (grepTool) Name() string { return "grep" }
 
 func (g grepTool) Description() string {
-	if g.search.PreferRTK() {
-		return "Search for a regular expression in a file or directory — RTK-backed compact output, capped at 200 matches."
+	if g.search.PreferRewrite() {
+		return "Search for a regular expression in a file or directory — RTK rewrite proxy when supported, capped at 200 matches."
 	}
 	if g.search.RgPath != "" {
 		return "Search for a regular expression in a file, or recursively under a directory — ripgrep-backed, so it honors .gitignore. Returns matching lines as path:line:text, capped at 200 matches."
@@ -66,8 +66,9 @@ func (g grepTool) Execute(ctx context.Context, args json.RawMessage) (string, er
 		p.Path = "."
 	}
 	p.Path = resolveIn(g.workDir, p.Path)
-	if g.search.PreferRTK() {
-		if out, err := rtk.Grep(ctx, g.workDir, p.Pattern, p.Path); err == nil {
+	if g.search.PreferRewrite() {
+		shellCmd := rtk.RipgrepShell(p.Pattern, p.Path)
+		if out, err := rtk.RunShellIfRewritten(ctx, g.workDir, shellCmd); err == nil {
 			return capGrepMatches(out), nil
 		}
 	}
@@ -258,15 +259,14 @@ type SearchSpec struct {
 	Engine string // auto (default), rtk, rg, native
 }
 
-// PreferRTK reports whether the grep tool should try RTK before ripgrep/native.
-func (s SearchSpec) PreferRTK() bool {
+// PreferRewrite reports whether grep should try rtk rewrite before ripgrep/native.
+// Auto/rg keep ripgrep for .gitignore semantics; bash already rewrites bare rg.
+func (s SearchSpec) PreferRewrite() bool {
 	switch strings.ToLower(strings.TrimSpace(s.Engine)) {
-	case "native", "rg":
-		return false
 	case "rtk":
 		return rtk.Available() && rtk.ModeFromEnv() != rtk.ModeOff
 	default:
-		return rtk.Active()
+		return false
 	}
 }
 
@@ -311,9 +311,6 @@ func ResolveSearch(engine, rgPath string, warn io.Writer) SearchSpec {
 		}
 		return SearchSpec{Engine: "native"}
 	default: // "auto", ""
-		if rtk.Active() {
-			return SearchSpec{Engine: "auto"}
-		}
 		if p := find(); p != "" {
 			return SearchSpec{Engine: "auto", RgPath: p}
 		}

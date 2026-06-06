@@ -1,0 +1,98 @@
+package rtk
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"os/exec"
+	"strings"
+	"time"
+)
+
+// ErrNotRewritten means rtk rewrite declined this command — callers must use
+// the native tool path and must not invoke RTK directly.
+var ErrNotRewritten = errors.New("rtk: command not rewritten")
+
+// ShellQuote wraps s for a POSIX sh -c argument.
+func ShellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", "'\"'\"'") + "'"
+}
+
+// RipgrepShell builds the ripgrep invocation Reasonix grep uses before rewrite.
+func RipgrepShell(pattern, path string) string {
+	if path == "" {
+		path = "."
+	}
+	return fmt.Sprintf("rg --no-heading --line-number --with-filename --color never --regexp %s -- %s",
+		ShellQuote(pattern), ShellQuote(path))
+}
+
+// LsShell builds a plain ls invocation for rewrite probing.
+func LsShell(path string) string {
+	if path == "" {
+		path = "."
+	}
+	return "ls " + ShellQuote(path)
+}
+
+// TreeShell builds a tree invocation for recursive directory listing.
+func TreeShell(path string) string {
+	if path == "" {
+		path = "."
+	}
+	return "tree -L 4 " + ShellQuote(path)
+}
+
+// FindNameShell builds find -name for glob patterns RTK supports.
+func FindNameShell(dir, namePattern string) (string, bool) {
+	namePattern = strings.TrimSpace(namePattern)
+	if namePattern == "" {
+		return "", false
+	}
+	if dir == "" {
+		dir = "."
+	}
+	// find -name only handles filename globs, not full ** paths.
+	if strings.Contains(namePattern, "/") || strings.Contains(namePattern, "\\") {
+		return "", false
+	}
+	return fmt.Sprintf("find %s -name %s", ShellQuote(dir), ShellQuote(namePattern)), true
+}
+
+// RunShellIfRewritten asks rtk rewrite for cmd; only runs the rewritten shell
+// when rewrite accepts it. This is the single gate for builtin RTK proxying.
+func RunShellIfRewritten(ctx context.Context, workDir, cmd string) (string, error) {
+	if !Active() {
+		return "", ErrNotRewritten
+	}
+	rewritten := Rewrite(strings.TrimSpace(cmd))
+	if rewritten == "" {
+		return "", ErrNotRewritten
+	}
+	return execShell(ctx, workDir, rewritten)
+}
+
+func execShell(ctx context.Context, workDir, cmd string) (string, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	timeout := rewriteTimeout() * 4
+	if timeout < 10*time.Second {
+		timeout = 10 * time.Second
+	}
+	tctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	c := exec.CommandContext(tctx, "/bin/sh", "-c", cmd)
+	if workDir != "" {
+		c.Dir = workDir
+	}
+	out, err := c.CombinedOutput()
+	text := strings.TrimSpace(string(out))
+	if err != nil {
+		if text != "" {
+			return "", fmt.Errorf("%w: %s", err, text)
+		}
+		return "", err
+	}
+	return text, nil
+}
