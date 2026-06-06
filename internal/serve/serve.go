@@ -213,6 +213,7 @@ func (s *Server) handler() http.Handler {
 	mux.HandleFunc("GET /status", s.status)
 	mux.HandleFunc("GET /sessions", s.sessions)
 	mux.HandleFunc("GET /skills", s.skills)
+tmux.HandleFunc("POST /delete-session", s.deleteSession)
 	return logMiddleware(csrfGuard(mux))
 }
 
@@ -878,6 +879,37 @@ func (s *Server) sessions(w http.ResponseWriter, r *http.Request) {
 		out = []sessionEntry{}
 	}
 	writeJSON(w, out)
+}
+
+// deleteSession removes a session file by path.
+func (s *Server) deleteSession(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Path string `json:"path"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	if req.Path == "" {
+		http.Error(w, "path required", http.StatusBadRequest)
+		return
+	}
+	dir := s.ctl().SessionDir()
+	if dir == "" || !strings.HasSuffix(req.Path, ".jsonl") {
+		http.Error(w, "invalid path", http.StatusBadRequest)
+		return
+	}
+	abs, _ := filepath.Abs(req.Path)
+	absDir, _ := filepath.Abs(dir)
+	if !strings.HasPrefix(abs, absDir) {
+		http.Error(w, "path outside session dir", http.StatusForbidden)
+		return
+	}
+	if err := os.Remove(req.Path); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // sessionTitle returns a title for a session: the cached flash-generated title

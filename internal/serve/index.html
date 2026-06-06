@@ -57,6 +57,7 @@ input,textarea{font:inherit;color:inherit}
 .sidebar__item svg{width:15px;height:15px;flex-shrink:0;opacity:.7}
 .sidebar__item--active svg,.sidebar__item--accent svg{opacity:1}
 .sidebar__section{padding:8px;border-top:1px solid var(--border)}
+.sidebar__sep{height:1px;background:var(--border);margin:4px 8px}
 .sidebar__label{font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:600;padding:4px 10px}
 .sidebar__ctx{padding:6px 10px;display:flex;flex-direction:column;gap:5px}
 .ctx-bar{height:3px;border-radius:99px;background:var(--panel-2);overflow:hidden}
@@ -237,6 +238,22 @@ input,textarea{font:inherit;color:inherit}
   .footer{padding:10px 16px 12px}
   .transcript{padding:16px}
 }
+
+/* stats modal */
+.modal-overlay{position:fixed;inset:0;background:oklch(0% 0 0/.55);display:flex;align-items:center;justify-content:center;z-index:200;animation:msg-in .15s ease}
+.modal{background:var(--panel);border:1px solid var(--border-strong);border-radius:var(--radius-lg);width:min(520px,90vw);max-height:80vh;overflow-y:auto;box-shadow:var(--shadow-lg)}
+.modal__head{padding:14px 16px;border-bottom:1px solid var(--border);font-family:var(--heading);font-weight:600;font-size:15px;display:flex;align-items:center;gap:8px}
+.modal__body{padding:14px 16px}
+.modal__close{margin-left:auto;cursor:pointer;color:var(--muted-2);width:24px;height:24px;display:flex;align-items:center;justify-content:center;border-radius:6px;transition:background .15s}
+.modal__close:hover{background:var(--card-hover);color:var(--fg)}
+.stat-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.stat-card{background:var(--bg-2);border:1px solid var(--border);border-radius:var(--radius);padding:12px}
+.stat-card__label{font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:600}
+.stat-card__value{font-family:var(--mono);font-size:18px;font-weight:600;color:var(--fg);margin-top:4px}
+.stat-card__value.acc{color:var(--accent)}
+.stat-card__value.ok{color:var(--success)}
+.stat-card--wide{grid-column:1/-1}
+.sidebar__item--danger{color:var(--danger)}
 </style>
 </head>
 <body>
@@ -262,6 +279,11 @@ input,textarea{font:inherit;color:inherit}
       <div class="sidebar__item" id="btn-tree">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="6" y1="3" x2="6" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/></svg>
         <span>__('branches')</span>
+      </div>
+      <div class="sidebar__sep"></div>
+      <div class="sidebar__item" id="btn-stats">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 20V10"/><path d="M12 20V4"/><path d="M6 20v-6"/></svg>
+        <span>Stats</span>
       </div>
     </nav>
     <div class="sidebar__label" style="padding:8px 10px 4px">__('sessions')</div>
@@ -340,6 +362,49 @@ input,textarea{font:inherit;color:inherit}
   </footer>
 </div>
 
+<!-- stats modal -->
+<div class="modal-overlay" id="stats-modal" style="display:none">
+  <div class="modal">
+    <div class="modal__head">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 20V10"/><path d="M12 20V4"/><path d="M6 20v-6"/></svg>
+      Statistics
+      <span class="modal__close" id="stats-modal-close">&times;</span>
+    </div>
+    <div class="modal__body">
+      <div class="stat-grid">
+        <div class="stat-card">
+          <div class="stat-card__label">Model</div>
+          <div class="stat-card__value" id="stats-model">-</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-card__label">Sessions</div>
+          <div class="stat-card__value" id="stats-sessions">0</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-card__label">Total Tokens</div>
+          <div class="stat-card__value acc" id="stats-total-tokens">0</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-card__label">Cache Hit Rate</div>
+          <div class="stat-card__value ok" id="stats-cache-rate">0%</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-card__label">Total Cost</div>
+          <div class="stat-card__value" id="stats-total-cost">-</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-card__label">Balance</div>
+          <div class="stat-card__value" id="stats-balance">-</div>
+        </div>
+        <div class="stat-card stat-card--wide">
+          <div class="stat-card__label">Context Usage</div>
+          <div class="ctx-bar" style="margin-top:8px"><div class="ctx-bar__fill" id="stats-ctx-fill" style="width:0%"></div></div>
+          <div class="ctx-label" style="margin-top:4px"><span id="stats-ctx-used">0 tok</span><span id="stats-ctx-window">0 tok</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
 <script>
 // ── i18n ──
 const __LANG = 'zh' === '__LANG__' ? 'zh' : (navigator.language || '').startsWith('zh') ? 'zh' : 'en';
@@ -780,6 +845,10 @@ es.onmessage=ev=>{setConnState('connected');
     case 'tool_progress': if(e.tool)renderToolProgress(e.tool); break;
     case 'usage':
       if(e.usage){turnTokens=e.usage.completionTokens||0;
+        cumulativeTokens+=e.usage.totalTokens||0;
+        if(typeof(e.usage.cost)===number)cumulativeCost+=e.usage.cost;
+        cumulativeCacheHit+=e.usage.cacheHitTokens||0;
+        cumulativeCacheMiss+=e.usage.cacheMissTokens||0;
         const strip=el('div','metric-strip');
         [{l:__('total'),v:fmtTok(e.usage.totalTokens),c:''},{l:__('in'),v:fmtTok(e.usage.promptTokens),c:'acc'},{l:__('out'),v:fmtTok(e.usage.completionTokens),c:'ok'}].forEach(it=>{
           const sp=el('span','item');sp.innerHTML=it.l+' <span class="v '+it.c+'">'+it.v+'</span>';strip.appendChild(sp);
@@ -859,16 +928,18 @@ fetch('/history').then(r=>r.json()).then(renderHistoryMessages).catch(()=>{});
 
 // ── session list ──
 function loadSessions(){
+  sessionCount=0;
   fetch('/sessions').then(r=>r.json()).then(ss=>{
     const list=$('#session-list'); if(!list)return;
     if(!ss||ss.length===0){list.innerHTML='<div style="padding:10px;color:var(--muted-2);font-size:12px">'+__('no_sessions')+'</div>';return;}
     list.innerHTML='';
     ss.forEach(s=>{
+    sessionCount++;
       const item=el('div','session-item'+(s.current?' session-item--active':''));
       const name=s.name.replace(/^.*\//,'').replace(/\.jsonl$/,'');
       const title=s.title||name.replace(/^\w+-/,'').replace(/T/,' ').replace(/[-_]/g,' ').slice(0,30);
       const meta=s.turns?s.turns+' turns':'';
-      item.innerHTML='<svg class="session-item__icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg><div class="session-item__body"><div class="session-item__title">'+escHtml(title)+'</div><div class="session-item__meta">'+escHtml(meta)+'</div></div>';
+	      item.innerHTML='<svg class="session-item__icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg><div class="session-item__body"><div class="session-item__title">'+escHtml(title)+'</div><div class="session-item__meta">'+escHtml(meta)+'</div></div><span class="session-del" data-path="'+escHtml(s.path)+'" style="flex-shrink:0;padding:2px 6px;cursor:pointer;color:var(--muted-2);font-size:14px;display:none">&times;</span>';
       item.onclick=()=>{if(running||s.current)return;post('/resume',{path:s.path}).then(()=>{log.innerHTML='';log.appendChild(welcome);welcome.style.display='';loadSessions();setTimeout(()=>fetch('/history').then(r=>r.json()).then(renderHistoryMessages),300);});};
       list.appendChild(item);
     });
@@ -929,6 +1000,40 @@ $('#btn-new').onclick=()=>{if(running)return;post('/new').then(()=>{log.innerHTM
 $('#btn-compact').onclick=()=>{if(!running)post('/compact');};
 $('#btn-rewind').onclick=()=>openRewindPicker();
 $('#btn-tree').onclick=()=>{post('/submit',{input:'/tree'});};
+$('#btn-stats').onclick=()=>openStats();
+
+// ── cumulative stats ──
+let cumulativeTokens=0, cumulativeCost=0, cumulativeCacheHit=0, cumulativeCacheMiss=0, sessionCount=0;
+function openStats(){
+  const modal=$('#stats-modal');
+  if(!modal)return;
+  // populate from latest status
+  fetch('/status').then(r=>r.json()).then(s=>{
+    $('#stats-model').textContent=s.label||'-';
+    $('#stats-sessions').textContent=sessionCount||'0';
+    const total=cumulativeTokens||s.used||0;
+    $('#stats-total-tokens').textContent=total>=1000?fmtTok(total):String(total);
+    const hit=cumulativeCacheHit||s.cacheHit||0, miss=cumulativeCacheMiss||s.cacheMiss||0;
+    const rate=hit+miss>0?Math.round(hit/(hit+miss)*100)+'%':'0%';
+    $('#stats-cache-rate').textContent=rate;
+    const cost=cumulativeCost||s.lastUsage?.cost||0;
+    $('#stats-total-cost').textContent=cost>0?fmtMoney(cost,s.lastUsage?.currency):'-';
+    $('#stats-balance').textContent=s.balance?.display||'-';
+    if(s.window){const pct=Math.min(100,Math.round(s.used/s.window*100));$('#stats-ctx-fill').style.width=pct+'%';$('#stats-ctx-used').textContent=fmtTok(s.used)+' tok';$('#stats-ctx-window').textContent=fmtTok(s.window)+' tok';}
+  }).catch(()=>{});
+  modal.style.display='flex';
+}
+$('#stats-modal-close').onclick=()=>{const m=$('#stats-modal');if(m)m.style.display='none';};
+$('#stats-modal').onclick=e=>{if(e.target===e.currentTarget){const m=$('#stats-modal');if(m)m.style.display='none';}};
+
+// ── session delete ──
+document.addEventListener('click',e=>{
+  const del=e.target.closest('.session-del');
+  if(!del)return;
+  e.stopPropagation();
+  const path=del.dataset.path;
+  if(path&&confirm('Delete this session?')){post('/delete-session',{path}).then(()=>loadSessions());}
+});
 
 // welcome examples
 $$('.welcome__ex').forEach(btn=>{btn.onclick=()=>{input.value=btn.dataset.prompt;send();};});
