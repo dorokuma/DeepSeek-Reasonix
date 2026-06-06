@@ -941,9 +941,18 @@ func (a *App) SwitchWorkspace(dir string) (string, error) {
 // HistoryMessage is one prior turn, for the frontend to repopulate its transcript
 // after a reload.
 type HistoryMessage struct {
-	Role      string `json:"role"`
-	Content   string `json:"content"`
-	Reasoning string `json:"reasoning,omitempty"`
+	Role       string            `json:"role"`
+	Content    string            `json:"content"`
+	Reasoning  string            `json:"reasoning,omitempty"`
+	ToolCalls  []HistoryToolCall `json:"toolCalls,omitempty"`
+	ToolCallID string            `json:"toolCallId,omitempty"`
+	ToolName   string            `json:"toolName,omitempty"`
+}
+
+type HistoryToolCall struct {
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	Arguments string `json:"arguments"`
 }
 
 // History returns the session's message log.
@@ -971,7 +980,18 @@ func historyMessages(msgs []provider.Message, resolveUserContent func(string) st
 		if m.Role == provider.RoleAssistant {
 			reasoning = m.ReasoningContent
 		}
-		out = append(out, HistoryMessage{Role: string(m.Role), Content: content, Reasoning: reasoning})
+		hm := HistoryMessage{Role: string(m.Role), Content: content, Reasoning: reasoning}
+		if m.Role == provider.RoleAssistant && len(m.ToolCalls) > 0 {
+			hm.ToolCalls = make([]HistoryToolCall, len(m.ToolCalls))
+			for i, tc := range m.ToolCalls {
+				hm.ToolCalls[i] = HistoryToolCall{ID: tc.ID, Name: tc.Name, Arguments: tc.Arguments}
+			}
+		}
+		if m.Role == provider.RoleTool {
+			hm.ToolCallID = m.ToolCallID
+			hm.ToolName = m.Name
+		}
+		out = append(out, hm)
 	}
 	return out
 }

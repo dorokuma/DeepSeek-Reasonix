@@ -189,6 +189,15 @@ export interface HistoryMessage {
   role: string;
   content: string;
   reasoning?: string;
+  toolCalls?: HistoryToolCall[];
+  toolCallId?: string;
+  toolName?: string;
+}
+
+export interface HistoryToolCall {
+  id: string;
+  name: string;
+  arguments: string;
 }
 
 // CheckpointMeta is one rewind point (a user turn) for the rewind UI.

@@ -119,6 +119,72 @@ type Action =
 
 // ---- reducer helpers (unchanged logic) ----
 
+export function historyMessagesToItems(messages: HistoryMessage[], idPrefix: string, startSeq = 0): { items: Item[]; seq: number } {
+  const resultByID = new Map<string, HistoryMessage>();
+  for (const m of messages) {
+    if (m.role === "tool" && m.toolCallId && !resultByID.has(m.toolCallId)) {
+      resultByID.set(m.toolCallId, m);
+    }
+  }
+
+  const items: Item[] = [];
+  let seq = startSeq;
+  const consumedToolIDs = new Set<string>();
+  for (const m of messages) {
+    if (m.role === "system") continue;
+    if (m.role === "user") {
+      if (m.content.trim() === "") continue;
+      items.push({ kind: "user", id: `${idPrefix}${seq}`, text: m.content });
+      seq++;
+      continue;
+    }
+    if (m.role === "assistant") {
+      const hasText = m.content.trim() !== "" || (m.reasoning ?? "").trim() !== "";
+      if (hasText) {
+        items.push({ kind: "assistant", id: `${idPrefix}${seq}`, text: m.content, reasoning: m.reasoning ?? "", streaming: false });
+        seq++;
+      }
+      for (const tc of m.toolCalls ?? []) {
+        const result = resultByID.get(tc.id);
+        if (tc.id) consumedToolIDs.add(tc.id);
+        const output = result?.content ?? "";
+        const error = output.startsWith("[error") || output.startsWith("Error:") ? output : undefined;
+        items.push({
+          kind: "tool",
+          id: tc.id || `${idPrefix}tool${seq}`,
+          name: tc.name,
+          args: tc.arguments ?? "",
+          readOnly: false,
+          status: error ? "error" : "done",
+          output,
+          error,
+          isShell: (tc.id || "").startsWith("shell-"),
+        });
+        seq++;
+      }
+      continue;
+    }
+    if (m.role === "tool") {
+      if (m.toolCallId && consumedToolIDs.has(m.toolCallId)) continue;
+      const output = m.content;
+      const error = output.startsWith("[error") || output.startsWith("Error:") ? output : undefined;
+      items.push({
+        kind: "tool",
+        id: m.toolCallId || `${idPrefix}tool${seq}`,
+        name: m.toolName || "tool",
+        args: "",
+        readOnly: false,
+        status: error ? "error" : "done",
+        output,
+        error,
+        isShell: (m.toolCallId || "").startsWith("shell-"),
+      });
+      seq++;
+    }
+  }
+  return { items, seq };
+}
+
 function ensureAssistant(s: State): { items: Item[]; id: string; seq: number } {
   if (s.currentAssistant) {
     const exists = s.items.some((it) => it.id === s.currentAssistant && it.kind === "assistant");
@@ -267,16 +333,8 @@ function reducer(s: State, a: Action): State {
     case "message_action_start": return { ...s, messageAction: a.action };
     case "message_action_done": return { ...s, messageAction: undefined };
     case "history": {
-      const visible = a.messages.filter(
-        (m) => (m.role === "user" && m.content.trim() !== "") ||
-               (m.role === "assistant" && (m.content.trim() !== "" || (m.reasoning ?? "").trim() !== "")),
-      );
-      const items: Item[] = visible.map((m, i) =>
-        m.role === "user"
-          ? { kind: "user", id: `h${i}`, text: m.content }
-          : { kind: "assistant", id: `h${i}`, text: m.content, reasoning: m.reasoning ?? "", streaming: false },
-      );
-      return { ...s, items, seq: s.seq + visible.length };
+      const { items, seq } = historyMessagesToItems(a.messages, "h", s.seq);
+      return { ...s, items, seq };
     }
     case "local_notice": return { ...s, running: false, turnActive: false, seq: s.seq + 1, items: [...s.items, { kind: "notice", id: `n${s.seq}`, level: a.level, text: a.text }] };
     case "clearApproval": return { ...s, approval: undefined };
