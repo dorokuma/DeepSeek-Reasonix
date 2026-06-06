@@ -277,7 +277,53 @@ func (s *Server) RunGraceful(ctx context.Context, addr string) error {
 
 func (s *Server) index(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_, _ = w.Write(indexHTML)
+	// Ensure legacy config is migrated before reading language setting
+	config.MigrateLegacyIfNeeded()
+	lang := "en"
+	if cfg, err := config.Load(); err == nil {
+		if dl := cfg.DesktopLanguage(); dl != "" {
+			lang = dl
+		}
+	}
+	html := string(indexHTML)
+	html = strings.ReplaceAll(html, "__LANG__", lang)
+	// Server-side i18n: replace __('key') in static HTML text nodes ONLY.
+	// JS __() handles dynamic content; must NOT touch <script> content
+	// to avoid breaking JavaScript syntax (e.g. __('thinking') → 思考中... without quotes).
+	i18nMap := i18nTranslations()
+	if trans, ok := i18nMap[lang]; ok {
+		// Split on <script, replace only in non-script segments
+		var buf strings.Builder
+		for {
+			idx := strings.Index(html, "<script")
+			if idx < 0 {
+				// No more script tags, replace in remaining content
+				s := html
+				for key, val := range trans {
+					s = strings.ReplaceAll(s, "__('"+key+"')", val)
+				}
+				buf.WriteString(s)
+				break
+			}
+			// Replace in content before <script
+			s := html[:idx]
+			for key, val := range trans {
+				s = strings.ReplaceAll(s, "__('"+key+"')", val)
+			}
+			buf.WriteString(s)
+			// Find </script> and keep script content verbatim
+			closing := strings.Index(html[idx:], "</script>")
+			if closing < 0 {
+				buf.WriteString(html[idx:])
+				break
+			}
+			closing += idx + len("</script>")
+			buf.WriteString(html[idx:closing])
+			html = html[closing:]
+		}
+		html = buf.String()
+	}
+	_, _ = w.Write([]byte(html))
 }
 
 // sseKeepaliveInterval is how often the /events handler emits a `: ping`
