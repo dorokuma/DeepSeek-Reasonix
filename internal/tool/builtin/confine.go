@@ -9,6 +9,11 @@ import (
 	"reasonix/internal/tool"
 )
 
+// ConfineCtxRun returns ctx_run bound to an OS-sandbox spec and workdir.
+func ConfineCtxRun(spec sandbox.Spec, workDir string) tool.Tool {
+	return ctxRun{sb: spec, workDir: workDir}
+}
+
 // ConfineBash returns the bash built-in bound to an OS-sandbox spec, overriding
 // the unconfined instance registered at init. When the spec enforces, bash runs
 // each command through the sandbox (see package sandbox).

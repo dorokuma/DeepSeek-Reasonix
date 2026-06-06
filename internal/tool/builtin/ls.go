@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"reasonix/internal/rtk"
 	"reasonix/internal/tool"
 )
 
@@ -44,9 +45,24 @@ func (l listDir) Execute(ctx context.Context, args json.RawMessage) (string, err
 	}
 	p.Path = resolveIn(l.workDir, p.Path)
 
-	// Recursive mode: walk the whole tree depth-first.
+	// Recursive mode: try RTK tree when rewrite accepts, else native walk.
 	if p.Recursive {
+		if rtk.Active() {
+			if out, err := rtk.RunShellIfRewritten(ctx, l.workDir, rtk.TreeShell(p.Path), "ls"); err == nil {
+				return out, nil
+			}
+		}
 		return l.listRecursive(p.Path)
+	}
+
+	if rtk.Active() {
+		shellCmd := rtk.LsShell(p.Path)
+		if out, err := rtk.RunShellIfRewritten(ctx, l.workDir, shellCmd, "ls"); err == nil {
+			if out == "" || out == "(empty)" {
+				return "(empty directory)", nil
+			}
+			return out, nil
+		}
 	}
 
 	entries, err := os.ReadDir(p.Path)

@@ -17,6 +17,7 @@ import (
 
 	fileenc "reasonix/internal/fileutil/encoding"
 	"reasonix/internal/proc"
+	"reasonix/internal/rtk"
 	"reasonix/internal/tool"
 )
 
@@ -29,13 +30,16 @@ func init() { tool.RegisterBuiltin(grepTool{}) }
 // ripgrep binary the search delegates to instead of the native Go scanner.
 type grepTool struct {
 	workDir string
-	rg      string
+	search  SearchSpec
 }
 
 func (grepTool) Name() string { return "grep" }
 
 func (g grepTool) Description() string {
-	if g.rg != "" {
+	if g.search.PreferRewrite() {
+		return "Search for a regular expression in a file or directory — RTK rewrite proxy when supported, capped at 200 matches."
+	}
+	if g.search.RgPath != "" {
 		return "Search for a regular expression in a file, or recursively under a directory — ripgrep-backed, so it honors .gitignore. Returns matching lines as path:line:text, capped at 200 matches."
 	}
 	return "Search for a regular expression in a file, or recursively under a directory (skips hidden files and files matched by .gitignore). Returns matching lines as path:line:text, capped at 200 matches."
@@ -62,7 +66,13 @@ func (g grepTool) Execute(ctx context.Context, args json.RawMessage) (string, er
 		p.Path = "."
 	}
 	p.Path = resolveIn(g.workDir, p.Path)
-	if g.rg != "" {
+	if g.search.PreferRewrite() {
+		shellCmd := rtk.RipgrepShell(p.Pattern, p.Path)
+		if out, err := rtk.RunShellIfRewritten(ctx, g.workDir, shellCmd, "grep"); err == nil {
+			return capGrepMatches(out), nil
+		}
+	}
+	if g.search.RgPath != "" {
 		return g.runRipgrep(ctx, p.Pattern, p.Path)
 	}
 	re, err := regexp.Compile(p.Pattern)
@@ -197,7 +207,7 @@ func (g grepTool) Execute(ctx context.Context, args json.RawMessage) (string, er
 // path:line:text with these flags and honors .gitignore. Output is streamed and
 // capped at grepMaxMatches so a flood of hits can't blow up memory.
 func (g grepTool) runRipgrep(ctx context.Context, pattern, path string) (string, error) {
-	cmd := exec.CommandContext(ctx, g.rg,
+	cmd := exec.CommandContext(ctx, g.search.RgPath,
 		"--no-heading", "--line-number", "--with-filename", "--color", "never",
 		"--regexp", pattern, "--", path)
 	proc.HideWindow(cmd)
@@ -243,10 +253,21 @@ func (g grepTool) runRipgrep(ctx context.Context, pattern, path string) (string,
 	return res, nil
 }
 
-// SearchSpec configures the grep tool's engine. A non-empty RgPath makes grep
-// delegate to that ripgrep binary; empty uses the native Go scanner.
+// SearchSpec configures the grep tool's engine.
 type SearchSpec struct {
 	RgPath string
+	Engine string // auto (default), rtk, rg, native
+}
+
+// PreferRewrite reports whether grep should try rtk rewrite before ripgrep/native.
+// Auto/rg keep ripgrep for .gitignore semantics; bash already rewrites bare rg.
+func (s SearchSpec) PreferRewrite() bool {
+	switch strings.ToLower(strings.TrimSpace(s.Engine)) {
+	case "rtk":
+		return rtk.Available() && rtk.ModeFromEnv() != rtk.ModeOff
+	default:
+		return false
+	}
 }
 
 // ResolveSearch picks the grep engine from config. "native" forces the Go
@@ -266,24 +287,53 @@ func ResolveSearch(engine, rgPath string, warn io.Writer) SearchSpec {
 		}
 		return ""
 	}
-	switch strings.ToLower(strings.TrimSpace(engine)) {
+	engine = strings.ToLower(strings.TrimSpace(engine))
+	switch engine {
 	case "native":
-		return SearchSpec{}
+		return SearchSpec{Engine: "native"}
+	case "rtk":
+		if rtk.Available() {
+			spec := SearchSpec{Engine: "rtk"}
+			if p := find(); p != "" {
+				spec.RgPath = p // fallback when RTK rewrite/exec declines
+			}
+			return spec
+		}
+		if warn != nil {
+			fmt.Fprintln(warn, `warning: [tools.search] engine="rtk" but rtk was not found; falling back`)
+		}
+		if p := find(); p != "" {
+			return SearchSpec{Engine: "auto", RgPath: p}
+		}
+		return SearchSpec{Engine: "native"}
 	case "rg":
 		if p := find(); p != "" {
-			return SearchSpec{RgPath: p}
+			return SearchSpec{Engine: "rg", RgPath: p}
 		}
 		if warn != nil {
 			fmt.Fprintln(warn, `warning: [tools.search] engine="rg" but ripgrep (rg) was not found; using the native search engine`)
 		}
-		return SearchSpec{}
+		return SearchSpec{Engine: "native"}
 	default: // "auto", ""
-		return SearchSpec{RgPath: find()}
+		if p := find(); p != "" {
+			return SearchSpec{Engine: "auto", RgPath: p}
+		}
+		return SearchSpec{Engine: "auto"}
 	}
 }
 
 // ConfineSearch returns the grep built-in bound to a resolved search engine,
 // overriding the native instance registered at init.
 func ConfineSearch(spec SearchSpec) tool.Tool {
-	return grepTool{rg: spec.RgPath}
+	return grepTool{search: spec}
+}
+
+// capGrepMatches trims RTK/rg output to grepMaxMatches lines.
+func capGrepMatches(out string) string {
+	lines := strings.Split(strings.TrimSpace(out), "\n")
+	if len(lines) <= grepMaxMatches {
+		return out
+	}
+	res := strings.Join(lines[:grepMaxMatches], "\n")
+	return res + fmt.Sprintf("\n... (truncated at %d matches)", grepMaxMatches)
 }

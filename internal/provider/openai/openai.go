@@ -38,7 +38,7 @@ func New(cfg provider.Config) (provider.Provider, error) {
 	}
 	keyEnv, _ := cfg.Extra["api_key_env"].(string) // for actionable auth errors
 	effort, _ := cfg.Extra["effort"].(string)
-	deepseek := isDeepSeekBaseURL(cfg.BaseURL)
+	deepseek := isDeepSeekBaseURL(cfg.BaseURL) || isDeepSeekModel(cfg.Model)
 	if deepseek {
 		effort = strings.ToLower(strings.TrimSpace(effort))
 		switch effort {
@@ -50,8 +50,7 @@ func New(cfg provider.Config) (provider.Provider, error) {
 		}
 	} else if effort != "" {
 		// Non-DeepSeek backends use OpenAI's reasoning_effort scale (low/medium/
-		// high); "max" is a DeepSeek-ism MiMo et al. reject with 400, so clamp it
-		// to the OpenAI ceiling and reject other values at boot, not at request time.
+		// high). "max" is a DeepSeek-ism; MiMo et al. reject with 400.
 		effort = strings.ToLower(strings.TrimSpace(effort))
 		switch effort {
 		case "max":
@@ -107,6 +106,10 @@ func isDeepSeekBaseURL(baseURL string) bool {
 	}
 	host := strings.ToLower(u.Hostname())
 	return host == "api.deepseek.com" || strings.HasSuffix(host, ".deepseek.com")
+}
+
+func isDeepSeekModel(model string) bool {
+	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(model)), "deepseek")
 }
 
 // bufPool reuses byte buffers for JSON-marshalled request bodies. Each turn
@@ -184,17 +187,19 @@ func (c *client) buildRequest(req provider.Request) chatRequest {
 	src := provider.SanitizeToolPairing(req.Messages)
 	msgs := make([]chatMessage, len(src))
 	for i, m := range src {
-		// reasoning_content is deliberately NOT sent back: it's a response-only
-		// field. DeepSeek counts re-sent reasoning as billable prompt input
-		// (measured ~500 extra tokens per turn on a reasoner chain); MiMo accepts
-		// it but does not require it (verified empirically: multi-turn tool-call
-		// sessions work fine without it, saving ~18 tokens/turn). The session
-		// still keeps it (for display/archive); we just don't pay to re-upload it.
 		cm := chatMessage{
 			Role:       string(m.Role),
 			Content:    m.Content,
 			ToolCallID: m.ToolCallID,
 			Name:       m.Name,
+		}
+		// DeepSeek thinking mode: tool-call turns must round-trip reasoning_content
+		// exactly as returned — even when it is an empty string. Omitting the field
+		// (Go's omitempty) triggers HTTP 400: "reasoning_content … must be passed
+		// back to the API." Pure chat turns between user messages may omit it.
+		if c.deepseek && needsReasoningRoundTrip(src, i) {
+			rc := m.ReasoningContent
+			cm.ReasoningContent = &rc
 		}
 		for _, tc := range m.ToolCalls {
 			wire := chatToolCall{ID: tc.ID, Type: "function"}
@@ -421,8 +426,10 @@ type chatMessage struct {
 	ToolCalls  []chatToolCall `json:"tool_calls,omitempty"`
 	ToolCallID string         `json:"tool_call_id,omitempty"`
 	Name       string         `json:"name,omitempty"`
-	// no reasoning_content field: it is a response-only signal and is never sent
-	// back upstream — re-uploading it is paid prompt input.
+	// Pointer so an intentional empty string serializes as "reasoning_content":""
+	// for tool-call turns; omitempty on a plain string would drop the field and
+	// DeepSeek returns HTTP 400.
+	ReasoningContent *string `json:"reasoning_content,omitempty"`
 }
 
 type chatTool struct {

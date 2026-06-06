@@ -222,10 +222,10 @@ func TestBuiltinInitIsInlineSkill(t *testing.T) {
 func TestBuiltinSubagentSkillsDeclareAllowedTools(t *testing.T) {
 	st := New(Options{HomeDir: t.TempDir()})
 	cases := map[string][]string{
-		"explore":         {"read_file", "ls", "glob", "grep"},
-		"research":        {"read_file", "ls", "glob", "grep", "web_fetch"},
-		"review":          {"read_file", "ls", "glob", "grep", "bash"},
-		"security-review": {"read_file", "ls", "glob", "grep", "bash"},
+		"explore":         {"read_file", "ls", "glob", "grep", "ctx_read", "ctx_search", "ctx_run"},
+		"research":        {"read_file", "ls", "glob", "grep", "ctx_read", "ctx_search", "ctx_run", "web_fetch"},
+		"review":          {"read_file", "ls", "glob", "grep", "bash", "ctx_read", "ctx_search", "ctx_run"},
+		"security-review": {"read_file", "ls", "glob", "grep", "bash", "ctx_read", "ctx_search", "ctx_run"},
 	}
 	for name, want := range cases {
 		sk, ok := st.Read(name)

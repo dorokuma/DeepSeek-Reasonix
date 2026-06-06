@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"reasonix/internal/jobs"
+	"reasonix/internal/rtk"
 	"reasonix/internal/sandbox"
 	"reasonix/internal/tool"
 )
@@ -116,6 +117,11 @@ func (b bash) Execute(ctx context.Context, args json.RawMessage) (string, error)
 	if p.Command == "" {
 		return "", fmt.Errorf("command is required")
 	}
+
+	// Transparent RTK proxy: rewrite the command when RTK has a compact filter.
+	// Background jobs still benefit from compact command output; only the
+	// incremental bash_output polling path is unchanged.
+	p.Command = rtk.ApplySegments(p.Command)
 
 	sh := b.resolved()
 	if !sh.SupportsChaining() && (hasUnquotedSeq(p.Command, "&&") || hasUnquotedSeq(p.Command, "||")) {

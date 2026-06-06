@@ -13,6 +13,8 @@ import (
 	"reasonix/internal/codegraph"
 	"reasonix/internal/config"
 	"reasonix/internal/netclient"
+	"reasonix/internal/ctxmode"
+	"reasonix/internal/rtk"
 	"reasonix/internal/sandbox"
 )
 
@@ -33,6 +35,8 @@ type Report struct {
 	LSP        LSPReport        `json:"lsp"`
 	Sessions   SessionsReport   `json:"sessions"`
 	Sandbox    SandboxReport    `json:"sandbox"`
+	RTK        RTKReport        `json:"rtk"`
+	Ctx        CtxReport        `json:"ctx"`
 	Network    NetworkReport    `json:"network"`
 	Permission PermissionReport `json:"permission"`
 	Warnings   []string         `json:"warnings,omitempty"`
@@ -82,6 +86,29 @@ type SessionsReport struct {
 	Count int    `json:"count"`
 	Bytes int64  `json:"bytes"`
 	Error string `json:"error,omitempty"`
+}
+
+type CtxReport struct {
+	Active        bool              `json:"active"`
+	Threshold     int               `json:"threshold"`
+	JournalOK     bool              `json:"journal_ok"`
+	CacheDirs     int               `json:"cache_dirs,omitempty"`
+	OrphansPruned int               `json:"orphans_pruned,omitempty"`
+	Env           map[string]string `json:"env,omitempty"`
+}
+
+type RTKReport struct {
+	Mode      string            `json:"mode"`
+	Path      string            `json:"path,omitempty"`
+	Version   string            `json:"version,omitempty"`
+	RewriteOK bool              `json:"rewrite_ok"`
+	GrepOK    bool              `json:"grep_ok"`
+	PipeOK    bool              `json:"pipe_ok"`
+	ReadLimit int               `json:"read_limit,omitempty"`
+	Timeout   string            `json:"timeout,omitempty"`
+	Env       map[string]string `json:"env,omitempty"`
+	Sample    string            `json:"sample,omitempty"`
+	Warning   string            `json:"warning,omitempty"`
 }
 
 type SandboxReport struct {
@@ -146,6 +173,8 @@ func Collect(opts Options) Report {
 			WriteRoots: redactHomeAll(cfg.WriteRoots()),
 			Available:  sandbox.Available(),
 		},
+		RTK: collectRTK(),
+		Ctx: collectCtx(),
 		Network: NetworkReport{
 			ProxyMode: cfg.NetworkProxyMode(),
 			Proxy:     netclient.Summary(cfg.NetworkProxySpec()),
@@ -190,6 +219,9 @@ func Collect(opts Options) Report {
 			AutoStart: p.ShouldAutoStart(),
 			Target:    pluginTarget(p),
 		})
+	}
+	if report.RTK.Warning != "" && !report.RTK.RewriteOK {
+		report.Warnings = append(report.Warnings, "rtk: "+report.RTK.Warning)
 	}
 	return report
 }
@@ -255,6 +287,63 @@ func RenderText(r Report) string {
 		fmt.Fprintf(&b, "  warning      %s\n", r.Sessions.Error)
 	}
 
+	fmt.Fprintf(&b, "\nrtk\n")
+	fmt.Fprintf(&b, "  mode         %s\n", r.RTK.Mode)
+	if r.RTK.Path != "" {
+		fmt.Fprintf(&b, "  path         %s\n", redactHome(r.RTK.Path))
+	}
+	if r.RTK.Version != "" {
+		fmt.Fprintf(&b, "  version      %s\n", r.RTK.Version)
+	}
+	if r.RTK.RewriteOK {
+		fmt.Fprintf(&b, "  rewrite      ok (%s)\n", r.RTK.Sample)
+	} else if r.RTK.Warning != "" {
+		fmt.Fprintf(&b, "  warning      %s\n", r.RTK.Warning)
+	}
+	if r.RTK.GrepOK {
+		fmt.Fprintf(&b, "  grep         ok (builtin → rtk grep)\n")
+	}
+	if r.RTK.PipeOK {
+		fmt.Fprintf(&b, "  pipe         ok (large output compaction)\n")
+	}
+	if r.RTK.Timeout != "" {
+		fmt.Fprintf(&b, "  timeout      %s\n", r.RTK.Timeout)
+	}
+	if r.RTK.ReadLimit > 0 && r.RTK.ReadLimit != 2000 {
+		fmt.Fprintf(&b, "  read_limit   %d lines (rtk mode)\n", r.RTK.ReadLimit)
+	}
+	for _, key := range []string{"REASONIX_RTK", "REASONIX_RTK_TIMEOUT", "REASONIX_RTK_READ_LIMIT", "REASONIX_RTK_LOG"} {
+		if r.RTK.Env == nil {
+			break
+		}
+		if v, ok := r.RTK.Env[key]; ok {
+			fmt.Fprintf(&b, "  %-14s %s\n", key, v)
+		}
+	}
+
+	fmt.Fprintf(&b, "\nctx\n")
+	fmt.Fprintf(&b, "  active       %v\n", r.Ctx.Active)
+	if r.Ctx.Threshold > 0 {
+		fmt.Fprintf(&b, "  threshold    %d bytes\n", r.Ctx.Threshold)
+	}
+	if r.Ctx.JournalOK {
+		fmt.Fprintf(&b, "  journal      ok (FTS5 compaction resume)\n")
+	}
+	if r.Ctx.CacheDirs > 0 {
+		fmt.Fprintf(&b, "  cache_dirs   %d\n", r.Ctx.CacheDirs)
+	}
+	if r.Ctx.OrphansPruned > 0 {
+		fmt.Fprintf(&b, "  pruned       %d orphan cache dirs\n", r.Ctx.OrphansPruned)
+	}
+	for _, key := range []string{"REASONIX_CTX", "REASONIX_CTX_THRESHOLD", "REASONIX_CTX_LOG"} {
+		if r.Ctx.Env == nil {
+			break
+		}
+		if v, ok := r.Ctx.Env[key]; ok {
+			fmt.Fprintf(&b, "  %-14s %s\n", key, v)
+		}
+	}
+
 	fmt.Fprintf(&b, "\nsandbox\n")
 	bashLine := r.Sandbox.Bash
 	if r.Sandbox.Bash == "enforce" && !r.Sandbox.Available {
@@ -273,6 +362,36 @@ func RenderText(r Report) string {
 	fmt.Fprintf(&b, "  mode         %s\n", valueOr(r.Permission.Mode, "ask"))
 	fmt.Fprintf(&b, "  rules        allow:%d ask:%d deny:%d\n", r.Permission.AllowRules, r.Permission.AskRules, r.Permission.DenyRules)
 	return b.String()
+}
+
+func collectRTK() RTKReport {
+	p := rtk.CollectProbe()
+	return RTKReport{
+		Mode:      p.Mode,
+		Path:      redactHome(p.Path),
+		Version:   p.Version,
+		RewriteOK: p.RewriteOK,
+		GrepOK:    p.GrepOK,
+		PipeOK:    p.PipeOK,
+		ReadLimit: p.ReadLimit,
+		Timeout:   p.Timeout,
+		Env:       p.Env,
+		Sample:    p.Sample,
+		Warning:   p.Warning,
+	}
+}
+
+func collectCtx() CtxReport {
+	p := ctxmode.CollectProbe()
+	pruned, _ := ctxmode.PruneOrphanCache()
+	return CtxReport{
+		Active:        p.Active,
+		Threshold:     p.Threshold,
+		JournalOK:     p.JournalOK,
+		CacheDirs:     ctxmode.CountCacheDirs(),
+		OrphansPruned: pruned,
+		Env:           p.Env,
+	}
 }
 
 func collectSessions(dir string) SessionsReport {

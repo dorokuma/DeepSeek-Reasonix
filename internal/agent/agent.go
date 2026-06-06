@@ -5,11 +5,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"unicode/utf8"
 
+	"reasonix/internal/ctxmode"
 	"reasonix/internal/diff"
 	"reasonix/internal/event"
 	"reasonix/internal/evidence"
@@ -187,10 +189,16 @@ type Agent struct {
 	// verify against same-turn bash receipts after a write-backed completion.
 	projectChecks []instruction.VerifyCheck
 
+	// writeFailureVerifier appends a footer when write/edit tools failed this turn.
+	writeFailureVerifier bool
+
 	// memQueue, when non-nil, lets the remember/forget tools fold a turn-tail note
 	// about a just-made memory change into the next turn, so it applies this
 	// session without touching the cache-stable prefix. Set via SetMemoryQueue.
 	memQueue memory.Queue
+
+	// ctxStore holds sandboxed tool output for ctx_read/ctx_search/ctx_run. nil when REASONIX_CTX=off.
+	ctxStore *ctxmode.Store
 
 	// Context management: when a turn's prompt nears contextWindow, the older
 	// middle of the session is summarized away, keeping a token-bounded recent
@@ -297,6 +305,26 @@ func (a *Agent) ContextWindow() int { return a.contextWindow }
 // fires (e.g. 0.8). The status line uses it to show headroom to the next compact.
 func (a *Agent) CompactRatio() float64 { return a.compactRatio }
 
+// ResetCtxStore removes the current store and opens a fresh one when ctxmode is on.
+// Called on /new session rotation.
+func (a *Agent) ResetCtxStore() {
+	if a.ctxStore != nil {
+		a.ctxStore.Remove()
+		a.ctxStore = nil
+	}
+	if ctxmode.Active() {
+		a.ctxStore = ctxmode.NewStore()
+	}
+}
+
+// CleanupCtxStore removes on-disk sandbox data. Called when the controller closes.
+func (a *Agent) CleanupCtxStore() {
+	if a.ctxStore != nil {
+		a.ctxStore.Remove()
+		a.ctxStore = nil
+	}
+}
+
 // CompactNow runs one compaction pass immediately, regardless of the
 // usage-ratio threshold maybeCompact normally honours. Used by the chat
 // TUI's `/compact` command so the user can reset the prefix before it
@@ -330,6 +358,10 @@ type Options struct {
 	// Jobs is the session's background-job manager (nil disables background tools).
 	Jobs *jobs.Manager
 
+	// CtxStore optionally shares a parent session's ctxmode store (sub-agents).
+	// When nil and ctxmode is active, New creates a fresh store.
+	CtxStore *ctxmode.Store
+
 	// ProjectChecks are host-observable structured checks extracted during boot.
 	ProjectChecks []instruction.VerifyCheck
 }
@@ -362,6 +394,10 @@ func New(prov provider.Provider, tools *tool.Registry, session *Session, opts Op
 	if nilutil.IsNil(hooks) {
 		hooks = nil
 	}
+	ctxStore := opts.CtxStore
+	if ctxStore == nil && ctxmode.Active() {
+		ctxStore = ctxmode.NewStore()
+	}
 	return &Agent{
 		prov:              prov,
 		tools:             tools,
@@ -373,9 +409,11 @@ func New(prov provider.Provider, tools *tool.Registry, session *Session, opts Op
 		gate:              gate,
 		hooks:             hooks,
 		jobs:              opts.Jobs,
+		ctxStore:          ctxStore,
 		evidence:          evidence.NewLedger(),
-		projectChecks:     append([]instruction.VerifyCheck(nil), opts.ProjectChecks...),
-		contextWindow:     opts.ContextWindow,
+		projectChecks:        append([]instruction.VerifyCheck(nil), opts.ProjectChecks...),
+		writeFailureVerifier: true,
+		contextWindow:        opts.ContextWindow,
 		softCompactRatio:  opts.SoftCompactRatio,
 		compactRatio:      opts.CompactRatio,
 		compactForceRatio: opts.CompactForceRatio,
@@ -397,9 +435,13 @@ func (a *Agent) Run(ctx context.Context, input string) error {
 	a.repeatSuccessCounts = nil
 	a.sink.Emit(event.Event{Kind: event.TurnStarted})
 	a.session.Add(provider.Message{Role: provider.RoleUser, Content: input})
+	if a.ctxStore != nil {
+		ctxmode.RecordUserPrompt(a.ctxStore.Journal(), input)
+	}
 
 	finalReadinessBlocks := 0
-	emptyFinalBlocks := 0
+	var emptyRecovery emptyRecoveryState
+	var visibilityRecovery visibilityRecoveryState
 	for step := 0; a.maxSteps <= 0 || step < a.maxSteps; step++ {
 		schemas := a.tools.Schemas()
 		prefixShape := a.capturePrefixShape(schemas)
@@ -424,17 +466,13 @@ func (a *Agent) Run(ctx context.Context, input string) error {
 			a.sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelWarn, Text: msg})
 		}
 
-		// Keep reasoning_content on the assistant turn for display and session
-		// archive. It is NOT re-uploaded to the API: the openai provider drops it
-		// when building the request, since re-sent reasoning is billable prompt
-		// input for no cache or coherence gain.
-		a.session.Add(provider.Message{
+		assistantMsg := provider.Message{
 			Role:               provider.RoleAssistant,
 			Content:            text,
 			ReasoningContent:   reasoning,
 			ReasoningSignature: signature,
 			ToolCalls:          calls,
-		})
+		}
 
 		if len(calls) == 0 {
 			readiness := a.finalReadinessCheck()
@@ -452,22 +490,51 @@ func (a *Agent) Run(ctx context.Context, input string) error {
 				a.maybeCompact(ctx, usage)
 				continue
 			}
-			if !hasVisibleFinalAnswer(text) {
-				emptyFinalBlocks++
-				if emptyFinalBlocks >= maxEmptyFinalBlocks {
-					return fmt.Errorf("model finished without a visible final answer %d times", emptyFinalBlocks)
+			if !hasVisibleAssistantText(text) {
+				action, notice := decideEmptyRecovery(&emptyRecovery, text, reasoning, a.session.Snapshot())
+				switch action {
+				case emptyRecoveryContinuePrefill, emptyRecoveryContinueRetry:
+					a.session.Add(assistantMsg)
+					if notice != "" {
+						a.sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelInfo, Text: notice})
+					}
+					a.maybeCompact(ctx, usage)
+					continue
+				case emptyRecoveryContinueNudge:
+					a.session.Add(assistantMsg)
+					a.session.Add(provider.Message{Role: provider.RoleUser, Content: postToolEmptyNudge})
+					if notice != "" {
+						a.sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelInfo, Text: notice})
+					}
+					a.maybeCompact(ctx, usage)
+					continue
+				case emptyRecoveryExhausted:
+					a.trimEmptyResponseScaffolding()
+					a.emitEmptyResponseFallback()
+					a.session.Add(provider.Message{Role: provider.RoleAssistant, Content: emptyResponseUserMessage})
+					return nil
 				}
-				a.sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelWarn, Text: "empty final answer blocked: model returned no visible answer text; retrying"})
-				a.session.Add(provider.Message{Role: provider.RoleUser, Content: emptyFinalRetryMessage()})
+			}
+
+			if action, notice := decideVisibilityRecovery(&visibilityRecovery, text, lastUserMessage(a.session.Snapshot())); action == visibilityRecoveryContinueNudge {
+				a.session.Add(assistantMsg)
+				a.session.Add(provider.Message{Role: provider.RoleUser, Content: visibilityNudge})
+				if notice != "" {
+					a.sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelInfo, Text: notice})
+				}
 				a.maybeCompact(ctx, usage)
 				continue
 			}
-			if readiness.applies {
-				event.RecordReadinessAudit(a.sink, readiness.audit(evidence.ReadinessAllowed, finalReadinessBlocks > 0))
+
+			a.trimEmptyResponseScaffolding()
+			if hasVisibleAssistantText(text) {
+				assistantMsg.Content = appendWriteFailureFooter(text, a.evidence, a.writeFailureVerifier)
 			}
+			a.session.Add(assistantMsg)
 			return nil // model gave a final answer
 		}
-		emptyFinalBlocks = 0
+		// Keep reasoning_content on tool-call turns for session archive.
+		a.session.Add(assistantMsg)
 
 		results := a.executeBatch(ctx, calls)
 		for i, call := range calls {
@@ -989,18 +1056,28 @@ func (a *Agent) executeOne(ctx context.Context, call provider.ToolCall) toolOutc
 	if a.memQueue != nil {
 		cctx = memory.WithQueue(cctx, a.memQueue)
 	}
+	if a.ctxStore != nil {
+		cctx = ctxmode.WithStore(cctx, a.ctxStore)
+	}
 	callID := call.ID
 	cctx = tool.WithProgress(cctx, func(chunk string) {
 		a.sink.Emit(event.Event{Kind: event.ToolProgress, Tool: event.Tool{ID: callID, Output: chunk}})
 	})
 	result, err := t.Execute(cctx, json.RawMessage(call.Arguments))
+	if a.ctxStore != nil {
+		ctxmode.RecordTool(a.ctxStore.Journal(), call.Name, json.RawMessage(call.Arguments), result, err)
+	}
 	if a.evidence != nil {
 		if call.Name == "complete_step" {
 			if err == nil {
 				a.evidence.Record(evidence.ReceiptFromToolCall(call.Name, json.RawMessage(call.Arguments), true, t.ReadOnly()))
 			}
 		} else {
-			a.evidence.Record(evidence.ReceiptFromToolCall(call.Name, json.RawMessage(call.Arguments), err == nil, t.ReadOnly()))
+			r := evidence.ReceiptFromToolCall(call.Name, json.RawMessage(call.Arguments), err == nil, t.ReadOnly())
+			if err != nil && r.Write {
+				r.ErrorPreview = evidence.ErrorPreviewFromToolOutput(result, err.Error())
+			}
+			a.evidence.Record(r)
 		}
 	}
 	// PostToolUse hooks observe the result (they can't block); fired whether the
@@ -1017,8 +1094,8 @@ func (a *Agent) executeOne(ctx context.Context, call provider.ToolCall) toolOutc
 		if !json.Valid([]byte(call.Arguments)) {
 			detail = strings.TrimRight(detail, "\n") + "\nThe arguments were not valid JSON. Re-emit them exactly per this schema:\n" + string(t.Schema())
 		}
-		body, truncMsg := truncateToolOutput(fmt.Sprintf("error: %v\n%s", err, detail))
-		return toolOutcome{output: body, errMsg: firstLine(err.Error()), truncated: truncMsg != "", truncMsg: truncMsg}
+		body, truncMsg := compactToolOutput(a.ctxStore, call.Name, json.RawMessage(call.Arguments), a.jobs, fmt.Sprintf("error: %v\n%s", err, detail))
+		return toolOutcome{output: body, errMsg: firstLine(err.Error()), truncated: truncMsg != "" || strings.Contains(body, "[truncated "), truncMsg: truncMsg}
 	}
 	a.recordRepeatSuccess(call, t)
 	// A foreground `task` sub-agent just finished — its result is the final answer.
@@ -1027,8 +1104,8 @@ func (a *Agent) executeOne(ctx context.Context, call provider.ToolCall) toolOutc
 	if a.hooks != nil && call.Name == "task" && !isBackgroundTaskCall(call.Arguments) {
 		a.hooks.SubagentStop(ctx, result)
 	}
-	body, truncMsg := truncateToolOutput(result)
-	return toolOutcome{output: body, truncated: truncMsg != "", truncMsg: truncMsg}
+	body, truncMsg := compactToolOutput(a.ctxStore, call.Name, json.RawMessage(call.Arguments), a.jobs, result)
+	return toolOutcome{output: body, truncated: truncMsg != "" || strings.Contains(body, "[truncated "), truncMsg: truncMsg}
 }
 
 func (a *Agent) repeatedSuccessBlock(call provider.ToolCall, t tool.Tool) (string, bool) {
@@ -1187,8 +1264,9 @@ func firstLine(s string) string {
 
 // truncateToolOutput head+tails s when it exceeds maxToolOutputBytes, slicing
 // on rune boundaries so we never split a multibyte glyph. Returns the possibly
-// trimmed body plus a one-line user-facing notice when truncation happened
-// (empty when it didn't, without the "· " display prefix).
+// trimmed body (which includes an internal "[truncated ...]" marker).
+// The one-line user-facing notice is suppressed (not emitted as Notice event
+// to avoid chat spam); truncation events are always logged via slog for debugging.
 func truncateToolOutput(s string) (string, string) {
 	if len(s) <= maxToolOutputBytes {
 		return s, ""
@@ -1197,9 +1275,9 @@ func truncateToolOutput(s string) (string, string) {
 	head := snapToRuneBoundary(s, 0, keep)
 	tail := snapToRuneBoundary(s, len(s)-keep, len(s))
 	omitted := len(s) - len(head) - len(tail)
-	notice := fmt.Sprintf("tool output truncated: %d of %d bytes elided", omitted, len(s))
+	slog.Info("tool output truncated", "omitted", omitted, "total", len(s))
 	body := head + fmt.Sprintf("\n\n…[truncated %d of %d bytes — rerun with narrower args to see the middle]…\n\n", omitted, len(s)) + tail
-	return body, notice
+	return body, ""
 }
 
 // snapToRuneBoundary returns s[lo:hi] with the bounds nudged outward until
