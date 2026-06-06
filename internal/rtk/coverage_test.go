@@ -1,47 +1,12 @@
 package rtk
 
 import (
-	"strings"
 	"testing"
 )
 
-// rewriteSamples maps representative shell commands to the RTK subcommand we
-// expect rewrite to produce. PASS entries must stay declined by rewrite.
-var rewriteSamples = []struct {
-	cmd        string
-	wantRTK    string // prefix after rewrite, empty = must decline
-	decline    bool
-}{
-	{cmd: "git status", wantRTK: "rtk git"},
-	{cmd: "ls .", wantRTK: "rtk ls"},
-	{cmd: "tree", wantRTK: "rtk tree"},
-	{cmd: "cat README.md", wantRTK: "rtk read"},
-	{cmd: "rg foo .", wantRTK: "rtk grep"},
-	{cmd: `find . -name '*.go'`, wantRTK: "rtk find"},
-	{cmd: "echo hello", decline: true},
-	{cmd: "python3 -c 'print(1)'", decline: true},
-	{cmd: "read README.md", decline: true},
-}
-
-func TestRewriteMatrix(t *testing.T) {
-	if !Available() {
-		t.Skip("rtk not on PATH")
-	}
-	for _, tc := range rewriteSamples {
-		tc := tc
-		t.Run(tc.cmd, func(t *testing.T) {
-			got := Rewrite(tc.cmd)
-			if tc.decline {
-				if got != "" {
-					t.Fatalf("rewrite %q = %q, want decline", tc.cmd, got)
-				}
-				return
-			}
-			if got == "" || !strings.HasPrefix(got, tc.wantRTK) {
-				t.Fatalf("rewrite %q = %q, want prefix %q", tc.cmd, got, tc.wantRTK)
-			}
-		})
-	}
+// integrationOnly are RTK subcommands Reasonix never invokes directly.
+var integrationOnly = map[string]bool{
+	"help": true,
 }
 
 func TestCoverageListsAllRTKFilters(t *testing.T) {
@@ -60,5 +25,50 @@ func TestCoverageListsAllRTKFilters(t *testing.T) {
 	}
 	if len(seen) < 40 {
 		t.Fatalf("coverage table too small: %d entries", len(seen))
+	}
+}
+
+func TestCoverageMatchesRTKHelp(t *testing.T) {
+	if !Available() {
+		t.Skip("rtk not on PATH")
+	}
+	help, err := ListHelpCommands()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(help) == 0 {
+		t.Fatal("rtk --help returned no commands")
+	}
+	byName := map[string]CoverageEntry{}
+	for _, e := range Coverage() {
+		byName[e.RTKCommand] = e
+	}
+	for _, cmd := range help {
+		if integrationOnly[cmd] {
+			continue
+		}
+		e, ok := byName[cmd]
+		if !ok {
+			t.Errorf("rtk --help lists %q but Coverage() has no entry", cmd)
+			continue
+		}
+		if e.Via == "" {
+			t.Errorf("%s: missing Via in coverage", cmd)
+		}
+	}
+	for name := range byName {
+		if integrationOnly[name] {
+			continue
+		}
+		found := false
+		for _, cmd := range help {
+			if cmd == name {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("Coverage() lists %q but rtk --help does not", name)
+		}
 	}
 }
