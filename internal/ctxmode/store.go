@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -43,13 +44,32 @@ func NewStore() *Store {
 	base := config.CacheDir()
 	if base != "" {
 		var slug [8]byte
-		_, _ = rand.Read(slug[:])
+		if _, err := rand.Read(slug[:]); err != nil {
+			slog.Warn("ctx store slug rand failed; using pid fallback", "err", err)
+			p := uint64(os.Getpid())
+			for i := range slug {
+				slug[i] = byte(p >> (8 * i))
+			}
+		} else {
+			// Mix pid to reduce cross-process slug collision risk even on good rand
+			// (addresses weak 8-byte naming without changing dir name length or prune regex).
+			p := uint64(os.Getpid())
+			for i := range slug {
+				slug[i] ^= byte(p >> (8 * i))
+			}
+		}
 		s.dir = filepath.Join(base, "ctxmode", hex.EncodeToString(slug[:]))
-		_ = os.MkdirAll(s.dir, 0o700)
-		markCacheAlive(s.dir)
-		_, _ = PruneOrphanCache()
+		if err := os.MkdirAll(s.dir, 0o700); err != nil {
+			slog.Warn("ctx store mkdir failed; falling back to memory", "dir", s.dir, "err", err)
+			s.dir = ""
+		} else {
+			markCacheAlive(s.dir)
+			_, _ = PruneOrphanCache()
+		}
 	}
-	if j, err := openJournal(s.dir); err == nil {
+	if j, err := openJournal(s.dir); err != nil {
+		LogJournalErr("open", err)
+	} else {
 		s.journal = j
 	}
 	return s
