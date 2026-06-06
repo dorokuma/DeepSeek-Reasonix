@@ -1,6 +1,7 @@
 package rtk
 
 import (
+	"context"
 	"testing"
 )
 
@@ -63,6 +64,55 @@ func TestRewrite_smoke(t *testing.T) {
 	}
 	if got := Rewrite("echo hello"); got != "" {
 		t.Fatalf("unsupported command should pass through, got %q", got)
+	}
+}
+
+func TestActive_defaultRewrite(t *testing.T) {
+	if !Available() {
+		t.Setenv("REASONIX_RTK", "rewrite")
+		if Active() {
+			t.Fatal("want inactive when rtk missing")
+		}
+		return
+	}
+	t.Setenv("REASONIX_RTK", "off")
+	if Active() {
+		t.Fatal("want inactive when off")
+	}
+	t.Setenv("REASONIX_RTK", "rewrite")
+	if !Active() {
+		t.Fatal("want active in rewrite mode")
+	}
+}
+
+func TestReadFileDefaultLimit(t *testing.T) {
+	t.Setenv("REASONIX_RTK", "off")
+	if ReadFileDefaultLimit() != 2000 {
+		t.Fatalf("off = %d", ReadFileDefaultLimit())
+	}
+	if !Available() {
+		return
+	}
+	t.Setenv("REASONIX_RTK", "rewrite")
+	if ReadFileDefaultLimit() != 800 {
+		t.Fatalf("rewrite default = %d", ReadFileDefaultLimit())
+	}
+	t.Setenv("REASONIX_RTK_READ_LIMIT", "1200")
+	if ReadFileDefaultLimit() != 1200 {
+		t.Fatalf("override = %d", ReadFileDefaultLimit())
+	}
+}
+
+func TestGrep_smoke(t *testing.T) {
+	if !Available() {
+		t.Skip("rtk not on PATH")
+	}
+	out, err := Grep(context.Background(), "/root/reasonix", "package rtk", "internal/rtk/rtk.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out == "" || out == "(no matches)" {
+		t.Fatalf("grep: %q", out)
 	}
 }
 

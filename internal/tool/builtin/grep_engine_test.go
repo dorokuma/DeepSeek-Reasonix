@@ -11,6 +11,7 @@ import (
 )
 
 func TestResolveSearch(t *testing.T) {
+	t.Setenv("REASONIX_RTK", "off")
 	rgFile := filepath.Join(t.TempDir(), "rg")
 	if err := os.WriteFile(rgFile, []byte("x"), 0o755); err != nil {
 		t.Fatal(err)
@@ -37,8 +38,8 @@ func TestResolveSearch(t *testing.T) {
 }
 
 func TestConfineSearch(t *testing.T) {
-	g, ok := ConfineSearch(SearchSpec{RgPath: "/path/to/rg"}).(grepTool)
-	if !ok || g.rg != "/path/to/rg" {
+	g, ok := ConfineSearch(SearchSpec{RgPath: "/path/to/rg", Engine: "rg"}).(grepTool)
+	if !ok || g.search.RgPath != "/path/to/rg" {
 		t.Fatalf("ConfineSearch must bind the rg path, got %+v ok=%v", g, ok)
 	}
 }
@@ -52,7 +53,7 @@ func TestGrepRipgrepEngine(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "a.txt"), []byte("alpha\nBETA needle here\ngamma\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	g := grepTool{rg: rg}
+	g := grepTool{search: SearchSpec{Engine: "rg", RgPath: rg}}
 
 	out := runTool(t, g, map[string]any{"pattern": "needle", "path": dir})
 	if !strings.Contains(out, "a.txt:2:BETA needle here") {

@@ -15,6 +15,7 @@ import (
 	"golang.org/x/text/transform"
 
 	fileenc "reasonix/internal/fileutil/encoding"
+	"reasonix/internal/rtk"
 	"reasonix/internal/tool"
 )
 
@@ -30,9 +31,7 @@ func init() { tool.RegisterBuiltin(readFile{}) }
 // at init resolves against the process working directory.
 type readFile struct{ workDir string }
 
-const (
-	readFileDefaultLimit = 2000 // lines returned when limit is unset
-)
+const readFileDefaultLimit = 2000 // lines when RTK is off and limit is unset
 
 func (readFile) Name() string { return "read_file" }
 
@@ -71,7 +70,7 @@ func (r readFile) Execute(ctx context.Context, args json.RawMessage) (string, er
 		p.Offset = 0
 	}
 	if p.Limit <= 0 {
-		p.Limit = readFileDefaultLimit
+		p.Limit = rtk.ReadFileDefaultLimit()
 	}
 
 	// A directory can be os.Open'd but not read as text — catch it up front with
