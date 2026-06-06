@@ -201,8 +201,8 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	pluginHost := plugin.NewHost()
 
 	// Partition configured plugins by tier so eager/lazy/background can each
-	// take the path that fits them. User entries default to lazy — they don't
-	// slow the next launch unless the user explicitly opts in to eager.
+	// take the path that fits them. User entries default to background: the
+	// session starts immediately while enabled MCP servers warm up.
 	eagerEntries, lazyEntries, bgEntries := partitionByTier(cfg.AutoStartPlugins())
 
 	// Auto-demote: any eager plugin that has been chronically slow (recent
@@ -748,7 +748,8 @@ func addBuiltins(reg *tool.Registry, enabled, writeRoots []string, bashSpec sand
 // partitionByTier splits configured plugin entries into the three startup
 // buckets — eager (block boot until ready), lazy (placeholder until first
 // model use), background (placeholder + start spawn now). Entries with an
-// unrecognised or empty tier land in lazy (the default).
+// empty tier land in background; unrecognised non-empty tiers land in lazy so a
+// typo never triggers unexpected background work.
 func partitionByTier(entries []config.PluginEntry) (eager, lazy, bg []config.PluginEntry) {
 	for _, e := range entries {
 		switch e.ResolvedTier() {
