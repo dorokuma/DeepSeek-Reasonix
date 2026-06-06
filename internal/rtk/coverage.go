@@ -63,7 +63,7 @@ func Coverage() []CoverageEntry {
 		{RTKCommand: "smart", Via: "bash", Notes: "explicit rtk smart only; no native shell rewrite"},
 		{RTKCommand: "run", Via: "none", Notes: "RTK meta executor"},
 		{RTKCommand: "proxy", Via: "none", Notes: "RTK meta"},
-		{RTKCommand: "pipe", Via: "none", Notes: "RTK meta"},
+		{RTKCommand: "pipe", Via: "agent", Notes: "large tool output when filter known; never for MCP"},
 		{RTKCommand: "rewrite", Via: "none", Notes: "integration gate"},
 		{RTKCommand: "hook", Via: "none", Notes: "external CLI hooks"},
 		{RTKCommand: "init", Via: "none", Notes: "RTK setup"},

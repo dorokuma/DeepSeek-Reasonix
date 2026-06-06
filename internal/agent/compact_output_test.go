@@ -1,0 +1,85 @@
+package agent
+
+import (
+	"context"
+	"encoding/json"
+	"io"
+	"strings"
+	"testing"
+
+	"reasonix/internal/event"
+	"reasonix/internal/jobs"
+	"reasonix/internal/rtk"
+)
+
+func TestPipeFilterHint_skipsMCP(t *testing.T) {
+	_, ok := pipeFilterHint("mcp__fs__read", nil, nil)
+	if ok {
+		t.Fatal("MCP tools must not get pipe filters")
+	}
+}
+
+func TestPipeFilterHint_grep(t *testing.T) {
+	f, ok := pipeFilterHint("grep", json.RawMessage(`{"pattern":"foo"}`), nil)
+	if !ok || f != "grep" {
+		t.Fatalf("grep hint = (%q, %v)", f, ok)
+	}
+}
+
+func TestCompactToolOutput_underCap(t *testing.T) {
+	in := "small"
+	out, notice := compactToolOutput("bash", nil, nil, in)
+	if out != in || notice != "" {
+		t.Fatalf("under cap unchanged: out=%q notice=%q", out, notice)
+	}
+}
+
+func TestCompactToolOutput_bashGitLog(t *testing.T) {
+	if !rtk.Available() {
+		t.Skip("rtk not on PATH")
+	}
+	t.Setenv("REASONIX_RTK", "rewrite")
+	var b strings.Builder
+	for i := 0; i < 400; i++ {
+		b.WriteString("commit abc\nAuthor: x\nDate: 2024\n\n    msg\n\n")
+	}
+	in := b.String()
+	if len(in) <= maxToolOutputBytes {
+		in = strings.Repeat(in, 2)
+	}
+	args := json.RawMessage(`{"command":"git log -400"}`)
+	out, notice := compactToolOutput("bash", args, nil, in)
+	if len(out) > maxToolOutputBytes {
+		t.Fatalf("output still over cap: %d", len(out))
+	}
+	if notice == "" || !strings.Contains(notice, "rtk pipe") {
+		t.Fatalf("want pipe notice, got %q", notice)
+	}
+}
+
+func TestCompactToolOutput_bashOutputUsesJobLabel(t *testing.T) {
+	if !rtk.Available() {
+		t.Skip("rtk not on PATH")
+	}
+	t.Setenv("REASONIX_RTK", "rewrite")
+	jm := jobs.NewManager(event.Discard)
+	j := jm.Start("bash", "git log -400", func(_ context.Context, _ io.Writer) (string, error) {
+		return "", nil
+	})
+	var b strings.Builder
+	for i := 0; i < 400; i++ {
+		b.WriteString("commit abc\nAuthor: x\nDate: 2024\n\n    msg\n\n")
+	}
+	in := b.String()
+	if len(in) <= maxToolOutputBytes {
+		in = strings.Repeat(in, 2)
+	}
+	args, _ := json.Marshal(map[string]string{"job_id": j.ID})
+	out, notice := compactToolOutput("bash_output", args, jm, in)
+	if len(out) > maxToolOutputBytes {
+		t.Fatalf("output still over cap: %d", len(out))
+	}
+	if notice == "" || !strings.Contains(notice, "git-log") {
+		t.Fatalf("want git-log pipe notice, got %q", notice)
+	}
+}
