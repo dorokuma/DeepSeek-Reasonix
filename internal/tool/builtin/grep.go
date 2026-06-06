@@ -293,7 +293,11 @@ func ResolveSearch(engine, rgPath string, warn io.Writer) SearchSpec {
 		return SearchSpec{Engine: "native"}
 	case "rtk":
 		if rtk.Available() {
-			return SearchSpec{Engine: "rtk"}
+			spec := SearchSpec{Engine: "rtk"}
+			if p := find(); p != "" {
+				spec.RgPath = p // fallback when RTK rewrite/exec declines
+			}
+			return spec
 		}
 		if warn != nil {
 			fmt.Fprintln(warn, `warning: [tools.search] engine="rtk" but rtk was not found; falling back`)

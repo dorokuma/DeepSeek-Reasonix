@@ -2,6 +2,7 @@ package agent
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 
 	"reasonix/internal/ctxmode"
@@ -11,20 +12,32 @@ import (
 )
 
 // compactToolOutput shrinks oversize tool output before it enters model context.
-// Order: ctxmode sandbox (read_file/grep/MCP), then rtk pipe when known, else truncation.
+// RTK pipe compacts semantically first; ctxmode sandboxes the full original for
+// paging; truncation is the last resort.
 func compactToolOutput(store *ctxmode.Store, toolName string, args json.RawMessage, jm *jobs.Manager, body string) (string, string) {
-	if summary, notice, ok := ctxmode.Transform(store, toolName, args, body); ok {
+	original := body
+	compactBody, pipeNotice, piped := tryRTKPipe(toolName, args, jm, body)
+
+	// CTX keeps the full original; model may see the RTK-compacted inline view.
+	if summary, notice, ok := ctxmode.TransformCooperative(store, toolName, args, original, compactBody, pipeNotice, piped, maxToolOutputBytes); ok {
 		if len(summary) <= maxToolOutputBytes {
 			return summary, notice
 		}
 		body = summary
+	} else if piped {
+		body = compactBody
+		if len(body) <= maxToolOutputBytes {
+			return body, pipeNotice
+		}
 	}
+
 	if len(body) <= maxToolOutputBytes {
 		return body, ""
 	}
-	if filter, ok := pipeFilterHint(toolName, args, jm); ok {
-		if compacted, err := rtk.PipeCompact(filter, body); err == nil {
-			notice := "tool output compacted via rtk pipe (" + filter + ")"
+
+	// Non-sandbox tools (bash): pipe may not have run yet below ctx threshold.
+	if !piped {
+		if compacted, notice, ok := tryRTKPipe(toolName, args, jm, body); ok {
 			if len(compacted) <= maxToolOutputBytes {
 				return compacted, notice
 			}
@@ -34,11 +47,34 @@ func compactToolOutput(store *ctxmode.Store, toolName string, args json.RawMessa
 			}
 			return truncated, notice
 		}
-		rtk.LogMissPipe(toolName, filter, len(body), "pipe_declined")
-	} else if rtk.Active() {
-		rtk.LogMissPipe(toolName, "", len(body), "no_pipe_filter")
 	}
+
 	return truncateToolOutput(body)
+}
+
+func tryRTKPipe(toolName string, args json.RawMessage, jm *jobs.Manager, body string) (compacted, notice string, ok bool) {
+	filter, hasFilter := pipeFilterHint(toolName, args, jm)
+	if !hasFilter {
+		if rtk.Active() && len(body) > ctxmode.ThresholdBytes() {
+			rtk.LogMissPipe(toolName, "", len(body), "no_pipe_filter")
+		}
+		return "", "", false
+	}
+	// Pipe when output is large enough to benefit (ctx threshold) or over hard cap.
+	if len(body) < ctxmode.ThresholdBytes() && len(body) <= maxToolOutputBytes {
+		return "", "", false
+	}
+	out, err := rtk.PipeCompact(filter, body)
+	if err != nil {
+		rtk.LogMissPipe(toolName, filter, len(body), "pipe_declined")
+		return "", "", false
+	}
+	if len(out) >= len(body) {
+		rtk.LogMissPipe(toolName, filter, len(body), "pipe_no_shrink")
+		return "", "", false
+	}
+	notice = fmt.Sprintf("rtk pipe (%s): %d→%d bytes", filter, len(body), len(out))
+	return out, notice, true
 }
 
 func pipeFilterHint(toolName string, args json.RawMessage, jm *jobs.Manager) (string, bool) {

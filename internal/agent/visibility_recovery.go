@@ -46,7 +46,15 @@ func lastUserMessage(msgs []provider.Message) string {
 // responseQuotesSubstantiveContent reports whether the assistant message actually
 // carries file/rule body the user can read, not just a meta summary.
 func responseQuotesSubstantiveContent(text string) bool {
+	trimmed := strings.TrimSpace(text)
+	if trimmed == "" {
+		return false
+	}
 	if strings.Contains(text, "```") {
+		return true
+	}
+	// Inline code / markdown samples (e.g. Telegram format tests) count as visible body.
+	if strings.Contains(text, "`") && len([]rune(trimmed)) >= 24 {
 		return true
 	}
 	headerLines := 0
@@ -79,14 +87,20 @@ func claimsContentIsElsewhere(text string) bool {
 
 func userRequestedVisibleContent(user string) bool {
 	u := strings.ToLower(strings.TrimSpace(user))
+	// Explicit "show me the file/rules" intent only — not "测试内容", "发内容", or casual "看看".
 	for _, k := range []string{
-		"内容", "全文", "贴出", "给我看", "展示", "读一下", "读取", "看看",
+		"内容是什么", "什么内容", "全文", "完整内容", "原文", "原样贴", "贴出来",
+		"给我看", "展示给", "展示一下",
 		"reasonix.md", "全局规则", "规则文件", "规则是什么", "什么规则",
-		"show me", "paste", "contents of", "full text",
+		"show me the", "paste the", "contents of", "full text of",
+		"文件内容",
 	} {
 		if strings.Contains(u, k) {
 			return true
 		}
+	}
+	if strings.Contains(u, "读取") || strings.Contains(u, "读一下") {
+		return strings.Contains(u, "文件") || strings.Contains(u, "规则") || strings.Contains(u, ".md")
 	}
 	return false
 }

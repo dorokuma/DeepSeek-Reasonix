@@ -151,8 +151,8 @@ Rules:
 // builtinSkills returns the shipped skills. A fresh slice each call so callers
 // can't mutate the shared set.
 func builtinSkills() []Skill {
-	readCodeTools := []string{"read_file", "ls", "glob", "grep"}
-	reviewTools := []string{"read_file", "ls", "glob", "grep", "bash"}
+	readCodeTools := []string{"read_file", "ls", "glob", "grep", "ctx_read", "ctx_search", "ctx_run"}
+	reviewTools := []string{"read_file", "ls", "glob", "grep", "bash", "ctx_read", "ctx_search", "ctx_run"}
 	return []Skill{
 		{
 			Name:        "init",

@@ -44,3 +44,30 @@ func TestDecideVisibilityRecoverySkipsRealPaste(t *testing.T) {
 		t.Fatalf("action = %v, want none when body is pasted", action)
 	}
 }
+
+func TestUserRequestedVisibleContentIgnoresSendContent(t *testing.T) {
+	t.Parallel()
+	if userRequestedVisibleContent("我让你发这个格式的测试内容呢") {
+		t.Fatal("send/test content should not count as show-me-file intent")
+	}
+}
+
+func TestDecideVisibilityRecoverySkipsFormatSample(t *testing.T) {
+	t.Parallel()
+	st := &visibilityRecoveryState{}
+	body := "**测试粗体** 和 *斜体* 和 `行内代码` 和 **`粗体+代码`**"
+	action, _ := decideVisibilityRecovery(st, body, "我让你发这个格式的测试内容呢")
+	if action != visibilityRecoveryNone {
+		t.Fatalf("action = %v, want none for inline formatted sample", action)
+	}
+}
+
+func TestDecideVisibilityRecoveryStillNudgesRulesQuestion(t *testing.T) {
+	t.Parallel()
+	st := &visibilityRecoveryState{}
+	msg := "规则都在上面了，包含身份和铁律。"
+	action, _ := decideVisibilityRecovery(st, msg, "REASONIX.md 内容是什么")
+	if action != visibilityRecoveryContinueNudge {
+		t.Fatalf("action = %v, want nudge for phantom rules reply", action)
+	}
+}

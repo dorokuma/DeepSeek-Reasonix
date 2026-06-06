@@ -11,22 +11,54 @@ import (
 // Transform stores oversized tool output and returns a short summary for the model.
 // ok is false when sandboxing does not apply (pass through to RTK/truncation).
 func Transform(store *Store, toolName string, args json.RawMessage, body string) (summary, notice string, ok bool) {
-	if store == nil || !Active() || len(body) < ThresholdBytes() {
+	return TransformCooperative(store, toolName, args, body, "", "", false, 0)
+}
+
+// TransformCooperative stores the full tool output for ctx_read/ctx_search and
+// returns a model-facing summary. When RTK pipe produced a smaller view
+// (compactBody), that text is shown inline; the sandbox always keeps fullBody.
+func TransformCooperative(store *Store, toolName string, args json.RawMessage, fullBody, compactBody, pipeNotice string, pipedOK bool, maxModelBytes int) (summary, notice string, ok bool) {
+	if store == nil || !Active() || len(fullBody) < ThresholdBytes() {
 		return "", "", false
 	}
 	if !sandboxTool(toolName) {
 		return "", "", false
 	}
 	subject := subjectFromArgs(toolName, args)
-	id, err := store.Put(toolName, subject, body)
+	id, err := store.Put(toolName, subject, fullBody)
 	if err != nil {
-		LogMissStore(toolName, len(body), err)
+		LogMissStore(toolName, len(fullBody), err)
 		return "", "", false
 	}
-	LogHitSandbox(toolName, id, len(body))
-	notice = fmt.Sprintf("tool output sandboxed via ctxmode (ref=%s, %d bytes)", id, len(body))
-	summary = buildSummary(id, toolName, subject, body)
+	LogHitSandbox(toolName, id, len(fullBody))
+	notice = fmt.Sprintf("tool output sandboxed via ctxmode (ref=%s, %d bytes)", id, len(fullBody))
+	if pipedOK && pipeNotice != "" {
+		notice += "; " + pipeNotice
+	}
+	useCompact := pipedOK && compactBody != "" && len(compactBody) < len(fullBody) &&
+		(maxModelBytes <= 0 || len(compactBody) <= maxModelBytes)
+	if useCompact {
+		summary = buildPipedSummary(id, toolName, subject, len(fullBody), compactBody)
+	} else {
+		summary = buildSummary(id, toolName, subject, fullBody)
+	}
 	return summary, notice, true
+}
+
+func buildPipedSummary(id, toolName, subject string, fullBytes int, compactBody string) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "[ctx] stored %s output (ref=%s, bytes=%d", toolName, id, fullBytes)
+	if subject != "" {
+		fmt.Fprintf(&b, ", subject=%q", subject)
+	}
+	b.WriteString(")\n")
+	b.WriteString("Full raw output is in ctx store. RTK-compacted view below; use ctx_read/ctx_search for the original.\n\n")
+	b.WriteString("--- RTK compact ---\n")
+	b.WriteString(compactBody)
+	if compactBody != "" && !strings.HasSuffix(compactBody, "\n") {
+		b.WriteByte('\n')
+	}
+	return b.String()
 }
 
 func sandboxTool(name string) bool {

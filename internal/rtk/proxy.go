@@ -72,10 +72,10 @@ func RunShellIfRewritten(ctx context.Context, workDir, cmd, surface string) (str
 		}
 		return "", ErrNotRewritten
 	}
-	return execShell(ctx, workDir, rewritten)
+	return execShell(ctx, workDir, rewritten, surface)
 }
 
-func execShell(ctx context.Context, workDir, cmd string) (string, error) {
+func execShell(ctx context.Context, workDir, cmd, surface string) (string, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -92,6 +92,15 @@ func execShell(ctx context.Context, workDir, cmd string) (string, error) {
 	out, err := c.CombinedOutput()
 	text := strings.TrimSpace(string(out))
 	if err != nil {
+		exitCode := -1
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			exitCode = exitErr.ExitCode()
+		}
+		// ripgrep/rtk grep: exit 1 with no stdout means "no matches", not failure.
+		if surface == "grep" && exitCode == 1 && text == "" {
+			return "(no matches)", nil
+		}
 		if text != "" {
 			return "", fmt.Errorf("%w: %s", err, text)
 		}
