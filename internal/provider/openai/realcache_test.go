@@ -167,11 +167,9 @@ func TestRealDeepSeekCacheProbe(t *testing.T) {
 		t.Logf("==== Probe 2: reasoning_content round-trip on real cache ====")
 		t.Logf("WITH reasoning_content: prompt=%d hit=%d miss=%d  rate=%s", p2withR.prompt, p2withR.hit, p2withR.miss, rate(p2withR))
 		t.Logf("WITHOUT (stripped):     prompt=%d hit=%d miss=%d  rate=%s", p2noR.prompt, p2noR.hit, p2noR.miss, rate(p2noR))
-		// Before the fix this delta was ~+500 (DeepSeek billed the re-sent
-		// reasoning as prompt input). After the fix the openai provider drops
-		// reasoning_content from the request, so both variants send an identical
-		// wire request and the delta should be ~0.
-		t.Logf("prompt_tokens delta (with - without) = %d  (~0 confirms the provider no longer re-uploads reasoning_content)", p2withR.prompt-p2noR.prompt)
+		// Tool-call histories must carry reasoning_content (400 otherwise). Pure
+		// chat turns may omit it. Expect WITH to succeed; WITHOUT may 400.
+		t.Logf("prompt_tokens delta (with - without) = %d", p2withR.prompt-p2noR.prompt)
 	}
 }
 
