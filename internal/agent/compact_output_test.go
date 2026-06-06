@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"strings"
 	"testing"
@@ -101,5 +102,32 @@ func TestCompactToolOutput_readFileSandboxed(t *testing.T) {
 	}
 	if !strings.Contains(out, "ctx_read") {
 		t.Fatalf("want ctx_read hint, got %q", out)
+	}
+}
+
+func TestCompactToolOutput_grepCtxAndPipe(t *testing.T) {
+	if !rtk.Available() {
+		t.Skip("rtk not on PATH")
+	}
+	t.Setenv("REASONIX_RTK", "rewrite")
+	t.Setenv("REASONIX_CTX", "on")
+	t.Setenv("REASONIX_CTX_THRESHOLD", "512")
+	store := ctxmode.NewStore()
+	defer store.Remove()
+	var b strings.Builder
+	for i := 0; i < 200; i++ {
+		fmt.Fprintf(&b, "/tmp/f.go:%d:match line %d content here\n", i, i)
+	}
+	body := b.String()
+	args := json.RawMessage(`{"pattern":"match"}`)
+	out, notice := compactToolOutput(store, "grep", args, nil, body)
+	if !strings.Contains(notice, "ctxmode") {
+		t.Fatalf("want ctx notice, got %q", notice)
+	}
+	if !strings.Contains(out, "ref=ctx-") {
+		t.Fatalf("want ctx ref in summary, got %q", out)
+	}
+	if strings.Contains(out, "/tmp/f.go:199:") && !strings.Contains(out, "RTK compact") {
+		t.Fatalf("raw tail should not appear without compact section when pipe shrinks, got %q", out)
 	}
 }

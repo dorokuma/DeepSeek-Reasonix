@@ -38,6 +38,24 @@ func TestRunShellIfRewritten_acceptsGitStatus(t *testing.T) {
 	}
 }
 
+func TestRunShellIfRewritten_grepNoMatches(t *testing.T) {
+	t.Setenv("REASONIX_RTK", "rewrite")
+	if !Available() {
+		t.Skip("rtk not on PATH")
+	}
+	cmd := RipgrepShell("ZZZ_REASONIX_NOMATCH_XYZ", "/tmp")
+	if Rewrite(cmd) == "" {
+		t.Skip("rg rewrite not available")
+	}
+	out, err := RunShellIfRewritten(context.Background(), "", cmd, "grep")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out != "(no matches)" {
+		t.Fatalf("got %q, want (no matches)", out)
+	}
+}
+
 func TestRipgrepShell_rewriteAccepted(t *testing.T) {
 	if !Available() {
 		t.Skip("rtk not on PATH")

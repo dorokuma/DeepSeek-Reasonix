@@ -59,9 +59,7 @@ var rewriteSamples = []struct {
 
 	// Misc shell utilities
 	{cmd: "git diff", wantRTK: "rtk git"},
-	{cmd: "wget -qO- https://example.com", wantRTK: "rtk wget"},
 	{cmd: "wc -l README.md", wantRTK: "rtk wc"},
-	{cmd: "curl -s https://example.com", wantRTK: "rtk curl"},
 	{cmd: "cargo build 2>&1", wantRTK: "rtk cargo"},
 	{cmd: "make test", wantRTK: "rtk make"},
 	{cmd: "ls -la", wantRTK: "rtk ls"},
@@ -85,6 +83,8 @@ var rewriteSamples = []struct {
 	{cmd: "env", decline: true},
 	{cmd: "black --check .", decline: true},
 	{cmd: "journalctl -n 5", decline: true},
+	{cmd: "curl -s https://example.com", decline: true},
+	{cmd: "wget -qO- https://example.com", decline: true},
 }
 
 func TestRewriteMatrix(t *testing.T) {

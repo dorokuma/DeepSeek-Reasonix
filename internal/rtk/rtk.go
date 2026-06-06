@@ -111,6 +111,13 @@ func rewriteWithMode(cmd string, mode Mode) string {
 	if !ensureBin() || mode == ModeOff {
 		return ""
 	}
+	if DeclineRewrite(cmd) {
+		rewriteCache.Store(cmd, "")
+		if mode == ModeRewrite {
+			LogMissBash(cmd, "side_effect_declined")
+		}
+		return ""
+	}
 	if v, ok := rewriteCache.Load(cmd); ok {
 		s, _ := v.(string)
 		if mode == ModeSuggest {
