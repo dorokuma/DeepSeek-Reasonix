@@ -294,16 +294,12 @@ func TestFinalReadinessAuditRecordsBlockAndRecovery(t *testing.T) {
 	if err := a.Run(context.Background(), "edit and finish"); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	if len(sink.events) != 2 {
-		t.Fatalf("readiness audit events = %d, want 2: %+v", len(sink.events), sink.events)
+	if len(sink.events) != 1 {
+		t.Fatalf("readiness audit events = %d, want 1 (branch removes redundant final-answer allowed audit): %+v", len(sink.events), sink.events)
 	}
 	blocked := sink.events[0]
 	if blocked.Result != evidence.ReadinessBlocked || blocked.MissingProjectChecks != 1 || blocked.CommandMismatchMissing != 1 {
 		t.Fatalf("blocked audit = %+v, want missing project check command", blocked)
-	}
-	recovered := sink.events[1]
-	if recovered.Result != evidence.ReadinessAllowed || !recovered.Recovered {
-		t.Fatalf("recovery audit = %+v, want allowed recovered", recovered)
 	}
 }
 

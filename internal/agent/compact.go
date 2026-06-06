@@ -198,6 +198,14 @@ func (a *Agent) compact(ctx context.Context, trigger, instructions string, force
 			instructions += hookInstr
 		}
 	}
+	if a.ctxStore != nil {
+		if g := a.ctxStore.Journal().CompactGuidance(instructions, region); g != "" {
+			if instructions != "" {
+				instructions += "\n"
+			}
+			instructions += g
+		}
+	}
 
 	archived := ""
 	if a.archiveDir != "" {
@@ -214,6 +222,12 @@ func (a *Agent) compact(ctx context.Context, trigger, instructions string, force
 		a.emitCompactionAborted(trigger)
 		return err
 	}
+	summaryBody := summary
+	if a.ctxStore != nil {
+		if resume := a.ctxStore.Journal().CompactResumeBlock(instructions); resume != "" {
+			summaryBody += "\n\n" + resume
+		}
+	}
 
 	compacted := make([]provider.Message, 0, head+1+len(msgs)-start)
 	compacted = append(compacted, msgs[:head]...)
@@ -221,7 +235,7 @@ func (a *Agent) compact(ctx context.Context, trigger, instructions string, force
 		Role: provider.RoleUser,
 		Content: summaryTagOpen + "\n" +
 			"Summary of earlier conversation (older messages were compacted to save context):\n" +
-			summary + "\n" +
+			summaryBody + "\n" +
 			summaryTagClose,
 	})
 	compacted = append(compacted, msgs[start:]...)

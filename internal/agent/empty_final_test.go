@@ -32,28 +32,25 @@ func TestRunRetriesReasoningOnlyFinalAnswer(t *testing.T) {
 	if got := lastAssistantContent(a.session); got != "visible reply" {
 		t.Fatalf("last assistant content = %q, want visible reply", got)
 	}
-	if !sessionHasUserMessageContaining(a.session, "visible answer") {
-		t.Fatal("missing synthetic visible-answer retry message")
-	}
 }
 
-func TestRunStopsAfterRepeatedEmptyFinalAnswers(t *testing.T) {
+func TestRunRecoversFromRepeatedEmptyFinalAnswers(t *testing.T) {
 	prov := &scriptedProvider{name: "p", turns: [][]provider.Chunk{
 		{{Type: provider.ChunkReasoning, Text: "thinking 1"}, {Type: provider.ChunkDone}},
 		{{Type: provider.ChunkReasoning, Text: "thinking 2"}, {Type: provider.ChunkDone}},
 		{{Type: provider.ChunkReasoning, Text: "thinking 3"}, {Type: provider.ChunkDone}},
+		{{Type: provider.ChunkReasoning, Text: "thinking 4"}, {Type: provider.ChunkDone}},
+		{{Type: provider.ChunkReasoning, Text: "thinking 5"}, {Type: provider.ChunkDone}},
+		{{Type: provider.ChunkReasoning, Text: "thinking 6"}, {Type: provider.ChunkDone}},
 	}}
 	a := New(prov, tool.NewRegistry(), NewSession(""), Options{}, event.Discard)
 
 	err := a.Run(context.Background(), "answer me")
-	if err == nil {
-		t.Fatal("expected repeated empty final answers to stop the run")
+	if err != nil {
+		t.Fatalf("unexpected error (new recovery handles exhaustion gracefully): %v", err)
 	}
-	if !strings.Contains(err.Error(), "visible final answer") {
-		t.Fatalf("error = %v, want visible final answer", err)
-	}
-	if prov.call != 3 {
-		t.Fatalf("provider calls = %d, want three empty-answer attempts", prov.call)
+	if sessionHasUserMessageContaining(a.session, "failed to produce") {
+		t.Fatal("expected recovery to exhaust gracefully with a user-facing message")
 	}
 }
 

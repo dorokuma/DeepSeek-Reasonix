@@ -5,9 +5,11 @@ import (
 	"encoding/json"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
+	"unicode/utf8"
 )
 
 // TodoItem mirrors the todo_write item shape the host needs for step matching.
@@ -41,6 +43,15 @@ type Receipt struct {
 	Read     bool            `json:"read,omitempty"`
 	Write    bool            `json:"write,omitempty"`
 	Todos    []TodoItem      `json:"todos,omitempty"`
+	// ErrorPreview is set on failed write-tool receipts for the turn-end footer.
+	ErrorPreview string `json:"error_preview,omitempty"`
+}
+
+// WriteFailure is an unresolved failed write/edit to a path this turn.
+type WriteFailure struct {
+	Path         string
+	Tool         string
+	ErrorPreview string
 }
 
 // Ledger stores the receipts available to complete_step for the current turn.
@@ -234,6 +245,49 @@ func (l *Ledger) LatestSuccessfulWriterIndex() (int, bool) {
 	return latest, latest >= 0
 }
 
+// UnresolvedWriteFailures returns paths whose last write-tool outcome this turn
+// was a failure — a later successful write to the same path clears it.
+func (l *Ledger) UnresolvedWriteFailures() []WriteFailure {
+	if l == nil {
+		return nil
+	}
+	l.mu.Lock()
+	receipts := append([]Receipt(nil), l.receipts...)
+	l.mu.Unlock()
+
+	type entry struct {
+		tool    string
+		preview string
+	}
+	byPath := make(map[string]entry)
+	for _, r := range receipts {
+		if !r.Write || len(r.Paths) == 0 {
+			continue
+		}
+		if r.Success {
+			for _, p := range r.Paths {
+				delete(byPath, p)
+			}
+			continue
+		}
+		for _, p := range r.Paths {
+			if _, ok := byPath[p]; ok {
+				continue
+			}
+			byPath[p] = entry{tool: r.ToolName, preview: r.ErrorPreview}
+		}
+	}
+	if len(byPath) == 0 {
+		return nil
+	}
+	out := make([]WriteFailure, 0, len(byPath))
+	for path, e := range byPath {
+		out = append(out, WriteFailure{Path: path, Tool: e.tool, ErrorPreview: e.preview})
+	}
+	sortWriteFailures(out)
+	return out
+}
+
 func (l *Ledger) MatchLatestTodoStep(step string) (TodoStepMatch, bool) {
 	step = strings.TrimSpace(step)
 	if l == nil || step == "" {
@@ -336,6 +390,46 @@ func WithLedger(ctx context.Context, ledger *Ledger) context.Context {
 func FromContext(ctx context.Context) (*Ledger, bool) {
 	ledger, ok := ctx.Value(contextKey{}).(*Ledger)
 	return ledger, ok && ledger != nil
+}
+
+// ErrorPreviewFromToolOutput picks a short user-facing error line from tool output.
+func ErrorPreviewFromToolOutput(output, errLine string) string {
+	output = strings.TrimSpace(output)
+	if output != "" {
+		var parsed struct {
+			Error string `json:"error"`
+		}
+		if json.Unmarshal([]byte(output), &parsed) == nil {
+			if s := strings.TrimSpace(parsed.Error); s != "" {
+				return truncateRunes(s, 200)
+			}
+		}
+	}
+	errLine = strings.TrimSpace(errLine)
+	if errLine != "" {
+		return truncateRunes(errLine, 200)
+	}
+	if output != "" {
+		return truncateRunes(output, 200)
+	}
+	return ""
+}
+
+func truncateRunes(s string, max int) string {
+	if max <= 0 || utf8.RuneCountInString(s) <= max {
+		return s
+	}
+	runes := []rune(s)
+	return string(runes[:max]) + "…"
+}
+
+func sortWriteFailures(failures []WriteFailure) {
+	sort.Slice(failures, func(i, j int) bool {
+		if failures[i].Path != failures[j].Path {
+			return failures[i].Path < failures[j].Path
+		}
+		return failures[i].Tool < failures[j].Tool
+	})
 }
 
 func ReceiptFromToolCall(toolName string, args json.RawMessage, success bool, readOnly bool) Receipt {

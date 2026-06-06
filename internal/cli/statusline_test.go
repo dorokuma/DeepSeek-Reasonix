@@ -144,6 +144,23 @@ func TestPlanStatuslineUsesBluePill(t *testing.T) {
 	}
 }
 
+func TestAllowConfigShowsYoloPill(t *testing.T) {
+	i18n.DetectLanguage("en")
+
+	ctrl := control.New(control.Options{})
+	m := newChatTUI(ctrl, "", make(chan event.Event, 1), 80)
+	m.permMode = "allow"
+	next, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	content := next.(chatTUI).View().Content
+	plain := bottomStatusPlain(content)
+	if !strings.Contains(plain, "YOLO") || !strings.Contains(plain, "approvals skipped") || !strings.Contains(plain, "(shift+tab to cycle)") {
+		t.Fatalf("allow config status line should show YOLO pill:\n%s", plain)
+	}
+	if !strings.Contains(content, "\x1b[48;2;229;72;77m") {
+		t.Fatalf("allow config should use YOLO danger pill background (#e5484d), got:\n%q", content)
+	}
+}
+
 func TestStatuslineCycleHintFollowsLanguage(t *testing.T) {
 	i18n.DetectLanguage("zh")
 	t.Cleanup(func() { i18n.DetectLanguage("en") })

@@ -15,6 +15,7 @@ import (
 	"golang.org/x/text/transform"
 
 	fileenc "reasonix/internal/fileutil/encoding"
+	"reasonix/internal/rtk"
 	"reasonix/internal/tool"
 )
 
@@ -30,14 +31,12 @@ func init() { tool.RegisterBuiltin(readFile{}) }
 // at init resolves against the process working directory.
 type readFile struct{ workDir string }
 
-const (
-	readFileDefaultLimit = 2000 // lines returned when limit is unset
-)
+const readFileDefaultLimit = 2000 // lines when RTK is off and limit is unset
 
 func (readFile) Name() string { return "read_file" }
 
 func (readFile) Description() string {
-	return "Read a text file with optional line offset/limit. Output prefixes each line with its 1-based number (e.g. `   42→...`) so subsequent edit_file calls can target exact lines. Use `offset` and `limit` to page through large files; the tool reports total length and pagination hints in a trailer."
+	return "Read a text file with optional line offset/limit. Output prefixes each line with its 1-based number (e.g. `   42→...`) so subsequent edit_file calls can target exact lines. Use `offset` and `limit` to page through large files; the tool reports total length and pagination hints in a trailer. For token-compact skimming without line numbers, use bash with cat/head/tail (RTK rewrite applies there — not here)."
 }
 
 func (readFile) Schema() json.RawMessage {
@@ -71,7 +70,7 @@ func (r readFile) Execute(ctx context.Context, args json.RawMessage) (string, er
 		p.Offset = 0
 	}
 	if p.Limit <= 0 {
-		p.Limit = readFileDefaultLimit
+		p.Limit = rtk.ReadFileDefaultLimit()
 	}
 
 	// A directory can be os.Open'd but not read as text — catch it up front with

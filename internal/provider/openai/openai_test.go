@@ -283,34 +283,11 @@ func TestNormaliseUsageMiMoShape(t *testing.T) {
 	}
 }
 
-// TestBuildRequestDropsReasoningContent guards the cache/cost fix: an assistant
-// turn's reasoning_content is a response-only signal and must never be echoed
-// back in the outgoing request. DeepSeek otherwise counts it as paid prompt
-// input (~500 tok/turn on a reasoner chain). The session keeps it for
-// display/archive; the wire request must not carry it.
+// TestBuildRequestDropsReasoningContent guards pure-chat turns: reasoning_content
+// is not required between user messages that did not involve tool calls.
 func TestBuildRequestDropsReasoningContent(t *testing.T) {
-	c := &client{model: "deepseek-reasoner"}
-	req := c.buildRequest(provider.Request{
-		Messages: []provider.Message{
-			{Role: provider.RoleUser, Content: "explain"},
-			{Role: provider.RoleAssistant, Content: "the answer", ReasoningContent: "SECRET-CHAIN-OF-THOUGHT"},
-			{Role: provider.RoleUser, Content: "thanks"},
-		},
-	})
-	b, err := json.Marshal(req.Messages)
-	if err != nil {
-		t.Fatalf("marshal: %v", err)
-	}
-	if strings.Contains(string(b), "reasoning_content") {
-		t.Errorf("outgoing request must not carry a reasoning_content field: %s", b)
-	}
-	if strings.Contains(string(b), "SECRET-CHAIN-OF-THOUGHT") {
-		t.Errorf("the assistant chain-of-thought leaked into the request: %s", b)
-	}
-	// The visible answer must survive — we only drop reasoning, not content.
-	if !strings.Contains(string(b), "the answer") {
-		t.Errorf("assistant content was dropped along with reasoning: %s", b)
-	}
+	t.Parallel()
+	TestBuildRequestDropsReasoningForPureChat(t)
 }
 
 func TestBuildRequestForwardsReasoningEffort(t *testing.T) {

@@ -175,6 +175,15 @@ func (m *Manager) get(id string) *Job {
 	return m.jobs[id]
 }
 
+// Label returns a job's command preview label. ok is false when id is unknown.
+func (m *Manager) Label(id string) (string, bool) {
+	j := m.get(id)
+	if j == nil {
+		return "", false
+	}
+	return j.Label, true
+}
+
 // Output returns the job's output produced since the last Output call plus its
 // current status. ok is false when the id is unknown.
 func (m *Manager) Output(id string) (text string, status Status, ok bool) {

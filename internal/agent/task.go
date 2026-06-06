@@ -7,6 +7,7 @@ import (
 	"io"
 	"strings"
 
+	"reasonix/internal/ctxmode"
 	"reasonix/internal/event"
 	"reasonix/internal/jobs"
 	"reasonix/internal/provider"
@@ -298,6 +299,10 @@ func (t *TaskTool) runSub(ctx context.Context, prompt string, subReg *tool.Regis
 		}
 		prov, pricing, ctxWin = p, pr, cw
 	}
+	var shared *ctxmode.Store
+	if s, ok := ctxmode.FromContext(ctx); ok {
+		shared = s
+	}
 	return RunSubAgent(ctx, prov, subReg, t.sysPrompt, prompt, Options{
 		MaxSteps:          maxSteps,
 		Temperature:       t.temperature,
@@ -308,6 +313,7 @@ func (t *TaskTool) runSub(ctx context.Context, prompt string, subReg *tool.Regis
 		CompactRatio:      t.compactRatio,
 		CompactForceRatio: t.compactForceRatio,
 		ArchiveDir:        t.archiveDir,
+		CtxStore:          shared,
 	}, sink)
 }
 
