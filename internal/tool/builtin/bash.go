@@ -22,6 +22,12 @@ import (
 
 // rtkBinPath caches the resolved RTK binary path so we don't look it up per call.
 var rtkBinPath string
+var rtkOnce sync.Once
+
+// rtkRewriteCache memoizes rtk rewrite results per command string.
+// Both "supported → rewritten" and "unsupported → empty" are cached so
+// repeated commands (ls -la, git status, etc.) skip the subprocess entirely.
+var rtkRewriteCache sync.Map
 
 func init() {
 	if p, err := exec.LookPath("rtk"); err == nil {
@@ -30,11 +36,16 @@ func init() {
 }
 
 // rtkRewrite runs "rtk rewrite <cmd>" and returns the rewritten command when
-// RTK supports a dedicated filter for it, or "" with a nil error when it
-// doesn't. The caller falls back to the original command when this returns "".
+// RTK supports a dedicated filter for it, or "" when it doesn't. Results are
+// cached so repeated commands skip the subprocess.
 func rtkRewrite(cmd string) string {
 	if rtkBinPath == "" {
 		return ""
+	}
+	// Check cache first.
+	if v, ok := rtkRewriteCache.Load(cmd); ok {
+		s, _ := v.(string)
+		return s
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
@@ -45,13 +56,16 @@ func rtkRewrite(cmd string) string {
 		// distinction is stdout content, not exit code.
 		var exitErr *exec.ExitError
 		if !errors.As(err, &exitErr) {
-			return "" // not found, timeout, etc.
+			rtkRewriteCache.Store(cmd, "") // cache miss so we don't retry
+			return ""
 		}
 	}
 	rewritten := strings.TrimSpace(string(out))
 	if rewritten == "" {
+		rtkRewriteCache.Store(cmd, "") // cache miss
 		return ""
 	}
+	rtkRewriteCache.Store(cmd, rewritten) // cache hit
 	return rewritten
 }
 
