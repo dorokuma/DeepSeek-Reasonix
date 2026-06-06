@@ -1191,7 +1191,6 @@ export default function App() {
               activeScope={activeTab?.scope}
               activeWorkspaceRoot={activeTab?.workspaceRoot}
               activeTopicId={activeTab?.topicId}
-              currentWorkspaceName={workspaceDisplayName(state.meta?.cwd)}
               onOpenTopic={handleOpenTopic}
               onOpenProjectHistory={openProjectHistory}
               onTopicsChanged={refreshProjectsAndTabs}
@@ -1200,9 +1199,6 @@ export default function App() {
               onAddProject={async () => {
                 await switchFolder();
               }}
-              onUseCurrentProject={state.meta?.cwd ? async () => {
-                await switchFolder(state.meta?.cwd);
-              } : undefined}
             />
           </section>
 

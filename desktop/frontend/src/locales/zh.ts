@@ -371,10 +371,6 @@ export const zh: Record<DictKey, string> = {
   "projectTree.colorPink": "粉色",
   "projectTree.emptyNoMatch": "没有匹配的项目或会话",
   "projectTree.emptyNoProjects": "还没有项目",
-  "projectTree.emptyNoProjectsDesc": "添加项目后，可以按项目管理会话、文件和上下文。",
-  "projectTree.emptyAddProject": "添加新项目",
-  "projectTree.emptyUseCurrentDir": "使用当前目录",
-  "projectTree.emptyCurrentDir": "当前目录：{dir}",
   "projectTree.newTopicTooltip": "新建会话",
   "projectTree.addProjectTooltip": "添加新项目",
 

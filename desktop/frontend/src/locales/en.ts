@@ -370,10 +370,6 @@ export const en = {
   "projectTree.colorPink": "Pink",
   "projectTree.emptyNoMatch": "No matching projects or sessions",
   "projectTree.emptyNoProjects": "No projects yet",
-  "projectTree.emptyNoProjectsDesc": "Add projects to organize sessions, files, and context.",
-  "projectTree.emptyAddProject": "Add new project",
-  "projectTree.emptyUseCurrentDir": "Use current directory",
-  "projectTree.emptyCurrentDir": "Current directory: {dir}",
   "projectTree.newTopicTooltip": "New session",
   "projectTree.addProjectTooltip": "Add new project",
 

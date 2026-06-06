@@ -7534,84 +7534,9 @@ a[href] {
   font-size: 13px;
 }
 
-.project-tree__empty-state {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  padding: 14px 8px;
-  color: var(--fg-dim);
-}
-
-.project-tree__empty-icon {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 34px;
-  height: 34px;
-  border: 1px solid var(--border-soft);
-  border-radius: 8px;
-  background: var(--bg);
-  color: var(--accent);
-}
-
-.project-tree__empty-copy {
-  display: flex;
-  flex-direction: column;
-  gap: 5px;
-}
-
-.project-tree__empty-copy strong {
-  color: var(--fg);
-  font-size: 14px;
-  line-height: 1.2;
-}
-
-.project-tree__empty-copy span,
-.project-tree__empty-current {
-  color: var(--fg-faint);
+.project-tree__empty--subtle {
+  padding: 8px 12px;
   font-size: 12px;
-  line-height: 1.45;
-}
-
-.project-tree__empty-actions {
-  display: flex;
-  flex-direction: column;
-  gap: 7px;
-}
-
-.project-tree__empty-actions button {
-  --wails-draggable: no-drag;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 7px;
-  height: 32px;
-  border-radius: 7px;
-  font: inherit;
-  font-size: 12.5px;
-}
-
-.project-tree__empty-primary {
-  border: 1px solid color-mix(in srgb, var(--accent) 52%, var(--border));
-  background: color-mix(in srgb, var(--accent) 18%, var(--bg-elev));
-  color: var(--accent-strong);
-  font-weight: 620;
-}
-
-.project-tree__empty-primary:hover {
-  background: color-mix(in srgb, var(--accent) 24%, var(--bg-elev));
-  color: var(--fg);
-}
-
-.project-tree__empty-secondary {
-  border: 1px solid var(--border-soft);
-  background: var(--bg);
-  color: var(--fg-dim);
-}
-
-.project-tree__empty-secondary:hover {
-  background: var(--bg-hover);
-  color: var(--fg);
 }
 
 .context-inspector,
