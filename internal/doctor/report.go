@@ -13,6 +13,7 @@ import (
 	"reasonix/internal/codegraph"
 	"reasonix/internal/config"
 	"reasonix/internal/netclient"
+	"reasonix/internal/rtk"
 	"reasonix/internal/sandbox"
 )
 
@@ -33,6 +34,7 @@ type Report struct {
 	LSP        LSPReport        `json:"lsp"`
 	Sessions   SessionsReport   `json:"sessions"`
 	Sandbox    SandboxReport    `json:"sandbox"`
+	RTK        RTKReport        `json:"rtk"`
 	Network    NetworkReport    `json:"network"`
 	Permission PermissionReport `json:"permission"`
 	Warnings   []string         `json:"warnings,omitempty"`
@@ -82,6 +84,15 @@ type SessionsReport struct {
 	Count int    `json:"count"`
 	Bytes int64  `json:"bytes"`
 	Error string `json:"error,omitempty"`
+}
+
+type RTKReport struct {
+	Mode      string `json:"mode"`
+	Path      string `json:"path,omitempty"`
+	Version   string `json:"version,omitempty"`
+	RewriteOK bool   `json:"rewrite_ok"`
+	Sample    string `json:"sample,omitempty"`
+	Warning   string `json:"warning,omitempty"`
 }
 
 type SandboxReport struct {
@@ -146,6 +157,7 @@ func Collect(opts Options) Report {
 			WriteRoots: redactHomeAll(cfg.WriteRoots()),
 			Available:  sandbox.Available(),
 		},
+		RTK: collectRTK(),
 		Network: NetworkReport{
 			ProxyMode: cfg.NetworkProxyMode(),
 			Proxy:     netclient.Summary(cfg.NetworkProxySpec()),
@@ -190,6 +202,9 @@ func Collect(opts Options) Report {
 			AutoStart: p.ShouldAutoStart(),
 			Target:    pluginTarget(p),
 		})
+	}
+	if report.RTK.Warning != "" && !report.RTK.RewriteOK {
+		report.Warnings = append(report.Warnings, "rtk: "+report.RTK.Warning)
 	}
 	return report
 }
@@ -255,6 +270,20 @@ func RenderText(r Report) string {
 		fmt.Fprintf(&b, "  warning      %s\n", r.Sessions.Error)
 	}
 
+	fmt.Fprintf(&b, "\nrtk\n")
+	fmt.Fprintf(&b, "  mode         %s\n", r.RTK.Mode)
+	if r.RTK.Path != "" {
+		fmt.Fprintf(&b, "  path         %s\n", redactHome(r.RTK.Path))
+	}
+	if r.RTK.Version != "" {
+		fmt.Fprintf(&b, "  version      %s\n", r.RTK.Version)
+	}
+	if r.RTK.RewriteOK {
+		fmt.Fprintf(&b, "  rewrite      ok (%s)\n", r.RTK.Sample)
+	} else if r.RTK.Warning != "" {
+		fmt.Fprintf(&b, "  warning      %s\n", r.RTK.Warning)
+	}
+
 	fmt.Fprintf(&b, "\nsandbox\n")
 	bashLine := r.Sandbox.Bash
 	if r.Sandbox.Bash == "enforce" && !r.Sandbox.Available {
@@ -273,6 +302,18 @@ func RenderText(r Report) string {
 	fmt.Fprintf(&b, "  mode         %s\n", valueOr(r.Permission.Mode, "ask"))
 	fmt.Fprintf(&b, "  rules        allow:%d ask:%d deny:%d\n", r.Permission.AllowRules, r.Permission.AskRules, r.Permission.DenyRules)
 	return b.String()
+}
+
+func collectRTK() RTKReport {
+	p := rtk.CollectProbe()
+	return RTKReport{
+		Mode:      p.Mode,
+		Path:      redactHome(p.Path),
+		Version:   p.Version,
+		RewriteOK: p.RewriteOK,
+		Sample:    p.Sample,
+		Warning:   p.Warning,
+	}
 }
 
 func collectSessions(dir string) SessionsReport {

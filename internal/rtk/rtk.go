@@ -1,0 +1,273 @@
+// Package rtk integrates the RTK CLI for compact shell output in Reasonix.
+package rtk
+
+import (
+	"context"
+	"errors"
+	"log"
+	"os"
+	"os/exec"
+	"strings"
+	"sync"
+	"time"
+)
+
+// Mode controls how Reasonix applies RTK rewrites to bash commands.
+type Mode int
+
+const (
+	ModeRewrite Mode = iota // default: transparent rewrite before execution
+	ModeSuggest               // log would-be rewrites, run original command
+	ModeOff                   // disable RTK integration
+)
+
+const defaultRewriteTimeout = 3 * time.Second
+
+var (
+	binPath string
+	rewriteCache sync.Map
+)
+
+func init() {
+	ensureBin()
+}
+
+func ensureBin() bool {
+	if binPath != "" {
+		return true
+	}
+	p, err := exec.LookPath("rtk")
+	if err != nil {
+		return false
+	}
+	binPath = p
+	return true
+}
+
+// ModeFromEnv reads REASONIX_RTK: rewrite (default), suggest, or off.
+func ModeFromEnv() Mode {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("REASONIX_RTK"))) {
+	case "off", "0", "false", "no":
+		return ModeOff
+	case "suggest":
+		return ModeSuggest
+	default:
+		return ModeRewrite
+	}
+}
+
+func logEnabled() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("REASONIX_RTK_LOG"))) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
+}
+
+// Available reports whether the rtk binary is on PATH.
+func Available() bool { return ensureBin() }
+
+// BinPath returns the resolved rtk binary path, or "" if missing.
+func BinPath() string { return binPath }
+
+// Rewrite runs "rtk rewrite <cmd>" and returns a compact equivalent, or ""
+// when RTK has no filter. Exit codes follow RTK semantics: 0 and 3 mean a
+// rewrite is offered; 1 and 2 mean pass-through.
+func Rewrite(cmd string) string {
+	return rewriteWithMode(cmd, ModeRewrite)
+}
+
+func rewriteWithMode(cmd string, mode Mode) string {
+	if !ensureBin() || mode == ModeOff {
+		return ""
+	}
+	if v, ok := rewriteCache.Load(cmd); ok {
+		s, _ := v.(string)
+		if mode == ModeSuggest {
+			if s != "" && s != cmd {
+				log.Printf("rtk suggest: %q → %q", cmd, s)
+			}
+			return ""
+		}
+		return s
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), defaultRewriteTimeout)
+	defer cancel()
+
+	c := exec.CommandContext(ctx, binPath, "rewrite", cmd)
+	out, err := c.Output()
+	rewritten := strings.TrimSpace(string(out))
+	exitCode := 0
+	if err != nil {
+		var exitErr *exec.ExitError
+		if !errors.As(err, &exitErr) {
+			rewriteCache.Store(cmd, "")
+			return ""
+		}
+		exitCode = exitErr.ExitCode()
+	}
+	result := acceptRewrite(exitCode, rewritten)
+	rewriteCache.Store(cmd, result)
+	if mode == ModeSuggest {
+		if result != "" && result != cmd {
+			log.Printf("rtk suggest: %q → %q", cmd, result)
+		}
+		return ""
+	}
+	if result != "" && result != cmd && logEnabled() {
+		log.Printf("rtk rewrite: %q → %q", cmd, result)
+	}
+	return result
+}
+
+// acceptRewrite maps RTK rewrite exit codes to a rewritten command or "".
+// Codes 0 and 3 carry a rewrite on stdout; 1 and 2 mean no rewrite.
+func acceptRewrite(exitCode int, stdout string) string {
+	stdout = strings.TrimSpace(stdout)
+	if stdout == "" {
+		return ""
+	}
+	switch exitCode {
+	case 0, 3:
+		return stdout
+	default:
+		return ""
+	}
+}
+
+// ApplySegments rewrites a compound shell command segment by segment.
+func ApplySegments(cmd string) string {
+	mode := ModeFromEnv()
+	if !ensureBin() || mode == ModeOff {
+		return cmd
+	}
+	if r := rewriteWithMode(cmd, mode); r != "" {
+		return r
+	}
+	segs := splitShellPipeline(cmd)
+	if len(segs) <= 1 {
+		return cmd
+	}
+	var out []string
+	changed := false
+	for _, s := range segs {
+		if r := rewriteWithMode(s.text, mode); r != "" {
+			out = append(out, r)
+			changed = true
+		} else {
+			out = append(out, s.text)
+		}
+	}
+	if !changed {
+		return cmd
+	}
+	var b strings.Builder
+	b.WriteString(out[0])
+	for i := 1; i < len(segs); i++ {
+		b.WriteByte(' ')
+		b.WriteString(segs[i].sep)
+		b.WriteByte(' ')
+		b.WriteString(out[i])
+	}
+	return b.String()
+}
+
+type segSep struct {
+	text string
+	sep  string
+}
+
+func splitShellPipeline(cmd string) []segSep {
+	var segs []segSep
+	start := 0
+	quote := byte(0)
+	for i := 0; i < len(cmd); i++ {
+		c := cmd[i]
+		if quote != 0 {
+			if c == quote {
+				quote = 0
+			}
+			continue
+		}
+		if c == '\'' || c == '"' {
+			quote = c
+			continue
+		}
+		if i+1 < len(cmd) {
+			two := cmd[i : i+2]
+			if two == "&&" || two == "||" {
+				segs = append(segs, segSep{text: strings.TrimSpace(cmd[start:i]), sep: two})
+				i++
+				start = i + 1
+				continue
+			}
+		}
+		if c == ';' || c == '|' {
+			segs = append(segs, segSep{text: strings.TrimSpace(cmd[start:i]), sep: string(c)})
+			start = i + 1
+			continue
+		}
+	}
+	remain := strings.TrimSpace(cmd[start:])
+	if remain != "" || len(segs) == 0 {
+		segs = append(segs, segSep{text: remain, sep: ""})
+	}
+	return segs
+}
+
+// Probe collects RTK diagnostics for reasonix doctor.
+type Probe struct {
+	Mode       string `json:"mode"`
+	Path       string `json:"path,omitempty"`
+	Version    string `json:"version,omitempty"`
+	RewriteOK  bool   `json:"rewrite_ok"`
+	Sample     string `json:"sample,omitempty"`
+	Warning    string `json:"warning,omitempty"`
+}
+
+// CollectProbe returns redacted RTK status for doctor reports.
+func CollectProbe() Probe {
+	mode := ModeFromEnv()
+	p := Probe{Mode: mode.String()}
+	if !Available() {
+		p.Warning = "rtk not found on PATH — bash runs without output compaction"
+		return p
+	}
+	p.Path = binPath
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if out, err := exec.CommandContext(ctx, binPath, "--version").CombinedOutput(); err == nil {
+		p.Version = strings.TrimSpace(string(out))
+	}
+	ctx2, cancel2 := context.WithTimeout(context.Background(), defaultRewriteTimeout)
+	defer cancel2()
+	c := exec.CommandContext(ctx2, binPath, "rewrite", "git status")
+	out, err := c.Output()
+	rewritten := strings.TrimSpace(string(out))
+	exitCode := 0
+	if err != nil {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			exitCode = exitErr.ExitCode()
+		}
+	}
+	if r := acceptRewrite(exitCode, rewritten); r != "" {
+		p.RewriteOK = true
+		p.Sample = "git status → " + r
+	} else {
+		p.Warning = "rtk rewrite smoke test failed (git status)"
+	}
+	return p
+}
+
+func (m Mode) String() string {
+	switch m {
+	case ModeOff:
+		return "off"
+	case ModeSuggest:
+		return "suggest"
+	default:
+		return "rewrite"
+	}
+}
