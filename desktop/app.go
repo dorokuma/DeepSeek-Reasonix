@@ -3,8 +3,13 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"io"
+	"mime"
+	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -65,12 +70,177 @@ type App struct {
 	forceQuit atomic.Bool
 	trayReady bool
 	tray      *desktopTray
+
+	mediaTokens *mediaTokenStore
+}
+
+// mediaTokenEntry holds metadata for a workspace media file served via temporary URL.
+type mediaTokenEntry struct {
+	absPath   string
+	filename  string
+	mime      string
+	kind      string
+	size      int64
+	modTime   time.Time
+	createdAt time.Time
+	expiresAt time.Time
+}
+
+// mediaTokenStore manages temporary tokens that grant access to workspace files
+// through the AssetServer middleware. Tokens expire after a fixed TTL and are
+// capped at a maximum count; creating a new token evicts the oldest entry when
+// the store is full.
+type mediaTokenStore struct {
+	mu    sync.Mutex
+	byTok map[string]*mediaTokenEntry
+	order []string // oldest first
+	maxN  int
+	ttl   time.Duration
+}
+
+const mediaTokenMax = 256
+
+func newMediaTokenStore() *mediaTokenStore {
+	return &mediaTokenStore{
+		byTok: map[string]*mediaTokenEntry{},
+		maxN:  mediaTokenMax,
+		ttl:   10 * time.Minute,
+	}
+}
+
+func (s *mediaTokenStore) cleanupLocked() {
+	now := time.Now()
+	for len(s.order) > 0 {
+		tok := s.order[0]
+		e := s.byTok[tok]
+		if e == nil {
+			s.order = s.order[1:]
+			continue
+		}
+		if !now.Before(e.expiresAt) {
+			delete(s.byTok, tok)
+			s.order = s.order[1:]
+			continue
+		}
+		break
+	}
+	for len(s.order) > s.maxN {
+		oldest := s.order[0]
+		delete(s.byTok, oldest)
+		s.order = s.order[1:]
+	}
+}
+
+func (s *mediaTokenStore) create(absPath, filename, mime, kind string, size int64, modTime time.Time) string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.cleanupLocked()
+
+	tok := make([]byte, 16)
+	if _, err := rand.Read(tok); err != nil {
+		panic("crypto/rand.Read failed: " + err.Error())
+	}
+	token := hex.EncodeToString(tok)
+
+	now := time.Now()
+	s.byTok[token] = &mediaTokenEntry{
+		absPath:   absPath,
+		filename:  filename,
+		mime:      mime,
+		kind:      kind,
+		size:      size,
+		modTime:   modTime,
+		createdAt: now,
+		expiresAt: now.Add(s.ttl),
+	}
+	s.order = append(s.order, token)
+
+	// Trim oldest if the new token pushed us over the limit.
+	for len(s.order) > s.maxN {
+		oldest := s.order[0]
+		delete(s.byTok, oldest)
+		s.order = s.order[1:]
+	}
+
+	return token
+}
+
+func (s *mediaTokenStore) get(token string) *mediaTokenEntry {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	e := s.byTok[token]
+	if e == nil {
+		return nil
+	}
+	if time.Now().After(e.expiresAt) {
+		delete(s.byTok, token)
+		return nil
+	}
+	return e
+}
+
+func (a *App) ensureMediaTokenStore() *mediaTokenStore {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.mediaTokens == nil {
+		a.mediaTokens = newMediaTokenStore()
+	}
+	return a.mediaTokens
+}
+
+// workspaceMediaMiddleware returns an HTTP middleware that intercepts
+// /__reasonix_workspace_media/{token}/{filename} requests and serves the
+// corresponding workspace file. All other paths pass through to the Wails
+// default asset handler unchanged.
+func (a *App) workspaceMediaMiddleware() func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			prefix := "/__reasonix_workspace_media/"
+			if !strings.HasPrefix(r.URL.Path, prefix) {
+				next.ServeHTTP(w, r)
+				return
+			}
+
+			if r.Method != http.MethodGet && r.Method != http.MethodHead {
+				w.WriteHeader(http.StatusMethodNotAllowed)
+				return
+			}
+
+			rest := strings.TrimPrefix(r.URL.Path, prefix)
+			parts := strings.SplitN(rest, "/", 2)
+			if len(parts) == 0 || parts[0] == "" {
+				http.NotFound(w, r)
+				return
+			}
+			token := parts[0]
+
+			entry := a.ensureMediaTokenStore().get(token)
+			if entry == nil {
+				http.NotFound(w, r)
+				return
+			}
+
+			f, err := os.Open(entry.absPath)
+			if err != nil {
+				http.NotFound(w, r)
+				return
+			}
+			defer f.Close()
+
+			w.Header().Set("Content-Type", entry.mime)
+			w.Header().Set("Content-Disposition", mime.FormatMediaType("inline", map[string]string{"filename": entry.filename}))
+			w.Header().Set("X-Content-Type-Options", "nosniff")
+			w.Header().Set("Cache-Control", "private, max-age=600")
+			http.ServeContent(w, r, entry.filename, entry.modTime, f)
+		})
+	}
 }
 
 // NewApp constructs the bound object. Tabs are restored in startup from the
 // last session's desktop-tabs.json.
 func NewApp() *App {
-	return &App{tabs: map[string]*WorkspaceTab{}}
+	return &App{tabs: map[string]*WorkspaceTab{}, mediaTokens: newMediaTokenStore()}
 }
 
 func (a *App) bootContext() context.Context {
@@ -2483,6 +2653,9 @@ type FilePreview struct {
 	Size      int64  `json:"size"`
 	Truncated bool   `json:"truncated"`
 	Binary    bool   `json:"binary"`
+	Kind      string `json:"kind,omitempty"`
+	Mime      string `json:"mime,omitempty"`
+	URL       string `json:"url,omitempty"`
 	Err       string `json:"err,omitempty"`
 }
 
@@ -2508,6 +2681,17 @@ var atSkip = map[string]bool{".git": true, "node_modules": true, ".DS_Store": tr
 const filePreviewLimit = 256 * 1024
 const fileRefSearchLimit = 20
 
+var previewMediaMIMEs = map[string]string{
+	".bmp":  "image/bmp",
+	".gif":  "image/gif",
+	".jpeg": "image/jpeg",
+	".jpg":  "image/jpeg",
+	".pdf":  "application/pdf",
+	".png":  "image/png",
+	".svg":  "image/svg+xml",
+	".webp": "image/webp",
+}
+
 func trimUTF8PartialSuffix(data []byte) []byte {
 	if utf8.Valid(data) {
 		return data
@@ -2522,6 +2706,20 @@ func trimUTF8PartialSuffix(data []byte) []byte {
 		return data[:i]
 	}
 	return data
+}
+
+func previewMediaKind(path string) (kind string, mime string) {
+	mime = previewMediaMIMEs[strings.ToLower(filepath.Ext(path))]
+	if mime == "" {
+		return "", ""
+	}
+	if strings.HasPrefix(mime, "image/") {
+		return "image", mime
+	}
+	if mime == "application/pdf" {
+		return "pdf", mime
+	}
+	return "", ""
 }
 
 func (a *App) activeWorkspaceBase() (string, error) {
@@ -2649,6 +2847,13 @@ func (a *App) ReadFile(rel string) FilePreview {
 		return out
 	}
 	out.Size = info.Size()
+	if kind, mime := previewMediaKind(path); kind != "" {
+		token := a.ensureMediaTokenStore().create(path, info.Name(), mime, kind, info.Size(), info.ModTime())
+		out.Kind = kind
+		out.Mime = mime
+		out.URL = "/__reasonix_workspace_media/" + token + "/" + url.PathEscape(info.Name())
+		return out
+	}
 	f, err := os.Open(path)
 	if err != nil {
 		out.Err = err.Error()

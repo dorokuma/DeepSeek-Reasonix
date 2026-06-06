@@ -278,6 +278,9 @@ export interface FilePreview {
   size: number;
   truncated: boolean;
   binary: boolean;
+  kind?: "image" | "pdf";
+  mime?: string;
+  url?: string;
   err?: string;
 }
 
