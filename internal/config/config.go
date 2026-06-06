@@ -513,8 +513,8 @@ type ToolsConfig struct {
 	Search  SearchConfig `toml:"search"`
 }
 
-// SearchConfig tunes the grep tool's engine. Engine is "auto" (default — RTK
-// grep when rewrite mode and rtk is on PATH, else ripgrep, else native Go),
+// SearchConfig tunes the grep tool's engine. Engine is "auto" (default —
+// ripgrep when on PATH, else native Go; RTK grep via bash or engine="rtk"),
 // "rtk", "rg", or "native".
 // RgPath optionally points at a specific ripgrep binary instead of a PATH lookup.
 type SearchConfig struct {

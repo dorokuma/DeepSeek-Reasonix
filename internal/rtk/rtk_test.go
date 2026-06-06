@@ -1,7 +1,6 @@
 package rtk
 
 import (
-	"context"
 	"testing"
 )
 
@@ -100,19 +99,6 @@ func TestReadFileDefaultLimit(t *testing.T) {
 	t.Setenv("REASONIX_RTK_READ_LIMIT", "1200")
 	if ReadFileDefaultLimit() != 1200 {
 		t.Fatalf("override = %d", ReadFileDefaultLimit())
-	}
-}
-
-func TestGrep_smoke(t *testing.T) {
-	if !Available() {
-		t.Skip("rtk not on PATH")
-	}
-	out, err := Grep(context.Background(), "/root/reasonix", "package rtk", "internal/rtk/rtk.go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if out == "" || out == "(no matches)" {
-		t.Fatalf("grep: %q", out)
 	}
 }
 

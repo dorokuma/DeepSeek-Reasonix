@@ -7,7 +7,6 @@ import (
 	"log"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -212,88 +211,6 @@ func ApplySegments(cmd string) string {
 	return b.String()
 }
 
-// Run executes an RTK subcommand and returns combined stdout (trimmed).
-func Run(ctx context.Context, workDir string, args ...string) (string, error) {
-	if !ensureBin() {
-		return "", errors.New("rtk not found on PATH")
-	}
-	if len(args) == 0 {
-		return "", errors.New("rtk: no subcommand")
-	}
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	tctx, cancel := context.WithTimeout(ctx, rewriteTimeout())
-	defer cancel()
-	cmd := exec.CommandContext(tctx, binPath, args...)
-	if workDir != "" {
-		cmd.Dir = workDir
-	}
-	out, err := cmd.CombinedOutput()
-	text := strings.TrimSpace(string(out))
-	if err != nil {
-		if text != "" {
-			return "", errors.New(text)
-		}
-		return "", err
-	}
-	return text, nil
-}
-
-// Grep runs RTK's compact grep. path is resolved against workDir when relative.
-func Grep(ctx context.Context, workDir, pattern, path string) (string, error) {
-	if pattern == "" {
-		return "", errors.New("pattern is required")
-	}
-	if path == "" {
-		path = "."
-	}
-	abs := path
-	if workDir != "" {
-		if path == "" || path == "." {
-			abs = workDir
-		} else if !filepath.IsAbs(path) {
-			abs = filepath.Join(workDir, path)
-		}
-	}
-	args := []string{"grep"}
-	if info, err := os.Stat(abs); err == nil && info.IsDir() {
-		args = append(args, "-r")
-	}
-	args = append(args, pattern, abs)
-	out, err := Run(ctx, workDir, args...)
-	if err != nil {
-		return "", err
-	}
-	if out == "" {
-		return "(no matches)", nil
-	}
-	return out, nil
-}
-
-// Ls lists a directory with RTK's compact formatter.
-func Ls(ctx context.Context, workDir, path string) (string, error) {
-	if path == "" {
-		path = "."
-	}
-	abs := path
-	if workDir != "" {
-		if path == "" || path == "." {
-			abs = workDir
-		} else if !filepath.IsAbs(path) {
-			abs = filepath.Join(workDir, path)
-		}
-	}
-	out, err := Run(ctx, workDir, "ls", abs)
-	if err != nil {
-		return "", err
-	}
-	if out == "" || out == "(empty)" {
-		return "(empty directory)", nil
-	}
-	return out, nil
-}
-
 type segSep struct {
 	text string
 	sep  string
@@ -383,10 +300,10 @@ func CollectProbe() Probe {
 	}
 	p.ReadLimit = ReadFileDefaultLimit()
 	if Active() {
-		if _, err := Grep(context.Background(), "", "package", "."); err == nil {
+		if _, err := RunShellIfRewritten(context.Background(), "", RipgrepShell("package", ".")); err == nil {
 			p.GrepOK = true
 			if p.Sample != "" {
-				p.Sample += "; builtin grep → rtk grep"
+				p.Sample += "; rg → rewrite gate"
 			}
 		}
 	}
