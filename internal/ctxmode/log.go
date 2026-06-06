@@ -1,13 +1,13 @@
 package ctxmode
 
 import (
-	"fmt"
-	"log"
+	"log/slog"
 	"os"
 	"strings"
 )
 
-// LogLevel controls ctxmode diagnostic logging to stderr.
+// LogLevel controls ctxmode diagnostic logging (to the global slog handler
+// when enabled via REASONIX_CTX_LOG).
 type LogLevel int
 
 const (
@@ -28,34 +28,29 @@ func LogLevelFromEnv() LogLevel {
 	}
 }
 
-func logMiss(detail string) {
+// LogMissStore records a sandbox store failure.
+func LogMissStore(tool string, bytes int, err error) {
 	if LogLevelFromEnv() < LogMiss {
 		return
 	}
-	log.Printf("ctx miss: %s", detail)
-}
-
-func logHit(detail string) {
-	if LogLevelFromEnv() < LogAll {
-		return
-	}
-	log.Printf("ctx hit: %s", detail)
-}
-
-// LogMissStore records a sandbox store failure.
-func LogMissStore(tool string, bytes int, err error) {
-	logMiss(fmt.Sprintf("surface=store tool=%s bytes=%d err=%v", tool, bytes, err))
+	slog.Info("ctx miss", "surface", "store", "tool", tool, "bytes", bytes, "err", err)
 }
 
 // LogHitSandbox records a successful outbound sandbox.
 func LogHitSandbox(tool, ref string, bytes int) {
-	logHit(fmt.Sprintf("surface=sandbox tool=%s ref=%s bytes=%d", tool, ref, bytes))
-}
-
-// LogJournalErr records a journal persistence failure (REASONIX_CTX_LOG=all).
-func LogJournalErr(op string, err error) {
-	if LogLevelFromEnv() < LogAll || err == nil {
+	if LogLevelFromEnv() < LogAll {
 		return
 	}
-	log.Printf("ctx journal %s: %v", op, err)
+	slog.Info("ctx hit", "surface", "sandbox", "tool", tool, "ref", ref, "bytes", bytes)
+}
+
+// LogJournalErr records a journal persistence failure.
+// Errors are always logged (via slog.Warn) so that persistence problems
+// (disk full, permission, sqlite corruption) are visible even when
+// REASONIX_CTX_LOG=off or miss. The env only gates hit/miss diagnostics.
+func LogJournalErr(op string, err error) {
+	if err == nil {
+		return
+	}
+	slog.Warn("ctx journal", "op", op, "err", err)
 }
