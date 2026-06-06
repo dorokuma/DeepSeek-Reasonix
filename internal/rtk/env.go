@@ -32,7 +32,7 @@ func EnvDocs() []EnvDoc {
 		{
 			Name:        "REASONIX_RTK_LOG",
 			Default:     "off",
-			Description: "Set to 1, true, yes, or on to log accepted bash rewrites to stderr.",
+			Description: "off (default), miss (log RTK fallbacks only), or all (miss + successful rewrites). Legacy 1/true/on maps to all.",
 		},
 	}
 }
@@ -42,9 +42,14 @@ func EnvSnapshot() map[string]string {
 	mode := ModeFromEnv().String()
 	timeout := rewriteTimeout().String()
 	readLimit := strconv.Itoa(ReadFileDefaultLimit())
-	logVal := "off"
-	if logEnabled() {
-		logVal = "on"
+	var logVal string
+	switch LogLevelFromEnv() {
+	case LogMiss:
+		logVal = "miss"
+	case LogAll:
+		logVal = "all"
+	default:
+		logVal = "off"
 	}
 	snap := map[string]string{
 		"REASONIX_RTK":          mode,

@@ -27,6 +27,9 @@ func compactToolOutput(toolName string, args json.RawMessage, jm *jobs.Manager, 
 			}
 			return truncated, notice
 		}
+		rtk.LogMissPipe(toolName, filter, len(body), "pipe_declined")
+	} else if rtk.Active() {
+		rtk.LogMissPipe(toolName, "", len(body), "no_pipe_filter")
 	}
 	return truncateToolOutput(body)
 }

@@ -18,7 +18,7 @@ func TestRunShellIfRewritten_declinesUnsupported(t *testing.T) {
 	if !Available() {
 		t.Skip("rtk not on PATH")
 	}
-	_, err := RunShellIfRewritten(context.Background(), "", "echo hello")
+	_, err := RunShellIfRewritten(context.Background(), "", "echo hello", "bash")
 	if !errors.Is(err, ErrNotRewritten) {
 		t.Fatalf("unsupported command should not rewrite: %v", err)
 	}
@@ -29,7 +29,7 @@ func TestRunShellIfRewritten_acceptsGitStatus(t *testing.T) {
 	if !Available() {
 		t.Skip("rtk not on PATH")
 	}
-	out, err := RunShellIfRewritten(context.Background(), "/root/reasonix", "git status")
+	out, err := RunShellIfRewritten(context.Background(), "/root/reasonix", "git status", "bash")
 	if err != nil {
 		t.Fatal(err)
 	}
