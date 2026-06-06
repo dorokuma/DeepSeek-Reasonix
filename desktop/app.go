@@ -108,10 +108,7 @@ func (a *App) beforeClose(ctx context.Context) bool {
 	if cfg.DesktopCloseBehavior() == "background" {
 		a.saveWindowStateSync()
 		a.snapshotAllTabs()
-		// Hide the application, not just the window, so macOS can restore it
-		// from the Dock/menu using the normal app activation path. On tray-capable
-		// platforms, the tray menu provides an additional Open/Quit entry point.
-		runtime.Hide(ctx)
+		hideForBackground(ctx)
 		return true
 	}
 	return false
@@ -119,8 +116,7 @@ func (a *App) beforeClose(ctx context.Context) bool {
 
 func (a *App) showMainWindow() {
 	if a.ctx != nil {
-		runtime.Show(a.ctx)
-		runtime.WindowShow(a.ctx)
+		showFromBackground(a.ctx)
 	}
 }
 
@@ -134,6 +130,26 @@ func (a *App) quitApp() {
 	}
 	a.forceQuit.Store(true)
 	runtime.Quit(a.ctx)
+}
+
+func hideForBackground(ctx context.Context) {
+	if backgroundCloseUsesApplicationHide(goruntime.GOOS) {
+		runtime.Hide(ctx)
+		return
+	}
+	runtime.WindowHide(ctx)
+}
+
+func showFromBackground(ctx context.Context) {
+	if backgroundCloseUsesApplicationHide(goruntime.GOOS) {
+		runtime.Show(ctx)
+	}
+	runtime.WindowShow(ctx)
+	runtime.WindowUnminimise(ctx)
+}
+
+func backgroundCloseUsesApplicationHide(goos string) bool {
+	return goos == "darwin"
 }
 
 // restoreOrBuildTabs restores the tabs from the last session, or creates a

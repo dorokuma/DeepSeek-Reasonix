@@ -95,6 +95,23 @@ func TestBeforeCloseAllowsSystemQuitWhenBackgroundCloseEnabled(t *testing.T) {
 	}
 }
 
+func TestBackgroundCloseHideStrategyByPlatform(t *testing.T) {
+	tests := []struct {
+		goos string
+		want bool
+	}{
+		{goos: "darwin", want: true},
+		{goos: "windows", want: false},
+		{goos: "linux", want: false},
+		{goos: "freebsd", want: false},
+	}
+	for _, tt := range tests {
+		if got := backgroundCloseUsesApplicationHide(tt.goos); got != tt.want {
+			t.Fatalf("backgroundCloseUsesApplicationHide(%q) = %v, want %v", tt.goos, got, tt.want)
+		}
+	}
+}
+
 func TestEmitReadyInvokesReadyHook(t *testing.T) {
 	app := NewApp()
 	var calls int32
