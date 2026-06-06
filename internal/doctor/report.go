@@ -13,6 +13,7 @@ import (
 	"reasonix/internal/codegraph"
 	"reasonix/internal/config"
 	"reasonix/internal/netclient"
+	"reasonix/internal/ctxmode"
 	"reasonix/internal/rtk"
 	"reasonix/internal/sandbox"
 )
@@ -35,6 +36,7 @@ type Report struct {
 	Sessions   SessionsReport   `json:"sessions"`
 	Sandbox    SandboxReport    `json:"sandbox"`
 	RTK        RTKReport        `json:"rtk"`
+	Ctx        CtxReport        `json:"ctx"`
 	Network    NetworkReport    `json:"network"`
 	Permission PermissionReport `json:"permission"`
 	Warnings   []string         `json:"warnings,omitempty"`
@@ -84,6 +86,15 @@ type SessionsReport struct {
 	Count int    `json:"count"`
 	Bytes int64  `json:"bytes"`
 	Error string `json:"error,omitempty"`
+}
+
+type CtxReport struct {
+	Active        bool              `json:"active"`
+	Threshold     int               `json:"threshold"`
+	JournalOK     bool              `json:"journal_ok"`
+	CacheDirs     int               `json:"cache_dirs,omitempty"`
+	OrphansPruned int               `json:"orphans_pruned,omitempty"`
+	Env           map[string]string `json:"env,omitempty"`
 }
 
 type RTKReport struct {
@@ -163,6 +174,7 @@ func Collect(opts Options) Report {
 			Available:  sandbox.Available(),
 		},
 		RTK: collectRTK(),
+		Ctx: collectCtx(),
 		Network: NetworkReport{
 			ProxyMode: cfg.NetworkProxyMode(),
 			Proxy:     netclient.Summary(cfg.NetworkProxySpec()),
@@ -309,6 +321,29 @@ func RenderText(r Report) string {
 		}
 	}
 
+	fmt.Fprintf(&b, "\nctx\n")
+	fmt.Fprintf(&b, "  active       %v\n", r.Ctx.Active)
+	if r.Ctx.Threshold > 0 {
+		fmt.Fprintf(&b, "  threshold    %d bytes\n", r.Ctx.Threshold)
+	}
+	if r.Ctx.JournalOK {
+		fmt.Fprintf(&b, "  journal      ok (FTS5 compaction resume)\n")
+	}
+	if r.Ctx.CacheDirs > 0 {
+		fmt.Fprintf(&b, "  cache_dirs   %d\n", r.Ctx.CacheDirs)
+	}
+	if r.Ctx.OrphansPruned > 0 {
+		fmt.Fprintf(&b, "  pruned       %d orphan cache dirs\n", r.Ctx.OrphansPruned)
+	}
+	for _, key := range []string{"REASONIX_CTX", "REASONIX_CTX_THRESHOLD", "REASONIX_CTX_LOG"} {
+		if r.Ctx.Env == nil {
+			break
+		}
+		if v, ok := r.Ctx.Env[key]; ok {
+			fmt.Fprintf(&b, "  %-14s %s\n", key, v)
+		}
+	}
+
 	fmt.Fprintf(&b, "\nsandbox\n")
 	bashLine := r.Sandbox.Bash
 	if r.Sandbox.Bash == "enforce" && !r.Sandbox.Available {
@@ -343,6 +378,19 @@ func collectRTK() RTKReport {
 		Env:       p.Env,
 		Sample:    p.Sample,
 		Warning:   p.Warning,
+	}
+}
+
+func collectCtx() CtxReport {
+	p := ctxmode.CollectProbe()
+	pruned, _ := ctxmode.PruneOrphanCache()
+	return CtxReport{
+		Active:        p.Active,
+		Threshold:     p.Threshold,
+		JournalOK:     p.JournalOK,
+		CacheDirs:     ctxmode.CountCacheDirs(),
+		OrphansPruned: pruned,
+		Env:           p.Env,
 	}
 }
 

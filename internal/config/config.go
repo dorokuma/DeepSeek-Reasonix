@@ -913,6 +913,9 @@ func SessionDir() string {
 // shares one root the user can wipe in a single rm. Empty when the OS dir is
 // unavailable — callers must tolerate that (caching is best-effort).
 func CacheDir() string {
+	if base := strings.TrimSpace(os.Getenv("REASONIX_CACHE_DIR")); base != "" {
+		return base
+	}
 	dir, err := os.UserConfigDir()
 	if err != nil {
 		return ""

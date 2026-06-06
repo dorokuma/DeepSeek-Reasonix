@@ -50,6 +50,7 @@ func (w Workspace) Tools(enabled ...string) []tool.Tool {
 		"glob":          globTool{workDir: w.Dir},
 		"grep":          grepTool{workDir: w.Dir, search: w.Search},
 		"web_fetch":     webFetch{},
+		"ctx_run":       ctxRun{workDir: w.Dir, sb: w.Bash},
 	}
 	all := tool.Builtins()
 	if len(enabled) == 0 {

@@ -4,14 +4,21 @@ import (
 	"encoding/json"
 	"strings"
 
+	"reasonix/internal/ctxmode"
 	"reasonix/internal/jobs"
 	"reasonix/internal/rtk"
 	"reasonix/internal/tool"
 )
 
 // compactToolOutput shrinks oversize tool output before it enters model context.
-// Order: rtk pipe when a safe filter is known, else head/tail truncation.
-func compactToolOutput(toolName string, args json.RawMessage, jm *jobs.Manager, body string) (string, string) {
+// Order: ctxmode sandbox (read_file/grep/MCP), then rtk pipe when known, else truncation.
+func compactToolOutput(store *ctxmode.Store, toolName string, args json.RawMessage, jm *jobs.Manager, body string) (string, string) {
+	if summary, notice, ok := ctxmode.Transform(store, toolName, args, body); ok {
+		if len(summary) <= maxToolOutputBytes {
+			return summary, notice
+		}
+		body = summary
+	}
 	if len(body) <= maxToolOutputBytes {
 		return body, ""
 	}
