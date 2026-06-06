@@ -22,7 +22,7 @@ The `rtk` section reports rewrite, grep gate, pipe compaction, timeout, and effe
 | `REASONIX_RTK` | `rewrite` | `rewrite` — transparent compaction; `suggest` — log would-be rewrites only; `off` / `0` / `false` — disable |
 | `REASONIX_RTK_TIMEOUT` | `3s` | Timeout for `rtk rewrite` and gated shell runs. Go duration (`5s`, `500ms`) or plain seconds (`10`) |
 | `REASONIX_RTK_READ_LIMIT` | `800` in rewrite mode, `2000` when off | Default `read_file` line cap when `limit` is omitted |
-| `REASONIX_RTK_LOG` | off | Set `1`, `true`, `yes`, or `on` to log accepted bash rewrites to stderr |
+| `REASONIX_RTK_LOG` | off | `miss` — log RTK fallbacks only (builtin/pipe/bash declines); `all` — miss + successful rewrites; legacy `1`/`true`/`on` = `all` |
 
 Example:
 
@@ -30,7 +30,8 @@ Example:
 export REASONIX_RTK=suggest          # dry-run: log rewrites, run originals
 export REASONIX_RTK_TIMEOUT=10s      # slower hosts / large repos
 export REASONIX_RTK_READ_LIMIT=1200  # larger read_file pages under RTK
-export REASONIX_RTK_LOG=1            # debug rewrite decisions
+export REASONIX_RTK_LOG=miss         # token-debug: only log what did NOT use RTK
+export REASONIX_RTK_LOG=all          # deep debug: miss + hit
 ```
 
 ## Config (grep builtin)
@@ -72,3 +73,15 @@ When a tool result exceeds ~32KB, Reasonix tries `rtk pipe` only when a safe fil
 Allowed pipe filters match RTK’s allowlist: `git-log`, `git-status`, `git-diff`, `grep`, `find`, `pytest`, `cargo-test`, `go-test`, `go-build`, `tsc`, `vitest`, `mypy`, `ruff-check`, `ruff-format`, `prettier`, `log`, `fd`, `rg`.
 
 If pipe does not shrink the payload, Reasonix falls back to head/tail truncation.
+
+## Debugging misses (token leaks)
+
+Set `REASONIX_RTK_LOG=miss` to log only fallbacks to stderr:
+
+- `rtk miss: surface=bash cmd="…" reason=rewrite_declined` — bash ran without RTK rewrite
+- `rtk miss: surface=grep cmd="…" reason=rewrite_declined` — grep builtin fell back to ripgrep/native
+- `rtk miss: surface=ls …` — ls builtin fell back to ReadDir/walk
+- `rtk miss: surface=pipe tool=bash bytes=… reason=no_pipe_filter` — large output with no safe filter
+- `rtk miss: surface=pipe … reason=pipe_declined` — filter known but `rtk pipe` did not shrink output
+
+Use `REASONIX_RTK_LOG=all` when you also want `rtk hit:` lines for successful rewrites.

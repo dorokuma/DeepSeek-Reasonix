@@ -46,7 +46,7 @@ func TestEnvSnapshot_defaults(t *testing.T) {
 func TestEnvSnapshot_override(t *testing.T) {
 	t.Setenv("REASONIX_RTK", "off")
 	t.Setenv("REASONIX_RTK_TIMEOUT", "10")
-	t.Setenv("REASONIX_RTK_LOG", "1")
+	t.Setenv("REASONIX_RTK_LOG", "all")
 	snap := EnvSnapshot()
 	if snap["REASONIX_RTK"] != "off" {
 		t.Fatalf("mode = %q", snap["REASONIX_RTK"])
@@ -54,7 +54,7 @@ func TestEnvSnapshot_override(t *testing.T) {
 	if snap["REASONIX_RTK_TIMEOUT"] != "10s" {
 		t.Fatalf("timeout = %q", snap["REASONIX_RTK_TIMEOUT"])
 	}
-	if snap["REASONIX_RTK_LOG"] != "on" {
+	if snap["REASONIX_RTK_LOG"] != "all" {
 		t.Fatalf("log = %q", snap["REASONIX_RTK_LOG"])
 	}
 }

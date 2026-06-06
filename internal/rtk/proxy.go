@@ -60,13 +60,16 @@ func FindNameShell(dir, namePattern string) (string, bool) {
 }
 
 // RunShellIfRewritten asks rtk rewrite for cmd; only runs the rewritten shell
-// when rewrite accepts it. This is the single gate for builtin RTK proxying.
-func RunShellIfRewritten(ctx context.Context, workDir, cmd string) (string, error) {
+// when rewrite accepts it. surface names the builtin (grep, ls) for miss logs.
+func RunShellIfRewritten(ctx context.Context, workDir, cmd, surface string) (string, error) {
 	if !Active() {
 		return "", ErrNotRewritten
 	}
 	rewritten := Rewrite(strings.TrimSpace(cmd))
 	if rewritten == "" {
+		if surface != "" {
+			LogMissBuiltin(surface, cmd, "rewrite_declined")
+		}
 		return "", ErrNotRewritten
 	}
 	return execShell(ctx, workDir, rewritten)

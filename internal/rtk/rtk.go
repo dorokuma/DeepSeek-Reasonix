@@ -61,15 +61,6 @@ func ModeFromEnv() Mode {
 	}
 }
 
-func logEnabled() bool {
-	switch strings.ToLower(strings.TrimSpace(os.Getenv("REASONIX_RTK_LOG"))) {
-	case "1", "true", "yes", "on":
-		return true
-	default:
-		return false
-	}
-}
-
 // Available reports whether the rtk binary is on PATH.
 func Available() bool { return ensureBin() }
 
@@ -153,8 +144,8 @@ func rewriteWithMode(cmd string, mode Mode) string {
 		}
 		return ""
 	}
-	if result != "" && result != cmd && logEnabled() {
-		log.Printf("rtk rewrite: %q → %q", cmd, result)
+	if result != "" && result != cmd && mode == ModeRewrite {
+		logHit(cmd, result)
 	}
 	return result
 }
@@ -185,6 +176,9 @@ func ApplySegments(cmd string) string {
 	}
 	segs := splitShellPipeline(cmd)
 	if len(segs) <= 1 {
+		if mode == ModeRewrite {
+			LogMissBash(cmd, "rewrite_declined")
+		}
 		return cmd
 	}
 	var out []string
@@ -194,6 +188,9 @@ func ApplySegments(cmd string) string {
 			out = append(out, r)
 			changed = true
 		} else {
+			if mode == ModeRewrite {
+				LogMissBash(s.text, "rewrite_declined")
+			}
 			out = append(out, s.text)
 		}
 	}
@@ -305,7 +302,7 @@ func CollectProbe() Probe {
 	p.Timeout = rewriteTimeout().String()
 	p.Env = EnvSnapshot()
 	if Active() {
-		if _, err := RunShellIfRewritten(context.Background(), "", RipgrepShell("package", ".")); err == nil {
+		if _, err := RunShellIfRewritten(context.Background(), "", RipgrepShell("package", "."), "grep"); err == nil {
 			p.GrepOK = true
 			if p.Sample != "" {
 				p.Sample += "; rg → rewrite gate"
