@@ -549,6 +549,57 @@ func TestBuildMigratesLegacyConfigEndToEnd(t *testing.T) {
 	}
 }
 
+func TestBuildMigratesLegacySessionsFromConfigSessionDir(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, "xdg-config"))
+	t.Setenv("AppData", filepath.Join(home, "AppData"))
+
+	proj := t.TempDir()
+	t.Chdir(proj)
+	writeFile(t, proj, "reasonix.toml", "[codegraph]\nenabled = false\n")
+
+	legacyDir := config.SessionDir()
+	writeFile(t, legacyDir, "custom-root.events.jsonl",
+		`{"type":"user.message","id":1,"ts":"t","turn":0,"text":"hello from redirected config root"}`+"\n"+
+			`{"type":"model.final","id":2,"ts":"t","turn":0,"content":"hi from redirected root","toolCalls":[],"usage":{},"costUsd":0}`+"\n")
+
+	var notices []string
+	sink := event.FuncSink(func(e event.Event) {
+		if e.Kind == event.Notice {
+			notices = append(notices, e.Text)
+		}
+	})
+
+	ctrl, err := Build(context.Background(), Options{Sink: sink})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	defer ctrl.Close()
+
+	sessionPath := filepath.Join(config.SessionDir(), "custom-root.jsonl")
+	data, err := os.ReadFile(sessionPath)
+	if err != nil {
+		t.Fatalf("legacy config-root session not imported to %s: %v", sessionPath, err)
+	}
+	if !strings.Contains(string(data), "hello from redirected config root") {
+		t.Fatalf("migrated session missing legacy content:\n%s", data)
+	}
+	if _, err := os.Stat(filepath.Join(config.SessionDir(), ".legacy-imported.v0-events-config")); err != nil {
+		t.Fatalf("config-root legacy import marker missing: %v", err)
+	}
+	sessionImported := false
+	for _, n := range notices {
+		if strings.Contains(n, "imported") && strings.Contains(n, "past session") && strings.Contains(n, legacyDir) {
+			sessionImported = true
+		}
+	}
+	if !sessionImported {
+		t.Errorf("no config-root session-import notice emitted; got %v", notices)
+	}
+}
+
 // isolateConfigHome redirects os.UserConfigDir() (and the cache subtree under
 // it) at a per-test temp dir by overriding the env vars Go's stdlib reads —
 // HOME on darwin, XDG_CONFIG_HOME on linux. Without this, Build's plugin path
