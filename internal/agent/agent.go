@@ -186,6 +186,9 @@ type Agent struct {
 	// verify against same-turn bash receipts after a write-backed completion.
 	projectChecks []instruction.VerifyCheck
 
+	// writeFailureVerifier appends a footer when write/edit tools failed this turn.
+	writeFailureVerifier bool
+
 	// memQueue, when non-nil, lets the remember/forget tools fold a turn-tail note
 	// about a just-made memory change into the next turn, so it applies this
 	// session without touching the cache-stable prefix. Set via SetMemoryQueue.
@@ -373,8 +376,9 @@ func New(prov provider.Provider, tools *tool.Registry, session *Session, opts Op
 		hooks:             hooks,
 		jobs:              opts.Jobs,
 		evidence:          evidence.NewLedger(),
-		projectChecks:     append([]instruction.VerifyCheck(nil), opts.ProjectChecks...),
-		contextWindow:     opts.ContextWindow,
+		projectChecks:        append([]instruction.VerifyCheck(nil), opts.ProjectChecks...),
+		writeFailureVerifier: true,
+		contextWindow:        opts.ContextWindow,
 		softCompactRatio:  opts.SoftCompactRatio,
 		compactRatio:      opts.CompactRatio,
 		compactForceRatio: opts.CompactForceRatio,
@@ -398,6 +402,8 @@ func (a *Agent) Run(ctx context.Context, input string) error {
 	a.session.Add(provider.Message{Role: provider.RoleUser, Content: input})
 
 	finalReadinessBlocks := 0
+	var emptyRecovery emptyRecoveryState
+	var visibilityRecovery visibilityRecoveryState
 	for step := 0; a.maxSteps <= 0 || step < a.maxSteps; step++ {
 		schemas := a.tools.Schemas()
 		prefixShape := a.capturePrefixShape(schemas)
@@ -422,17 +428,13 @@ func (a *Agent) Run(ctx context.Context, input string) error {
 			a.sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelWarn, Text: msg})
 		}
 
-		// Keep reasoning_content on the assistant turn for display and session
-		// archive. It is NOT re-uploaded to the API: the openai provider drops it
-		// when building the request, since re-sent reasoning is billable prompt
-		// input for no cache or coherence gain.
-		a.session.Add(provider.Message{
+		assistantMsg := provider.Message{
 			Role:               provider.RoleAssistant,
 			Content:            text,
 			ReasoningContent:   reasoning,
 			ReasoningSignature: signature,
 			ToolCalls:          calls,
-		})
+		}
 
 		if len(calls) == 0 {
 			if reason := a.finalReadinessFailure(); reason != "" {
@@ -445,8 +447,53 @@ func (a *Agent) Run(ctx context.Context, input string) error {
 				a.maybeCompact(ctx, usage)
 				continue
 			}
+
+			if !hasVisibleAssistantText(text) {
+				action, notice := decideEmptyRecovery(&emptyRecovery, text, reasoning, a.session.Snapshot())
+				switch action {
+				case emptyRecoveryContinuePrefill, emptyRecoveryContinueRetry:
+					a.session.Add(assistantMsg)
+					if notice != "" {
+						a.sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelInfo, Text: notice})
+					}
+					a.maybeCompact(ctx, usage)
+					continue
+				case emptyRecoveryContinueNudge:
+					a.session.Add(assistantMsg)
+					a.session.Add(provider.Message{Role: provider.RoleUser, Content: postToolEmptyNudge})
+					if notice != "" {
+						a.sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelInfo, Text: notice})
+					}
+					a.maybeCompact(ctx, usage)
+					continue
+				case emptyRecoveryExhausted:
+					a.trimEmptyResponseScaffolding()
+					a.emitEmptyResponseFallback()
+					a.session.Add(provider.Message{Role: provider.RoleAssistant, Content: emptyResponseUserMessage})
+					return nil
+				}
+			}
+
+			if action, notice := decideVisibilityRecovery(&visibilityRecovery, text, lastUserMessage(a.session.Snapshot())); action == visibilityRecoveryContinueNudge {
+				a.session.Add(assistantMsg)
+				a.session.Add(provider.Message{Role: provider.RoleUser, Content: visibilityNudge})
+				if notice != "" {
+					a.sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelInfo, Text: notice})
+				}
+				a.maybeCompact(ctx, usage)
+				continue
+			}
+
+			a.trimEmptyResponseScaffolding()
+			if hasVisibleAssistantText(text) {
+				assistantMsg.Content = appendWriteFailureFooter(text, a.evidence, a.writeFailureVerifier)
+			}
+			a.session.Add(assistantMsg)
 			return nil // model gave a final answer
 		}
+
+		// Keep reasoning_content on tool-call turns for session archive.
+		a.session.Add(assistantMsg)
 
 		results := a.executeBatch(ctx, calls)
 		for i, call := range calls {
@@ -934,7 +981,11 @@ func (a *Agent) executeOne(ctx context.Context, call provider.ToolCall) toolOutc
 				a.evidence.Record(evidence.ReceiptFromToolCall(call.Name, json.RawMessage(call.Arguments), true, t.ReadOnly()))
 			}
 		} else {
-			a.evidence.Record(evidence.ReceiptFromToolCall(call.Name, json.RawMessage(call.Arguments), err == nil, t.ReadOnly()))
+			r := evidence.ReceiptFromToolCall(call.Name, json.RawMessage(call.Arguments), err == nil, t.ReadOnly())
+			if err != nil && r.Write {
+				r.ErrorPreview = evidence.ErrorPreviewFromToolOutput(result, err.Error())
+			}
+			a.evidence.Record(r)
 		}
 	}
 	// PostToolUse hooks observe the result (they can't block); fired whether the

@@ -251,6 +251,24 @@ func runAgent(args []string) int {
 // commands arrive as JSON POSTs. The Broadcaster is the controller's event sink,
 // so the same typed stream the chat TUI consumes reaches web clients — the
 // transport-agnostic controller driven by a second frontend.
+// resumeOrPinSession loads an existing transcript or pins a fresh session to
+// path when the file does not exist yet (e.g. reasonix-telegram /new).
+func resumeOrPinSession(ctrl *control.Controller, path string) error {
+	loaded, err := agent.LoadSession(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+				return fmt.Errorf("create session dir: %w", err)
+			}
+			ctrl.SetSessionPath(path)
+			return nil
+		}
+		return err
+	}
+	ctrl.Resume(loaded, path)
+	return nil
+}
+
 func runServe(args []string) int {
 	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
 	model := fs.String("model", "", "provider name (default: config default_model)")
@@ -272,12 +290,10 @@ func runServe(args []string) int {
 
 	// Auto-save target: reuse the resumed file, else a fresh one — same as chat.
 	if *resume != "" {
-		loaded, err := agent.LoadSession(*resume)
-		if err != nil {
+		if err := resumeOrPinSession(ctrl, *resume); err != nil {
 			fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
 			return 1
 		}
-		ctrl.Resume(loaded, *resume)
 	} else if ctrl.SessionDir() != "" {
 		ctrl.SetSessionPath(agent.NewSessionPath(ctrl.SessionDir(), ctrl.Label()))
 	}
@@ -368,11 +384,9 @@ func chatREPL(args []string) int {
 	// file so closing/reopening keeps appending to the same history; a fresh
 	// session lands in a new file stamped with the model name.
 	if resumePath != "" {
-		if loaded, err := agent.LoadSession(resumePath); err != nil {
+		if err := resumeOrPinSession(ctrl, resumePath); err != nil {
 			fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
 			return 1
-		} else {
-			ctrl.Resume(loaded, resumePath)
 		}
 	} else if ctrl.SessionDir() != "" {
 		ctrl.SetSessionPath(agent.NewSessionPath(ctrl.SessionDir(), ctrl.Label()))

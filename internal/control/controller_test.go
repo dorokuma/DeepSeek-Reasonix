@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -42,6 +43,27 @@ func (fakeControlTool) Execute(context.Context, json.RawMessage) (string, error)
 	return "", nil
 }
 func (fakeControlTool) ReadOnly() bool { return true }
+
+func TestResumeRefreshesSystemPrompt(t *testing.T) {
+	t.Parallel()
+	stale := agent.NewSession("stale rules without 爸爸")
+	stale.Add(provider.Message{Role: provider.RoleUser, Content: "hi"})
+	stale.Add(provider.Message{Role: provider.RoleAssistant, Content: "hello"})
+
+	merged := mergeResumedSession("fresh global rules 爸爸", stale)
+	if len(merged.Messages) != 3 {
+		t.Fatalf("messages = %d, want system + user + assistant", len(merged.Messages))
+	}
+	if merged.Messages[0].Role != provider.RoleSystem {
+		t.Fatalf("first role = %q, want system", merged.Messages[0].Role)
+	}
+	if !strings.Contains(merged.Messages[0].Content, "爸爸") {
+		t.Fatalf("system = %q, want fresh boot prompt", merged.Messages[0].Content)
+	}
+	if strings.Contains(merged.Messages[0].Content, "stale") {
+		t.Fatalf("system should not keep stale saved prompt: %q", merged.Messages[0].Content)
+	}
+}
 
 func TestNewTreatsTypedNilSinkAsDiscard(t *testing.T) {
 	var sink *typedNilControllerSink
@@ -153,6 +175,8 @@ func TestDisconnectMCPServerRemovesLazyPlaceholder(t *testing.T) {
 func TestRemoveMCPServerRemovesUnconnectedLazyPlaceholder(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
+	t.Setenv("HOME", dir)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(dir, "xdg-config"))
 	if err := os.WriteFile("reasonix.toml", []byte(`
 [[plugins]]
 name = "mock"

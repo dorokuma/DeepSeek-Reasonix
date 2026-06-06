@@ -620,6 +620,18 @@ const LanguagePolicy = `Reply in the same language the user is using in their mo
 	`whenever they switch. Let this also guide the language you think in. Always keep code, ` +
 	`identifiers, file paths, shell commands, and technical terms in their original form — never translate them.`
 
+// VisibilityPolicy defines what the user can see in chat UIs (TUI, Telegram, SSE).
+// Tool results and the system prompt exist only in the model's context — a common
+// failure mode is claiming "as above" / "内容如上" after read_file without quoting
+// anything in the assistant message. Static English text for cache stability.
+const VisibilityPolicy = `User visibility: The user sees only your assistant messages in the chat UI — ` +
+	`not tool results, not the system prompt, not memory loaded in your context, not reasoning. ` +
+	`"Above" in your context is invisible to the user. Summarizing that a file or rules are ` +
+	`"loaded" or listing section names is not showing content. Calling read_file or any tool does ` +
+	`not display anything until you paste the text in your reply. Never say "above", "as shown", ` +
+	`"都在上面", or "内容如上". When the user asks to see a file or rules, quote the full text ` +
+	`in your message.`
+
 // Default returns the built-in default configuration (DeepSeek + MiMo presets).
 func Default() *Config {
 	return &Config{

@@ -193,12 +193,13 @@ func (c *client) buildRequest(req provider.Request) chatRequest {
 			ToolCallID: m.ToolCallID,
 			Name:       m.Name,
 		}
-		// DeepSeek requires reasoning_content to be passed back on every turn
-		// when the model made a tool call in the previous turn (400 error
-		// otherwise). Non-DeepSeek endpoints may or may not need it; skip sending
-		// for them to avoid unnecessary prompt tokens.
-		if c.deepseek && m.ReasoningContent != "" {
-			cm.ReasoningContent = m.ReasoningContent
+		// DeepSeek thinking mode: tool-call turns must round-trip reasoning_content
+		// exactly as returned — even when it is an empty string. Omitting the field
+		// (Go's omitempty) triggers HTTP 400: "reasoning_content … must be passed
+		// back to the API." Pure chat turns between user messages may omit it.
+		if c.deepseek && needsReasoningRoundTrip(src, i) {
+			rc := m.ReasoningContent
+			cm.ReasoningContent = &rc
 		}
 		for _, tc := range m.ToolCalls {
 			wire := chatToolCall{ID: tc.ID, Type: "function"}
@@ -425,11 +426,10 @@ type chatMessage struct {
 	ToolCalls  []chatToolCall `json:"tool_calls,omitempty"`
 	ToolCallID string         `json:"tool_call_id,omitempty"`
 	Name       string         `json:"name,omitempty"`
-	// reasoning_content is sent back to DeepSeek on every turn because DeepSeek
-	// requires it on multi-turn sessions where the model made a tool call
-	// (otherwise returns 400). Re-uploading it costs ~500 tokens/turn but is
-	// mandatory for correct multi-turn agent behavior.
-	ReasoningContent string `json:"reasoning_content,omitempty"`
+	// Pointer so an intentional empty string serializes as "reasoning_content":""
+	// for tool-call turns; omitempty on a plain string would drop the field and
+	// DeepSeek returns HTTP 400.
+	ReasoningContent *string `json:"reasoning_content,omitempty"`
 }
 
 type chatTool struct {

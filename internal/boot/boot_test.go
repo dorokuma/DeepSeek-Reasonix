@@ -302,6 +302,8 @@ tier = "eager"
 func TestBuildWithoutMemoryLeavesPromptUnchanged(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
+	t.Setenv("HOME", dir)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(dir, "xdg-config"))
 	writeFile(t, dir, "reasonix.toml", `
 default_model = "test-model"
 
@@ -310,6 +312,7 @@ enabled = false
 
 [agent]
 system_prompt = "JUST THE BASE"
+output_style = ""
 
 [[providers]]
 name = "test-model"
@@ -335,11 +338,46 @@ api_key_env = "REASONIX_TEST_KEY_UNSET"
 	if i := strings.Index(sys, "\n\n# Skills"); i >= 0 {
 		base = sys[:i]
 	}
-	// The language policy is always appended at boot; strip it so this assertion
-	// is purely about whether project/ancestor memory leaked into the base.
-	base = stripLanguagePolicy(base)
+	if i := strings.Index(base, "\n\n# Memory"); i >= 0 {
+		base = base[:i]
+	}
+	// Boot always appends language + visibility policies; strip them so this
+	// assertion is purely about whether project/ancestor memory leaked into the base.
+	base = stripBootPolicies(base)
 	if base != "JUST THE BASE" {
 		t.Fatalf("expected untouched base prompt, got:\n%s", sys)
+	}
+}
+
+func TestBuildVisibilityPolicyIsAppended(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	writeFile(t, dir, "reasonix.toml", `
+default_model = "test-model"
+
+[codegraph]
+enabled = false
+
+[agent]
+system_prompt = "BASE"
+
+[[providers]]
+name = "test-model"
+kind = "openai"
+base_url = "https://example.invalid"
+model = "x"
+api_key_env = "REASONIX_TEST_KEY_UNSET"
+`)
+
+	ctrl, err := Build(context.Background(), Options{})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	defer ctrl.Close()
+
+	sys := systemMessage(ctrl.History())
+	if !strings.Contains(sys, config.VisibilityPolicy) {
+		t.Fatalf("visibility policy missing from system prompt:\n%s", sys)
 	}
 }
 
@@ -384,9 +422,10 @@ func systemMessage(msgs []provider.Message) string {
 	return ""
 }
 
-func stripLanguagePolicy(s string) string {
+func stripBootPolicies(s string) string {
 	s = strings.TrimSpace(s)
 	for _, policy := range []string{
+		config.VisibilityPolicy,
 		config.LanguagePolicy,
 	} {
 		s = strings.TrimSpace(strings.TrimSuffix(s, policy))

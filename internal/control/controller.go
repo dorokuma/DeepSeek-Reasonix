@@ -1218,15 +1218,31 @@ func (c *Controller) summarizeAt(ctx context.Context, turn int, from bool) error
 }
 
 // Resume seeds the session from a loaded transcript and pins the active file to
-// its path so auto-save keeps appending there.
+// its path so auto-save keeps appending there. The system prompt always comes
+// from the current boot (latest REASONIX.md / config), not from the saved file —
+// stale system messages in JSONL are dropped so resume never loses global rules.
 func (c *Controller) Resume(s *agent.Session, path string) {
 	if c.executor != nil {
-		c.executor.SetSession(s)
+		c.executor.SetSession(mergeResumedSession(c.systemPrompt, s))
 	}
 	c.mu.Lock()
 	c.sessionPath = path
 	c.mu.Unlock()
 	c.rebindCheckpoints(path)
+}
+
+func mergeResumedSession(systemPrompt string, loaded *agent.Session) *agent.Session {
+	merged := agent.NewSession(systemPrompt)
+	if loaded == nil {
+		return merged
+	}
+	for _, m := range loaded.Messages {
+		if m.Role == provider.RoleSystem {
+			continue
+		}
+		merged.Add(m)
+	}
+	return merged
 }
 
 // Snapshot writes the executor's conversation to the active session file. No-op
