@@ -92,9 +92,8 @@ type chatTUI struct {
 	planMode bool
 
 	// permMode is the config-level permissions writer-fallback mode ("ask",
-	// "allow", or "deny"). When "allow", the TUI shows an "Allow" tag because
-	// writer tools never prompt — effectively YOLO-level behaviour without the
-	// runtime bypass flag.
+	// "allow", or "deny"). When "allow", the TUI shows "YOLO" because writer
+	// tools never prompt — the same effective behaviour as the runtime bypass flag.
 	permMode string
 
 	// pendingInterject queues input typed while a turn runs; each TurnDone
@@ -1892,7 +1891,7 @@ func (m chatTUI) View() tea.View {
 			Bold(true).
 			Padding(0, 1).
 			Render("Shell")
-	case m.ctrl.Bypass():
+	case m.ctrl.Bypass() || m.permMode == "allow":
 		modeTag = lipgloss.NewStyle().
 			Background(lipgloss.Color(statusYoloColor.hex)).
 			Foreground(lipgloss.Color("#ffffff")).
@@ -1906,13 +1905,6 @@ func (m chatTUI) View() tea.View {
 			Bold(true).
 			Padding(0, 1).
 			Render("Plan")
-	case m.permMode == "allow":
-		modeTag = lipgloss.NewStyle().
-			Background(lipgloss.Color(statusAllowColor.hex)).
-			Foreground(lipgloss.Color("#ffffff")).
-			Bold(true).
-			Padding(0, 1).
-			Render("Allow")
 	default:
 		modeTag = lipgloss.NewStyle().
 			Background(lipgloss.Color(statusAutoColor.hex)).
@@ -1941,10 +1933,8 @@ func (m chatTUI) View() tea.View {
 		status = "  " + modeTag + " · " + i18n.M.ChatStatusToolApproval
 	case shellMode:
 		status = "  " + modeTag + " · " + i18n.M.ShellModeHint
-	case m.ctrl.Bypass():
+	case m.ctrl.Bypass() || m.permMode == "allow":
 		status = "  " + modeTag + " · " + i18n.M.ChatStatusYoloIdle + " " + dim("("+i18n.M.ChatStatusCycleHint+")")
-	case m.permMode == "allow":
-		status = "  " + modeTag + " · " + i18n.M.ChatStatusIdle + " " + dim("("+i18n.M.ChatStatusCycleHint+")")
 	default:
 		status = "  " + modeTag + " · " + i18n.M.ChatStatusIdle + " " + dim("("+i18n.M.ChatStatusCycleHint+")")
 	}

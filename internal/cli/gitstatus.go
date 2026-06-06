@@ -129,17 +129,14 @@ var (
 	statusPlanColor  = cliColor{"#2563eb", 27}
 	statusYoloColor  = cliColor{"#e5484d", 167}
 	statusShellColor = cliColor{"#16a34a", 71} // green — shell mode indicator
-	statusAllowColor = cliColor{"#10b981", 42} // emerald — config-level allow mode
 )
 
 func (m chatTUI) statusModeColor() cliColor {
 	switch {
-	case m.ctrl != nil && m.ctrl.Bypass():
+	case m.ctrl != nil && (m.ctrl.Bypass() || m.permMode == "allow"):
 		return statusYoloColor
 	case m.planMode:
 		return statusPlanColor
-	case m.permMode == "allow":
-		return statusAllowColor
 	default:
 		return statusAutoColor
 	}
