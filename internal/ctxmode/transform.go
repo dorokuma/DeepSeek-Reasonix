@@ -31,10 +31,12 @@ func TransformCooperative(store *Store, toolName string, args json.RawMessage, f
 		return "", "", false
 	}
 	LogHitSandbox(toolName, id, len(fullBody))
-	notice = fmt.Sprintf("tool output sandboxed via ctxmode (ref=%s, %d bytes)", id, len(fullBody))
-	if pipedOK && pipeNotice != "" {
-		notice += "; " + pipeNotice
-	}
+	// Sandbox store records are sent only to the diagnostic log (via LogHitSandbox
+	// when REASONIX_CTX_LOG=all). We do not return a user-facing notice for the
+	// ctx sandbox store itself (nor the rtk pipeNotice): that previously became
+	// a Notice event and caused spam in the chat. The model receives the
+	// necessary ref + RTK compact view via the summary (first return value).
+	notice = ""
 	useCompact := pipedOK && compactBody != "" && len(compactBody) < len(fullBody) &&
 		(maxModelBytes <= 0 || len(compactBody) <= maxModelBytes)
 	if useCompact {

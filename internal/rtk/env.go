@@ -31,8 +31,8 @@ func EnvDocs() []EnvDoc {
 		},
 		{
 			Name:        "REASONIX_RTK_LOG",
-			Default:     "off",
-			Description: "off (default), miss (log RTK fallbacks only), or all (miss + successful rewrites). Legacy 1/true/on maps to all.",
+			Default:     "all",
+			Description: "all (default, for review of hits/misses), miss (fallbacks only), or off. Legacy 1/true/on maps to all.",
 		},
 	}
 }

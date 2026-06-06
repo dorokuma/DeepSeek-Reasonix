@@ -31,7 +31,8 @@ func TestTruncateToolOutputUnderCap(t *testing.T) {
 }
 
 // TestTruncateToolOutputHeadTail keeps head+tail of an oversize payload and
-// inserts a marker; the notice must report the elided byte count truthfully.
+// inserts a marker in the body. The user-facing notice is suppressed (to avoid
+// chat spam); truncation is logged via slog instead.
 func TestTruncateToolOutputHeadTail(t *testing.T) {
 	head := strings.Repeat("H", maxToolOutputBytes)
 	tail := strings.Repeat("T", maxToolOutputBytes)
@@ -46,8 +47,8 @@ func TestTruncateToolOutputHeadTail(t *testing.T) {
 	if len(out) >= len(in) {
 		t.Errorf("output not shorter than input: in=%d out=%d", len(in), len(out))
 	}
-	if !strings.Contains(notice, "truncated") {
-		t.Errorf("notice missing: %q", notice)
+	if notice != "" {
+		t.Errorf("notice should be suppressed (only logged), got %q", notice)
 	}
 }
 

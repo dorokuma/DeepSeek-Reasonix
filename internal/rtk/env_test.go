@@ -38,7 +38,7 @@ func TestEnvSnapshot_defaults(t *testing.T) {
 	if snap["REASONIX_RTK_TIMEOUT"] != "3s" {
 		t.Fatalf("timeout = %q", snap["REASONIX_RTK_TIMEOUT"])
 	}
-	if snap["REASONIX_RTK_LOG"] != "off" {
+	if snap["REASONIX_RTK_LOG"] != "all" {
 		t.Fatalf("log = %q", snap["REASONIX_RTK_LOG"])
 	}
 }

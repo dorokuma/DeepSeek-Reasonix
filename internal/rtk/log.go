@@ -2,12 +2,13 @@ package rtk
 
 import (
 	"fmt"
-	"log"
+	"log/slog"
 	"os"
 	"strings"
 )
 
-// LogLevel controls RTK diagnostic logging to stderr.
+// LogLevel controls RTK diagnostic logging (to the global slog handler when
+// enabled via REASONIX_RTK_LOG, for consistency with CTX and app logging).
 type LogLevel int
 
 const (
@@ -16,16 +17,18 @@ const (
 	LogAll
 )
 
-// LogLevelFromEnv reads REASONIX_RTK_LOG: off (default), miss, or all.
-// Legacy values 1, true, yes, and on map to all (preserve prior hit logging).
+// LogLevelFromEnv reads REASONIX_RTK_LOG: all (default for review), miss, or off.
+// Legacy values 1, true, yes, and on map to all. Default changed to all so hits/misses
+// are logged by default for recent review of compaction effectiveness.
 func LogLevelFromEnv() LogLevel {
 	switch strings.ToLower(strings.TrimSpace(os.Getenv("REASONIX_RTK_LOG"))) {
+	case "off", "0", "false", "no":
+		return LogOff
 	case "miss", "decline", "declines":
 		return LogMiss
-	case "all", "1", "true", "yes", "on":
-		return LogAll
 	default:
-		return LogOff
+		// default to all (was off) to capture all hits and misses for review
+		return LogAll
 	}
 }
 
@@ -33,14 +36,14 @@ func logMiss(surface, detail string) {
 	if LogLevelFromEnv() < LogMiss {
 		return
 	}
-	log.Printf("rtk miss: %s %s", surface, detail)
+	slog.Info("rtk miss", "surface", surface, "detail", detail)
 }
 
 func logHit(cmd, rewritten string) {
 	if LogLevelFromEnv() < LogAll {
 		return
 	}
-	log.Printf("rtk hit: cmd=%q rewritten=%q", cmd, rewritten)
+	slog.Info("rtk hit", "cmd", cmd, "rewritten", rewritten)
 }
 
 // LogMissBuiltin records a builtin gate fallback (grep, ls, …).

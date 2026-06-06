@@ -27,8 +27,12 @@ func TestTransform_readFile(t *testing.T) {
 	if !ok {
 		t.Fatal("want transform")
 	}
-	if notice == "" || !strings.Contains(notice, "ctx-1") {
-		t.Fatalf("notice = %q", notice)
+	// Transform no longer returns the "sandboxed via ctxmode" notice as its second
+	// value (that used to become a visible Notice in the chat UI).
+	// The sandbox record is only in the diagnostic log (when REASONIX_CTX_LOG=all).
+	// The ref is still provided to the model in the first return value (the summary).
+	if notice != "" {
+		t.Fatalf("want empty notice (ctx store record suppressed from notice return), got %q", notice)
 	}
 	if strings.Contains(out, strings.Repeat("line\n", 50)) {
 		t.Fatal("full body should not appear in summary")

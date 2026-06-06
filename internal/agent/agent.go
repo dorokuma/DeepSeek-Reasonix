@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -1045,7 +1046,7 @@ func (a *Agent) executeOne(ctx context.Context, call provider.ToolCall) toolOutc
 			detail = strings.TrimRight(detail, "\n") + "\nThe arguments were not valid JSON. Re-emit them exactly per this schema:\n" + string(t.Schema())
 		}
 		body, truncMsg := compactToolOutput(a.ctxStore, call.Name, json.RawMessage(call.Arguments), a.jobs, fmt.Sprintf("error: %v\n%s", err, detail))
-		return toolOutcome{output: body, errMsg: firstLine(err.Error()), truncated: truncMsg != "", truncMsg: truncMsg}
+		return toolOutcome{output: body, errMsg: firstLine(err.Error()), truncated: truncMsg != "" || strings.Contains(body, "[truncated "), truncMsg: truncMsg}
 	}
 	a.recordRepeatSuccess(call, t)
 	// A foreground `task` sub-agent just finished — its result is the final answer.
@@ -1055,7 +1056,7 @@ func (a *Agent) executeOne(ctx context.Context, call provider.ToolCall) toolOutc
 		a.hooks.SubagentStop(ctx, result)
 	}
 	body, truncMsg := compactToolOutput(a.ctxStore, call.Name, json.RawMessage(call.Arguments), a.jobs, result)
-	return toolOutcome{output: body, truncated: truncMsg != "", truncMsg: truncMsg}
+	return toolOutcome{output: body, truncated: truncMsg != "" || strings.Contains(body, "[truncated "), truncMsg: truncMsg}
 }
 
 func (a *Agent) repeatedSuccessBlock(call provider.ToolCall, t tool.Tool) (string, bool) {
@@ -1214,8 +1215,9 @@ func firstLine(s string) string {
 
 // truncateToolOutput head+tails s when it exceeds maxToolOutputBytes, slicing
 // on rune boundaries so we never split a multibyte glyph. Returns the possibly
-// trimmed body plus a one-line user-facing notice when truncation happened
-// (empty when it didn't, without the "· " display prefix).
+// trimmed body (which includes an internal "[truncated ...]" marker).
+// The one-line user-facing notice is suppressed (not emitted as Notice event
+// to avoid chat spam); truncation events are always logged via slog for debugging.
 func truncateToolOutput(s string) (string, string) {
 	if len(s) <= maxToolOutputBytes {
 		return s, ""
@@ -1224,9 +1226,9 @@ func truncateToolOutput(s string) (string, string) {
 	head := snapToRuneBoundary(s, 0, keep)
 	tail := snapToRuneBoundary(s, len(s)-keep, len(s))
 	omitted := len(s) - len(head) - len(tail)
-	notice := fmt.Sprintf("tool output truncated: %d of %d bytes elided", omitted, len(s))
+	slog.Info("tool output truncated", "omitted", omitted, "total", len(s))
 	body := head + fmt.Sprintf("\n\n…[truncated %d of %d bytes — rerun with narrower args to see the middle]…\n\n", omitted, len(s)) + tail
-	return body, notice
+	return body, ""
 }
 
 // snapToRuneBoundary returns s[lo:hi] with the bounds nudged outward until

@@ -54,8 +54,10 @@ func TestCompactToolOutput_bashGitLog(t *testing.T) {
 	if len(out) > maxToolOutputBytes {
 		t.Fatalf("output still over cap: %d", len(out))
 	}
-	if notice == "" || !strings.Contains(notice, "rtk pipe") {
-		t.Fatalf("want pipe notice, got %q", notice)
+	// rtk pipe notice suppressed from chat (only in slog log + REASONIX_RTK_LOG);
+	// compaction is in the returned out (model/tool body).
+	if notice != "" {
+		t.Fatalf("rtk pipe notice should be suppressed from chat, got %q", notice)
 	}
 }
 
@@ -81,8 +83,10 @@ func TestCompactToolOutput_bashOutputUsesJobLabel(t *testing.T) {
 	if len(out) > maxToolOutputBytes {
 		t.Fatalf("output still over cap: %d", len(out))
 	}
-	if notice == "" || !strings.Contains(notice, "git-log") {
-		t.Fatalf("want git-log pipe notice, got %q", notice)
+	// rtk pipe notice suppressed from chat (only in slog log + REASONIX_RTK_LOG);
+	// compaction is in the returned out (model/tool body).
+	if notice != "" {
+		t.Fatalf("rtk pipe notice should be suppressed from chat, got %q", notice)
 	}
 }
 
@@ -94,8 +98,11 @@ func TestCompactToolOutput_readFileSandboxed(t *testing.T) {
 	body := strings.Repeat("content line\n", 400)
 	args := json.RawMessage(`{"path":"big.txt"}`)
 	out, notice := compactToolOutput(store, "read_file", args, nil, body)
-	if notice == "" || !strings.Contains(notice, "ctxmode") {
-		t.Fatalf("want sandbox notice, got %q", notice)
+	// We no longer emit a user-facing notice for ctx sandbox store (it previously
+	// caused repeated Notice events in the chat). The ref info is inside the
+	// returned output (the model-facing summary body).
+	if notice != "" {
+		t.Fatalf("want no user notice for ctx sandbox, got %q", notice)
 	}
 	if strings.Contains(out, strings.Repeat("content line\n", 100)) {
 		t.Fatal("full read_file body should not reach model context")
@@ -121,8 +128,11 @@ func TestCompactToolOutput_grepCtxAndPipe(t *testing.T) {
 	body := b.String()
 	args := json.RawMessage(`{"pattern":"match"}`)
 	out, notice := compactToolOutput(store, "grep", args, nil, body)
-	if !strings.Contains(notice, "ctxmode") {
-		t.Fatalf("want ctx notice, got %q", notice)
+	// ctx sandbox no longer contributes to the user-facing notice (prevents chat spam).
+	// An rtk pipe notice (if any) or empty is expected here; the ctx ref and RTK
+	// view remain in the output body for the model.
+	if strings.Contains(notice, "ctxmode") || strings.Contains(notice, "sandboxed via ctxmode") {
+		t.Fatalf("do not want ctx sandbox notice in user-facing notice, got %q", notice)
 	}
 	if !strings.Contains(out, "ref=ctx-") {
 		t.Fatalf("want ctx ref in summary, got %q", out)
