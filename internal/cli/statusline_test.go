@@ -143,6 +143,23 @@ func TestPlanStatuslineUsesBluePill(t *testing.T) {
 	}
 }
 
+func TestAllowStatuslineUsesGreenPill(t *testing.T) {
+	i18n.DetectLanguage("en")
+
+	ctrl := control.New(control.Options{})
+	m := newChatTUI(ctrl, "", make(chan event.Event, 1), 80)
+	m.permMode = "allow"
+	next, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	content := next.(chatTUI).View().Content
+	plain := bottomStatusPlain(content)
+	if !strings.Contains(plain, "Allow") || !strings.Contains(plain, "ready") || !strings.Contains(plain, "(shift+tab to cycle)") {
+		t.Fatalf("allow status line missing mode status:\n%s", plain)
+	}
+	if !strings.Contains(content, "\x1b[48;2;16;185;129m") {
+		t.Fatalf("Allow status line should use emerald pill background (#10b981), got:\n%q", content)
+	}
+}
+
 func TestStatuslineCycleHintFollowsLanguage(t *testing.T) {
 	i18n.DetectLanguage("zh")
 	t.Cleanup(func() { i18n.DetectLanguage("en") })
