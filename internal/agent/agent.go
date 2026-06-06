@@ -10,6 +10,7 @@ import (
 	"sync/atomic"
 	"unicode/utf8"
 
+	"reasonix/internal/ctxmode"
 	"reasonix/internal/diff"
 	"reasonix/internal/event"
 	"reasonix/internal/evidence"
@@ -194,6 +195,9 @@ type Agent struct {
 	// session without touching the cache-stable prefix. Set via SetMemoryQueue.
 	memQueue memory.Queue
 
+	// ctxStore holds sandboxed tool output for ctx_read/ctx_search/ctx_run. nil when REASONIX_CTX=off.
+	ctxStore *ctxmode.Store
+
 	// Context management: when a turn's prompt nears contextWindow, the older
 	// middle of the session is summarized away, keeping a token-bounded recent
 	// tail verbatim (recentKeep is the message floor) and archiving the originals
@@ -299,6 +303,26 @@ func (a *Agent) ContextWindow() int { return a.contextWindow }
 // fires (e.g. 0.8). The status line uses it to show headroom to the next compact.
 func (a *Agent) CompactRatio() float64 { return a.compactRatio }
 
+// ResetCtxStore removes the current store and opens a fresh one when ctxmode is on.
+// Called on /new session rotation.
+func (a *Agent) ResetCtxStore() {
+	if a.ctxStore != nil {
+		a.ctxStore.Remove()
+		a.ctxStore = nil
+	}
+	if ctxmode.Active() {
+		a.ctxStore = ctxmode.NewStore()
+	}
+}
+
+// CleanupCtxStore removes on-disk sandbox data. Called when the controller closes.
+func (a *Agent) CleanupCtxStore() {
+	if a.ctxStore != nil {
+		a.ctxStore.Remove()
+		a.ctxStore = nil
+	}
+}
+
 // CompactNow runs one compaction pass immediately, regardless of the
 // usage-ratio threshold maybeCompact normally honours. Used by the chat
 // TUI's `/compact` command so the user can reset the prefix before it
@@ -332,6 +356,10 @@ type Options struct {
 	// Jobs is the session's background-job manager (nil disables background tools).
 	Jobs *jobs.Manager
 
+	// CtxStore optionally shares a parent session's ctxmode store (sub-agents).
+	// When nil and ctxmode is active, New creates a fresh store.
+	CtxStore *ctxmode.Store
+
 	// ProjectChecks are host-observable structured checks extracted during boot.
 	ProjectChecks []instruction.VerifyCheck
 }
@@ -364,6 +392,10 @@ func New(prov provider.Provider, tools *tool.Registry, session *Session, opts Op
 	if nilutil.IsNil(hooks) {
 		hooks = nil
 	}
+	ctxStore := opts.CtxStore
+	if ctxStore == nil && ctxmode.Active() {
+		ctxStore = ctxmode.NewStore()
+	}
 	return &Agent{
 		prov:              prov,
 		tools:             tools,
@@ -375,6 +407,7 @@ func New(prov provider.Provider, tools *tool.Registry, session *Session, opts Op
 		gate:              gate,
 		hooks:             hooks,
 		jobs:              opts.Jobs,
+		ctxStore:          ctxStore,
 		evidence:          evidence.NewLedger(),
 		projectChecks:        append([]instruction.VerifyCheck(nil), opts.ProjectChecks...),
 		writeFailureVerifier: true,
@@ -400,6 +433,9 @@ func (a *Agent) Run(ctx context.Context, input string) error {
 	a.repeatSuccessCounts = nil
 	a.sink.Emit(event.Event{Kind: event.TurnStarted})
 	a.session.Add(provider.Message{Role: provider.RoleUser, Content: input})
+	if a.ctxStore != nil {
+		ctxmode.RecordUserPrompt(a.ctxStore.Journal(), input)
+	}
 
 	finalReadinessBlocks := 0
 	var emptyRecovery emptyRecoveryState
@@ -970,11 +1006,17 @@ func (a *Agent) executeOne(ctx context.Context, call provider.ToolCall) toolOutc
 	if a.memQueue != nil {
 		cctx = memory.WithQueue(cctx, a.memQueue)
 	}
+	if a.ctxStore != nil {
+		cctx = ctxmode.WithStore(cctx, a.ctxStore)
+	}
 	callID := call.ID
 	cctx = tool.WithProgress(cctx, func(chunk string) {
 		a.sink.Emit(event.Event{Kind: event.ToolProgress, Tool: event.Tool{ID: callID, Output: chunk}})
 	})
 	result, err := t.Execute(cctx, json.RawMessage(call.Arguments))
+	if a.ctxStore != nil {
+		ctxmode.RecordTool(a.ctxStore.Journal(), call.Name, json.RawMessage(call.Arguments), result, err)
+	}
 	if a.evidence != nil {
 		if call.Name == "complete_step" {
 			if err == nil {
@@ -1002,7 +1044,7 @@ func (a *Agent) executeOne(ctx context.Context, call provider.ToolCall) toolOutc
 		if !json.Valid([]byte(call.Arguments)) {
 			detail = strings.TrimRight(detail, "\n") + "\nThe arguments were not valid JSON. Re-emit them exactly per this schema:\n" + string(t.Schema())
 		}
-		body, truncMsg := compactToolOutput(call.Name, json.RawMessage(call.Arguments), a.jobs, fmt.Sprintf("error: %v\n%s", err, detail))
+		body, truncMsg := compactToolOutput(a.ctxStore, call.Name, json.RawMessage(call.Arguments), a.jobs, fmt.Sprintf("error: %v\n%s", err, detail))
 		return toolOutcome{output: body, errMsg: firstLine(err.Error()), truncated: truncMsg != "", truncMsg: truncMsg}
 	}
 	a.recordRepeatSuccess(call, t)
@@ -1012,7 +1054,7 @@ func (a *Agent) executeOne(ctx context.Context, call provider.ToolCall) toolOutc
 	if a.hooks != nil && call.Name == "task" && !isBackgroundTaskCall(call.Arguments) {
 		a.hooks.SubagentStop(ctx, result)
 	}
-	body, truncMsg := compactToolOutput(call.Name, json.RawMessage(call.Arguments), a.jobs, result)
+	body, truncMsg := compactToolOutput(a.ctxStore, call.Name, json.RawMessage(call.Arguments), a.jobs, result)
 	return toolOutcome{output: body, truncated: truncMsg != "", truncMsg: truncMsg}
 }
 

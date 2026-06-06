@@ -704,6 +704,9 @@ func addBuiltins(reg *tool.Registry, enabled, writeRoots []string, bashSpec sand
 	// preserved on replace): file-writers bound to the workspace, bash to the OS
 	// sandbox. Only replace tools actually enabled/present.
 	confined := append(builtin.ConfineWriters(writeRoots), builtin.ConfineBash(bashSpec), builtin.ConfineSearch(searchSpec))
+	if workDir != "" {
+		confined = append(confined, builtin.ConfineCtxRun(bashSpec, workDir))
+	}
 	for _, t := range confined {
 		if _, ok := reg.Get(t.Name()); ok {
 			reg.Add(t)

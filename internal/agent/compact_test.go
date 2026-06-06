@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"reasonix/internal/ctxmode"
 	"reasonix/internal/event"
 	"strings"
 	"testing"
@@ -229,6 +230,40 @@ func TestCompactInjectsFocusAndPreCompactHook(t *testing.T) {
 	}
 	if !strings.Contains(sys, "KEEP-THE-MIGRATION-PLAN") {
 		t.Errorf("summary system prompt missing the PreCompact hook output: %q", sys)
+	}
+}
+
+func TestCompactInjectsJournalGuidanceAndResume(t *testing.T) {
+	t.Setenv("REASONIX_CTX", "on")
+	store := ctxmode.NewStore()
+	defer store.Remove()
+	store.Journal().Record("edit", "internal/auth/session.go", "added cookie refresh")
+
+	prov := &fakeProvider{reply: "- summary"}
+	sess := &Session{Messages: []provider.Message{
+		{Role: provider.RoleSystem, Content: "sys"},
+		{Role: provider.RoleUser, Content: "wire session.go auth"},
+		{Role: provider.RoleAssistant, Content: "step one"},
+		{Role: provider.RoleUser, Content: "more"},
+		{Role: provider.RoleAssistant, Content: "step two"},
+		{Role: provider.RoleUser, Content: "next"},
+		{Role: provider.RoleAssistant, Content: "ok"},
+	}}
+	a := New(prov, tool.NewRegistry(), sess, Options{RecentKeep: 2, CtxStore: store}, event.Discard)
+
+	if err := a.compact(context.Background(), "manual", "session.go", true); err != nil {
+		t.Fatalf("compact: %v", err)
+	}
+	if len(prov.got) == 0 {
+		t.Fatal("summarizer not called")
+	}
+	sys := prov.got[0].Content
+	if !strings.Contains(sys, "session.go") {
+		t.Errorf("summary system prompt missing journal guidance: %q", sys)
+	}
+	summaryMsg := sess.Messages[1].Content
+	if !strings.Contains(summaryMsg, "Resume context recovered") {
+		t.Errorf("compacted summary missing resume block: %q", summaryMsg)
 	}
 }
 

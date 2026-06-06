@@ -7,6 +7,7 @@ import (
 	"io"
 	"strings"
 
+	"reasonix/internal/ctxmode"
 	"reasonix/internal/event"
 	"reasonix/internal/jobs"
 	"reasonix/internal/provider"
@@ -208,6 +209,10 @@ func FilterRegistry(parent *tool.Registry, names []string, exclude ...string) *t
 // sink, and returns its final assistant answer. Shared by the foreground and
 // background paths.
 func (t *TaskTool) runSub(ctx context.Context, prompt string, subReg *tool.Registry, sink event.Sink, maxSteps int) (string, error) {
+	var shared *ctxmode.Store
+	if s, ok := ctxmode.FromContext(ctx); ok {
+		shared = s
+	}
 	return RunSubAgent(ctx, t.prov, subReg, t.sysPrompt, prompt, Options{
 		MaxSteps:          maxSteps,
 		Temperature:       t.temperature,
@@ -218,6 +223,7 @@ func (t *TaskTool) runSub(ctx context.Context, prompt string, subReg *tool.Regis
 		CompactRatio:      t.compactRatio,
 		CompactForceRatio: t.compactForceRatio,
 		ArchiveDir:        t.archiveDir,
+		CtxStore:          shared,
 	}, sink)
 }
 
