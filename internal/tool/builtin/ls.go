@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"reasonix/internal/rtk"
 	"reasonix/internal/tool"
 )
 
@@ -47,6 +48,12 @@ func (l listDir) Execute(ctx context.Context, args json.RawMessage) (string, err
 	// Recursive mode: walk the whole tree depth-first.
 	if p.Recursive {
 		return l.listRecursive(p.Path)
+	}
+
+	if rtk.Active() {
+		if out, err := rtk.Ls(ctx, l.workDir, p.Path); err == nil {
+			return out, nil
+		}
 	}
 
 	entries, err := os.ReadDir(p.Path)

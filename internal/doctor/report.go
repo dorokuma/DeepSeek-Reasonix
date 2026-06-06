@@ -91,6 +91,8 @@ type RTKReport struct {
 	Path      string `json:"path,omitempty"`
 	Version   string `json:"version,omitempty"`
 	RewriteOK bool   `json:"rewrite_ok"`
+	GrepOK    bool   `json:"grep_ok"`
+	ReadLimit int    `json:"read_limit,omitempty"`
 	Sample    string `json:"sample,omitempty"`
 	Warning   string `json:"warning,omitempty"`
 }
@@ -283,6 +285,12 @@ func RenderText(r Report) string {
 	} else if r.RTK.Warning != "" {
 		fmt.Fprintf(&b, "  warning      %s\n", r.RTK.Warning)
 	}
+	if r.RTK.GrepOK {
+		fmt.Fprintf(&b, "  grep         ok (builtin → rtk grep)\n")
+	}
+	if r.RTK.ReadLimit > 0 && r.RTK.ReadLimit != 2000 {
+		fmt.Fprintf(&b, "  read_limit   %d lines (rtk mode)\n", r.RTK.ReadLimit)
+	}
 
 	fmt.Fprintf(&b, "\nsandbox\n")
 	bashLine := r.Sandbox.Bash
@@ -311,6 +319,8 @@ func collectRTK() RTKReport {
 		Path:      redactHome(p.Path),
 		Version:   p.Version,
 		RewriteOK: p.RewriteOK,
+		GrepOK:    p.GrepOK,
+		ReadLimit: p.ReadLimit,
 		Sample:    p.Sample,
 		Warning:   p.Warning,
 	}

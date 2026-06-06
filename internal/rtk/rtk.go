@@ -7,6 +7,8 @@ import (
 	"log"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -21,7 +23,11 @@ const (
 	ModeOff                   // disable RTK integration
 )
 
-const defaultRewriteTimeout = 3 * time.Second
+const (
+	defaultRewriteTimeout = 3 * time.Second
+	defaultReadLimitRTK   = 800
+	readFileLimitDefault  = 2000
+)
 
 var (
 	binPath string
@@ -68,6 +74,39 @@ func logEnabled() bool {
 // Available reports whether the rtk binary is on PATH.
 func Available() bool { return ensureBin() }
 
+// Active reports whether RTK should transparently rewrite tools and builtins.
+func Active() bool {
+	return Available() && ModeFromEnv() == ModeRewrite
+}
+
+func rewriteTimeout() time.Duration {
+	v := strings.TrimSpace(os.Getenv("REASONIX_RTK_TIMEOUT"))
+	if v == "" {
+		return defaultRewriteTimeout
+	}
+	if d, err := time.ParseDuration(v); err == nil && d > 0 {
+		return d
+	}
+	if n, err := strconv.Atoi(v); err == nil && n > 0 {
+		return time.Duration(n) * time.Second
+	}
+	return defaultRewriteTimeout
+}
+
+// ReadFileDefaultLimit returns the read_file line cap when limit is unset.
+// Smaller under RTK rewrite mode to nudge paging; override with REASONIX_RTK_READ_LIMIT.
+func ReadFileDefaultLimit() int {
+	if !Active() {
+		return readFileLimitDefault
+	}
+	if v := strings.TrimSpace(os.Getenv("REASONIX_RTK_READ_LIMIT")); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			return n
+		}
+	}
+	return defaultReadLimitRTK
+}
+
 // BinPath returns the resolved rtk binary path, or "" if missing.
 func BinPath() string { return binPath }
 
@@ -92,7 +131,7 @@ func rewriteWithMode(cmd string, mode Mode) string {
 		}
 		return s
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), defaultRewriteTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), rewriteTimeout())
 	defer cancel()
 
 	c := exec.CommandContext(ctx, binPath, "rewrite", cmd)
@@ -173,6 +212,88 @@ func ApplySegments(cmd string) string {
 	return b.String()
 }
 
+// Run executes an RTK subcommand and returns combined stdout (trimmed).
+func Run(ctx context.Context, workDir string, args ...string) (string, error) {
+	if !ensureBin() {
+		return "", errors.New("rtk not found on PATH")
+	}
+	if len(args) == 0 {
+		return "", errors.New("rtk: no subcommand")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	tctx, cancel := context.WithTimeout(ctx, rewriteTimeout())
+	defer cancel()
+	cmd := exec.CommandContext(tctx, binPath, args...)
+	if workDir != "" {
+		cmd.Dir = workDir
+	}
+	out, err := cmd.CombinedOutput()
+	text := strings.TrimSpace(string(out))
+	if err != nil {
+		if text != "" {
+			return "", errors.New(text)
+		}
+		return "", err
+	}
+	return text, nil
+}
+
+// Grep runs RTK's compact grep. path is resolved against workDir when relative.
+func Grep(ctx context.Context, workDir, pattern, path string) (string, error) {
+	if pattern == "" {
+		return "", errors.New("pattern is required")
+	}
+	if path == "" {
+		path = "."
+	}
+	abs := path
+	if workDir != "" {
+		if path == "" || path == "." {
+			abs = workDir
+		} else if !filepath.IsAbs(path) {
+			abs = filepath.Join(workDir, path)
+		}
+	}
+	args := []string{"grep"}
+	if info, err := os.Stat(abs); err == nil && info.IsDir() {
+		args = append(args, "-r")
+	}
+	args = append(args, pattern, abs)
+	out, err := Run(ctx, workDir, args...)
+	if err != nil {
+		return "", err
+	}
+	if out == "" {
+		return "(no matches)", nil
+	}
+	return out, nil
+}
+
+// Ls lists a directory with RTK's compact formatter.
+func Ls(ctx context.Context, workDir, path string) (string, error) {
+	if path == "" {
+		path = "."
+	}
+	abs := path
+	if workDir != "" {
+		if path == "" || path == "." {
+			abs = workDir
+		} else if !filepath.IsAbs(path) {
+			abs = filepath.Join(workDir, path)
+		}
+	}
+	out, err := Run(ctx, workDir, "ls", abs)
+	if err != nil {
+		return "", err
+	}
+	if out == "" || out == "(empty)" {
+		return "(empty directory)", nil
+	}
+	return out, nil
+}
+
 type segSep struct {
 	text string
 	sep  string
@@ -222,6 +343,8 @@ type Probe struct {
 	Path       string `json:"path,omitempty"`
 	Version    string `json:"version,omitempty"`
 	RewriteOK  bool   `json:"rewrite_ok"`
+	GrepOK     bool   `json:"grep_ok"`
+	ReadLimit  int    `json:"read_limit,omitempty"`
 	Sample     string `json:"sample,omitempty"`
 	Warning    string `json:"warning,omitempty"`
 }
@@ -240,7 +363,7 @@ func CollectProbe() Probe {
 	if out, err := exec.CommandContext(ctx, binPath, "--version").CombinedOutput(); err == nil {
 		p.Version = strings.TrimSpace(string(out))
 	}
-	ctx2, cancel2 := context.WithTimeout(context.Background(), defaultRewriteTimeout)
+	ctx2, cancel2 := context.WithTimeout(context.Background(), rewriteTimeout())
 	defer cancel2()
 	c := exec.CommandContext(ctx2, binPath, "rewrite", "git status")
 	out, err := c.Output()
@@ -257,6 +380,15 @@ func CollectProbe() Probe {
 		p.Sample = "git status → " + r
 	} else {
 		p.Warning = "rtk rewrite smoke test failed (git status)"
+	}
+	p.ReadLimit = ReadFileDefaultLimit()
+	if Active() {
+		if _, err := Grep(context.Background(), "", "package", "."); err == nil {
+			p.GrepOK = true
+			if p.Sample != "" {
+				p.Sample += "; builtin grep → rtk grep"
+			}
+		}
 	}
 	return p
 }

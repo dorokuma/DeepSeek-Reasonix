@@ -48,7 +48,7 @@ func (w Workspace) Tools(enabled ...string) []tool.Tool {
 		"bash":          bash{workDir: w.Dir, sb: w.Bash},
 		"ls":            listDir{workDir: w.Dir},
 		"glob":          globTool{workDir: w.Dir},
-		"grep":          grepTool{workDir: w.Dir, rg: w.Search.RgPath},
+		"grep":          grepTool{workDir: w.Dir, search: w.Search},
 		"web_fetch":     webFetch{},
 	}
 	all := tool.Builtins()
