@@ -261,7 +261,10 @@ type Probe struct {
 	Version    string `json:"version,omitempty"`
 	RewriteOK  bool   `json:"rewrite_ok"`
 	GrepOK     bool   `json:"grep_ok"`
+	PipeOK     bool   `json:"pipe_ok"`
 	ReadLimit  int    `json:"read_limit,omitempty"`
+	Timeout    string `json:"timeout,omitempty"`
+	Env        map[string]string `json:"env,omitempty"`
 	Sample     string `json:"sample,omitempty"`
 	Warning    string `json:"warning,omitempty"`
 }
@@ -299,11 +302,20 @@ func CollectProbe() Probe {
 		p.Warning = "rtk rewrite smoke test failed (git status)"
 	}
 	p.ReadLimit = ReadFileDefaultLimit()
+	p.Timeout = rewriteTimeout().String()
+	p.Env = EnvSnapshot()
 	if Active() {
 		if _, err := RunShellIfRewritten(context.Background(), "", RipgrepShell("package", ".")); err == nil {
 			p.GrepOK = true
 			if p.Sample != "" {
 				p.Sample += "; rg → rewrite gate"
+			}
+		}
+		pipeIn := strings.Repeat("commit abc\nAuthor: x\nDate: 2024\n\n    msg\n\n", 40)
+		if out, err := PipeCompact("git-log", pipeIn); err == nil && len(out) < len(pipeIn)/2 {
+			p.PipeOK = true
+			if p.Sample != "" {
+				p.Sample += "; pipe git-log ok"
 			}
 		}
 	}
