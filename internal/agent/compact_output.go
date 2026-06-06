@@ -3,6 +3,7 @@ package agent
 import (
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"strings"
 
 	"reasonix/internal/ctxmode"
@@ -27,7 +28,7 @@ func compactToolOutput(store *ctxmode.Store, toolName string, args json.RawMessa
 	} else if piped {
 		body = compactBody
 		if len(body) <= maxToolOutputBytes {
-			return body, pipeNotice
+			return body, ""  // suppress rtk pipe notice from chat (only log); model gets compact in body
 		}
 	}
 
@@ -39,13 +40,13 @@ func compactToolOutput(store *ctxmode.Store, toolName string, args json.RawMessa
 	if !piped {
 		if compacted, notice, ok := tryRTKPipe(toolName, args, jm, body); ok {
 			if len(compacted) <= maxToolOutputBytes {
-				return compacted, notice
+				return compacted, ""  // suppress rtk pipe notice from chat (only log via slog + REASONIX_RTK_LOG)
 			}
 			truncated, truncMsg := truncateToolOutput(compacted)
 			if truncMsg != "" {
-				return truncated, notice + "; " + truncMsg
+				return truncated, notice + "; " + truncMsg  // note: truncMsg now "" after our trunc suppress
 			}
-			return truncated, notice
+			return truncated, ""
 		}
 	}
 
@@ -73,6 +74,7 @@ func tryRTKPipe(toolName string, args json.RawMessage, jm *jobs.Manager, body st
 		rtk.LogMissPipe(toolName, filter, len(body), "pipe_no_shrink")
 		return "", "", false
 	}
+	slog.Info("rtk pipe compact", "tool", toolName, "filter", filter, "bytes_in", len(body), "bytes_out", len(out))
 	notice = fmt.Sprintf("rtk pipe (%s): %d→%d bytes", filter, len(body), len(out))
 	return out, notice, true
 }

@@ -7,7 +7,7 @@ func TestLogLevelFromEnv(t *testing.T) {
 		env  string
 		want LogLevel
 	}{
-		{"", LogOff},
+		{"", LogAll}, // default now all for review of hits/misses
 		{"off", LogOff},
 		{"miss", LogMiss},
 		{"decline", LogMiss},
