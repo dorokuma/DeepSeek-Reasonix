@@ -2354,6 +2354,46 @@ func todoPanelWindow(todos []todoPanelTodo) (int, int) {
 	return start, start + todoPanelMaxRows
 }
 
+// markTodoCompleted checks if complete_step args reference a todo step title
+// in the current todoArgs JSON and, if found, marks that item completed.
+// Returns the (possibly updated) todoArgs. The original is returned unchanged
+// when there's nothing to update (no todo list, no match, already done).
+func markTodoCompleted(todoArgs, stepArgs string) string {
+	if todoArgs == "" || stepArgs == "" {
+		return todoArgs
+	}
+	var step struct {
+		Step string `json:"step"`
+	}
+	if err := json.Unmarshal([]byte(stepArgs), &step); err != nil || step.Step == "" {
+		return todoArgs
+	}
+	var p struct {
+		Todos []todoPanelTodo `json:"todos"`
+	}
+	if err := json.Unmarshal([]byte(todoArgs), &p); err != nil || len(p.Todos) == 0 {
+		return todoArgs
+	}
+
+	stepTitle := strings.TrimSpace(step.Step)
+	changed := false
+	for i := range p.Todos {
+		if strings.TrimSpace(p.Todos[i].Content) == stepTitle && p.Todos[i].Status != "completed" {
+			p.Todos[i].Status = "completed"
+			changed = true
+		}
+	}
+	if !changed {
+		return todoArgs
+	}
+
+	b, err := json.Marshal(map[string]any{"todos": p.Todos})
+	if err != nil {
+		return todoArgs
+	}
+	return string(b)
+}
+
 // truncateSubject trims a tool subject so the approval banner fits one line.
 func truncateSubject(s string, width int) string {
 	max := width - 28
@@ -2852,6 +2892,11 @@ func (m *chatTUI) ingestEvent(e event.Event) {
 		m.collapseToolOutput(e.Tool.ID)
 		if e.Tool.Name == "todo_write" && e.Tool.Err == "" {
 			m.todoArgs = e.Tool.Args
+		}
+		if e.Tool.Name == "complete_step" && e.Tool.Err == "" {
+			// Update the matching todo item in-place so the panel reflects real
+			// progress immediately, without waiting for a follow-up todo_write.
+			m.todoArgs = markTodoCompleted(m.todoArgs, e.Tool.Args)
 		}
 		if e.Tool.Err != "" {
 			m.finalizeStreamed()
