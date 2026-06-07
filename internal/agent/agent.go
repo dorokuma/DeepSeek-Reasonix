@@ -1105,6 +1105,11 @@ func (a *Agent) executeOne(ctx context.Context, call provider.ToolCall) toolOutc
 		a.hooks.SubagentStop(ctx, result)
 	}
 	body, truncMsg := compactToolOutput(a.ctxStore, call.Name, json.RawMessage(call.Arguments), a.jobs, result)
+	// After a successful todo_write, inject the current plan as a user message
+	// so the model sees it in every subsequent turn and follows the intended flow.
+	if err == nil && call.Name == "todo_write" {
+		a.injectPlanMessage(json.RawMessage(call.Arguments))
+	}
 	return toolOutcome{output: body, truncated: truncMsg != "" || strings.Contains(body, "[truncated "), truncMsg: truncMsg}
 }
 
@@ -1190,6 +1195,60 @@ func isShellFileWriteCommand(command string) bool {
 		return true
 	default:
 		return false
+	}
+}
+
+// injectPlanMessage parses a todo_write args blob and adds a user message with
+// the current plan to the session, so the model sees it on every subsequent turn.
+func (a *Agent) injectPlanMessage(args json.RawMessage) {
+	var p struct {
+		Merge bool                `json:"merge"`
+		Todos []map[string]any    `json:"todos"`
+	}
+	if err := json.Unmarshal([]byte(args), &p); err != nil || len(p.Todos) == 0 {
+		return
+	}
+	// Count active (pending / in_progress) items — if none, the plan is done.
+	active := 0
+	for _, t := range p.Todos {
+		s, _ := t["status"].(string)
+		if s == "pending" || s == "in_progress" {
+			active++
+		}
+	}
+	if active == 0 {
+		// All done — remove the stale plan reminder if one exists.
+		a.clearPlanMessage()
+		return
+	}
+	// Render a terse reminder.
+	var b strings.Builder
+	b.WriteString("[Current task list — follow this plan step by step, complete_step each item before calling other tools]\n")
+	for _, t := range p.Todos {
+		content, _ := t["content"].(string)
+		status, _ := t["status"].(string)
+		switch status {
+		case "completed":
+			b.WriteString("  ✅ " + content + "\n")
+		case "in_progress":
+			b.WriteString("  ▶ " + content + " (current — call complete_step when done)\n")
+		case "pending", "":
+			b.WriteString("  ○ " + content + "\n")
+		}
+	}
+	b.WriteString("[Complete the current ▶ step with complete_step, then call todo_write merge=true to advance]")
+	msg := b.String()
+	// Append the reminder to the session.
+	a.session.Add(provider.Message{Role: "user", Content: msg})
+}
+
+// clearPlanMessage removes the last plan reminder injected by injectPlanMessage.
+func (a *Agent) clearPlanMessage() {
+	msgs := a.session.Messages
+	if len(msgs) == 0 { return }
+	last := msgs[len(msgs)-1]
+	if strings.HasPrefix(last.Content, "[Current task list") {
+		a.session.Replace(msgs[:len(msgs)-1])
 	}
 }
 
