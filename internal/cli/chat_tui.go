@@ -1353,6 +1353,10 @@ func (m chatTUI) bottomRows() int {
 		rows += strings.Count(footer, "\n") + 1
 	}
 	if !m.hideComposer() {
+		qi := m.renderQueueIndicator()
+		if qi != "" {
+			rows += strings.Count(qi, "\n") + 1
+		}
 		rows += m.input.Height() + 2
 	}
 	return rows + 2
