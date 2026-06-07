@@ -2429,6 +2429,83 @@ func mustMarshal(v any) json.RawMessage {
 	return b
 }
 
+// isMergeTodoWrite checks whether a todo_write arg blob has merge=true.
+func isMergeTodoWrite(args string) bool {
+	var p struct {
+		Merge bool `json:"merge"`
+	}
+	if err := json.Unmarshal([]byte(args), &p); err != nil {
+		return false
+	}
+	return p.Merge
+}
+
+// mergeTodoWrite takes the current todoArgs and a merge payload, and merges
+// the incoming items into existing ones matched by content. Items in the
+// payload replace existing ones (same content); items not in the payload
+// keep their existing status; new items in the payload are appended.
+func mergeTodoWrite(currentArgs, mergeArgs string) string {
+	if currentArgs == "" {
+		return mergeArgs
+	}
+	var payload struct {
+		Todos []todoPanelTodo `json:"todos"`
+	}
+	if err := json.Unmarshal([]byte(mergeArgs), &payload); err != nil || len(payload.Todos) == 0 {
+		return currentArgs
+	}
+	var doc map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(currentArgs), &doc); err != nil {
+		return currentArgs
+	}
+	rawExisting, ok := doc["todos"]
+	if !ok {
+		return mergeArgs
+	}
+	var existing []todoPanelTodo
+	if err := json.Unmarshal(rawExisting, &existing); err != nil {
+		return currentArgs
+	}
+
+	// Build lookup by normalized content.
+	type entry struct {
+		idx    int
+		status string
+	}
+	byContent := make(map[string]entry, len(existing))
+	for i, t := range existing {
+		key := strings.TrimSpace(t.Content)
+		if key != "" {
+			byContent[key] = entry{idx: i, status: t.Status}
+		}
+	}
+
+	// Apply merge: update existing items in-place; collect truly new items.
+	var appended []todoPanelTodo
+	for _, t := range payload.Todos {
+		key := strings.TrimSpace(t.Content)
+		if key == "" {
+			continue
+		}
+		if e, ok := byContent[key]; ok {
+			existing[e.idx].Status = t.Status
+			if t.ActiveForm != "" {
+				existing[e.idx].ActiveForm = t.ActiveForm
+			}
+		} else {
+			appended = append(appended, t)
+		}
+	}
+	existing = append(existing, appended...)
+
+	doc["todos"] = mustMarshal(existing)
+	b, err := json.Marshal(doc)
+	if err != nil {
+		return currentArgs
+	}
+	return string(b)
+}
+
 // truncateSubject trims a tool subject so the approval banner fits one line.
 func truncateSubject(s string, width int) string {
 	max := width - 28
@@ -2926,7 +3003,13 @@ func (m *chatTUI) ingestEvent(e event.Event) {
 		// collapses to a one-line "⎿ N lines" summary first.
 		m.collapseToolOutput(e.Tool.ID)
 		if e.Tool.Name == "todo_write" && e.Tool.Err == "" {
-			m.todoArgs = e.Tool.Args
+			// When merge=true, update only the provided items and keep the rest.
+			// Otherwise, replace the entire list.
+			if isMergeTodoWrite(e.Tool.Args) {
+				m.todoArgs = mergeTodoWrite(m.todoArgs, e.Tool.Args)
+			} else {
+				m.todoArgs = e.Tool.Args
+			}
 		}
 		if e.Tool.Name == "complete_step" && e.Tool.Err == "" {
 			// Update the matching todo item in-place so the panel reflects real
