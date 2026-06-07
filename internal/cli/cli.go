@@ -484,11 +484,11 @@ func chatREPL(args []string) int {
 	// No alt-screen: finalized transcript lines are committed to the terminal's
 	// normal buffer (via tea.Println) so native scrollback, the wheel, and copy
 	// all work — the bubbletea-managed region is just the bottom input/status.
-	// Route slog output away from stderr while the TUI owns the terminal.
+	// Route slog output to a file while the TUI owns the terminal.
 	// The default handler writes directly to stderr, which bypasses Bubble
-	// Tea's alt-screen rendering and corrupts the display (especially rtk
-	// miss/hit messages from the compaction layer).
-	slog.SetDefault(slog.New(slog.NewTextHandler(io.Discard, nil)))
+	// Tea's alt-screen rendering and corrupts the display.
+	slg := slog.New(slog.NewTextHandler(slogFile(), nil))
+	slog.SetDefault(slg)
 
 	p := tea.NewProgram(m)
 	final, runErr := p.Run()
@@ -514,6 +514,23 @@ func chatREPL(args []string) int {
 		return 1
 	}
 	return 0
+}
+
+// slogFile returns a writer for TUI-mode log output: a temp file
+// `reasonix-tui-*.log` in the cache dir. Falls back to io.Discard when
+// the cache dir can't be resolved or the file can't be opened.
+func slogFile() io.Writer {
+	dir := config.CacheDir()
+	if dir == "" {
+		return io.Discard
+	}
+	f, err := os.CreateTemp(dir, "reasonix-tui-*.log")
+	if err != nil {
+		return io.Discard
+	}
+	// Best-effort: leave the file open for the TUI's lifetime; the OS
+	// reclaims the fd on process exit. No need to track and close it.
+	return f
 }
 
 // setupTargets is where the wizard writes: the TOML config and the secrets file.
