@@ -43,6 +43,7 @@ type stdioTransport struct {
 	readErr error // set once the reader goroutine exits; further calls fail fast
 
 	waitOnce sync.Once
+	done     chan struct{} // closed in failAll; signals transport death to auto-restart
 }
 
 func newStdioTransport(ctx context.Context, s Spec) (*stdioTransport, error) {
@@ -85,6 +86,7 @@ func newStdioTransport(ctx context.Context, s Spec) (*stdioTransport, error) {
 		stdout:  bufio.NewReader(stdout),
 		stderr:  stderr,
 		pending: map[int]chan rpcResponse{},
+		done:    make(chan struct{}),
 	}
 	go t.readLoop()
 	return t, nil
@@ -336,11 +338,14 @@ func (t *stdioTransport) readLoop() {
 // failAll records the terminal read error and unblocks every pending call by
 // closing its channel; a caller distinguishes this from a real response by the
 // closed-channel receive.
+func (t *stdioTransport) Done() <-chan struct{} { return t.done }
+
 func (t *stdioTransport) failAll(err error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if t.readErr == nil {
 		t.readErr = err
+		close(t.done)
 	}
 	for id, ch := range t.pending {
 		close(ch)
