@@ -75,9 +75,10 @@ type chatTUI struct {
 	// events) for the live "↓N" readout in the running status line.
 	turnTokens int
 
-	// sessCost is the cumulative conversation cost in RMB (¥), summed from every
-	// Usage event's Pricing.Cost(). Displayed in the status data line.
-	sessCost float64
+	// sessCost is the cumulative conversation cost (e.g. ¥0.1234), summed from
+	// every Usage event's Pricing.Cost(). Displayed in the status data line.
+	sessCost     float64
+	sessCurrency string // currency symbol from the last Pricing event (e.g. "¥")
 
 	// balance is the last-fetched wallet-balance readout (e.g. "¥110.00"), "" when
 	// the provider declares no balance_url or a fetch failed. Refreshed async on
@@ -2191,10 +2192,13 @@ func (m chatTUI) modelTag() string {
 // sessionCostTag returns the cumulative conversation cost, e.g. "¥0.1234".
 // Empty string when no cost has been accumulated yet.
 func (m chatTUI) sessionCostTag() string {
-	if m.sessCost <= 0 {
+	if m.sessCost <= 0 || m.sessCurrency == "" {
 		return ""
 	}
-	return dim(fmt.Sprintf("¥%.4f", m.sessCost))
+	s := fmt.Sprintf("%.4f", m.sessCost)
+	s = strings.TrimRight(s, "0")
+	s = strings.TrimRight(s, ".")
+	return dim(m.sessCurrency + s)
 }
 
 func (m chatTUI) effortTag() string {
@@ -2855,6 +2859,9 @@ func (m *chatTUI) ingestEvent(e event.Event) {
 			m.turnTokens += e.Usage.CompletionTokens
 			if e.Pricing != nil {
 				m.sessCost += e.Pricing.Cost(e.Usage)
+				if m.sessCurrency == "" {
+					m.sessCurrency = e.Pricing.Symbol()
+				}
 			}
 		}
 		if line := agent.FormatUsageLine(e.Usage, e.Pricing, e.CacheDiagnostics); line != "" {
