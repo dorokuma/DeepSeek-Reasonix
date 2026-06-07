@@ -61,6 +61,7 @@ type transport interface {
 	call(ctx context.Context, method string, params any) (json.RawMessage, error)
 	notify(ctx context.Context, method string, params any) error
 	close()
+	Done() <-chan struct{} // closed when the transport dies (subprocess exit / connection lost)
 }
 
 // Host owns the running plugin connections and closes them together. It also
@@ -590,6 +591,50 @@ func (h *Host) addConnected(ctx context.Context, s Spec) ([]tool.Tool, error) {
 	if c.hasResources {
 		go h.fetchResources(ctx, c, nil)
 	}
+	// Auto-restart monitoring: when the subprocess exits unexpectedly
+	// (e.g. CodeGraph daemon idle timeout), restart it transparently so the
+	// user never sees a "failed" status that needs manual reconnect.
+	// Uses exponential backoff (2s, 4s, 8s, 16s, 32s, capped at 32s) and
+	// stops after maxRetries consecutive failures to avoid infinite loops.
+	go func() {
+		const maxRetries = 5
+		backoff := 2 * time.Second
+		const maxBackoff = 32 * time.Second
+
+		<-c.t.Done()
+		time.Sleep(backoff)
+
+		for attempt := 1; attempt <= maxRetries; attempt++ {
+			h.mu.Lock()
+			stillPresent := false
+			for _, cl := range h.clients {
+				if cl.name == s.Name {
+					stillPresent = true
+					break
+				}
+			}
+			if !stillPresent {
+				h.mu.Unlock()
+				return // removed during backoff — don't restart
+			}
+			h.mu.Unlock()
+
+			h.Remove(s.Name)
+			if _, err := h.Add(context.Background(), s); err == nil {
+				return // success
+			}
+
+			h.RecordFailure(s, fmt.Errorf("auto-restart attempt %d/%d: %w", attempt, maxRetries, err))
+			if attempt == maxRetries {
+				return // give up
+			}
+			time.Sleep(backoff)
+			backoff *= 2
+			if backoff > maxBackoff {
+				backoff = maxBackoff
+			}
+		}
+	}()
 	return ts, nil
 }
 

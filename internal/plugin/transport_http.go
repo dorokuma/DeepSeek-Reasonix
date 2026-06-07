@@ -35,6 +35,8 @@ type httpTransport struct {
 	mu      sync.Mutex
 	nextID  int
 	session string // Mcp-Session-Id, captured from responses
+
+	done chan struct{} // closed in close()
 }
 
 func newHTTPTransport(s Spec) (*httpTransport, error) {
@@ -46,6 +48,7 @@ func newHTTPTransport(s Spec) (*httpTransport, error) {
 		url:     s.URL,
 		headers: s.Headers,
 		client:  &http.Client{},
+		done:    make(chan struct{}),
 	}, nil
 }
 
@@ -99,8 +102,11 @@ func (t *httpTransport) notify(ctx context.Context, method string, params any) e
 	return nil
 }
 
+func (t *httpTransport) Done() <-chan struct{} { return t.done }
+
 func (t *httpTransport) close() {
 	t.client.CloseIdleConnections()
+	close(t.done)
 }
 
 // do POSTs one JSON-RPC body with the standard MCP headers, the configured
