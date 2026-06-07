@@ -26,6 +26,7 @@ import (
 	"reasonix/internal/control"
 	"reasonix/internal/event"
 	"reasonix/internal/hook"
+	"reasonix/internal/installsource"
 	"reasonix/internal/instruction"
 	"reasonix/internal/jobs"
 	"reasonix/internal/lsp"
@@ -520,6 +521,51 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	}
 	reg.Add(skill.NewRunSkillTool(skillStore, skillRunner, skillProfile))
 	reg.Add(skill.NewInstallSkillTool(skillStore, nil))
+	reg.Add(installsource.NewTool(installsource.Options{
+		ProjectRoot: root,
+		HTTPClient:  balanceClient,
+		ConnectMCP: func(e config.PluginEntry) (installsource.MCPConnectResult, error) {
+			exp := e.ExpandedPlugin()
+			spec := plugin.Spec{
+				Name:    exp.Name,
+				Type:    exp.Type,
+				Command: exp.Command,
+				Args:    exp.Args,
+				Env:     exp.Env,
+				URL:     exp.URL,
+				Headers: exp.Headers,
+			}
+			if opts.Stderr != nil {
+				spec.Stderr = opts.Stderr
+			}
+			tools, err := pluginHost.Add(ctx, spec)
+			if err != nil {
+				return installsource.MCPConnectResult{}, err
+			}
+			reg.RemovePrefix(plugin.ToolPrefix(spec.Name))
+			for _, t := range tools {
+				reg.Add(t)
+			}
+			// Disconnect closes the server and drops its namespaced tools.
+			// Used by the install_source rollback path when SaveTo fails.
+			disconnect := func() {
+				if prefix, ok := pluginHost.Remove(spec.Name); ok {
+					reg.RemovePrefix(prefix)
+				}
+			}
+			return installsource.MCPConnectResult{
+				ToolCount:  len(tools),
+				Disconnect: disconnect,
+			}, nil
+		},
+		OnDisconnect: func(serverName string) bool {
+			if prefix, ok := pluginHost.Remove(serverName); ok {
+				reg.RemovePrefix(prefix)
+				return true
+			}
+			return false
+		},
+	}))
 	for _, t := range skill.BuiltinSubagentTools(skillStore, skillRunner, skillProfile) {
 		reg.Add(t)
 	}

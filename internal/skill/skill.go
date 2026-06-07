@@ -437,9 +437,9 @@ func (s *Store) Create(name string, scope Scope) (string, error) {
 	return s.CreateWithContent(name, scope, stubBody(name))
 }
 
-// CreateWithContent writes caller-supplied file contents as a new flat
-// <name>.md skill, refusing to clobber an existing flat or directory-layout
-// skill of the same name. Returns the written path.
+// CreateWithContent writes caller-supplied file contents as a canonical
+// <name>/SKILL.md skill, refusing to clobber an existing directory-layout or
+// legacy flat skill of the same name. Returns the written path.
 func (s *Store) CreateWithContent(name string, scope Scope, content string) (string, error) {
 	if !IsValidName(name) {
 		return "", fmt.Errorf("invalid skill name %q — use letters, digits, '_', '-', '.'", name)
@@ -456,17 +456,20 @@ func (s *Store) CreateWithContent(name string, scope Scope, content string) (str
 	}
 	flat := filepath.Join(root, name+".md")
 	folder := filepath.Join(root, name, SkillFile)
+	if _, err := os.Stat(flat); err == nil {
+		return "", fmt.Errorf("skill %q already exists at %s", name, flat)
+	}
 	if _, err := os.Stat(folder); err == nil {
 		return "", fmt.Errorf("skill %q already exists at %s", name, folder)
 	}
-	if err := os.MkdirAll(root, 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(folder), 0o755); err != nil {
 		return "", err
 	}
 	// O_EXCL so a concurrent create (or an existing file) is reported, not clobbered.
-	f, err := os.OpenFile(flat, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	f, err := os.OpenFile(folder, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 	if err != nil {
 		if os.IsExist(err) {
-			return "", fmt.Errorf("skill %q already exists at %s", name, flat)
+			return "", fmt.Errorf("skill %q already exists at %s", name, folder)
 		}
 		return "", err
 	}
@@ -474,7 +477,7 @@ func (s *Store) CreateWithContent(name string, scope Scope, content string) (str
 	if _, err := f.WriteString(content); err != nil {
 		return "", err
 	}
-	return flat, nil
+	return folder, nil
 }
 
 // loadBodyWithReferences appends a directory-layout skill's sibling

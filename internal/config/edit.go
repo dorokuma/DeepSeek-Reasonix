@@ -449,6 +449,7 @@ func CanonicalSkillPath(path string) string {
 // position). The transport-specific required fields are validated: stdio needs
 // a command, http/sse need a url.
 func (c *Config) UpsertPlugin(e PluginEntry) error {
+	e, _ = NormalizePluginCommandLine(e)
 	if err := validatePlugin(e); err != nil {
 		return err
 	}
