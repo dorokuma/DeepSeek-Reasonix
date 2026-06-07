@@ -197,7 +197,8 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 		Stderr:        opts.Stderr,
 	})
 	skills := skillStore.List()
-	allSkills := skill.New(skill.Options{ProjectRoot: root, CustomPaths: cfg.SkillCustomPaths(), ExcludedPaths: cfg.SkillExcludedPaths(), MaxDepth: cfg.SkillMaxDepth(), Stderr: io.Discard}).List()
+	allSkillStore := skill.New(skill.Options{ProjectRoot: root, CustomPaths: cfg.SkillCustomPaths(), ExcludedPaths: cfg.SkillExcludedPaths(), MaxDepth: cfg.SkillMaxDepth(), Stderr: io.Discard})
+	allSkills := allSkillStore.List()
 	sysPrompt = skill.ApplyIndex(sysPrompt, skills)
 
 	reg := tool.NewRegistry()
@@ -671,6 +672,8 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 		Commands:      cmds,
 		Skills:        skills,
 		AllSkills:     allSkills,
+		SkillStore:    skillStore,
+		AllSkillStore: allSkillStore,
 		Hooks:         hookRunner,
 		Memory:        mem,
 		Cleanup:       cleanup,
