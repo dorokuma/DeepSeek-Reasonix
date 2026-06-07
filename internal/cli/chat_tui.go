@@ -3024,12 +3024,8 @@ func (m *chatTUI) ingestEvent(e event.Event) {
 	case event.Usage:
 		if e.Usage != nil {
 			m.turnTokens += e.Usage.CompletionTokens
-			if e.Pricing != nil {
-				m.sessCost += e.Pricing.Cost(e.Usage)
-				if m.sessCurrency == "" {
-					m.sessCurrency = e.Pricing.Symbol()
-				}
-			}
+			m.sessCost = e.SessionCost
+			m.sessCurrency = e.SessionCurrency
 		}
 		if line := agent.FormatUsageLine(e.Usage, e.Pricing, e.CacheDiagnostics); line != "" {
 			m.finalizeStreamed()
@@ -3154,7 +3150,8 @@ func (m *chatTUI) runSlashCommand(input string) tea.Cmd {
 		m.reasoning.Reset()
 		m.todoArgs = ""
 		m.chooser = nil
-		m.sessCost = 0
+		// Pull fresh cost from the new session (controller.ResetSessionCost already zeroed it).
+		m.sessCost, m.sessCurrency = m.ctrl.SessionCost()
 		m.commitLine("")
 		m.commitLine(strings.TrimRight(renderTUIBanner(m.label, "", m.width), "\n"))
 		m.notice(i18n.M.SlashNewDone)

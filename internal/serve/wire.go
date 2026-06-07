@@ -78,6 +78,8 @@ type wireUsage struct {
 	// hit-rate Σhit/Σ(hit+miss), steadier than the single-turn CacheHitTokens.
 	SessionCacheHitTokens  int     `json:"sessionCacheHitTokens"`
 	SessionCacheMissTokens int     `json:"sessionCacheMissTokens"`
+	SessionCost            float64 `json:"sessionCost,omitempty"`
+	SessionCurrency        string  `json:"sessionCurrency,omitempty"`
 	Cost                   float64 `json:"cost,omitempty"`
 	Currency               string  `json:"currency,omitempty"`
 	// CostUSD is kept for older status consumers. It mirrors Cost and does not
@@ -163,6 +165,7 @@ func toWire(e event.Event) wireEvent {
 				TotalTokens: u.TotalTokens, CacheHitTokens: u.CacheHitTokens,
 				CacheMissTokens: u.CacheMissTokens, ReasoningTokens: u.ReasoningTokens,
 				SessionCacheHitTokens: e.SessionHit, SessionCacheMissTokens: e.SessionMiss,
+				SessionCost: e.SessionCost, SessionCurrency: e.SessionCurrency,
 			}
 			if e.CacheDiagnostics != nil {
 				w.Usage.CacheDiagnostics = toWireCacheDiagnostics(e.CacheDiagnostics)
