@@ -104,6 +104,8 @@ func (m *chatTUI) replayActiveBranch(title string) {
 	m.pendingApproval = nil
 	m.bubblePending = false
 	m.turnDiscarded = false
+	m.sessCost = 0
+	m.sessCurrency = ""
 
 	m.commitLine("")
 	if title != "" {
