@@ -55,6 +55,8 @@ export interface WireUsage {
   // hit-rate (Σhit/Σ(hit+miss)), steadier than the single-turn cacheHitTokens.
   sessionCacheHitTokens: number;
   sessionCacheMissTokens: number;
+  sessionCost?: number;
+  sessionCurrency?: string;
   cost?: number;
   currency?: string;
   // Deprecated compatibility alias. Prefer cost + currency.

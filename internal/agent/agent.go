@@ -113,6 +113,12 @@ type ToolHooks interface {
 	PreCompact(ctx context.Context, trigger string) string
 }
 
+// sessionCostInfo bundles the cumulative cost and its currency for atomic storage.
+type sessionCostInfo struct {
+	cost     float64
+	currency string
+}
+
 // Agent drives a single task: a Provider, a tool Registry, and a Session wired
 // into the main loop.
 type Agent struct {
@@ -143,6 +149,7 @@ type Agent struct {
 	// loop accumulates them while the status line reads them.
 	sessCacheHit  atomic.Int64
 	sessCacheMiss atomic.Int64
+	sessCostInfo  atomic.Value // stores sessionCostInfo{cost, currency}
 
 	// lastPrefixShape records the previous provider request's cacheable prefix
 	// so usage events can explain prefix churn on the next request.
@@ -295,6 +302,20 @@ func (a *Agent) LastUsage() *provider.Usage { return a.lastUsage.Load() }
 // API call this session — the basis for the status line's aggregate hit-rate.
 func (a *Agent) SessionCache() (hit, miss int) {
 	return int(a.sessCacheHit.Load()), int(a.sessCacheMiss.Load())
+}
+
+// SessionCost returns the cumulative conversation cost and its currency symbol.
+func (a *Agent) SessionCost() (cost float64, currency string) {
+	if v := a.sessCostInfo.Load(); v != nil {
+		info := v.(sessionCostInfo)
+		return info.cost, info.currency
+	}
+	return 0, ""
+}
+
+// ResetSessionCost zeros the cumulative cost — used on /new session rotation.
+func (a *Agent) ResetSessionCost() {
+	a.sessCostInfo.Store(sessionCostInfo{})
 }
 
 // ContextWindow returns the configured context-window size in tokens. 0
@@ -458,9 +479,17 @@ func (a *Agent) Run(ctx context.Context, input string) error {
 		a.lastPrefixShape = prefixShape
 		a.haveLastPrefixShape = true
 		if usage != nil && usage.TotalTokens > 0 {
+			var sCost float64
+			var sCurrency string
+			if v := a.sessCostInfo.Load(); v != nil {
+				info := v.(sessionCostInfo)
+				sCost = info.cost
+				sCurrency = info.currency
+			}
 			a.sink.Emit(event.Event{Kind: event.Usage, Usage: usage, Pricing: a.pricing,
 				CacheDiagnostics: &cacheDiagnostics,
-				SessionHit:       int(a.sessCacheHit.Load()), SessionMiss: int(a.sessCacheMiss.Load())})
+				SessionHit:       int(a.sessCacheHit.Load()), SessionMiss: int(a.sessCacheMiss.Load()),
+				SessionCost: sCost, SessionCurrency: sCurrency})
 		}
 		if msg, ok := finishReasonMessage(usage); ok {
 			a.sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelWarn, Text: msg})
@@ -719,6 +748,18 @@ func (a *Agent) stream(ctx context.Context, turn int) (string, string, string, [
 			a.lastUsage.Store(chunk.Usage)
 			a.sessCacheHit.Add(int64(chunk.Usage.CacheHitTokens))
 			a.sessCacheMiss.Add(int64(chunk.Usage.CacheMissTokens))
+			if a.pricing != nil {
+				prev := a.sessCostInfo.Load()
+				var info sessionCostInfo
+				if prev != nil {
+					info = prev.(sessionCostInfo)
+				}
+				info.cost += a.pricing.Cost(chunk.Usage)
+				if info.currency == "" {
+					info.currency = a.pricing.Symbol()
+				}
+				a.sessCostInfo.Store(info)
+			}
 		case provider.ChunkError:
 			return "", "", "", nil, nil, chunk.Err
 		}

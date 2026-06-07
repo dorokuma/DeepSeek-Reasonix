@@ -104,8 +104,8 @@ func (m *chatTUI) replayActiveBranch(title string) {
 	m.pendingApproval = nil
 	m.bubblePending = false
 	m.turnDiscarded = false
-	m.sessCost = 0
-	m.sessCurrency = ""
+	// Sync cost from the agent (survives branch/switch/rewind on the same agent).
+	m.sessCost, m.sessCurrency = m.ctrl.SessionCost()
 
 	m.commitLine("")
 	if title != "" {

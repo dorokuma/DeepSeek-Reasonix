@@ -880,6 +880,7 @@ func (c *Controller) NewSession() error {
 		c.mu.Unlock()
 	}
 	c.executor.SetSession(agent.NewSession(c.systemPrompt))
+	c.executor.ResetSessionCost()
 	c.rebindCheckpoints(c.SessionPath())
 	c.mu.Lock()
 	c.startedOnce = true // NewSession fires SessionStart itself; don't re-fire on the next turn
@@ -1234,6 +1235,7 @@ func (c *Controller) summarizeAt(ctx context.Context, turn int, from bool) error
 func (c *Controller) Resume(s *agent.Session, path string) {
 	if c.executor != nil {
 		c.executor.SetSession(mergeResumedSession(c.systemPrompt, s))
+		c.executor.ResetSessionCost()
 	}
 	c.mu.Lock()
 	c.sessionPath = path
@@ -1381,6 +1383,14 @@ func (c *Controller) SessionCache() (hit, miss int) {
 		return 0, 0
 	}
 	return c.executor.SessionCache()
+}
+
+// SessionCost returns the cumulative conversation cost and its currency.
+func (c *Controller) SessionCost() (cost float64, currency string) {
+	if c.executor == nil {
+		return 0, ""
+	}
+	return c.executor.SessionCost()
 }
 
 // Balance queries the active provider's wallet balance, or (nil, nil) when the

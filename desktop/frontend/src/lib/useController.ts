@@ -281,9 +281,10 @@ function applyEvent(s: State, e: WireEvent): State {
     case "usage": {
       const used = e.usage && s.context.window ? e.usage.promptTokens : s.context.used;
       const turnTokens = s.turnTokens + (e.usage?.completionTokens ?? 0);
-      const usageCost = e.usage?.cost ?? e.usage?.costUsd ?? 0;
-      const sessionCost = s.sessionCost + usageCost;
-      const sessionCurrency = e.usage?.currency || s.sessionCurrency || "¥";
+      // Use the backend's cumulative session cost when available; fall back to
+      // per-turn accumulation for backward compat.
+      const sessionCost = e.usage?.sessionCost ?? s.sessionCost + (e.usage?.cost ?? e.usage?.costUsd ?? 0);
+      const sessionCurrency = e.usage?.sessionCurrency || e.usage?.currency || s.sessionCurrency || "¥";
       return { ...s, usage: e.usage, context: { ...s.context, used }, turnTokens, sessionCost, sessionCurrency };
     }
     case "notice":

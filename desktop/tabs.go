@@ -195,9 +195,9 @@ func toWireTab(e event.Event, tabID string) wireEventTab {
 		TabID:             tabID,
 		SessionHitTokens:  e.SessionHit,
 		SessionMissTokens: e.SessionMiss,
-		SessionCost:       0, // filled by frontend accumulator per tab
-		SessionCurrency:   "",
-		SessionCostUsd:    0, // deprecated compatibility alias
+		SessionCost:       e.SessionCost,
+		SessionCurrency:   e.SessionCurrency,
+		SessionCostUsd:    e.SessionCost, // deprecated compatibility alias
 	}
 }
 
@@ -209,7 +209,8 @@ type wireEventTab struct {
 	// Session-cumulative tokens per tab.
 	SessionHitTokens  int `json:"sessionHitTokens,omitempty"`
 	SessionMissTokens int `json:"sessionMissTokens,omitempty"`
-	// SessionCost is filled by the frontend's per-tab accumulator.
+	// SessionCost is the cumulative conversation cost, set by the backend from
+	// the agent's accumulator and passed through to the frontend.
 	SessionCost     float64 `json:"sessionCost,omitempty"`
 	SessionCurrency string  `json:"sessionCurrency,omitempty"`
 	// SessionCostUsd is a deprecated compatibility alias. It mirrors
