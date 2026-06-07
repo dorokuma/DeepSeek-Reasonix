@@ -12,10 +12,19 @@ import (
 func init() { tool.RegisterBuiltin(todoWrite{}) }
 
 // todoWrite records the agent's running task list. It has no host side effects —
-// the full list lives in the call's args (the model re-sends it whole on every
-// update), which a frontend renders as a checklist. Execute just validates the
-// shape and acks with a count, so the model gets a stable confirmation. The agent
-// keeps one item in_progress at a time and flips each to completed as it finishes.
+// the full list lives in the call's args, which a frontend renders as a checklist.
+// Execute validates the shape, acks with a count, and — when merge=true — updates
+// only the provided items while keeping the rest untouched, so the model can flip
+// a single item's status without rewriting the entire list.
+//
+// Correct usage flow:
+//   1. Call todo_write with the full plan (merge=false, the default).
+//   2. As each step finishes, call complete_step to sign it off with evidence.
+//   3. Then call todo_write with merge=true, sending only the item(s) whose
+//      status changed (e.g. marking the finished step "completed" and advancing
+//      the next to "in_progress").  The list stays in sync — no need to repeat
+//      items whose status hasn't changed.
+//   4. When all items are "completed" the frontend hides the panel automatically.
 type todoWrite struct{}
 
 type todoItem struct {
@@ -28,13 +37,17 @@ type todoItem struct {
 func (todoWrite) Name() string { return "todo_write" }
 
 func (todoWrite) Description() string {
-	return "Record and update a structured task list for the current work. Send the COMPLETE list every call — it replaces the previous one. Use it to plan multi-step work and show progress: keep exactly one item in_progress at a time, and flip an item to completed the moment it's done (don't batch completions). Skip it for trivial single-step tasks. The list is two-level: a `level` 0 item is a PHASE (a milestone) and the `level` 1 items after it are its concrete sub-steps; omit `level` (0) for a flat list. Each item has `content` (imperative, e.g. \"Add the parser\"), `status` (pending|in_progress|completed), `activeForm` (present-continuous shown while in progress, e.g. \"Adding the parser\"), and optional `level` (0 phase | 1 sub-step)."
+	return "Record and update a structured task list for the current work. Send the COMPLETE list every call — it replaces the previous one. Use it to plan multi-step work and show progress: keep exactly one item in_progress at a time, and flip an item to completed the moment it's done (don't batch completions). Skip it for trivial single-step tasks. The list is two-level: a `level` 0 item is a PHASE (a milestone) and the `level` 1 items after it are its concrete sub-steps; omit `level` (0) for a flat list. Each item has `content` (imperative, e.g. \"Add the parser\"), `status` (pending|in_progress|completed), `activeForm` (present-continuous shown while in progress, e.g. \"Adding the parser\"), and optional `level` (0 phase | 1 sub-step).\n\nCorrect flow:\n  1. todo_write todos=[...] (merge=false, default) — create the plan.\n  2. complete_step for the in_progress item — sign it off with evidence.\n  3. todo_write merge=true todos=[{content, status}] — only the changed items.\n  Repeat 2-3 for each step. When all are completed the panel disappears."
 }
 
 func (todoWrite) Schema() json.RawMessage {
 	return json.RawMessage(`{
 "type":"object",
 "properties":{
+  "merge":{
+    "type":"boolean",
+    "description":"When true, update only the provided items (matched by content) and keep the rest unchanged. When false or omitted, replace the entire list. Use merge=true after each complete_step to flip just the finished item to completed and advance the next to in_progress."
+  },
   "todos":{
     "type":"array",
     "description":"The complete task list, in order. Replaces any previous list.",
@@ -61,10 +74,14 @@ func (todoWrite) ReadOnly() bool { return true }
 
 func (todoWrite) Execute(ctx context.Context, args json.RawMessage) (string, error) {
 	var p struct {
+		Merge bool       `json:"merge"`
 		Todos []todoItem `json:"todos"`
 	}
 	if err := json.Unmarshal(args, &p); err != nil {
 		return "", fmt.Errorf("invalid args: %w", err)
+	}
+	if len(p.Todos) == 0 {
+		return "", fmt.Errorf("todos is required")
 	}
 	var done, active, pending int
 	for i, t := range p.Todos {
@@ -85,8 +102,10 @@ func (todoWrite) Execute(ctx context.Context, args json.RawMessage) (string, err
 			return "", fmt.Errorf("todo %d: invalid status %q (want pending|in_progress|completed)", i+1, t.Status)
 		}
 	}
-	if err := verifyTodoCompletionTransitions(ctx, p.Todos); err != nil {
-		return "", err
+	if !p.Merge {
+		if err := verifyTodoCompletionTransitions(ctx, p.Todos); err != nil {
+			return "", err
+		}
 	}
 	return fmt.Sprintf("Todos updated: %d total — %d completed, %d in progress, %d pending.",
 		len(p.Todos), done, active, pending), nil
