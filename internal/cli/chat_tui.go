@@ -2274,8 +2274,8 @@ const todoPanelMaxRows = 8
 type todoPanelTodo struct {
 	Content    string `json:"content"`
 	Status     string `json:"status"`
-	ActiveForm string `json:"activeForm"`
-	Level      int    `json:"level"`
+	ActiveForm string `json:"activeForm,omitempty"`
+	Level      int    `json:"level,omitempty"`
 }
 
 // renderTodoPanel renders the task list pinned above the input from the latest
@@ -2356,8 +2356,10 @@ func todoPanelWindow(todos []todoPanelTodo) (int, int) {
 
 // markTodoCompleted checks if complete_step args reference a todo step title
 // in the current todoArgs JSON and, if found, marks that item completed.
-// Returns the (possibly updated) todoArgs. The original is returned unchanged
-// when there's nothing to update (no todo list, no match, already done).
+// Matching logic mirrors internal/evidence/evidence.go: sameStepText
+// (case-insensitive, Content + ActiveForm) and numeric index fallback.
+// Preserves any extra top-level fields in the original todoArgs.
+// Returns the original todoArgs unchanged when there's nothing to update.
 func markTodoCompleted(todoArgs, stepArgs string) string {
 	if todoArgs == "" || stepArgs == "" {
 		return todoArgs
@@ -2365,33 +2367,66 @@ func markTodoCompleted(todoArgs, stepArgs string) string {
 	var step struct {
 		Step string `json:"step"`
 	}
-	if err := json.Unmarshal([]byte(stepArgs), &step); err != nil || step.Step == "" {
+	if err := json.Unmarshal([]byte(stepArgs), &step); err != nil {
 		return todoArgs
 	}
-	var p struct {
-		Todos []todoPanelTodo `json:"todos"`
-	}
-	if err := json.Unmarshal([]byte(todoArgs), &p); err != nil || len(p.Todos) == 0 {
+	stepName := strings.TrimSpace(step.Step)
+	if stepName == "" {
 		return todoArgs
 	}
 
-	stepTitle := strings.TrimSpace(step.Step)
-	changed := false
-	for i := range p.Todos {
-		if strings.TrimSpace(p.Todos[i].Content) == stepTitle && p.Todos[i].Status != "completed" {
-			p.Todos[i].Status = "completed"
-			changed = true
+	// Parse into raw message to preserve unknown top-level keys.
+	var doc map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(todoArgs), &doc); err != nil {
+		return todoArgs
+	}
+	rawTodos, ok := doc["todos"]
+	if !ok {
+		return todoArgs
+	}
+	var todos []todoPanelTodo
+	if err := json.Unmarshal(rawTodos, &todos); err != nil || len(todos) == 0 {
+		return todoArgs
+	}
+
+	// Match — same logic as evidence.matchTodoStep + sameStepText.
+	idx := -1
+	for i, t := range todos {
+		if sameStepText(stepName, t.Content) || sameStepText(stepName, t.ActiveForm) {
+			idx = i
+			break
 		}
 	}
-	if !changed {
+	// Numeric index fallback: "3" → third item (1-based).
+	if idx < 0 {
+		if n, err := strconv.Atoi(stepName); err == nil && n >= 1 && n <= len(todos) {
+			idx = n - 1
+		}
+	}
+	if idx < 0 || todos[idx].Status == "completed" {
 		return todoArgs
 	}
 
-	b, err := json.Marshal(map[string]any{"todos": p.Todos})
+	todos[idx].Status = "completed"
+	doc["todos"] = mustMarshal(todos)
+	b, err := json.Marshal(doc)
 	if err != nil {
 		return todoArgs
 	}
 	return string(b)
+}
+
+// sameStepText is a case-insensitive string equality check for matching step
+// titles, mirrored from internal/evidence/evidence.go.
+func sameStepText(a, b string) bool {
+	return a != "" && b != "" && strings.EqualFold(a, b)
+}
+
+// mustMarshal marshals v to RawMessage, panicking only if the input is
+// impossible to marshal (always succeeds for the types used here).
+func mustMarshal(v any) json.RawMessage {
+	b, _ := json.Marshal(v)
+	return b
 }
 
 // truncateSubject trims a tool subject so the approval banner fits one line.
