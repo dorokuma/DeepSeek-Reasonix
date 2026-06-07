@@ -12,6 +12,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/url"
 	"os"
 	"os/signal"
@@ -483,6 +484,12 @@ func chatREPL(args []string) int {
 	// No alt-screen: finalized transcript lines are committed to the terminal's
 	// normal buffer (via tea.Println) so native scrollback, the wheel, and copy
 	// all work — the bubbletea-managed region is just the bottom input/status.
+	// Route slog output away from stderr while the TUI owns the terminal.
+	// The default handler writes directly to stderr, which bypasses Bubble
+	// Tea's alt-screen rendering and corrupts the display (especially rtk
+	// miss/hit messages from the compaction layer).
+	slog.SetDefault(slog.New(slog.NewTextHandler(io.Discard, nil)))
+
 	p := tea.NewProgram(m)
 	final, runErr := p.Run()
 	// Close the active controller plus any retired ones from /model switches.
