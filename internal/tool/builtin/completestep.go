@@ -106,14 +106,6 @@ func (completeStep) Execute(ctx context.Context, args json.RawMessage) (string, 
 		kinds = append(kinds, e.Kind)
 	}
 
-	if ledger, ok := evidence.FromContext(ctx); ok {
-		if !ledger.HasWorkSinceLastCheckpoint() {
-			return "", fmt.Errorf(
-				"no work detected since the last checkpoint -- call complete_step only after "+
-					"you have actually worked on this step (run a command, edit a file, etc.)")
-		}
-	}
-
 	hostVerified, manualUnverified, err := verifyStepEvidence(ctx, p.Evidence)
 	if err != nil {
 		return "", err

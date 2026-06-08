@@ -317,7 +317,6 @@ func TestCompleteStepIgnoresFailedTodoReceipt(t *testing.T) {
 		Success:  false,
 		Todos:    []evidence.TodoItem{{Content: "Add parser", Status: "in_progress"}},
 	})
-	ledger.Record(evidence.Receipt{ToolName: "bash", Success: true, Command: "go test"})
 	ctx := evidence.WithLedger(context.Background(), ledger)
 
 	if _, err := (completeStep{}).Execute(ctx, json.RawMessage(`{
