@@ -26,18 +26,6 @@ have enough evidence. Do not write full implementations or attempt side effects.
 Outline the steps, which files to touch, and the key decisions. Keep it short and
 actionable.`
 
-const DefaultPlannerMaxSteps = 6
-
-// PlannerMaxSteps bounds planner-side read-only exploration so two-model mode
-// gains context access without letting planning turns become long-running agent
-// sessions. A lower explicit agent.max_steps remains respected.
-func PlannerMaxSteps(configured int) int {
-	if configured > 0 && configured < DefaultPlannerMaxSteps {
-		return configured
-	}
-	return DefaultPlannerMaxSteps
-}
-
 // PlannerPromptWithContext appends cache-stable standing context, such as loaded
 // REASONIX.md / AGENTS.md memory, to the planner's smaller system prompt.
 func PlannerPromptWithContext(context string) string {

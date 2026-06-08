@@ -129,6 +129,7 @@ type Agent struct {
 	session     *Session
 	sessMu      sync.Mutex // guards the session pointer for external Session()/SetSession
 	maxSteps    int
+	maxStepsKey string
 	temperature float64
 	pricing     *provider.Pricing
 
@@ -363,7 +364,10 @@ func (a *Agent) CompactNow(ctx context.Context, instructions string) error {
 
 // Options configures an Agent.
 type Options struct {
-	MaxSteps    int
+	MaxSteps int
+	// MaxStepsKey names the configuration knob shown when the MaxSteps guard is
+	// hit. Empty defaults to agent.max_steps.
+	MaxStepsKey string
 	Temperature float64
 	Pricing     *provider.Pricing // optional, for per-turn cost display
 
@@ -426,11 +430,17 @@ func New(prov provider.Provider, tools *tool.Registry, session *Session, opts Op
 	if ctxStore == nil && ctxmode.Active() {
 		ctxStore = ctxmode.NewStore()
 	}
+	maxStepsKey := opts.MaxStepsKey
+	if strings.TrimSpace(maxStepsKey) == "" {
+		maxStepsKey = "agent.max_steps"
+	}
+	}
 	return &Agent{
 		prov:              prov,
 		tools:             tools,
 		session:           session,
 		maxSteps:          opts.MaxSteps,
+		maxStepsKey:       maxStepsKey,
 		temperature:       opts.Temperature,
 		pricing:           opts.Pricing,
 		sink:              sink,
@@ -593,7 +603,7 @@ func (a *Agent) Run(ctx context.Context, input string) error {
 	// Only reached when a positive maxSteps guard is configured. The work so far
 	// is already in the session, so the user can just send another message to pick
 	// up where it left off.
-	return fmt.Errorf("paused after %d tool-call rounds (agent.max_steps) — the work so far is saved; send another message to continue, or set max_steps higher or to 0 for no limit", a.maxSteps)
+	return fmt.Errorf("paused after %d tool-call rounds (%s) — the work so far is saved; send another message to continue, or set %s higher or to 0 for no limit", a.maxSteps, a.maxStepsKey, a.maxStepsKey)
 }
 
 
