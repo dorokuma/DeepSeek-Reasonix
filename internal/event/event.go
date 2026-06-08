@@ -12,8 +12,6 @@
 package event
 
 import (
-	"reasonix/internal/evidence"
-	"reasonix/internal/nilutil"
 	"reasonix/internal/provider"
 )
 
@@ -226,18 +224,8 @@ type Event struct {
 // ReadinessAuditSink is an optional sink capability. Sinks that do not care
 // about readiness audit receipts can implement only Sink and will ignore them.
 type ReadinessAuditSink interface {
-	RecordReadinessAudit(evidence.ReadinessAudit)
 }
 
-// RecordReadinessAudit forwards a readiness audit receipt to sinks that opt in.
-func RecordReadinessAudit(s Sink, a evidence.ReadinessAudit) {
-	if nilutil.IsNil(s) {
-		return
-	}
-	if rs, ok := s.(ReadinessAuditSink); ok {
-		rs.RecordReadinessAudit(a)
-	}
-}
 
 // Sink consumes a turn's events. The agent calls Emit serially from its run
 // loop (tool execution may fan out across goroutines, but emission does not),

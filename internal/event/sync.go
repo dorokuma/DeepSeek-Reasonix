@@ -3,7 +3,6 @@ package event
 import (
 	"sync"
 
-	"reasonix/internal/evidence"
 	"reasonix/internal/nilutil"
 )
 
@@ -32,10 +31,3 @@ func (s *syncSink) Emit(e Event) {
 	s.inner.Emit(e)
 }
 
-func (s *syncSink) RecordReadinessAudit(a evidence.ReadinessAudit) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if rs, ok := s.inner.(ReadinessAuditSink); ok {
-		rs.RecordReadinessAudit(a)
-	}
-}

@@ -295,9 +295,6 @@ input,textarea{font:inherit;color:inherit}
     </div>
     <div class="sidebar__section">
       <div class="sidebar__label">__('status')</div>
-      <div class="sidebar__ctx">
-        <div class="ctx-bar"><div class="ctx-bar__fill" id="ctx-fill" style="width:0%"></div></div>
-        <div class="ctx-label"><span id="ctx-used">0 tok</span><span id="ctx-window">0 tok</span></div>
       </div>
       <div class="status-metrics" id="status-metrics">
         <div class="sm-item"><span class="sm-val" id="sm-cache">—</span><span>__('cache')</span></div>
@@ -627,7 +624,6 @@ const $$ = s => document.querySelectorAll(s);
 const log = $('#log'), input = $('#in'), btnSend = $('#btn-send'), btnStop = $('#btn-stop');
 const statusDot = $('#status-dot-footer'), statusText = $('#status-text');
 const turnInfo = $('#turn-info'), balanceInfo = $('#balance-info');
-const ctxFill = $('#ctx-fill'), ctxUsed = $('#ctx-used'), ctxWindow = $('#ctx-window');
 const statusDotSidebar = $('#status-dot'), statusModel = $('#status-model');
 const welcome = $('#welcome');
 const slashAnchor = $('#slash-menu-anchor');
@@ -923,7 +919,6 @@ function fetchStatus(){
     // sync mode UI without triggering POST (server is source of truth)
     planMode=!!s.plan; bypassMode=!!s.bypass;
     updateModeButtons();
-    if(s.window){const pct=Math.min(100,Math.round(s.used/s.window*100));ctxFill.style.width=pct+'%';ctxFill.style.background=pct>85?'var(--warning)':pct>95?'var(--danger)':'var(--accent)';ctxUsed.textContent=fmtTok(s.used)+' tok';ctxWindow.textContent=fmtTok(s.window)+' tok';}
     // sidebar metrics
     const cacheTotal=(s.cacheHit||0)+(s.cacheMiss||0);
     $('#sm-cache').textContent=cacheTotal>0?Math.round((s.cacheHit||0)/cacheTotal*100)+'%':'—';
@@ -1063,7 +1058,7 @@ function openStats(){
     const cost=cumulativeCost||s.lastUsage?.cost||0;
     $('#stats-total-cost').textContent=cost>0?fmtMoney(cost,s.lastUsage?.currency):'-';
     $('#stats-balance').textContent=s.balance?.display||'-';
-    if(s.window){const pct=Math.min(100,Math.round(s.used/s.window*100));$('#stats-ctx-fill').style.width=pct+'%';$('#stats-ctx-used').textContent=fmtTok(s.used)+' tok';$('#stats-ctx-window').textContent=fmtTok(s.window)+' tok';}
+    
   }).catch(()=>{});
   modal.style.display='flex';
 }

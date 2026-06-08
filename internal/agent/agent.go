@@ -15,7 +15,6 @@ import (
 	"reasonix/internal/diff"
 	"reasonix/internal/event"
 
-	"reasonix/internal/evidence"
 	"reasonix/internal/instruction"
 	"reasonix/internal/jobs"
 	"reasonix/internal/memory"
@@ -189,9 +188,6 @@ type Agent struct {
 	// reach it. nil leaves those tools to degrade gracefully.
 	jobs *jobs.Manager
 
-	// evidence is a per-user-turn ledger of host-observed tool receipts. It lets
-	// complete_step validate that cited evidence happened before the claim.
-	evidence *evidence.Ledger
 
 	// projectChecks are structured project instructions that complete_step can
 	// verify against same-turn bash receipts after a write-backed completion.
@@ -432,7 +428,6 @@ func New(prov provider.Provider, tools *tool.Registry, session *Session, opts Op
 		hooks:             hooks,
 		jobs:              opts.Jobs,
 		ctxStore:          ctxStore,
-		evidence:          evidence.NewLedger(),
 		projectChecks:        append([]instruction.VerifyCheck(nil), opts.ProjectChecks...),
 		writeFailureVerifier: true,
 		contextWindow:        opts.ContextWindow,
@@ -451,9 +446,6 @@ func New(prov provider.Provider, tools *tool.Registry, session *Session, opts Op
 // a round count. A positive maxSteps imposes an optional hard guard, surfaced as
 // a resumable notice when hit.
 func (a *Agent) Run(ctx context.Context, input string) error {
-	if a.evidence != nil {
-		a.evidence.Reset()
-	}
 	a.repeatSuccessCounts = nil
 	a.sink.Emit(event.Event{Kind: event.TurnStarted})
 	a.session.Add(provider.Message{Role: provider.RoleUser, Content: input})
@@ -461,7 +453,6 @@ func (a *Agent) Run(ctx context.Context, input string) error {
 		ctxmode.RecordUserPrompt(a.ctxStore.Journal(), input)
 	}
 
-	finalReadinessBlocks := 0
 	var emptyRecovery emptyRecoveryState
 	var visibilityRecovery visibilityRecoveryState
 	for step := 0; a.maxSteps <= 0 || step < a.maxSteps; step++ {
@@ -505,21 +496,6 @@ func (a *Agent) Run(ctx context.Context, input string) error {
 		}
 
 		if len(calls) == 0 {
-			readiness := a.finalReadinessCheck()
-			if readiness.reason != "" {
-				finalReadinessBlocks++
-				result := evidence.ReadinessBlocked
-				if finalReadinessBlocks >= maxFinalReadinessBlocks {
-					result = evidence.ReadinessErrored
-					event.RecordReadinessAudit(a.sink, readiness.audit(result, false))
-					return fmt.Errorf("final-answer readiness failed %d times: %s", finalReadinessBlocks, readiness.reason)
-				}
-				event.RecordReadinessAudit(a.sink, readiness.audit(result, false))
-				a.sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelWarn, Text: "final-answer readiness blocked: " + readiness.reason})
-				a.session.Add(provider.Message{Role: provider.RoleUser, Content: finalReadinessRetryMessage(readiness.reason)})
-				a.maybeCompact(ctx, usage)
-				continue
-			}
 			if !hasVisibleAssistantText(text) {
 				action, notice := decideEmptyRecovery(&emptyRecovery, text, reasoning, a.session.Snapshot())
 				switch action {
@@ -584,103 +560,6 @@ func (a *Agent) Run(ctx context.Context, input string) error {
 	// is already in the session, so the user can just send another message to pick
 	// up where it left off.
 	return fmt.Errorf("paused after %d tool-call rounds (agent.max_steps) — the work so far is saved; send another message to continue, or set max_steps higher or to 0 for no limit", a.maxSteps)
-}
-
-func (a *Agent) finalReadinessFailure() string {
-	return a.finalReadinessCheck().reason
-}
-
-type finalReadinessCheck struct {
-	applies              bool
-	reason               string
-	missingProjectChecks int
-	missingCompleteStep  bool
-	incompleteTodos      int
-}
-
-func (c finalReadinessCheck) audit(result evidence.ReadinessAuditResult, recovered bool) evidence.ReadinessAudit {
-	return evidence.ReadinessAudit{
-		Result:                 result,
-		Recovered:              recovered,
-		MissingProjectChecks:   c.missingProjectChecks,
-		MissingCompleteStep:    c.missingCompleteStep,
-		IncompleteTodos:        c.incompleteTodos,
-		CommandMismatchMissing: c.missingProjectChecks,
-	}
-}
-
-func (a *Agent) finalReadinessCheck() finalReadinessCheck {
-	if a.evidence == nil {
-		return finalReadinessCheck{}
-	}
-	var missing []string
-	out := finalReadinessCheck{}
-	if !a.planMode.Load() {
-		if incomplete, hasTodos := a.evidence.IncompleteLatestTodos(); hasTodos && len(incomplete) > 0 {
-			out.applies = true
-			out.incompleteTodos = len(incomplete)
-			missing = append(missing, finalReadinessIncompleteTodos(incomplete))
-		}
-	}
-	writer, hasWriter := a.evidence.LatestSuccessfulWriterIndex()
-	if !hasWriter {
-		if len(missing) > 0 {
-			out.reason = strings.Join(missing, "; ")
-		}
-		return out
-	}
-	hasProjectChecks := len(a.projectChecks) > 0
-	hasTodoReceipt := a.evidence.HasSuccessfulTodoWrite()
-	if !hasProjectChecks && !hasTodoReceipt && len(missing) == 0 {
-		return finalReadinessCheck{}
-	}
-	out.applies = true
-	for _, check := range a.projectChecks {
-		command := strings.TrimSpace(check.Command)
-		if command == "" {
-			continue
-		}
-		if !a.evidence.HasSuccessfulCommandAfter(command, writer) {
-			out.missingProjectChecks++
-			missing = append(missing, fmt.Sprintf("run %q from %s after the latest write", command, finalReadinessCheckSource(check)))
-		}
-	}
-	if hasTodoReceipt && !a.evidence.HasSuccessfulCompleteStepAfter(writer) {
-		out.missingCompleteStep = true
-		missing = append(missing, "call complete_step after the latest write")
-	}
-	if len(missing) == 0 {
-		return out
-	}
-	out.reason = strings.Join(missing, "; ")
-	return out
-}
-
-func finalReadinessIncompleteTodos(items []evidence.TodoStepMatch) string {
-	parts := make([]string, 0, len(items))
-	for _, item := range items {
-		label := strings.TrimSpace(item.Content)
-		if label == "" {
-			label = fmt.Sprintf("todo %d", item.Index)
-		}
-		parts = append(parts, fmt.Sprintf("%s: %s", label, item.Status))
-	}
-	return "latest successful todo_write still has incomplete items: " + strings.Join(parts, ", ")
-}
-
-func finalReadinessCheckSource(check instruction.VerifyCheck) string {
-	source := strings.TrimSpace(check.SourcePath)
-	if source == "" {
-		source = "project memory"
-	}
-	if check.Line > 0 {
-		return fmt.Sprintf("%s:%d", source, check.Line)
-	}
-	return source
-}
-
-func finalReadinessRetryMessage(reason string) string {
-	return "Host final-answer readiness check failed. Before giving a final answer, address the missing host-observable receipts: " + reason + ". Run the required tool calls, then answer when readiness is satisfied."
 }
 
 func hasVisibleFinalAnswer(text string) bool {
@@ -1086,9 +965,6 @@ func (a *Agent) executeOne(ctx context.Context, call provider.ToolCall) toolOutc
 		}
 	}
 	cctx := withCallContext(ctx, call.ID, a.sink, a.asker)
-	if a.evidence != nil {
-		cctx = evidence.WithLedger(cctx, a.evidence)
-	}
 	if len(a.projectChecks) > 0 {
 		cctx = instruction.WithChecks(cctx, a.projectChecks)
 	}
@@ -1109,19 +985,7 @@ func (a *Agent) executeOne(ctx context.Context, call provider.ToolCall) toolOutc
 	if a.ctxStore != nil {
 		ctxmode.RecordTool(a.ctxStore.Journal(), call.Name, json.RawMessage(call.Arguments), result, err)
 	}
-	if a.evidence != nil {
-		if call.Name == "complete_step" {
-			if err == nil {
-				a.evidence.Record(evidence.ReceiptFromToolCall(call.Name, json.RawMessage(call.Arguments), true, t.ReadOnly()))
-			}
-		} else {
-			r := evidence.ReceiptFromToolCall(call.Name, json.RawMessage(call.Arguments), err == nil, t.ReadOnly())
-			if err != nil && r.Write {
-				r.ErrorPreview = evidence.ErrorPreviewFromToolOutput(result, err.Error())
-			}
-			a.evidence.Record(r)
-		}
-	}
+
 	// PostToolUse hooks observe the result (they can't block); fired whether the
 	// call succeeded or errored, since the tool did run.
 	if a.hooks != nil {
@@ -1147,11 +1011,6 @@ func (a *Agent) executeOne(ctx context.Context, call provider.ToolCall) toolOutc
 		a.hooks.SubagentStop(ctx, result)
 	}
 	body, truncMsg := compactToolOutput(a.ctxStore, call.Name, json.RawMessage(call.Arguments), a.jobs, result)
-	// After a successful todo_write, inject the current plan as a user message
-	// so the model sees it in every subsequent turn and follows the intended flow.
-	if err == nil && call.Name == "todo_write" {
-		a.injectPlanMessage(json.RawMessage(call.Arguments))
-	}
 	// PostCallGuidance: if the tool teaches a post-call workflow, append it
 	// to the result so the model is explicitly reminded what to do next.
 	if pg, ok := t.(tool.PostCallGuidance); ok {
@@ -1253,59 +1112,10 @@ func isShellFileWriteCommand(command string) bool {
 	}
 }
 
-// injectPlanMessage parses a todo_write args blob and adds a user message with
+
 // the current plan to the session, so the model sees it on every subsequent turn.
-func (a *Agent) injectPlanMessage(args json.RawMessage) {
-	var p struct {
-		Merge bool                `json:"merge"`
-		Todos []map[string]any    `json:"todos"`
-	}
-	if err := json.Unmarshal([]byte(args), &p); err != nil || len(p.Todos) == 0 {
-		return
-	}
-	// Count active (pending / in_progress) items — if none, the plan is done.
-	active := 0
-	for _, t := range p.Todos {
-		s, _ := t["status"].(string)
-		if s == "pending" || s == "in_progress" {
-			active++
-		}
-	}
-	if active == 0 {
-		// All done — remove the stale plan reminder if one exists.
-		a.clearPlanMessage()
-		return
-	}
-	// Render a terse reminder.
-	var b strings.Builder
-	b.WriteString("[Current task list — follow this plan step by step, complete_step each item before calling other tools]\n")
-	for _, t := range p.Todos {
-		content, _ := t["content"].(string)
-		status, _ := t["status"].(string)
-		switch status {
-		case "completed":
-			b.WriteString("  ✅ " + content + "\n")
-		case "in_progress":
-			b.WriteString("  ▶ " + content + " (current — call complete_step when done)\n")
-		case "pending", "":
-			b.WriteString("  ○ " + content + "\n")
-		}
-	}
-	b.WriteString("[Complete the current ▶ step with complete_step, then call todo_write merge=true to advance]")
-	msg := b.String()
-	// Append the reminder to the session.
-	a.session.Add(provider.Message{Role: "user", Content: msg})
-}
 
 // clearPlanMessage removes the last plan reminder injected by injectPlanMessage.
-func (a *Agent) clearPlanMessage() {
-	msgs := a.session.Messages
-	if len(msgs) == 0 { return }
-	last := msgs[len(msgs)-1]
-	if strings.HasPrefix(last.Content, "[Current task list") {
-		a.session.Replace(msgs[:len(msgs)-1])
-	}
-}
 
 func shellPythonOpenWrites(lower string) bool {
 	if !strings.Contains(lower, "open(") {
