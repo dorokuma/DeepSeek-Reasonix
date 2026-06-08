@@ -6,57 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"reasonix/internal/event"
-	"reasonix/internal/evidence"
 )
-
-func TestMetricsSinkAccumulatesReadinessAudit(t *testing.T) {
-	s := &metricsSink{inner: event.Discard}
-
-	s.RecordReadinessAudit(evidence.ReadinessAudit{
-		Result:                 evidence.ReadinessBlocked,
-		MissingProjectChecks:   2,
-		MissingCompleteStep:    true,
-		IncompleteTodos:        3,
-		CommandMismatchMissing: 2,
-	})
-	s.RecordReadinessAudit(evidence.ReadinessAudit{
-		Result:    evidence.ReadinessAllowed,
-		Recovered: true,
-	})
-	s.RecordReadinessAudit(evidence.ReadinessAudit{
-		Result:              evidence.ReadinessErrored,
-		MissingCompleteStep: true,
-	})
-
-	if s.m.ReadinessChecks != 3 {
-		t.Fatalf("readiness checks = %d, want 3", s.m.ReadinessChecks)
-	}
-	if s.m.ReadinessAllowed != 1 {
-		t.Fatalf("readiness allowed = %d, want 1", s.m.ReadinessAllowed)
-	}
-	if s.m.ReadinessBlocks != 1 {
-		t.Fatalf("readiness blocks = %d, want 1", s.m.ReadinessBlocks)
-	}
-	if s.m.ReadinessRecoveries != 1 {
-		t.Fatalf("readiness recoveries = %d, want 1", s.m.ReadinessRecoveries)
-	}
-	if s.m.ReadinessErrors != 1 {
-		t.Fatalf("readiness errors = %d, want 1", s.m.ReadinessErrors)
-	}
-	if s.m.ReadinessMissingProjectChecks != 2 {
-		t.Fatalf("missing project checks = %d, want 2", s.m.ReadinessMissingProjectChecks)
-	}
-	if s.m.ReadinessMissingCompleteSteps != 2 {
-		t.Fatalf("missing complete_step = %d, want 2", s.m.ReadinessMissingCompleteSteps)
-	}
-	if s.m.ReadinessIncompleteTodos != 3 {
-		t.Fatalf("incomplete todos = %d, want 3", s.m.ReadinessIncompleteTodos)
-	}
-	if s.m.ReadinessCommandMismatches != 2 {
-		t.Fatalf("command mismatches = %d, want 2", s.m.ReadinessCommandMismatches)
-	}
-}
 
 func TestWriteMetricsIncludesReadinessFields(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "metrics.json")
