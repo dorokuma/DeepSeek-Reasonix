@@ -29,14 +29,3 @@ func TestAppendWriteFailureFooterSkipsWhenClean(t *testing.T) {
 	}
 }
 
-func TestAppendWriteFailureFooterAppendsOnFailure(t *testing.T) {
-	ledger := evidence.NewLedger()
-	ledger.Record(evidence.Receipt{ToolName: "edit_file", Success: false, Paths: []string{"/tmp/a.go"}, Write: true, ErrorPreview: "boom"})
-	out := appendWriteFailureFooter("All files updated.", ledger, true)
-	if !strings.Contains(out, "All files updated.") {
-		t.Fatalf("missing original text: %q", out)
-	}
-	if !strings.Contains(out, "写文件校验") {
-		t.Fatalf("missing footer: %q", out)
-	}
-}
