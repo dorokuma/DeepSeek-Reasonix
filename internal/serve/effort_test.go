@@ -8,7 +8,7 @@ import (
 
 func TestApplyEffortEditUpsertsMissingProvider(t *testing.T) {
 	edit := &config.Config{}
-	entry := &config.ProviderEntry{Name: "deepseek", Kind: "openai", BaseURL: "https://api.deepseek.com", Model: "deepseek-v4"}
+	entry := &config.ProviderEntry{Name: "deepseek", Kind: "openai", BaseURL: "https://api.deepseek.com", Model: "deepseek-v4", APIKeyEnv: "TEST_KEY"}
 
 	if err := applyEffortEdit(edit, entry, "high"); err != nil {
 		t.Fatalf("applyEffortEdit: %v", err)
@@ -24,7 +24,7 @@ func TestApplyEffortEditUpsertsMissingProvider(t *testing.T) {
 
 func TestApplyEffortEditEnablesAnthropicThinking(t *testing.T) {
 	edit := &config.Config{}
-	entry := &config.ProviderEntry{Name: "anthropic", Kind: "anthropic", BaseURL: "https://api.anthropic.com", Model: "claude-opus-4-8"}
+	entry := &config.ProviderEntry{Name: "anthropic", Kind: "anthropic", BaseURL: "https://api.anthropic.com", Model: "claude-opus-4-8", APIKeyEnv: "TEST_KEY"}
 
 	if err := applyEffortEdit(edit, entry, "max"); err != nil {
 		t.Fatalf("applyEffortEdit: %v", err)
