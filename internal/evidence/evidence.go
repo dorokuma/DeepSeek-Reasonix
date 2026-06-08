@@ -463,7 +463,7 @@ func ReceiptFromToolCall(toolName string, args json.RawMessage, success bool, re
 
 func isWriterTool(name string) bool {
 	switch name {
-	case "write_file", "edit_file", "multi_edit", "notebook_edit", "delete_range", "delete_symbol":
+	case "write_file", "edit_file", "multi_edit", "notebook_edit", "delete_range", "delete_symbol", "note", "audit_finish":
 		return true
 	default:
 		return false
@@ -472,7 +472,7 @@ func isWriterTool(name string) bool {
 
 func isReaderTool(name string) bool {
 	switch name {
-	case "read_file", "ls", "grep":
+	case "read_file", "ls", "grep", "note":
 		return true
 	default:
 		return false

@@ -1151,6 +1151,13 @@ func (a *Agent) executeOne(ctx context.Context, call provider.ToolCall) toolOutc
 	if err == nil && call.Name == "todo_write" {
 		a.injectPlanMessage(json.RawMessage(call.Arguments))
 	}
+	// PostCallGuidance: if the tool teaches a post-call workflow, append it
+	// to the result so the model is explicitly reminded what to do next.
+	if pg, ok := t.(tool.PostCallGuidance); ok {
+		if guidance := strings.TrimSpace(pg.PostCallGuidance(json.RawMessage(call.Arguments))); guidance != "" {
+			body += "\n\n---\n" + "⚠ **Post-call requirements**\n" + guidance
+		}
+	}
 	return toolOutcome{output: body, truncated: truncMsg != "" || strings.Contains(body, "[truncated "), truncMsg: truncMsg}
 }
 
