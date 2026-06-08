@@ -126,9 +126,9 @@ func verifyTodoCompletionTransitions(ctx context.Context, todos []todoItem, merg
 	}
 	if len(missing) == 1 {
 		m := missing[0]
-		return fmt.Errorf("todo %d %q is newly completed but has no matching successful complete_step receipt in this turn", m.Index, m.Content)
+		return fmt.Errorf("todo %d %q is not properly signed off (missing a successful complete_step receipt for a completed or dropped item)", m.Index, m.Content)
 	}
-	return fmt.Errorf("%d todos are newly completed but have no matching successful complete_step receipts in this turn", len(missing))
+	return fmt.Errorf("%d todos are not properly signed off (missing successful complete_step receipts)", len(missing))
 }
 
 func toEvidenceTodos(todos []todoItem) []evidence.TodoItem {

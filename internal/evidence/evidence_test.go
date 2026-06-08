@@ -329,3 +329,85 @@ func TestLedgerNoBaselineDoesNotConstrainCompletedTodos(t *testing.T) {
 		t.Fatalf("no baseline should not report missing completions, got %+v", missing)
 	}
 }
+
+func TestLastCheckpointIndex(t *testing.T) {
+	ledger := NewLedger()
+	idx, ok := ledger.LastCheckpointIndex()
+	if ok {
+		t.Fatal("empty ledger should have no checkpoint")
+	}
+	ledger.Record(Receipt{ToolName: "bash", Success: true, Command: "go test"})
+	idx, ok = ledger.LastCheckpointIndex()
+	if ok {
+		t.Fatal("bash receipt should not be a checkpoint")
+	}
+	ledger.Record(Receipt{ToolName: "todo_write", Success: true, Todos: []TodoItem{{Content: "Task", Status: "in_progress"}}})
+	idx, ok = ledger.LastCheckpointIndex()
+	if !ok || idx != 1 {
+		t.Fatalf("todo_write checkpoint = %d, want 1", idx)
+	}
+	ledger.Record(Receipt{ToolName: "complete_step", Success: true, Step: "Task"})
+	idx, ok = ledger.LastCheckpointIndex()
+	if !ok || idx != 2 {
+		t.Fatalf("complete_step checkpoint = %d, want 2", idx)
+	}
+	ledger.Record(Receipt{ToolName: "todo_write", Success: false, Todos: []TodoItem{{Content: "Fail", Status: "in_progress"}}})
+	idx, ok = ledger.LastCheckpointIndex()
+	if idx != 2 {
+		t.Fatalf("failed todo_write must not update checkpoint, idx = %d, want 2", idx)
+	}
+}
+
+func TestHasWorkSinceLastCheckpoint(t *testing.T) {
+	if !(*Ledger)(nil).HasWorkSinceLastCheckpoint() {
+		t.Fatal("nil ledger should allow completion")
+	}
+	ledger := NewLedger()
+	if !ledger.HasWorkSinceLastCheckpoint() {
+		t.Fatal("no checkpoint should allow completion")
+	}
+	ledger.Record(Receipt{ToolName: "todo_write", Success: true, Todos: []TodoItem{{Content: "Task", Status: "in_progress"}}})
+	if ledger.HasWorkSinceLastCheckpoint() {
+		t.Fatal("no work after checkpoint should fail")
+	}
+	ledger.Record(Receipt{ToolName: "bash", Success: true, Command: "go test"})
+	if !ledger.HasWorkSinceLastCheckpoint() {
+		t.Fatal("work after checkpoint should pass")
+	}
+	ledger.Record(Receipt{ToolName: "complete_step", Success: true, Step: "Task"})
+	if ledger.HasWorkSinceLastCheckpoint() {
+		t.Fatal("complete_step alone should not count as work")
+	}
+}
+
+func TestDroppedSinceLastTodo(t *testing.T) {
+	ledger := NewLedger()
+	dropped, hasBaseline := ledger.DroppedSinceLastTodo(nil)
+	if hasBaseline {
+		t.Fatal("empty ledger should not have baseline")
+	}
+	ledger.Record(Receipt{
+		ToolName: "todo_write",
+		Success:  true,
+		Todos: []TodoItem{
+			{Content: "Task A", Status: "in_progress"},
+			{Content: "Task B", Status: "pending"},
+		},
+	})
+	current := []TodoItem{
+		{Content: "Task A", Status: "in_progress"},
+		{Content: "Task B", Status: "pending"},
+	}
+	dropped, hasBaseline = ledger.DroppedSinceLastTodo(current)
+	if !hasBaseline {
+		t.Fatal("should have baseline")
+	}
+	if len(dropped) != 0 {
+		t.Fatalf("no items dropped, got %+v", dropped)
+	}
+	current = []TodoItem{{Content: "Task A", Status: "completed"}}
+	dropped, hasBaseline = ledger.DroppedSinceLastTodo(current)
+	if len(dropped) != 1 || dropped[0].Content != "Task B" {
+		t.Fatalf("dropped pending item should be flagged, got %+v", dropped)
+	}
+}
