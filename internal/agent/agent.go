@@ -557,7 +557,7 @@ func (a *Agent) Run(ctx context.Context, input string) error {
 
 			a.trimEmptyResponseScaffolding()
 			if hasVisibleAssistantText(text) {
-				assistantMsg.Content = appendWriteFailureFooter(text, a.evidence, a.writeFailureVerifier)
+				
 			}
 			a.session.Add(assistantMsg)
 			return nil // model gave a final answer
