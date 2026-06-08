@@ -636,7 +636,8 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 			plannerSess := agent.NewSession(agent.PlannerPromptWithContext(mem.Block()))
 			plannerTools := agent.PlannerToolRegistry(reg)
 			runner = agent.NewCoordinator(plannerProv, plannerSess, pe.Price, plannerTools, agent.Options{
-				MaxSteps:          agent.PlannerMaxSteps(maxSteps),
+				MaxSteps:          cfg.Agent.PlannerMaxSteps,
+				MaxStepsKey:       "agent.planner_max_steps",
 				Gate:              headlessGate,
 				ContextWindow:     pe.ContextWindow,
 				SoftCompactRatio:  cfg.Agent.SoftCompactRatio,

@@ -145,8 +145,9 @@ func RenderTOMLForScope(c *Config, scope RenderScope) string {
 	} else {
 		b.WriteString("# system_prompt_file = \"prompts/system.md\"   # overrides system_prompt when set\n")
 	}
-	fmt.Fprintf(&b, "max_steps   = %d\n", c.Agent.MaxSteps)
-	fmt.Fprintf(&b, "temperature = %s\n", formatFloat(c.Agent.Temperature))
+	fmt.Fprintf(&b, "max_steps         = %d   # executor tool-call rounds; 0 = no limit\n", c.Agent.MaxSteps)
+	fmt.Fprintf(&b, "planner_max_steps = %d   # planner read-only tool-call rounds; 0 = no limit\n", c.Agent.PlannerMaxSteps)
+	fmt.Fprintf(&b, "temperature       = %s\n", formatFloat(c.Agent.Temperature))
 	autoPlan := c.Agent.AutoPlan
 	switch strings.ToLower(strings.TrimSpace(autoPlan)) {
 	case "on", "ask":

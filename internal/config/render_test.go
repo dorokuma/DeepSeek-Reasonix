@@ -97,6 +97,9 @@ func TestRenderTOMLRoundTrips(t *testing.T) {
 	if got.Agent.MaxSteps != orig.Agent.MaxSteps {
 		t.Errorf("max_steps = %d, want %d", got.Agent.MaxSteps, orig.Agent.MaxSteps)
 	}
+	if got.Agent.PlannerMaxSteps != orig.Agent.PlannerMaxSteps {
+		t.Errorf("planner_max_steps = %d, want %d", got.Agent.PlannerMaxSteps, orig.Agent.PlannerMaxSteps)
+	}
 	if got.Agent.Temperature != orig.Agent.Temperature {
 		t.Errorf("temperature = %v, want %v", got.Agent.Temperature, orig.Agent.Temperature)
 	}

@@ -462,7 +462,8 @@ func (c *Config) BashMode() string {
 type AgentConfig struct {
 	SystemPrompt     string            `toml:"system_prompt"`
 	SystemPromptFile string            `toml:"system_prompt_file"`
-	MaxSteps         int               `toml:"max_steps"` // tool-call rounds per turn; 0 = unlimited
+	MaxSteps         int               `toml:"max_steps"`         // tool-call rounds per turn; 0 = unlimited
+	PlannerMaxSteps  int               `toml:"planner_max_steps"` // planner read-only tool-call rounds; 0 = unlimited
 	Temperature      float64           `toml:"temperature"`
 	PlannerModel     string            `toml:"planner_model"`
 	SubagentModel    string            `toml:"subagent_model"`
@@ -719,6 +720,7 @@ func Default() *Config {
 			// compaction, not by a round count. Set a positive agent.max_steps only
 			// if you want a hard guard against runaway.
 			MaxSteps:          0,
+			PlannerMaxSteps:   12,
 			AutoPlan:          "off",
 			SoftCompactRatio:  0.5,
 			CompactRatio:      0.8,
