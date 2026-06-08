@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -236,6 +237,11 @@ func validateProvider(e ProviderEntry) error {
 		return fmt.Errorf("provider %q: base_url is required", e.Name)
 	case strings.TrimSpace(e.Model) == "":
 		return fmt.Errorf("provider %q: model is required", e.Name)
+	case strings.TrimSpace(e.APIKeyEnv) == "":
+		return fmt.Errorf("provider %q: api_key_env is required (set the env var name that holds the API key)", e.Name)
+	}
+	if _, err := url.Parse(e.BaseURL); err != nil {
+		return fmt.Errorf("provider %q: invalid base_url %q: %v", e.Name, e.BaseURL, err)
 	}
 	return nil
 }

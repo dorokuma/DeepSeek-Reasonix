@@ -185,7 +185,7 @@ func TestUpsertProvider(t *testing.T) {
 	n := len(c.Providers)
 
 	// Add a new one.
-	if err := c.UpsertProvider(ProviderEntry{Name: "local", Kind: "openai", BaseURL: "http://localhost:1234/v1", Model: "x"}); err != nil {
+	if err := c.UpsertProvider(ProviderEntry{Name: "local", Kind: "openai", BaseURL: "http://localhost:1234/v1", Model: "x", APIKeyEnv: "TEST_KEY"}); err != nil {
 		t.Fatalf("add: %v", err)
 	}
 	if len(c.Providers) != n+1 {
@@ -193,7 +193,7 @@ func TestUpsertProvider(t *testing.T) {
 	}
 
 	// Replace it in place (no growth, position preserved).
-	if err := c.UpsertProvider(ProviderEntry{Name: "local", Kind: "openai", BaseURL: "http://localhost:9999/v1", Model: "y"}); err != nil {
+	if err := c.UpsertProvider(ProviderEntry{Name: "local", Kind: "openai", BaseURL: "http://localhost:9999/v1", Model: "y", APIKeyEnv: "TEST_KEY"}); err != nil {
 		t.Fatalf("replace: %v", err)
 	}
 	if len(c.Providers) != n+1 {
@@ -597,7 +597,7 @@ func TestSaveToRoundTrips(t *testing.T) {
 	if err := c.SetPlannerModel("deepseek-pro"); err != nil {
 		t.Fatal(err)
 	}
-	if err := c.UpsertProvider(ProviderEntry{Name: "local", Kind: "openai", BaseURL: "http://localhost:1234/v1", Model: "llama"}); err != nil {
+	if err := c.UpsertProvider(ProviderEntry{Name: "local", Kind: "openai", BaseURL: "http://localhost:1234/v1", Model: "llama", APIKeyEnv: "TEST_KEY"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := c.SetPermissionMode("deny"); err != nil {
@@ -806,6 +806,7 @@ func TestUpsertProviderNormalizesCustomEffortFields(t *testing.T) {
 		Kind:             "openai",
 		BaseURL:          "https://example.com",
 		Model:            "m",
+		APIKeyEnv:        "TEST_KEY",
 		Effort:           " HIGH ",
 		SupportedEfforts: []string{"Low", "MEDIUM", "medium", "auto"},
 		DefaultEffort:    " LOW ",

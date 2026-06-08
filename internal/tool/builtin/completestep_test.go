@@ -255,6 +255,7 @@ func TestCompleteStepMatchesTodoReceipt(t *testing.T) {
 			{Content: "Wire parser", Status: "completed"},
 		},
 	})
+	ledger.Record(evidence.Receipt{ToolName: "write_file", Success: true, Paths: []string{"parser.go"}, Write: true})
 	ctx := evidence.WithLedger(context.Background(), ledger)
 
 	for _, step := range []string{"Add parser", "Adding parser", "2"} {
@@ -283,6 +284,7 @@ func TestCompleteStepRejectsTodoMismatchAndPending(t *testing.T) {
 			{Content: "Document parser", Status: "pending"},
 		},
 	})
+	ledger.Record(evidence.Receipt{ToolName: "write_file", Success: true, Paths: []string{"parser.go"}, Write: true})
 	ctx := evidence.WithLedger(context.Background(), ledger)
 
 	cases := []struct {

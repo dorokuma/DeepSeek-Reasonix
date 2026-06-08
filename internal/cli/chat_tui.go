@@ -626,6 +626,7 @@ func (m chatTUI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	prevLines := len(m.transcript)
 	prevWidth := m.width
 	prevYOff := m.viewport.YOffset()
+	prevHeight := m.viewport.Height()
 
 	next, cmd := m.update(msg)
 	cm := next.(chatTUI)
@@ -638,13 +639,17 @@ func (m chatTUI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	cm.viewport.SetHeight(cm.transcriptHeight())
 	// Re-feed only when the content grew or the width changed (re-wrapping is
 	// the expensive part); a bare scroll or spinner tick keeps the offset.
-	if len(cm.transcript) != prevLines || cm.width != prevWidth || cm.transcriptDirty {
+	contentChanged := len(cm.transcript) != prevLines || cm.width != prevWidth || cm.transcriptDirty
+	if contentChanged {
 		wrapped := wrapTranscript(strings.Join(cm.transcript, "\n"), contentW)
 		cm.viewport.SetContent(wrapped)
 		cm.wrappedLines = strings.Split(wrapped, "\n")
-		if wasAtBottom {
-			cm.viewport.GotoBottom() // tail-follow: stay pinned to newest output
-		}
+	}
+	// Tail-follow: stay pinned to newest output. Also re-pin on viewport
+	// resize (e.g. todo/approval/chooser panel appears/disappears) when the
+	// user was at the bottom so they don't get stranded with blank space.
+	if wasAtBottom && (contentChanged || cm.viewport.Height() != prevHeight) {
+		cm.viewport.GotoBottom()
 	}
 	cm.transcriptDirty = false
 	// Any viewport scroll (wheel, PgUp/PgDn, edge auto-scroll, or tail-follow to
