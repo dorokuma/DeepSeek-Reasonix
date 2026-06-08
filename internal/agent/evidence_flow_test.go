@@ -498,7 +498,6 @@ func TestEvidenceFlowRejectsStepMissingFromTodoWrite(t *testing.T) {
 	prov := &scriptedProvider{name: "p", turns: [][]provider.Chunk{
 		{
 			toolCallChunk("c1", "todo_write", `{"todos":[{"content":"Add parser","status":"in_progress"}]}`),
-toolCallChunk("wf497", "write_file", `{"path":"work.go"}`),
 			toolCallChunk("c2", "complete_step", `{
 				"step":"Ship parser",
 				"result":"step is complete",
@@ -543,7 +542,6 @@ func TestEvidenceFlowAcceptsTodoCompletionAfterCompleteStep(t *testing.T) {
 	prov := &scriptedProvider{name: "p", turns: [][]provider.Chunk{
 		{
 			toolCallChunk("c1", "todo_write", `{"todos":[{"content":"Add parser","status":"in_progress"}]}`),
-toolCallChunk("wf541", "write_file", `{"path":"work.go"}`),
 			toolCallChunk("c2", "complete_step", `{
 				"step":"Add parser",
 				"result":"parser added",
@@ -583,7 +581,6 @@ func TestEvidenceFlowRejectsTodoCompletionWithoutCompleteStep(t *testing.T) {
 		{
 			toolCallChunk("c1", "todo_write", `{"todos":[{"content":"Add parser","status":"in_progress"}]}`),
 			toolCallChunk("c2", "todo_write", `{"todos":[{"content":"Add parser","status":"completed"}]}`),
-toolCallChunk("wf580", "write_file", `{"path":"work.go"}`),
 			toolCallChunk("c3", "complete_step", `{
 				"step":"Add parser",
 				"result":"parser added",
@@ -627,14 +624,12 @@ func TestEvidenceFlowFailedCompleteStepDoesNotAuthorizeTodoCompletion(t *testing
 	prov := &scriptedProvider{name: "p", turns: [][]provider.Chunk{
 		{
 			toolCallChunk("c1", "todo_write", `{"todos":[{"content":"Add parser","status":"in_progress"}]}`),
-toolCallChunk("wf623", "write_file", `{"path":"work.go"}`),
 			toolCallChunk("c2", "complete_step", `{
 				"step":"Ship parser",
 				"result":"parser shipped",
 				"evidence":[{"kind":"manual","summary":"checked manually"}]
 			}`),
 			toolCallChunk("c3", "todo_write", `{"todos":[{"content":"Add parser","status":"completed"}]}`),
-toolCallChunk("wf630", "write_file", `{"path":"work.go"}`),
 			toolCallChunk("c4", "complete_step", `{
 				"step":"Add parser",
 				"result":"parser added",
@@ -678,7 +673,6 @@ func TestEvidenceFlowRejectsReplacedTodoAfterNumericCompleteStep(t *testing.T) {
 	prov := &scriptedProvider{name: "p", turns: [][]provider.Chunk{
 		{
 			toolCallChunk("c1", "todo_write", `{"todos":[{"content":"Add parser","status":"in_progress"}]}`),
-toolCallChunk("wf673", "write_file", `{"path":"work.go"}`),
 			toolCallChunk("c2", "complete_step", `{
 				"step":"1",
 				"result":"parser added",

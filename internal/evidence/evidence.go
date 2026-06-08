@@ -264,8 +264,9 @@ func (l *Ledger) LastCheckpointIndex() (int, bool) {
 }
 
 // HasWorkSinceLastCheckpoint returns true when there is at least one successful
-// receipt (any tool other than todo_write/complete_step) after the most recent
-// checkpoint (todo_write or complete_step).
+// receipt (any tool other than complete_step) after the most recent complete_step.
+// todo_write is NOT a checkpoint -- it only sets up the plan, and work done before
+// planning should still count toward the first complete_step.
 func (l *Ledger) HasWorkSinceLastCheckpoint() bool {
 	if l == nil {
 		return true
@@ -273,20 +274,29 @@ func (l *Ledger) HasWorkSinceLastCheckpoint() bool {
 	l.mu.Lock()
 	receipts := append([]Receipt(nil), l.receipts...)
 	l.mu.Unlock()
+	// Find the last complete_step (only complete_step is a checkpoint)
 	cp := -1
 	for i := len(receipts) - 1; i >= 0; i-- {
 		r := receipts[i]
-		if r.Success && (r.ToolName == "todo_write" || r.ToolName == "complete_step") {
+		if r.Success && r.ToolName == "complete_step" {
 			cp = i
 			break
 		}
 	}
 	if cp < 0 {
-		return true
+		// No prior complete_step: any successful receipt counts (including the
+		// plan itself — the user may define the plan first then work on step 1).
+		for _, r := range receipts {
+			if r.Success && r.ToolName != "complete_step" {
+				return true
+			}
+		}
+		return len(receipts) == 0 // empty ledger = nothing to enforce
 	}
+	// After a complete_step: only non-trivial work after it counts.
 	for i := cp + 1; i < len(receipts); i++ {
 		r := receipts[i]
-		if r.Success && r.ToolName != "todo_write" && r.ToolName != "complete_step" {
+		if r.Success && r.ToolName != "complete_step" {
 			return true
 		}
 	}
