@@ -121,7 +121,7 @@ func (b bash) Execute(ctx context.Context, args json.RawMessage) (string, error)
 	// Transparent RTK proxy: rewrite the command when RTK has a compact filter.
 	// Background jobs still benefit from compact command output; only the
 	// incremental bash_output polling path is unchanged.
-	p.Command = rtk.ApplySegments(p.Command)
+	p.Command = rtk.ApplySegmentsCtx(ctx, p.Command)
 
 	sh := b.resolved()
 	if !sh.SupportsChaining() && (hasUnquotedSeq(p.Command, "&&") || hasUnquotedSeq(p.Command, "||")) {

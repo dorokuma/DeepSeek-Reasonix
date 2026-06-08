@@ -349,6 +349,7 @@ func TestFinalReadinessRequiresCompleteStepAfterWriterWhenTodoSeen(t *testing.T)
 		{
 			toolCallChunk("c1", "write_file", `{"path":"changed.go","content":"package main"}`),
 			toolCallChunk("c2", "todo_write", `{"todos":[{"content":"Edit code","status":"in_progress"}]}`),
+   toolCallChunk("c2b", "write_file", `{"path":"work.go"}`),
 			{Type: provider.ChunkDone},
 		},
 		{{Type: provider.ChunkText, Text: "premature"}, {Type: provider.ChunkDone}},
@@ -490,12 +491,14 @@ func TestEvidenceFlowRejectsStepMissingFromTodoWrite(t *testing.T) {
 		t.Fatal("complete_step builtin not registered")
 	}
 	reg := tool.NewRegistry()
+ reg.Add(fakeTool{name: "write_file", readOnly: false})
 	reg.Add(todoWrite)
 	reg.Add(completeStep)
 
 	prov := &scriptedProvider{name: "p", turns: [][]provider.Chunk{
 		{
 			toolCallChunk("c1", "todo_write", `{"todos":[{"content":"Add parser","status":"in_progress"}]}`),
+toolCallChunk("wf497", "write_file", `{"path":"work.go"}`),
 			toolCallChunk("c2", "complete_step", `{
 				"step":"Ship parser",
 				"result":"step is complete",
@@ -533,12 +536,14 @@ func TestEvidenceFlowAcceptsTodoCompletionAfterCompleteStep(t *testing.T) {
 		t.Fatal("complete_step builtin not registered")
 	}
 	reg := tool.NewRegistry()
+ reg.Add(fakeTool{name: "write_file", readOnly: false})
 	reg.Add(todoWrite)
 	reg.Add(completeStep)
 
 	prov := &scriptedProvider{name: "p", turns: [][]provider.Chunk{
 		{
 			toolCallChunk("c1", "todo_write", `{"todos":[{"content":"Add parser","status":"in_progress"}]}`),
+toolCallChunk("wf541", "write_file", `{"path":"work.go"}`),
 			toolCallChunk("c2", "complete_step", `{
 				"step":"Add parser",
 				"result":"parser added",
@@ -570,6 +575,7 @@ func TestEvidenceFlowRejectsTodoCompletionWithoutCompleteStep(t *testing.T) {
 		t.Fatal("complete_step builtin not registered")
 	}
 	reg := tool.NewRegistry()
+ reg.Add(fakeTool{name: "write_file", readOnly: false})
 	reg.Add(todoWrite)
 	reg.Add(completeStep)
 
@@ -577,6 +583,7 @@ func TestEvidenceFlowRejectsTodoCompletionWithoutCompleteStep(t *testing.T) {
 		{
 			toolCallChunk("c1", "todo_write", `{"todos":[{"content":"Add parser","status":"in_progress"}]}`),
 			toolCallChunk("c2", "todo_write", `{"todos":[{"content":"Add parser","status":"completed"}]}`),
+toolCallChunk("wf580", "write_file", `{"path":"work.go"}`),
 			toolCallChunk("c3", "complete_step", `{
 				"step":"Add parser",
 				"result":"parser added",
@@ -613,18 +620,21 @@ func TestEvidenceFlowFailedCompleteStepDoesNotAuthorizeTodoCompletion(t *testing
 		t.Fatal("complete_step builtin not registered")
 	}
 	reg := tool.NewRegistry()
+ reg.Add(fakeTool{name: "write_file", readOnly: false})
 	reg.Add(todoWrite)
 	reg.Add(completeStep)
 
 	prov := &scriptedProvider{name: "p", turns: [][]provider.Chunk{
 		{
 			toolCallChunk("c1", "todo_write", `{"todos":[{"content":"Add parser","status":"in_progress"}]}`),
+toolCallChunk("wf623", "write_file", `{"path":"work.go"}`),
 			toolCallChunk("c2", "complete_step", `{
 				"step":"Ship parser",
 				"result":"parser shipped",
 				"evidence":[{"kind":"manual","summary":"checked manually"}]
 			}`),
 			toolCallChunk("c3", "todo_write", `{"todos":[{"content":"Add parser","status":"completed"}]}`),
+toolCallChunk("wf630", "write_file", `{"path":"work.go"}`),
 			toolCallChunk("c4", "complete_step", `{
 				"step":"Add parser",
 				"result":"parser added",
@@ -661,12 +671,14 @@ func TestEvidenceFlowRejectsReplacedTodoAfterNumericCompleteStep(t *testing.T) {
 		t.Fatal("complete_step builtin not registered")
 	}
 	reg := tool.NewRegistry()
+ reg.Add(fakeTool{name: "write_file", readOnly: false})
 	reg.Add(todoWrite)
 	reg.Add(completeStep)
 
 	prov := &scriptedProvider{name: "p", turns: [][]provider.Chunk{
 		{
 			toolCallChunk("c1", "todo_write", `{"todos":[{"content":"Add parser","status":"in_progress"}]}`),
+toolCallChunk("wf673", "write_file", `{"path":"work.go"}`),
 			toolCallChunk("c2", "complete_step", `{
 				"step":"1",
 				"result":"parser added",
@@ -704,6 +716,7 @@ func TestEvidenceFlowAcceptsReorderedTodoAfterNumericCompleteStep(t *testing.T) 
 		t.Fatal("complete_step builtin not registered")
 	}
 	reg := tool.NewRegistry()
+	reg.Add(fakeTool{name: "write_file", readOnly: false})
 	reg.Add(todoWrite)
 	reg.Add(completeStep)
 
@@ -713,6 +726,7 @@ func TestEvidenceFlowAcceptsReorderedTodoAfterNumericCompleteStep(t *testing.T) 
 				{"content":"Add parser","status":"in_progress"},
 				{"content":"Write tests","status":"pending"}
 			]}`),
+			toolCallChunk("cw1", "write_file", `{"path":"parser.go"}`),
 			toolCallChunk("c2", "complete_step", `{
 				"step":"1",
 				"result":"parser added",
@@ -726,6 +740,7 @@ func TestEvidenceFlowAcceptsReorderedTodoAfterNumericCompleteStep(t *testing.T) 
 				{"content":"Write tests","status":"in_progress"},
 				{"content":"Add parser","status":"completed"}
 			]}`),
+			toolCallChunk("cw5", "write_file", `{"path":"writetests.go"}`),
 			toolCallChunk("c5", "complete_step", `{
 				"step":"Write tests",
 				"result":"tests written",

@@ -104,10 +104,10 @@ func BinPath() string { return binPath }
 // when RTK has no filter. Exit codes follow RTK semantics: 0 and 3 mean a
 // rewrite is offered; 1 and 2 mean pass-through.
 func Rewrite(cmd string) string {
-	return rewriteWithMode(cmd, ModeRewrite)
+	return rewriteWithMode(context.Background(), cmd, ModeRewrite)
 }
 
-func rewriteWithMode(cmd string, mode Mode) string {
+func rewriteWithMode(ctx context.Context, cmd string, mode Mode) string {
 	if !ensureBin() || mode == ModeOff {
 		return ""
 	}
@@ -128,10 +128,10 @@ func rewriteWithMode(cmd string, mode Mode) string {
 		}
 		return s
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), rewriteTimeout())
+	ctx2, cancel := context.WithTimeout(ctx, rewriteTimeout())
 	defer cancel()
 
-	c := exec.CommandContext(ctx, binPath, "rewrite", cmd)
+	c := exec.CommandContext(ctx2, binPath, "rewrite", cmd)
 	out, err := c.Output()
 	rewritten := strings.TrimSpace(string(out))
 	exitCode := 0
@@ -174,11 +174,15 @@ func acceptRewrite(exitCode int, stdout string) string {
 
 // ApplySegments rewrites a compound shell command segment by segment.
 func ApplySegments(cmd string) string {
+	return ApplySegmentsCtx(context.Background(), cmd)
+}
+
+func ApplySegmentsCtx(ctx context.Context, cmd string) string {
 	mode := ModeFromEnv()
 	if !ensureBin() || mode == ModeOff {
 		return cmd
 	}
-	if r := rewriteWithMode(cmd, mode); r != "" {
+	if r := rewriteWithMode(ctx, cmd, mode); r != "" {
 		return r
 	}
 	segs := splitShellPipeline(cmd)
@@ -191,7 +195,7 @@ func ApplySegments(cmd string) string {
 	var out []string
 	changed := false
 	for _, s := range segs {
-		if r := rewriteWithMode(s.text, mode); r != "" {
+		if r := rewriteWithMode(ctx, s.text, mode); r != "" {
 			out = append(out, r)
 			changed = true
 		} else {

@@ -245,6 +245,106 @@ func (l *Ledger) LatestSuccessfulWriterIndex() (int, bool) {
 	return latest, latest >= 0
 }
 
+
+// LastCheckpointIndex returns the index of the most recent successful receipt
+// whose tool is todo_write or complete_step. Returns -1, false if none exist.
+func (l *Ledger) LastCheckpointIndex() (int, bool) {
+	if l == nil {
+		return -1, false
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	for i := len(l.receipts) - 1; i >= 0; i-- {
+		r := l.receipts[i]
+		if r.Success && (r.ToolName == "todo_write" || r.ToolName == "complete_step") {
+			return i, true
+		}
+	}
+	return -1, false
+}
+
+// HasWorkSinceLastCheckpoint returns true when there is at least one successful
+// receipt (any tool other than todo_write/complete_step) after the most recent
+// checkpoint (todo_write or complete_step).
+func (l *Ledger) HasWorkSinceLastCheckpoint() bool {
+	if l == nil {
+		return true
+	}
+	l.mu.Lock()
+	receipts := append([]Receipt(nil), l.receipts...)
+	l.mu.Unlock()
+	cp := -1
+	for i := len(receipts) - 1; i >= 0; i-- {
+		r := receipts[i]
+		if r.Success && (r.ToolName == "todo_write" || r.ToolName == "complete_step") {
+			cp = i
+			break
+		}
+	}
+	if cp < 0 {
+		return true
+	}
+	for i := cp + 1; i < len(receipts); i++ {
+		r := receipts[i]
+		if r.Success && r.ToolName != "todo_write" && r.ToolName != "complete_step" {
+			return true
+		}
+	}
+	return false
+}
+
+// DroppedSinceLastTodo returns items from the most recent successful todo_write
+// that are absent from current and were not already completed in that baseline.
+func (l *Ledger) DroppedSinceLastTodo(current []TodoItem) ([]TodoStepMatch, bool) {
+	current = normalizeTodos(current)
+	if l == nil {
+		return nil, false
+	}
+	l.mu.Lock()
+	receipts := append([]Receipt(nil), l.receipts...)
+	l.mu.Unlock()
+	var previous []TodoItem
+	hasBaseline := false
+	for i := len(receipts) - 1; i >= 0; i-- {
+		r := receipts[i]
+		if !r.Success || r.ToolName != "todo_write" {
+			continue
+		}
+		previous = r.Todos
+		hasBaseline = true
+		break
+	}
+	if !hasBaseline {
+		return nil, false
+	}
+	key := func(t TodoItem) string { return strings.TrimSpace(t.Content) }
+	inCurrent := make(map[string]bool, len(current))
+	for _, t := range current {
+		inCurrent[key(t)] = true
+	}
+	var dropped []TodoStepMatch
+	for i, t := range previous {
+		if todoStatus(t.Status) == "completed" {
+			continue
+		}
+		if inCurrent[key(t)] {
+			continue
+		}
+		index := i + 1
+		if hasSuccessfulCompleteStepForTodo(receipts, index, previous) {
+			continue
+		}
+		dropped = append(dropped, TodoStepMatch{
+			Found:      true,
+			Index:      index,
+			Content:    t.Content,
+			Status:     todoStatus(t.Status),
+			ActiveForm: t.ActiveForm,
+		})
+	}
+	return dropped, true
+}
+
 // UnresolvedWriteFailures returns paths whose last write-tool outcome this turn
 // was a failure — a later successful write to the same path clears it.
 func (l *Ledger) UnresolvedWriteFailures() []WriteFailure {
