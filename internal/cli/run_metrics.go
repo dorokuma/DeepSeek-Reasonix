@@ -5,7 +5,6 @@ import (
 	"os"
 
 	"reasonix/internal/event"
-	"reasonix/internal/evidence"
 )
 
 // RunMetrics is the machine-readable token/cache/cost summary `run --metrics`
@@ -59,29 +58,6 @@ func (s *metricsSink) Emit(e event.Event) {
 	s.inner.Emit(e)
 }
 
-func (s *metricsSink) RecordReadinessAudit(a evidence.ReadinessAudit) {
-	if s == nil {
-		return
-	}
-	s.m.ReadinessChecks++
-	switch a.Result {
-	case evidence.ReadinessAllowed:
-		s.m.ReadinessAllowed++
-	case evidence.ReadinessBlocked:
-		s.m.ReadinessBlocks++
-	case evidence.ReadinessErrored:
-		s.m.ReadinessErrors++
-	}
-	if a.Recovered {
-		s.m.ReadinessRecoveries++
-	}
-	s.m.ReadinessMissingProjectChecks += a.MissingProjectChecks
-	if a.MissingCompleteStep {
-		s.m.ReadinessMissingCompleteSteps++
-	}
-	s.m.ReadinessIncompleteTodos += a.IncompleteTodos
-	s.m.ReadinessCommandMismatches += a.CommandMismatchMissing
-}
 
 func writeMetrics(path string, m RunMetrics) error {
 	b, err := json.MarshalIndent(m, "", "  ")

@@ -2361,7 +2361,6 @@ func todoPanelWindow(todos []todoPanelTodo) (int, int) {
 
 // markTodoCompleted checks if complete_step args reference a todo step title
 // in the current todoArgs JSON and, if found, marks that item completed.
-// Matching logic mirrors internal/evidence/evidence.go: sameStepText
 // (case-insensitive, Content + ActiveForm) and numeric index fallback.
 // Preserves any extra top-level fields in the original todoArgs.
 // Returns the original todoArgs unchanged when there's nothing to update.
@@ -2394,7 +2393,7 @@ func markTodoCompleted(todoArgs, stepArgs string) string {
 		return todoArgs
 	}
 
-	// Match — same logic as evidence.matchTodoStep + sameStepText.
+	// Match — same logic as matchTodoStep + sameStepText.
 	idx := -1
 	for i, t := range todos {
 		if sameStepText(stepName, t.Content) || sameStepText(stepName, t.ActiveForm) {
@@ -2422,7 +2421,6 @@ func markTodoCompleted(todoArgs, stepArgs string) string {
 }
 
 // sameStepText is a case-insensitive string equality check for matching step
-// titles, mirrored from internal/evidence/evidence.go.
 func sameStepText(a, b string) bool {
 	return a != "" && b != "" && strings.EqualFold(a, b)
 }

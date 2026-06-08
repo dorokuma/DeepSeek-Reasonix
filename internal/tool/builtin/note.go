@@ -35,7 +35,6 @@ func init() { tool.RegisterBuiltin(note{}) }
 
 // note appends a long-form text entry to the session's sidecar file and
 // returns a stable `note_id` the caller can cite (e.g. in a complete_step
-// evidence summary as "see note#3") without re-pasting the content into the
 // conversation history. The default file is <workdir>/.notes.md; the
 // confined instance registered by ConfineWriters inherits the same workspace
 // roots as the other writer tools, so the file always lives inside the
