@@ -204,7 +204,7 @@ func TestNote_ReadOnlyIsFalse(t *testing.T) {
 func TestNote_PostCallGuidance_ReturnsWorkflow(t *testing.T) {
 	dir := t.TempDir()
 	n := note{workDir: dir}
-	args, _ := json.Marshal(map[string]string{"content": "x"})
+	args, _ := json.Marshal(map[string]string{"content": "x", "kind": "evidence"})
 	guidance := n.PostCallGuidance(args)
 	if guidance == "" {
 		t.Fatal("PostCallGuidance should return non-empty guidance")
@@ -227,7 +227,7 @@ func TestNote_PostCallGuidance_MentionsOverridePath(t *testing.T) {
 	dir := t.TempDir()
 	n := note{workDir: dir}
 	override := filepath.Join(dir, "sub", "custom.md")
-	args, _ := json.Marshal(map[string]string{"content": "x", "path": override})
+	args, _ := json.Marshal(map[string]string{"content": "x", "kind": "evidence", "path": override})
 	guidance := n.PostCallGuidance(args)
 	if guidance == "" {
 		t.Fatal("PostCallGuidance should return non-empty guidance")

@@ -145,7 +145,9 @@ func (n note) PostCallGuidance(args json.RawMessage) string {
 	}
 	kind := strings.TrimSpace(p.Kind)
 	// For non-evidence notes, just remind to include in final answer.
-	if kind != "" && kind != "evidence" {
+	// Note: Execute defaults empty kind to "scratch", so non-evidence
+	// and unset both get the simplified guidance.
+	if kind == "" || kind == "scratch" || kind == "summary" {
 		return "Include this content (or a tight paraphrase) in your final assistant message — the user sees THAT, not this tool result."
 	}
 	// Full workflow for evidence notes (default).
