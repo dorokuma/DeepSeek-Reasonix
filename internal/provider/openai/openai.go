@@ -200,7 +200,6 @@ func (c *client) buildRequest(req provider.Request) chatRequest {
 	for i, m := range src {
 		cm := chatMessage{
 			Role:       string(m.Role),
-			Content:    m.Content,
 			ToolCallID: m.ToolCallID,
 			Name:       m.Name,
 		}
@@ -217,6 +216,10 @@ func (c *client) buildRequest(req provider.Request) chatRequest {
 			wire.Function.Name = tc.Name
 			wire.Function.Arguments = tc.Arguments
 			cm.ToolCalls = append(cm.ToolCalls, wire)
+		}
+		if m.Role != provider.RoleAssistant || len(cm.ToolCalls) == 0 || m.Content != "" {
+			content := m.Content
+			cm.Content = &content
 		}
 		msgs[i] = cm
 	}
@@ -427,13 +430,12 @@ type streamOptions struct {
 
 type chatMessage struct {
 	Role string `json:"role"`
-	// content is always serialized, even when empty: an assistant turn that is
-	// pure tool_calls (no preamble text) has empty content, and DeepSeek's
-	// strict deserializer rejects a message missing the field ("missing field
-	// `content`"). An empty string satisfies presence and is accepted by every
-	// OpenAI-compatible backend for all roles (unlike null, which some reject
-	// for a tool message).
-	Content    string         `json:"content"`
+	// content is always present (never omitted): DeepSeek's strict deserializer
+	// rejects a message missing the field. A pure tool_calls assistant turn
+	// serializes as null (OpenAI-spec, and what strict clones expect); every
+	// other role/message serializes as a string, empty included — null is
+	// rejected by some backends for a tool message.
+	Content    *string        `json:"content"`
 	ToolCalls  []chatToolCall `json:"tool_calls,omitempty"`
 	ToolCallID string         `json:"tool_call_id,omitempty"`
 	Name       string         `json:"name,omitempty"`
