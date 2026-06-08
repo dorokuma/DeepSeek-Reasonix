@@ -245,24 +245,6 @@ func (l *Ledger) LatestSuccessfulWriterIndex() (int, bool) {
 	return latest, latest >= 0
 }
 
-
-// LastCheckpointIndex returns the index of the most recent successful receipt
-// whose tool is todo_write or complete_step. Returns -1, false if none exist.
-func (l *Ledger) LastCheckpointIndex() (int, bool) {
-	if l == nil {
-		return -1, false
-	}
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	for i := len(l.receipts) - 1; i >= 0; i-- {
-		r := l.receipts[i]
-		if r.Success && (r.ToolName == "todo_write" || r.ToolName == "complete_step") {
-			return i, true
-		}
-	}
-	return -1, false
-}
-
 // HasWorkSinceLastCheckpoint returns true when there is at least one successful
 // receipt (any tool other than complete_step) after the most recent complete_step.
 // todo_write is NOT a checkpoint -- it only sets up the plan, and work done before
@@ -293,10 +275,12 @@ func (l *Ledger) HasWorkSinceLastCheckpoint() bool {
 		}
 		return len(receipts) == 0 // empty ledger = nothing to enforce
 	}
-	// After a complete_step: only non-trivial work (not todo_write, not complete_step) counts.
+	// After a complete_step: only actual work (writer tools or bash) counts.
+	// Read-only tools (read_file, grep, ls, etc.) don't count to prevent
+	// trivial "work" with manual evidence sign-offs.
 	for i := cp + 1; i < len(receipts); i++ {
 		r := receipts[i]
-		if r.Success && r.ToolName != "complete_step" && r.ToolName != "todo_write" {
+		if r.Success && (r.Write || r.ToolName == "bash" || r.ToolName == "complete_step") {
 			return true
 		}
 	}
