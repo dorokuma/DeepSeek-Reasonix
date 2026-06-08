@@ -381,6 +381,21 @@ func TestHasWorkSinceLastCheckpoint(t *testing.T) {
 	if !ledger.HasWorkSinceLastCheckpoint() {
 		t.Fatal("work after complete_step should pass")
 	}
+	// Reset with another complete_step
+	ledger.Record(Receipt{ToolName: "complete_step", Success: true, Step: "Done"})
+	if ledger.HasWorkSinceLastCheckpoint() {
+		t.Fatal("complete_step must not count as work after checkpoint")
+	}
+	// todo_write alone after complete_step should NOT count as work
+	ledger.Record(Receipt{ToolName: "todo_write", Success: true, Todos: nil})
+	if ledger.HasWorkSinceLastCheckpoint() {
+		t.Fatal("todo_write must not count as work after complete_step")
+	}
+	// bash after todo_write should count
+	ledger.Record(Receipt{ToolName: "bash", Success: true, Command: "go test"})
+	if !ledger.HasWorkSinceLastCheckpoint() {
+		t.Fatal("bash after todo_write should count as work")
+	}
 }
 
 func TestDroppedSinceLastTodo(t *testing.T) {

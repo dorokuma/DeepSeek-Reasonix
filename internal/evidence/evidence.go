@@ -293,10 +293,10 @@ func (l *Ledger) HasWorkSinceLastCheckpoint() bool {
 		}
 		return len(receipts) == 0 // empty ledger = nothing to enforce
 	}
-	// After a complete_step: only non-trivial work after it counts.
+	// After a complete_step: only non-trivial work (not todo_write, not complete_step) counts.
 	for i := cp + 1; i < len(receipts); i++ {
 		r := receipts[i]
-		if r.Success && r.ToolName != "complete_step" {
+		if r.Success && r.ToolName != "complete_step" && r.ToolName != "todo_write" {
 			return true
 		}
 	}
