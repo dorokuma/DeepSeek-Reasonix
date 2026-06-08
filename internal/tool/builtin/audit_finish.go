@@ -149,24 +149,7 @@ func (a auditFinish) Execute(ctx context.Context, args json.RawMessage) (string,
 // Used by Execute (which returns error) and PostCallGuidance (which returns
 // empty string on failure).
 func (a auditFinish) resolveAuditPath(raw string) (string, error) {
-	path := strings.TrimSpace(raw)
-	if path == "" {
-		base := a.workDir
-		if base == "" {
-			wd, err := os.Getwd()
-			if err != nil {
-				return "", fmt.Errorf("getwd: %w", err)
-			}
-			base = wd
-		}
-		path = filepath.Join(base, auditReportBasename)
-	} else {
-		path = resolveIn(a.workDir, path)
-	}
-	if err := confine(a.roots, path); err != nil {
-		return "", err
-	}
-	return path, nil
+	return resolveWorkspacePath(a.workDir, auditReportBasename, raw, a.roots)
 }
 
 // PostCallGuidance teaches the model to include the audit report in its final

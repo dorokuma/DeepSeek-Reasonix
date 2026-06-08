@@ -126,30 +126,16 @@ func (n note) Execute(ctx context.Context, args json.RawMessage) (string, error)
 // the returned path is ready for confine() and I/O. Used by Execute (which
 // returns error) and PostCallGuidance (which returns empty string on failure).
 func (n note) resolveNotePath(raw string) (string, error) {
-	path := strings.TrimSpace(raw)
-	if path == "" {
-		base := n.workDir
-		if base == "" {
-			wd, err := os.Getwd()
-			if err != nil {
-				return "", fmt.Errorf("getwd: %w", err)
-			}
-			base = wd
-		}
-		path = filepath.Join(base, noteDefaultBasename)
-	} else {
-		path = resolveIn(n.workDir, path)
-	}
-	if err := confine(n.roots, path); err != nil {
-		return "", err
-	}
-	return path, nil
+	return resolveWorkspacePath(n.workDir, noteDefaultBasename, raw, n.roots)
 }
 
 // PostCallGuidance teaches the model what to do after writing a note: re-load
 // the sidecar, call audit_finish, and include the content in the final reply.
 func (n note) PostCallGuidance(args json.RawMessage) string {
-	var p struct{ Path string `json:"path,omitempty"` }
+	var p struct {
+		Path string `json:"path,omitempty"`
+		Kind string `json:"kind,omitempty"`
+	}
 	if err := json.Unmarshal(args, &p); err != nil {
 		return ""
 	}
@@ -157,6 +143,12 @@ func (n note) PostCallGuidance(args json.RawMessage) string {
 	if err != nil {
 		return ""
 	}
+	kind := strings.TrimSpace(p.Kind)
+	// For non-evidence notes, just remind to include in final answer.
+	if kind != "" && kind != "evidence" {
+		return "Include this content (or a tight paraphrase) in your final assistant message — the user sees THAT, not this tool result."
+	}
+	// Full workflow for evidence notes (default).
 	return "You MUST:\n" +
 		"1. Call `read_file(\"" + path + "\")` to re-load the notes into context.\n" +
 		"2. Call `audit_finish(summary=...)` with the user-facing report.\n" +

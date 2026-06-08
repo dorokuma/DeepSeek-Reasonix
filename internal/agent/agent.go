@@ -1154,8 +1154,14 @@ func (a *Agent) executeOne(ctx context.Context, call provider.ToolCall) toolOutc
 	// PostCallGuidance: if the tool teaches a post-call workflow, append it
 	// to the result so the model is explicitly reminded what to do next.
 	if pg, ok := t.(tool.PostCallGuidance); ok {
+		prefix := "⚠ **Post-call requirements**"
+		if gp, ok := t.(tool.GuidancePrefixer); ok {
+			if p := strings.TrimSpace(gp.GuidancePrefix()); p != "" {
+				prefix = p
+			}
+		}
 		if guidance := strings.TrimSpace(pg.PostCallGuidance(json.RawMessage(call.Arguments))); guidance != "" {
-			body += "\n\n---\n" + "⚠ **Post-call requirements**\n" + guidance
+			body += "\n\n---\n" + prefix + "\n" + guidance
 		}
 	}
 	return toolOutcome{output: body, truncated: truncMsg != "" || strings.Contains(body, "[truncated "), truncMsg: truncMsg}

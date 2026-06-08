@@ -53,6 +53,14 @@ type PostCallGuidance interface {
 	PostCallGuidance(args json.RawMessage) string
 }
 
+// GuidancePrefixer is an optional extension to PostCallGuidance. When
+// implemented by the same tool, the agent uses the returned prefix
+// instead of the default "⚠ **Post-call requirements**". Return ""
+// to keep the default.
+type GuidancePrefixer interface {
+	GuidancePrefix() string
+}
+
 // PreviewChange returns the change a writer tool would make for args, or ok=false
 // when there's nothing renderable: t is read-only, doesn't implement Previewer,
 // the preview errored (the edit will likely fail too), or the file is binary.
