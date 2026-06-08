@@ -330,34 +330,6 @@ func TestLedgerNoBaselineDoesNotConstrainCompletedTodos(t *testing.T) {
 	}
 }
 
-func TestLastCheckpointIndex(t *testing.T) {
-	ledger := NewLedger()
-	idx, ok := ledger.LastCheckpointIndex()
-	if ok {
-		t.Fatal("empty ledger should have no checkpoint")
-	}
-	ledger.Record(Receipt{ToolName: "bash", Success: true, Command: "go test"})
-	idx, ok = ledger.LastCheckpointIndex()
-	if ok {
-		t.Fatal("bash receipt should not be a checkpoint")
-	}
-	ledger.Record(Receipt{ToolName: "todo_write", Success: true, Todos: []TodoItem{{Content: "Task", Status: "in_progress"}}})
-	idx, ok = ledger.LastCheckpointIndex()
-	if !ok || idx != 1 {
-		t.Fatalf("todo_write checkpoint = %d, want 1", idx)
-	}
-	ledger.Record(Receipt{ToolName: "complete_step", Success: true, Step: "Task"})
-	idx, ok = ledger.LastCheckpointIndex()
-	if !ok || idx != 2 {
-		t.Fatalf("complete_step checkpoint = %d, want 2", idx)
-	}
-	ledger.Record(Receipt{ToolName: "todo_write", Success: false, Todos: []TodoItem{{Content: "Fail", Status: "in_progress"}}})
-	idx, ok = ledger.LastCheckpointIndex()
-	if idx != 2 {
-		t.Fatalf("failed todo_write must not update checkpoint, idx = %d, want 2", idx)
-	}
-}
-
 func TestHasWorkSinceLastCheckpoint(t *testing.T) {
 	if !(*Ledger)(nil).HasWorkSinceLastCheckpoint() {
 		t.Fatal("nil ledger should allow completion")

@@ -102,24 +102,22 @@ func (todoWrite) Execute(ctx context.Context, args json.RawMessage) (string, err
 			return "", fmt.Errorf("todo %d: invalid status %q (want pending|in_progress|completed)", i+1, t.Status)
 		}
 	}
-	if err := verifyTodoCompletionTransitions(ctx, p.Todos, p.Merge); err != nil {
+	if err := verifyTodoCompletionTransitions(ctx, p.Todos); err != nil {
 		return "", err
 	}
 	return fmt.Sprintf("Todos updated: %d total — %d completed, %d in progress, %d pending.",
 		len(p.Todos), done, active, pending), nil
 }
 
-func verifyTodoCompletionTransitions(ctx context.Context, todos []todoItem, merge bool) error {
+func verifyTodoCompletionTransitions(ctx context.Context, todos []todoItem) error {
 	ledger, ok := evidence.FromContext(ctx)
 	if !ok {
 		return nil
 	}
 	missing, hasBaseline := ledger.UnverifiedCompletedTodos(toEvidenceTodos(todos))
 	if hasBaseline {
-		if !merge {
-			dropped, _ := ledger.DroppedSinceLastTodo(toEvidenceTodos(todos))
-			missing = append(missing, dropped...)
-		}
+		dropped, _ := ledger.DroppedSinceLastTodo(toEvidenceTodos(todos))
+		missing = append(missing, dropped...)
 	}
 	if len(missing) == 0 {
 		return nil
