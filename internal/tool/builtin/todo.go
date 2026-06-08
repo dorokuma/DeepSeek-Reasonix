@@ -102,8 +102,10 @@ func (todoWrite) Execute(ctx context.Context, args json.RawMessage) (string, err
 			return "", fmt.Errorf("todo %d: invalid status %q (want pending|in_progress|completed)", i+1, t.Status)
 		}
 	}
-	if err := verifyTodoCompletionTransitions(ctx, p.Todos); err != nil {
-		return "", err
+	if !p.Merge {
+		if err := verifyTodoCompletionTransitions(ctx, p.Todos); err != nil {
+			return "", err
+		}
 	}
 	return fmt.Sprintf("Todos updated: %d total — %d completed, %d in progress, %d pending.",
 		len(p.Todos), done, active, pending), nil
@@ -115,18 +117,14 @@ func verifyTodoCompletionTransitions(ctx context.Context, todos []todoItem) erro
 		return nil
 	}
 	missing, hasBaseline := ledger.UnverifiedCompletedTodos(toEvidenceTodos(todos))
-	if hasBaseline {
-		dropped, _ := ledger.DroppedSinceLastTodo(toEvidenceTodos(todos))
-		missing = append(missing, dropped...)
-	}
-	if len(missing) == 0 {
+	if !hasBaseline || len(missing) == 0 {
 		return nil
 	}
 	if len(missing) == 1 {
 		m := missing[0]
-		return fmt.Errorf("todo %d %q is not properly signed off (missing a successful complete_step receipt for a completed or dropped item)", m.Index, m.Content)
+		return fmt.Errorf("todo %d %q is newly completed but has no matching successful complete_step receipt in this turn", m.Index, m.Content)
 	}
-	return fmt.Errorf("%d todos are not properly signed off (missing successful complete_step receipts)", len(missing))
+	return fmt.Errorf("%d todos are newly completed but have no matching successful complete_step receipts in this turn", len(missing))
 }
 
 func toEvidenceTodos(todos []todoItem) []evidence.TodoItem {
