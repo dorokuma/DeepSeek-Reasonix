@@ -42,6 +42,17 @@ type Previewer interface {
 	Preview(args json.RawMessage) (diff.Change, error)
 }
 
+// PostCallGuidance is an optional capability a Tool may implement. When a
+// successful call returns a non-empty string from PostCallGuidance, the agent
+// appends it (as a block) to the tool result the model sees — so the model is
+// taught what it must do next: re-read a sidecar, include the result in the
+// final answer, call a follow-up tool, etc. The method receives the raw JSON
+// args so guidance can reference concrete values (file paths, ids, names).
+// A tool without PostCallGuidance leaves no trace in the result.
+type PostCallGuidance interface {
+	PostCallGuidance(args json.RawMessage) string
+}
+
 // PreviewChange returns the change a writer tool would make for args, or ok=false
 // when there's nothing renderable: t is read-only, doesn't implement Previewer,
 // the preview errored (the edit will likely fail too), or the file is binary.

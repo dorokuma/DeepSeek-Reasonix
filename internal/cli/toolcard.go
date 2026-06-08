@@ -48,6 +48,8 @@ var toolVerb = map[string]string{
 	"web_search":    "Search",
 	"complete_step": "Step",
 	"task":          "Task",
+	"note":          "Note",
+	"audit_finish":  "Report",
 }
 
 // toolArgKey is the JSON field shown in parentheses for each tool (wait is
@@ -70,6 +72,8 @@ var toolArgKey = map[string]string{
 	"web_search":    "query",
 	"complete_step": "summary",
 	"task":          "description",
+	"note":          "kind",
+	"audit_finish":  "summary",
 }
 
 // toolDot returns the "●" status glyph coloured by the tool's category so the eye
@@ -97,6 +101,8 @@ var toolCategory = map[string]string{
 	"web_fetch": "read", "web_search": "read", "bash_output": "read",
 	"write_file": "write", "edit_file": "write", "multi_edit": "write",
 	"delete_range": "write", "delete_symbol": "write", "notebook_edit": "write",
+	"note": "write",
+	"audit_finish": "write",
 	"bash": "exec",
 	"wait": "proc", "kill_shell": "proc",
 }
