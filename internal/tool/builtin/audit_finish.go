@@ -22,7 +22,6 @@ import (
 //     The user gets nothing usable.
 //
 //  2. Model skips the audit_finish entirely, ends the turn after the last
-//     complete_step, and the user receives only the per-step evidence
 //     (which by design is short — that's the point of the cap).
 //
 // audit_finish solves this by validating a substantive `summary` (the
@@ -50,7 +49,6 @@ func init() { tool.RegisterBuiltin(auditFinish{}) }
 // what the model SHOULD include in its final assistant message to the user
 // (the bridge auto-splits long messages into multiple Telegram bubbles).
 // This tool itself is a writer, so it joins the workspace confinement and
-// counts as a successful write in the evidence ledger — meaning the user
 // can cite the report file in a follow-up complete_step as proof the
 // audit was formally wrapped.
 type auditFinish struct {
