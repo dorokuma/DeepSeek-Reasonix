@@ -33,6 +33,7 @@ const maxToolOutputBytes = 32 * 1024
 const maxFinalReadinessBlocks = 3
 const maxEmptyFinalBlocks = 3
 const maxStreamRecoveries = 1
+const maxExecutorHandoffNudges = 1
 
 // Renderer redraws the assistant's final-answer text as styled output. It is
 // applied only after a turn's text stream completes, so the user sees raw
@@ -130,8 +131,11 @@ type Agent struct {
 	sessMu      sync.Mutex // guards the session pointer for external Session()/SetSession
 	maxSteps    int
 	maxStepsKey string
-	temperature float64
-	pricing     *provider.Pricing
+	// executorHandoffGuard is enabled by Coordinator for the executor agent. The
+	// per-turn marker check in Run keeps ordinary single-model turns unaffected.
+	executorHandoffGuard bool
+	temperature          float64
+	pricing              *provider.Pricing
 
 	// sink receives the turn's typed event stream (reasoning/text deltas, tool
 	// dispatch/results, usage, notices). The agent no longer formats output
@@ -477,7 +481,10 @@ func (a *Agent) Run(ctx context.Context, input string) error {
 	var visibilityRecovery visibilityRecoveryState
 	finalReadinessBlocks := 0
 	emptyFinalBlocks := 0
+	handoffNudges := 0
+	usedAnyTool := false
 	streamRecoveries := 0
+	executorHandoff := a.executorHandoffGuard && strings.Contains(input, executorHandoffMarker)
 	for step := 0; a.maxSteps <= 0 || step < a.maxSteps; step++ {
 		select {
 		case <-ctx.Done():
@@ -579,12 +586,36 @@ func (a *Agent) Run(ctx context.Context, input string) error {
 				continue
 			}
 
+
 			a.trimEmptyResponseScaffolding()
+			if !hasVisibleFinalAnswer(text) {
+				emptyFinalBlocks++
+				if emptyFinalBlocks >= maxEmptyFinalBlocks {
+					return fmt.Errorf("model finished without a visible final answer %d times", emptyFinalBlocks)
+				}
+				a.sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelWarn, Text: "empty final answer blocked: model returned no visible answer text; retrying"})
+				a.session.Add(provider.Message{Role: provider.RoleUser, Content: emptyFinalRetryMessage()})
+				a.maybeCompact(ctx, usage)
+				continue
+			}
+			if executorHandoff && !usedAnyTool && handoffNudges < maxExecutorHandoffNudges {
+				handoffNudges++
+				a.sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelWarn, Text: "executor answered without taking any action; nudging it to use its tools"})
+				a.session.Add(provider.Message{Role: provider.RoleUser, Content: executorHandoffRetryMessage()})
+				a.maybeCompact(ctx, usage)
+				continue
+			}
+			if readiness.applies {
+				event.RecordReadinessAudit(a.sink, readiness.audit(evidence.ReadinessAllowed, finalReadinessBlocks > 0))
+			}
 			a.session.Add(assistantMsg)
 			return nil // model gave a normal final answer
 		}
 		// Keep reasoning_content on tool-call turns for session archive.
 		a.session.Add(assistantMsg)
+		emptyFinalBlocks = 0
+		usedAnyTool = true
+
 
 		results := a.executeBatch(ctx, calls)
 		for i, call := range calls {
@@ -606,6 +637,114 @@ func (a *Agent) Run(ctx context.Context, input string) error {
 	return fmt.Errorf("paused after %d tool-call rounds (%s) — the work so far is saved; send another message to continue, or set %s higher or to 0 for no limit", a.maxSteps, a.maxStepsKey, a.maxStepsKey)
 }
 
+
+type finalReadinessCheck struct {
+	applies              bool
+	reason               string
+	missingProjectChecks int
+	missingCompleteStep  bool
+	incompleteTodos      int
+}
+
+func (c finalReadinessCheck) audit(result evidence.ReadinessAuditResult, recovered bool) evidence.ReadinessAudit {
+	return evidence.ReadinessAudit{
+		Result:                 result,
+		Recovered:              recovered,
+		MissingProjectChecks:   c.missingProjectChecks,
+		MissingCompleteStep:    c.missingCompleteStep,
+		IncompleteTodos:        c.incompleteTodos,
+		CommandMismatchMissing: c.missingProjectChecks,
+	}
+}
+
+func (a *Agent) finalReadinessCheck() finalReadinessCheck {
+	if a.evidence == nil {
+		return finalReadinessCheck{}
+	}
+	var missing []string
+	out := finalReadinessCheck{}
+	if !a.planMode.Load() {
+		if incomplete, hasTodos := a.evidence.IncompleteLatestTodos(); hasTodos && len(incomplete) > 0 {
+			out.applies = true
+			out.incompleteTodos = len(incomplete)
+			missing = append(missing, finalReadinessIncompleteTodos(incomplete))
+		}
+	}
+	writer, hasWriter := a.evidence.LatestSuccessfulWriterIndex()
+	if !hasWriter {
+		if len(missing) > 0 {
+			out.reason = strings.Join(missing, "; ")
+		}
+		return out
+	}
+	hasProjectChecks := len(a.projectChecks) > 0
+	hasTodoReceipt := a.evidence.HasSuccessfulTodoWrite()
+	if !hasProjectChecks && !hasTodoReceipt && len(missing) == 0 {
+		return finalReadinessCheck{}
+	}
+	out.applies = true
+	for _, check := range a.projectChecks {
+		command := strings.TrimSpace(check.Command)
+		if command == "" {
+			continue
+		}
+		if !a.evidence.HasSuccessfulCommandAfter(command, writer) {
+			out.missingProjectChecks++
+			missing = append(missing, fmt.Sprintf("run %q from %s after the latest write", command, finalReadinessCheckSource(check)))
+		}
+	}
+	if hasTodoReceipt && !a.evidence.HasSuccessfulCompleteStepAfter(writer) {
+		out.missingCompleteStep = true
+		missing = append(missing, "call complete_step after the latest write")
+	}
+	if len(missing) == 0 {
+		return out
+	}
+	out.reason = strings.Join(missing, "; ")
+	return out
+}
+
+func finalReadinessIncompleteTodos(items []evidence.TodoStepMatch) string {
+	parts := make([]string, 0, len(items))
+	for _, item := range items {
+		label := strings.TrimSpace(item.Content)
+		if label == "" {
+			label = fmt.Sprintf("todo %d", item.Index)
+		}
+		parts = append(parts, fmt.Sprintf("%s: %s", label, item.Status))
+	}
+	return "latest successful todo_write still has incomplete items: " + strings.Join(parts, ", ")
+}
+
+func finalReadinessCheckSource(check instruction.VerifyCheck) string {
+	source := strings.TrimSpace(check.SourcePath)
+	if source == "" {
+		source = "project memory"
+	}
+	if check.Line > 0 {
+		return fmt.Sprintf("%s:%d", source, check.Line)
+	}
+	return source
+}
+
+func finalReadinessRetryMessage(reason string) string {
+	return "Host final-answer readiness check failed. Before giving a final answer, address the missing host-observable receipts: " + reason + ". Run the required tool calls, then answer when readiness is satisfied."
+}
+
+func executorHandoffRetryMessage() string {
+	return `You are already in the executor phase. The planner's read-only limitations do not apply to you.
+
+Do not answer as the planner and do not ask how to trigger the executor.
+Use your available tools now to carry out the task. If a write or command is blocked by permissions or workspace boundaries, state that specific blocker and ask for the needed approval/path.`
+}
+
+func hasVisibleFinalAnswer(text string) bool {
+	return strings.TrimSpace(text) != ""
+}
+
+func emptyFinalRetryMessage() string {
+	return "The previous assistant response finished without any visible answer text. Continue the same task now and provide a concise visible answer to the user. Do not send reasoning only."
+}
 
 
 func streamRecoveryMessage(hasPartialText, hadPartialTool bool) string {
