@@ -1885,6 +1885,7 @@ func (m chatTUI) View() tea.View {
 	if boxW < 10 {
 		boxW = 10
 	}
+	narrow := boxW < 80 // phone-width: compact status lines
 	hideComposer := m.hideComposer()
 	shellMode := strings.HasPrefix(strings.TrimSpace(m.input.Value()), "!")
 	var box string
@@ -1930,33 +1931,60 @@ func (m chatTUI) View() tea.View {
 
 	ctxTag := m.contextTag()
 	var status string
-	switch {
-	case m.rewind != nil:
-		status = "  " + modeTag + " · ⟲ rewind"
-	case m.resumePick != nil:
-		status = "  " + modeTag + " · " + i18n.M.StatusResumePicker
-	case m.mcp != nil:
-		status = "  " + modeTag + " · MCP"
-	case m.skillPick != nil:
-		status = "  " + modeTag + " · " + i18n.M.SkillPickerStatusLabel
-	case m.chooser != nil:
-		status = "  " + modeTag + " · " + i18n.M.ChatStatusQuestion
-	case m.pendingApproval != nil && m.pendingApproval.Tool == planApprovalTool:
-		status = "  " + modeTag + " · " + i18n.M.ChatStatusPlanApproval
-	case m.pendingApproval != nil:
-		status = "  " + modeTag + " · " + i18n.M.ChatStatusToolApproval
-	case shellMode:
-		status = "  " + modeTag + " · " + i18n.M.ShellModeHint
-	case m.ctrl.Bypass() || m.permMode == "allow":
-		status = "  " + modeTag + " · " + i18n.M.ChatStatusYoloIdle + " " + dim("("+i18n.M.ChatStatusCycleHint+")")
-	default:
-		status = "  " + modeTag + " · " + i18n.M.ChatStatusIdle + " " + dim("("+i18n.M.ChatStatusCycleHint+")")
-	}
-	if et := m.effortTag(); et != "" {
-		status += " · " + et
-	}
-	if gt := m.gitTag(boxW - visibleWidth(status) - visibleWidth(" · ")); gt != "" {
-		status += " · " + gt
+	if narrow {
+		// Narrow (phone) mode: just mode + effort, no status hints, no git.
+		switch {
+		case m.rewind != nil:
+			status = "  " + modeTag + " · ⟲ rw"
+		case m.resumePick != nil:
+			status = "  " + modeTag + " · resume"
+		case m.mcp != nil:
+			status = "  " + modeTag + " · MCP"
+		case m.skillPick != nil:
+			status = "  " + modeTag + " · skills"
+		case m.chooser != nil:
+			status = "  " + modeTag + " · question"
+		case m.pendingApproval != nil:
+			status = "  " + modeTag + " · approve"
+		case shellMode:
+			status = "  " + modeTag + " · shell"
+		case m.state == tuiRunning:
+			status = "  " + modeTag + " · running"
+		default:
+			status = "  " + modeTag
+		}
+		if et := m.effortTag(); et != "" {
+			status += " · " + et
+		}
+	} else {
+		switch {
+		case m.rewind != nil:
+			status = "  " + modeTag + " · ⟲ rewind"
+		case m.resumePick != nil:
+			status = "  " + modeTag + " · " + i18n.M.StatusResumePicker
+		case m.mcp != nil:
+			status = "  " + modeTag + " · MCP"
+		case m.skillPick != nil:
+			status = "  " + modeTag + " · " + i18n.M.SkillPickerStatusLabel
+		case m.chooser != nil:
+			status = "  " + modeTag + " · " + i18n.M.ChatStatusQuestion
+		case m.pendingApproval != nil && m.pendingApproval.Tool == planApprovalTool:
+			status = "  " + modeTag + " · " + i18n.M.ChatStatusPlanApproval
+		case m.pendingApproval != nil:
+			status = "  " + modeTag + " · " + i18n.M.ChatStatusToolApproval
+		case shellMode:
+			status = "  " + modeTag + " · " + i18n.M.ShellModeHint
+		case m.ctrl.Bypass() || m.permMode == "allow":
+			status = "  " + modeTag + " · " + i18n.M.ChatStatusYoloIdle + " " + dim("("+i18n.M.ChatStatusCycleHint+")")
+		default:
+			status = "  " + modeTag + " · " + i18n.M.ChatStatusIdle + " " + dim("("+i18n.M.ChatStatusCycleHint+")")
+		}
+		if et := m.effortTag(); et != "" {
+			status += " · " + et
+		}
+		if gt := m.gitTag(boxW - visibleWidth(status) - visibleWidth(" · ")); gt != "" {
+			status += " · " + gt
+		}
 	}
 	// The spinning "thinking…" indicator is its own line ABOVE the input box (shown
 	// only while a turn runs); the status/data rows stay below. This mirrors Claude
@@ -1982,27 +2010,38 @@ func (m chatTUI) View() tea.View {
 	// Cache rates get their own fixed second row so they're never truncated off
 	// the status line; a fixed height also avoids wrap-induced resize ghosting.
 	var data []string
-	if mt := m.modelTag(); mt != "" {
-		data = append(data, mt)
-	}
-	if cache := m.cacheTag(); cache != "" {
-		data = append(data, cache)
-	}
-	if ctxTag != "" {
-		data = append(data, ctxTag)
-	}
-	if jt := m.jobsTag(); jt != "" {
-		data = append(data, jt)
-	}
-	if m.balance != "" {
-		data = append(data, dim(m.balance))
-	}
-	if cost := m.sessionCostTag(); cost != "" {
-		data = append(data, cost)
+	if narrow {
+		// Narrow (phone) mode: cache rates + cost only.
+		if cache := m.cacheTag(); cache != "" {
+			data = append(data, cache)
+		}
+		if cost := m.sessionCostTag(); cost != "" {
+			data = append(data, cost)
+		}
+	} else {
+		if mt := m.modelTag(); mt != "" {
+			data = append(data, mt)
+		}
+		if cache := m.cacheTag(); cache != "" {
+			data = append(data, cache)
+		}
+		if ctxTag != "" {
+			data = append(data, ctxTag)
+		}
+		if jt := m.jobsTag(); jt != "" {
+			data = append(data, jt)
+		}
+		if m.balance != "" {
+			data = append(data, dim(m.balance))
+		}
+		if cost := m.sessionCostTag(); cost != "" {
+			data = append(data, cost)
+		}
 	}
 	dataLine := "  " + strings.Join(data, " · ")
-	// A configured custom status line replaces the built-in data row entirely.
-	if m.statuslineCmd != "" && m.statuslineOut != "" {
+	// A configured custom status line replaces the built-in data row entirely
+	// (except in narrow mode where we keep cache+cost).
+	if !narrow && m.statuslineCmd != "" && m.statuslineOut != "" {
 		dataLine = "  " + m.statuslineOut
 	}
 

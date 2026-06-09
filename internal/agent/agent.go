@@ -315,6 +315,11 @@ func (a *Agent) ResetSessionCost() {
 	a.sessCostInfo.Store(sessionCostInfo{})
 }
 
+// SetSessionCost restores cumulative cost from a loaded session sidecar.
+func (a *Agent) SetSessionCost(cost float64, currency string) {
+	a.sessCostInfo.Store(sessionCostInfo{cost: cost, currency: currency})
+}
+
 // ContextWindow returns the configured context-window size in tokens. 0
 // means compaction is disabled for this agent.
 func (a *Agent) ContextWindow() int { return a.contextWindow }
