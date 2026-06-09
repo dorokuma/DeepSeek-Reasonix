@@ -15,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"reasonix/internal/envutil"
 	"reasonix/internal/proc"
 )
 
@@ -102,11 +103,11 @@ func resolveStdioExecutable(ctx context.Context, s Spec, env []string) (string, 
 		return exe, env, nil
 	}
 
-	currentPath, _ := envValue(env, "PATH")
+	currentPath, _ := envutil.EnvValue(env, "PATH")
 	if shellPath := strings.TrimSpace(stdioShellPATH(ctx)); shellPath != "" {
-		fallbackPath := mergePathLists(shellPath, currentPath)
+		fallbackPath := envutil.MergePathLists(shellPath, currentPath)
 		if fallbackPath != currentPath {
-			fallbackEnv := setEnvValue(env, "PATH", fallbackPath)
+			fallbackEnv := envutil.SetEnvValue(env, "PATH", fallbackPath)
 			if exe, ok := lookPathInEnv(s.Command, fallbackEnv); ok {
 				return exe, fallbackEnv, nil
 			}
@@ -124,8 +125,8 @@ func hasPathSeparator(s string) bool {
 }
 
 func lookPathInEnv(command string, env []string) (string, bool) {
-	path, _ := envValue(env, "PATH")
-	pathext, _ := envValue(env, "PATHEXT")
+	path, _ := envutil.EnvValue(env, "PATH")
+	pathext, _ := envutil.EnvValue(env, "PATHEXT")
 	for _, dir := range filepath.SplitList(path) {
 		if dir == "" || !filepath.IsAbs(dir) {
 			continue
@@ -253,98 +254,12 @@ func mergeEnv(base []string, overrides map[string]string) []string {
 	// MCP subprocesses don't inherit API keys, tokens, or passwords unless
 	// explicitly declared in the spec's Env. This prevents credential
 	// leakage via /proc/self/environ or child process inheritance.
-	base = stripCredentialEnv(base)
+	base = envutil.StripCredentialEnv(base)
 	out := append([]string(nil), base...)
 	for k, v := range overrides {
-		out = setEnvValue(out, k, v)
+		out = envutil.SetEnvValue(out, k, v)
 	}
 	return out
-}
-
-// stripCredentialEnv removes env vars likely to carry secrets from the
-// inherited process environment. Callers should declare needed credentials
-// explicitly in the spec's Env field instead of relying on inheritance.
-func stripCredentialEnv(env []string) []string {
-	out := make([]string, 0, len(env))
-	for _, kv := range env {
-		k, _, ok := strings.Cut(kv, "=")
-		if !ok {
-			continue
-		}
-		// Remove env vars matching common credential patterns.
-		upper := strings.ToUpper(k)
-		if strings.HasSuffix(upper, "_KEY") ||
-			strings.HasSuffix(upper, "_TOKEN") ||
-			strings.HasSuffix(upper, "_SECRET") ||
-			strings.HasSuffix(upper, "_PASSWORD") ||
-			strings.HasSuffix(upper, "_PASS") ||
-			strings.HasSuffix(upper, "_CREDENTIALS") ||
-			strings.HasSuffix(upper, "_CREDENTIAL") ||
-			strings.HasSuffix(upper, "_APIKEY") ||
-			strings.HasSuffix(upper, "_APITOKEN") ||
-			strings.HasSuffix(upper, "_ACCESS_KEY") ||
-			strings.HasSuffix(upper, "_AUTH") ||
-			strings.HasSuffix(upper, "_CERT") ||
-			strings.HasSuffix(upper, "_SIGNATURE") ||
-			upper == "TOKEN" || upper == "SECRET" || upper == "PASSWORD" ||
-			upper == "AUTHORIZATION" || upper == "BEARER" {
-			continue
-		}
-		out = append(out, kv)
-	}
-	return out
-}
-
-func setEnvValue(env []string, key, value string) []string {
-	out := make([]string, 0, len(env)+1)
-	replaced := false
-	for _, kv := range env {
-		k, _, ok := strings.Cut(kv, "=")
-		if ok && envKeyEqual(k, key) {
-			if !replaced {
-				out = append(out, key+"="+value)
-				replaced = true
-			}
-			continue
-		}
-		out = append(out, kv)
-	}
-	if !replaced {
-		out = append(out, key+"="+value)
-	}
-	return out
-}
-
-func envValue(env []string, key string) (string, bool) {
-	for i := len(env) - 1; i >= 0; i-- {
-		k, v, ok := strings.Cut(env[i], "=")
-		if ok && envKeyEqual(k, key) {
-			return v, true
-		}
-	}
-	return "", false
-}
-
-func envKeyEqual(a, b string) bool {
-	if runtime.GOOS == "windows" {
-		return strings.EqualFold(a, b)
-	}
-	return a == b
-}
-
-func mergePathLists(primary, secondary string) string {
-	var out []string
-	seen := map[string]bool{}
-	for _, path := range []string{primary, secondary} {
-		for _, dir := range filepath.SplitList(path) {
-			if dir == "" || seen[dir] {
-				continue
-			}
-			seen[dir] = true
-			out = append(out, dir)
-		}
-	}
-	return strings.Join(out, string(os.PathListSeparator))
 }
 
 // readLoop owns stdout for the transport's lifetime: it reads one JSON-RPC

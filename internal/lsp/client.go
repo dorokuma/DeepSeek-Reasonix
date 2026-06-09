@@ -7,10 +7,10 @@ import (
 	"io"
 	"os"
 	"os/exec"
-	"strings"
 	"sync"
 	"time"
 
+	"reasonix/internal/envutil"
 	"reasonix/internal/proc"
 )
 
@@ -47,7 +47,7 @@ func startClient(ctx context.Context, bin string, args []string, env map[string]
 	cmd := exec.CommandContext(ctx, bin, args...)
 	proc.HideWindow(cmd)
 	cmd.Dir = root
-	cmd.Env = append(stripCredentialEnv(os.Environ()), envSlice(env)...)
+	cmd.Env = append(envutil.StripCredentialEnv(os.Environ()), envSlice(env)...)
 	cmd.Stderr = io.Discard
 
 	stdin, err := cmd.StdinPipe()
@@ -274,34 +274,3 @@ func envSlice(env map[string]string) []string {
 	return out
 }
 
-// stripCredentialEnv removes env vars likely to carry secrets from the
-// inherited process environment so LSP subprocesses don't inherit API keys.
-func stripCredentialEnv(env []string) []string {
-	out := make([]string, 0, len(env))
-	for _, kv := range env {
-		k, _, ok := strings.Cut(kv, "=")
-		if !ok {
-			continue
-		}
-		upper := strings.ToUpper(k)
-		if strings.HasSuffix(upper, "_KEY") ||
-			strings.HasSuffix(upper, "_TOKEN") ||
-			strings.HasSuffix(upper, "_SECRET") ||
-			strings.HasSuffix(upper, "_PASSWORD") ||
-			strings.HasSuffix(upper, "_PASS") ||
-			strings.HasSuffix(upper, "_CREDENTIALS") ||
-			strings.HasSuffix(upper, "_CREDENTIAL") ||
-			strings.HasSuffix(upper, "_APIKEY") ||
-			strings.HasSuffix(upper, "_APITOKEN") ||
-			strings.HasSuffix(upper, "_ACCESS_KEY") ||
-			strings.HasSuffix(upper, "_AUTH") ||
-			strings.HasSuffix(upper, "_CERT") ||
-			strings.HasSuffix(upper, "_SIGNATURE") ||
-			upper == "TOKEN" || upper == "SECRET" || upper == "PASSWORD" ||
-			upper == "AUTHORIZATION" || upper == "BEARER" {
-			continue
-		}
-		out = append(out, kv)
-	}
-	return out
-}

@@ -4,12 +4,15 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"strings"
 	"sync"
+
+	"reasonix/internal/netclient"
 )
 
 // maxHTTPBody caps how much of a JSON / SSE response body we read, so a
@@ -43,11 +46,17 @@ func newHTTPTransport(s Spec) (*httpTransport, error) {
 	if s.URL == "" {
 		return nil, fmt.Errorf("http plugin %q: url is required", s.Name)
 	}
+	var transport http.RoundTripper
+	if caPool := netclient.GlobalCACerts(); caPool != nil {
+		transport = &http.Transport{
+			TLSClientConfig: &tls.Config{RootCAs: caPool},
+		}
+	}
 	return &httpTransport{
 		name:    s.Name,
 		url:     s.URL,
 		headers: s.Headers,
-		client:  &http.Client{},
+		client:  &http.Client{Transport: transport},
 		done:    make(chan struct{}),
 	}, nil
 }
