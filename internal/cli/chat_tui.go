@@ -1038,6 +1038,7 @@ func (m chatTUI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			if line == "exit" || line == "quit" || line == ":q" {
+				_ = m.ctrl.Snapshot()
 				return m, tea.Quit
 			}
 			m.rememberSubmittedInput(line)
