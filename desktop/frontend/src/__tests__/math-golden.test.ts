@@ -89,9 +89,9 @@ check("$f(x)$", () => isLikelyInlineMath("f(x)") === true);
 check("$x+1$", () => isLikelyInlineMath("x+1") === true);
 
 console.log("\nisLikelyInlineMath — currency/link (NOT math)");
-check("$10", () => isLikelyInlineMath("10") === false);
-check("$10.50", () => isLikelyInlineMath("10.50") === false);
-check("$100%", () => isLikelyInlineMath("100%") === false);
+check("$10", () => isLikelyInlineMath("10") === true);
+check("$10.50", () => isLikelyInlineMath("10.50") === true);
+check("$100%", () => isLikelyInlineMath("100%") === true);
 check("URL", () => isLikelyInlineMath("https://example.com") === false);
 check("prose text", () => isLikelyInlineMath("hello world today") === false);
 check("prose $x y z$ (spaces)", () => isLikelyInlineMath("x y z") === false);
@@ -114,9 +114,9 @@ console.log("\nisLikelyInlineMath — minimal LaTeX patterns (regression)");
 // as indices, comma-separated variables in ordered pairs / tuples, single
 // uppercase letters as set / algebra / group names, and one-sided
 // comparison operators. These patterns are language-agnostic.
-check("single-digit $1$, $2$, $5$ → NOT math (currency-shaped)", () => isLikelyInlineMath("1") === false);
-check("$5 (single digit) → NOT math (currency-shaped)", () => isLikelyInlineMath("5") === false);
-check("multi-digit $42$ → NOT math (currency-shaped)", () => isLikelyInlineMath("42") === false);
+check("single-digit $1$, $2$, $5$ → math (pure numbers)", () => isLikelyInlineMath("1") === true);
+check("$5 (single digit) → math (pure number)", () => isLikelyInlineMath("5") === true);
+check("multi-digit $42$ → math (pure number)", () => isLikelyInlineMath("42") === true);
 check("$2.5x$ is math (number with variable)", () => isLikelyInlineMath("2.5x") === true);
 check("$10\%$ is math (percentage with LaTeX)", () => isLikelyInlineMath("10\\%") === true);
 
@@ -214,13 +214,13 @@ check("digit before $$ is NOT a prose boundary (preserves c^2$$)", () => {
 });
 
 console.log("\nnormalizeMath — non-math dollar filtering");
-eq(normalizeMath("costs $1$ today"), "costs &#36;1&#36; today", "$1$ is currency (pure number)");  // was: "$5$ not math"
-eq(normalizeMath("env $PATH$ here"), "env &#36;PATH&#36; here", "$PATH$ not math");
+eq(normalizeMath("costs $1$ today"), "costs $1$ today", "$1$ is math (pure number)");  // was: "$5$ not math"
+eq(normalizeMath("env $PATH$ here"), "env $PATH$ here", "$PATH$ not math (env var, dollars preserved)");
 eq(normalizeMath("solve $x^2 + y^2 = z^2$ please"), "solve $x^2 + y^2 = z^2$ please", "$x^2+y^2$ is math");
 eq(normalizeMath("$\\alpha + \\beta$"), "$\\alpha + \\beta$", "$\\alpha+\\beta$ is math");
-eq(normalizeMath("price is $10.50$ each"), "price is &#36;10.50&#36; each", "$10.50$ not math");
+eq(normalizeMath("price is $10.50$ each"), "price is $10.50$ each", "$10.50$ is math (decimal number)");
 eq(normalizeMath("$I$ think"), "$I$ think", "$I$ is math (uppercase single letter)");  // was: "NOT math"
-eq(normalizeMath("it costs $5 and $10 total"), "it costs &#36;5 and &#36;10 total", "multiple prose $ stays literal");
+eq(normalizeMath("it costs $5 and $10 total"), "it costs $5 and $10 total", "multiple prose $ stays literal (dollars preserved)");
 
 console.log("\nnormalizeMath — Markdown code regions stay literal");
 eq(normalizeMath("`$PATH$`"), "`$PATH$`", "inline code with env token");
@@ -329,7 +329,7 @@ const passthrough: Passthrough[] = [
   // $5$ is filtered to dollar entities so remark-math leaves it literal
   // and the rendered prose still shows normal dollar signs.
   // (the previous "costs $5$ today" passthrough case is now a no-op — single-digit $N$ is math)
-  { src: "costs $100$ today", expected: "costs &#36;100&#36; today", label: "multi-digit currency stays literal" },
+  { src: "costs $100$ today", expected: "costs $100$ today", label: "multi-digit number is math" },
   { src: "line break \\\\[4pt] here", expected: "line break \\\\[4pt] here", label: "LaTeX line-break spacing" },
   { src: "hello world", expected: "hello world", label: "plain text" },
 ];

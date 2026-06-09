@@ -95,10 +95,13 @@ function normalizeMathText(s: string): string {
   });
 
   // Step 5: remaining $…$ → classifier-gated inline math. Non-math pairs
-  // use Markdown dollar entities so remark-math leaves them as literal text
-  // instead of raising on bare currency / env-var / version tokens.
-  r = r.replace(/\$([^$\n]+)\$/g, (_m, m) => {
-    if (!isLikelyInlineMath(m.trim())) return `${DOLLAR}${m}${DOLLAR}`;
+  // (e.g., currency like "$5 and $6") are left unchanged so the dollars
+  // remain visible. remark-math will not try to parse them as math since
+  // they're not valid math expressions.
+  // Use non-greedy matching so '$5 and $6' doesn't match '$5 and $' as a
+  // single pair.
+  r = r.replace(/\$([^$\n]+?)\$/g, (_m, m) => {
+    if (!isLikelyInlineMath(m.trim())) return _m; // Leave non-math pairs unchanged
     return `${IM}${latexNormalizeForKatex(m)}${IM}`;
   });
 

@@ -1,18 +1,19 @@
 export function isLikelyInlineMath(math: string): boolean {
   if (!math || math !== math.trim() || math.includes("\n")) return false;
   if (math.includes("://") || math.includes("](")) return false;
-  // Pure-digit/decimal/percentage strings are almost always currency or
-  // percentages in prose (e.g., "$5$", "$10.50$", "$50%"). Reject these
-  // regardless of digit count — math expressions like "$2.5x$" will be
-  // accepted by later rules that detect operators or variable references.
-  if (/^\$?\d+(?:\.\d+)?%?$/.test(math)) return false;
-
   // Number followed by variable (implicit multiplication) is math
   // e.g., "2.5x", "3y^2", "0.5z"
   if (/^\d+(?:\.\d+)?[A-Za-z]/.test(math)) return true;
 
   // Number with LaTeX escape is math (e.g., "10\%", "5\cdot3")
   if (/\d.*\\/.test(math)) return true;
+
+  // Pure numbers (single or multi-digit, with optional decimal/percentage)
+  // are accepted as math. When wrapped in $...$, numbers almost always
+  // represent mathematical quantities (counts, indices, values) rather
+  // than currency. Currency in prose is typically written without a
+  // closing dollar (e.g., "costs $5" not "costs $5$").
+  if (/^\d+(?:\.\d+)?%?$/.test(math)) return true;
 
   if (/\\[A-Za-z]+\b/.test(math)) return true;
   if (/[\^_{}|]/.test(math)) return true;
