@@ -98,7 +98,7 @@ func (b bash) resolved() sandbox.Shell {
 }
 
 func (bash) Schema() json.RawMessage {
-	return json.RawMessage(`{"type":"object","properties":{"command":{"type":"string","description":"Shell command to execute"},"run_in_background":{"type":"boolean","description":"Run detached: returns a job id immediately and keeps running across turns (no timeout). Read new output with bash_output, wait for it with wait, stop it with kill_shell. Use for long-running commands like servers, watchers, or builds you don't need to block on."}},"required":["command"]}`)
+	return json.RawMessage(`{"type":"object","properties":{"command":{"type":"string","description":"Shell command to execute","maxLength":65536},"run_in_background":{"type":"boolean","description":"Run detached: returns a job id immediately and keeps running across turns (no timeout). Read new output with bash_output, wait for it with wait, stop it with kill_shell. Use for long-running commands like servers, watchers, or builds you don't need to block on."}},"required":["command"]}`)
 }
 
 // ReadOnly is false: bash's effect cannot be inferred from args (rm, curl,
@@ -116,6 +116,9 @@ func (b bash) Execute(ctx context.Context, args json.RawMessage) (string, error)
 	}
 	if p.Command == "" {
 		return "", fmt.Errorf("command is required")
+	}
+	if len(p.Command) > 65536 {
+		return "", fmt.Errorf("command too long (%d bytes, max 65536)", len(p.Command))
 	}
 
 	// Transparent RTK proxy: rewrite the command when RTK has a compact filter.
@@ -264,7 +267,12 @@ func stripBashCredentialEnv(env []string) []string {
 			strings.HasSuffix(upper, "_CREDENTIAL") ||
 			strings.HasSuffix(upper, "_APIKEY") ||
 			strings.HasSuffix(upper, "_APITOKEN") ||
-			upper == "TOKEN" || upper == "SECRET" || upper == "PASSWORD" {
+			strings.HasSuffix(upper, "_ACCESS_KEY") ||
+			strings.HasSuffix(upper, "_AUTH") ||
+			strings.HasSuffix(upper, "_CERT") ||
+			strings.HasSuffix(upper, "_SIGNATURE") ||
+			upper == "TOKEN" || upper == "SECRET" || upper == "PASSWORD" ||
+			upper == "AUTHORIZATION" || upper == "BEARER" {
 			continue
 		}
 		out = append(out, kv)

@@ -4,10 +4,13 @@
 package netclient
 
 import (
+	"crypto/tls"
+	"crypto/x509"
 	"fmt"
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -23,6 +26,15 @@ const (
 	ModeCustom = "custom"
 	ModeOff    = "off"
 )
+
+// globalCACerts is set by SetGlobalCACerts (called during boot) and read by
+// all HTTP clients that go through NewTransport. When non-nil, it is the
+// default RootCAs for TransportOptions that don't explicitly specify one.
+var globalCACerts *x509.CertPool
+
+// SetGlobalCACerts sets the global CA certificate pool used by all HTTP
+// clients. Called once during boot; nil is safe (uses system pool).
+func SetGlobalCACerts(pool *x509.CertPool) { globalCACerts = pool }
 
 // ProxySpec is the resolved proxy configuration used by network clients. URL is
 // an advanced override; otherwise Type/Server/Port/Credentials are composed into a
@@ -47,6 +59,12 @@ type TransportOptions struct {
 	KeepAlive             time.Duration
 	TLSHandshakeTimeout   time.Duration
 	ResponseHeaderTimeout time.Duration
+	// RootCAs is an optional cert pool for TLS connections. When nil, the system
+	// pool is used (default). Set via network.ca_cert_path in config.
+	RootCAs *x509.CertPool
+	// InsecureSkipVerify, when true, disables TLS certificate verification.
+	// Use only for testing with self-signed certs.
+	InsecureSkipVerify bool
 }
 
 // NormalizeMode maps empty and unknown modes to auto, preserving a fail-open
@@ -82,7 +100,9 @@ func NewHTTPClient(spec ProxySpec, opts TransportOptions) (*http.Client, error) 
 
 // NewTransport clones net/http's default transport and overlays the requested
 // proxy and timeout knobs. Cloning preserves defaults such as HTTP/2 support,
-// connection pooling, and environment-proxy behavior for auto/env modes.
+// connection pooling, and environment-proxy behavior for auto/env modes. When
+// opts.RootCAs is set, it is used instead of the system pool; when
+// opts.InsecureSkipVerify is true, verification is disabled.
 func NewTransport(spec ProxySpec, opts TransportOptions) (*http.Transport, error) {
 	tr := defaultTransport()
 	proxy, err := proxyFunc(spec)
@@ -99,6 +119,19 @@ func NewTransport(spec ProxySpec, opts TransportOptions) (*http.Transport, error
 	}
 	if opts.ResponseHeaderTimeout != 0 {
 		tr.ResponseHeaderTimeout = opts.ResponseHeaderTimeout
+	}
+	if opts.RootCAs != nil || opts.InsecureSkipVerify {
+		if tr.TLSClientConfig == nil {
+			tr.TLSClientConfig = &tls.Config{}
+		}
+		tr.TLSClientConfig.RootCAs = opts.RootCAs
+		tr.TLSClientConfig.InsecureSkipVerify = opts.InsecureSkipVerify
+	} else if globalCACerts != nil {
+		// Use the globally configured CA pool (from network.ca_cert_path).
+		if tr.TLSClientConfig == nil {
+			tr.TLSClientConfig = &tls.Config{}
+		}
+		tr.TLSClientConfig.RootCAs = globalCACerts
 	}
 	return tr, nil
 }
@@ -257,10 +290,31 @@ func redactURL(u *url.URL) string {
 	cp := *u
 	if cp.User != nil {
 		if name := cp.User.Username(); name != "" {
-			cp.User = url.User(name)
+			cp.User = url.UserPassword(name, "***")
 		} else {
 			cp.User = nil
 		}
 	}
 	return cp.String()
+}
+
+// LoadCACert reads a PEM-encoded CA certificate file and returns a
+// x509.CertPool containing it alongside the system root CAs. Returns nil when
+// path is empty (no error), so callers can pass it unconditionally.
+func LoadCACert(path string) (*x509.CertPool, error) {
+	if path == "" {
+		return nil, nil
+	}
+	pem, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("load CA cert %s: %w", path, err)
+	}
+	pool, err := x509.SystemCertPool()
+	if err != nil {
+		pool = x509.NewCertPool()
+	}
+	if !pool.AppendCertsFromPEM(pem) {
+		return nil, fmt.Errorf("load CA cert %s: no valid PEM block found", path)
+	}
+	return pool, nil
 }

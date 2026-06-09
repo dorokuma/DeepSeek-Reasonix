@@ -119,7 +119,7 @@ func TestSummaryRedactsPassword(t *testing.T) {
 		Username: "user",
 		Password: "secret",
 	})
-	if got != "custom (socks5://user@proxy.example.com:1080)" {
+	if got != "custom (socks5://user:%2A%2A%2A@proxy.example.com:1080)" {
 		t.Fatalf("Summary = %q", got)
 	}
 }

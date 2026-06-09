@@ -344,6 +344,7 @@ func (c *Conn) shutdown() {
 // RateLimiter provides a per-connection message throttle.
 type RateLimiter struct {
 	interval time.Duration
+	mu       sync.Mutex
 	last     time.Time
 }
 
@@ -357,15 +358,20 @@ func (rl *RateLimiter) Wait(ctx context.Context) error {
 	if rl.interval == 0 {
 		return nil
 	}
+	rl.mu.Lock()
 	now := time.Now()
 	elapsed := now.Sub(rl.last)
 	if elapsed >= rl.interval {
 		rl.last = now
+		rl.mu.Unlock()
 		return nil
 	}
+	rl.mu.Unlock()
 	select {
 	case <-time.After(rl.interval - elapsed):
+		rl.mu.Lock()
 		rl.last = time.Now()
+		rl.mu.Unlock()
 		return nil
 	case <-ctx.Done():
 		return ctx.Err()

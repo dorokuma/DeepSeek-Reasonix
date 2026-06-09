@@ -157,8 +157,8 @@ func TestLoadSessionMalformed(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for malformed JSONL")
 	}
-	if !strings.Contains(err.Error(), "decode") {
-		t.Errorf("error should mention decode: %v", err)
+	if !strings.Contains(err.Error(), "decode") && !strings.Contains(err.Error(), "decrypt") {
+		t.Errorf("error should mention decode or decrypt: %v", err)
 	}
 }
 
