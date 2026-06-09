@@ -15,12 +15,7 @@ func NewPlatformSender() PlatformSender { return PlatformSender{} }
 
 func (PlatformSender) Send(m Message) error {
 	script := `display notification "` + appleScriptString(m.Body) + `" with title "` + appleScriptString(m.Title) + `"`
-	cmd := exec.Command("osascript", "-e", script)
-	if err := cmd.Start(); err != nil {
-		return err
-	}
-	go func() { _ = cmd.Wait() }()
-	return nil
+	return exec.Command("osascript", "-e", script).Run()
 }
 
 func appleScriptString(s string) string {

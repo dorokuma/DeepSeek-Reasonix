@@ -11,10 +11,5 @@ type PlatformSender struct{}
 func NewPlatformSender() PlatformSender { return PlatformSender{} }
 
 func (PlatformSender) Send(m Message) error {
-	cmd := exec.Command("notify-send", m.Title, m.Body)
-	if err := cmd.Start(); err != nil {
-		return err
-	}
-	go func() { _ = cmd.Wait() }()
-	return nil
+	return exec.Command("notify-send", m.Title, m.Body).Run()
 }

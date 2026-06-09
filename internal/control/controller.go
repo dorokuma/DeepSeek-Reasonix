@@ -14,6 +14,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -88,6 +89,11 @@ type Controller struct {
 	// available on the next turn (see AddMCPServer / RemoveMCPServer).
 	reg       *tool.Registry
 	pluginCtx context.Context
+
+	// closeCtx is cancelled by Close() so background goroutines (/compact, /new)
+	// know to stop when the controller shuts down.
+	closeCtx    context.Context
+	closeCancel context.CancelFunc
 
 	// Checkpoints (snapshot-based rewind). cp is the per-session store rebound when
 	// the session path changes; cpRoot is the workspace root used to guard restore
@@ -236,6 +242,8 @@ func New(opts Options) *Controller {
 		jobs:          opts.Jobs,
 		reg:           opts.Registry,
 		pluginCtx:     pluginCtx,
+		closeCtx:      context.Background(),
+		closeCancel:   func() {}, // replaced by Close if ever needed; safe no-op default
 		cpRoot:        opts.WorkspaceRoot,
 		approvals:     map[string]chan approvalReply{},
 		asks:          map[string]chan []event.AskAnswer{},
@@ -460,7 +468,10 @@ func (c *Controller) Submit(input string) {
 	case trimmed == "/compact" || strings.HasPrefix(trimmed, "/compact "):
 		focus := strings.TrimSpace(strings.TrimPrefix(trimmed, "/compact"))
 		go func() {
-			if err := c.Compact(context.Background(), focus); err != nil {
+			if err := c.Compact(c.closeCtx, focus); err != nil {
+				if errors.Is(err, context.Canceled) {
+					return
+				}
 				c.notice("compaction failed: " + err.Error())
 			} else {
 				c.notice("compacted")
@@ -472,6 +483,9 @@ func (c *Controller) Submit(input string) {
 	case trimmed == "/new":
 		go func() {
 			if err := c.NewSession(); err != nil {
+				if errors.Is(err, context.Canceled) {
+					return
+				}
 				c.notice("new session failed: " + err.Error())
 			} else {
 				c.notice("new session")
@@ -1730,6 +1744,7 @@ func (c *Controller) Label() string { return c.label }
 // Close stops plugin subprocesses and releases resources. A session that ever
 // started fires SessionEnd so a teardown hook runs.
 func (c *Controller) Close() {
+	c.closeCancel()
 	c.mu.Lock()
 	started := c.startedOnce
 	c.mu.Unlock()
