@@ -453,6 +453,11 @@ func (a *Agent) Run(ctx context.Context, input string) error {
 	var emptyRecovery emptyRecoveryState
 	var visibilityRecovery visibilityRecoveryState
 	for step := 0; a.maxSteps <= 0 || step < a.maxSteps; step++ {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
 		schemas := a.tools.Schemas()
 		prefixShape := a.capturePrefixShape(schemas)
 		prevPrefixShape := a.lastPrefixShape
@@ -712,7 +717,7 @@ func (a *Agent) executeBatch(ctx context.Context, calls []provider.ToolCall) []s
 
 	for _, batch := range partitionToolCalls(a.tools, calls) {
 		if batch.parallel && batch.end-batch.start > 1 {
-			runParallel(batch.start, batch.end, run)
+			runParallel(ctx, batch.start, batch.end, run)
 			continue
 		}
 		for i := batch.start; i < batch.end; i++ {
@@ -772,13 +777,17 @@ func parallelisable(r *tool.Registry, name string) bool {
 	return ok && t.ReadOnly()
 }
 
-func runParallel(start, end int, run func(int)) {
+func runParallel(ctx context.Context, start, end int, run func(int)) {
 	const maxParallel = 8
 	sem := make(chan struct{}, maxParallel)
 	var wg sync.WaitGroup
 	for i := start; i < end; i++ {
 		i := i
-		sem <- struct{}{}
+		select {
+		case sem <- struct{}{}:
+		case <-ctx.Done():
+			return
+		}
 		wg.Add(1)
 		go func() {
 			defer wg.Done()

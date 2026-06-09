@@ -221,9 +221,10 @@ type Event struct {
 	RetryMax     int        // Retrying: total attempts before giving up
 }
 
-// Sink consumes a turn's events. The agent calls Emit serially from its run
-// loop (tool execution may fan out across goroutines, but emission does not),
-// so an implementation need not be safe for concurrent Emit. Emit must not
+// Sink consumes a turn's events. The agent calls Emit from multiple goroutines
+// (tool progress is streamed from parallel execution goroutines), so a Sink
+// must be safe for concurrent Emit. A channel-backed sink with a draining
+// reader is the simplest correct implementation.
 // block indefinitely — a channel-backed sink should be buffered or drained by
 // a live reader.
 type Sink interface {
