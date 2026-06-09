@@ -1003,6 +1003,7 @@ func main() {
 		t.Fatal(err)
 	}
 	cmd := exec.Command("go", "build", "-o", path, src)
+	cmd.Env = append(os.Environ(), "GOTOOLCHAIN=local")
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("build codegraph helper: %v\n%s", err, out)
 	}
