@@ -111,7 +111,7 @@ func main() {
 
 	report := render(results)
 	if *outMD != "" {
-		if err := os.WriteFile(*outMD, []byte(report), 0o644); err != nil {
+		if err := os.WriteFile(*outMD, []byte(report), 0o600); err != nil {
 			fmt.Fprintln(os.Stderr, "write report:", err)
 			os.Exit(1)
 		}
@@ -124,7 +124,7 @@ func main() {
 			fmt.Fprintln(os.Stderr, "marshal json:", err)
 			os.Exit(1)
 		}
-		if err := os.WriteFile(*outJSON, b, 0o644); err != nil {
+		if err := os.WriteFile(*outJSON, b, 0o600); err != nil {
 			fmt.Fprintln(os.Stderr, "write json:", err)
 			os.Exit(1)
 		}
@@ -133,7 +133,7 @@ func main() {
 
 func emit(report, outMD, _ string) {
 	if outMD != "" {
-		if err := os.WriteFile(outMD, []byte(report), 0o644); err != nil {
+		if err := os.WriteFile(outMD, []byte(report), 0o600); err != nil {
 			fmt.Fprintln(os.Stderr, "write report:", err)
 			os.Exit(1)
 		}

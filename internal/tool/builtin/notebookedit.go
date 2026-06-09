@@ -100,7 +100,7 @@ func (n notebookEdit) Execute(ctx context.Context, raw json.RawMessage) (string,
 	if err != nil {
 		return "", err
 	}
-	if err := os.WriteFile(a.Path, out, 0o644); err != nil {
+	if err := os.WriteFile(a.Path, out, 0o600); err != nil {
 		return "", fmt.Errorf("write %s: %w", a.Path, err)
 	}
 	return fmt.Sprintf("%s in %s (cell %d; %d cells total)", summary, a.Path, idx, len(nb.cells)), nil

@@ -53,6 +53,6 @@ func (c *titleCache) put(name, title string, mod int64) {
 	c.load()
 	c.entries[name] = titleEntry{Title: title, Mod: mod}
 	if data, err := json.Marshal(c.entries); err == nil {
-		_ = os.WriteFile(filepath.Join(c.dir, ".session-titles.json"), data, 0o644)
+		_ = os.WriteFile(filepath.Join(c.dir, ".session-titles.json"), data, 0o600)
 	}
 }

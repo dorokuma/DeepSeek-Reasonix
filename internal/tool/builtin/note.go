@@ -110,7 +110,7 @@ func (n note) Execute(ctx context.Context, args json.RawMessage) (string, error)
 		}
 	}
 	block := formatNoteBlock(nextID, kind, p.Content)
-	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
 	if err != nil {
 		return "", fmt.Errorf("open %s: %w", path, err)
 	}

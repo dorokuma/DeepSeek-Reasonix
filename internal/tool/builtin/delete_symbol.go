@@ -92,7 +92,7 @@ func (d deleteSymbol) Execute(ctx context.Context, args json.RawMessage) (string
 	original := string(src)
 
 	newContent := deleteLines(original, fset, m)
-	if err := os.WriteFile(p.Path, []byte(newContent), 0o644); err != nil {
+	if err := os.WriteFile(p.Path, []byte(newContent), 0o600); err != nil {
 		return "", fmt.Errorf("write %s: %w", p.Path, err)
 	}
 

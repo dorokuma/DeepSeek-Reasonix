@@ -127,7 +127,7 @@ func writeImportMarkers(destDir string, markers ...string) {
 			continue
 		}
 		seen[marker] = true
-		_ = os.WriteFile(filepath.Join(destDir, marker), nil, 0o644)
+		_ = os.WriteFile(filepath.Join(destDir, marker), nil, 0o600)
 	}
 }
 

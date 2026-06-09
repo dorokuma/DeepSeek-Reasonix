@@ -63,7 +63,7 @@ func runMutation(repo, base string, srcFiles []string, refs []testRef) mutationR
 			lb := fset.Position(fd.Body.Lbrace).Offset
 			rb := fset.Position(fd.Body.Rbrace).Offset
 			mutated := src[:lb] + mutantBody(fset, fd.Type.Results) + src[rb+1:]
-			if os.WriteFile(abs, []byte(mutated), 0o644) != nil {
+			if os.WriteFile(abs, []byte(mutated), 0o600) != nil {
 				res.total--
 				continue
 			}
@@ -74,11 +74,11 @@ func runMutation(repo, base string, srcFiles []string, refs []testRef) mutationR
 			restored := false
 			defer func() {
 				if !restored {
-					_ = os.WriteFile(abs, srcB, 0o644)
+					_ = os.WriteFile(abs, srcB, 0o600)
 				}
 			}()
 			caught := cmd.Run() != nil
-			_ = os.WriteFile(abs, srcB, 0o644)
+			_ = os.WriteFile(abs, srcB, 0o600)
 			restored = true
 			if caught {
 				res.caught++
