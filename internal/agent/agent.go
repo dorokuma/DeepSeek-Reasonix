@@ -186,8 +186,8 @@ type Agent struct {
 	jobs *jobs.Manager
 
 
-	// projectChecks are structured project instructions that complete_step can
-	// verify against same-turn bash receipts after a write-backed completion.
+	// projectChecks are structured project instructions the agent gates tool
+	// calls against after each turn that wrote files.
 	projectChecks []instruction.VerifyCheck
 
 	// writeFailureVerifier appends a footer when write/edit tools failed this turn.

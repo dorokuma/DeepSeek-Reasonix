@@ -221,12 +221,6 @@ type Event struct {
 	RetryMax     int        // Retrying: total attempts before giving up
 }
 
-// ReadinessAuditSink is an optional sink capability. Sinks that do not care
-// about readiness audit receipts can implement only Sink and will ignore them.
-type ReadinessAuditSink interface {
-}
-
-
 // Sink consumes a turn's events. The agent calls Emit serially from its run
 // loop (tool execution may fan out across goroutines, but emission does not),
 // so an implementation need not be safe for concurrent Emit. Emit must not

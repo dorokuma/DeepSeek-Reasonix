@@ -128,6 +128,7 @@ var kindNames = map[event.Kind]string{
 	event.CompactionStarted: "compaction_started",
 	event.CompactionDone:    "compaction_done",
 	event.ToolProgress:      "tool_progress",
+	event.MCPSurfaceReady:   "mcp_surface_ready",
 	event.Retrying:          "retrying",
 }
 
@@ -200,6 +201,8 @@ func toWire(e event.Event) wireEvent {
 	case event.Retrying:
 		w.RetryAttempt = e.RetryAttempt
 		w.RetryMax = e.RetryMax
+	case event.MCPSurfaceReady:
+		// Text is already set on w.Text
 	}
 	return w
 }
