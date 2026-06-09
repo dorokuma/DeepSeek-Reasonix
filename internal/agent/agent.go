@@ -301,7 +301,10 @@ func (a *Agent) SessionCache() (hit, miss int) {
 // SessionCost returns the cumulative conversation cost and its currency symbol.
 func (a *Agent) SessionCost() (cost float64, currency string) {
 	if v := a.sessCostInfo.Load(); v != nil {
-		info := v.(sessionCostInfo)
+		info, ok := v.(sessionCostInfo)
+		if !ok {
+			return 0, ""
+		}
 		return info.cost, info.currency
 	}
 	return 0, ""
@@ -476,7 +479,7 @@ func (a *Agent) Run(ctx context.Context, input string) error {
 			var sCost float64
 			var sCurrency string
 			if v := a.sessCostInfo.Load(); v != nil {
-				info := v.(sessionCostInfo)
+				info, _ := v.(sessionCostInfo) // zero-value on type mismatch
 				sCost = info.cost
 				sCurrency = info.currency
 			}
@@ -625,7 +628,7 @@ func (a *Agent) stream(ctx context.Context, turn int) (string, string, string, [
 				prev := a.sessCostInfo.Load()
 				var info sessionCostInfo
 				if prev != nil {
-					info = prev.(sessionCostInfo)
+					info, _ = prev.(sessionCostInfo) // zero-value on type mismatch is safe here
 				}
 				info.cost += a.pricing.Cost(chunk.Usage)
 				if info.currency == "" {

@@ -1,12 +1,15 @@
 package main
 
 import (
+	"context"
 	"sync"
 
 	"fyne.io/systray"
 )
 
 type desktopTray struct {
+	ctx      context.Context
+	cancel   context.CancelFunc
 	end      func()
 	openItem *systray.MenuItem
 	quitItem *systray.MenuItem
@@ -23,6 +26,7 @@ func (a *App) startTray() {
 		return
 	}
 	t := &desktopTray{}
+	t.ctx, t.cancel = context.WithCancel(context.Background())
 	a.tray = t
 	a.mu.Unlock()
 
@@ -43,13 +47,29 @@ func (a *App) startTray() {
 		a.mu.Unlock()
 
 		go func() {
-			for range t.openItem.ClickedCh {
-				a.showFromTray()
+			for {
+				select {
+				case <-t.ctx.Done():
+					return
+				case _, ok := <-t.openItem.ClickedCh:
+					if !ok {
+						return
+					}
+					a.showFromTray()
+				}
 			}
 		}()
 		go func() {
-			for range t.quitItem.ClickedCh {
-				a.quitFromTray()
+			for {
+				select {
+				case <-t.ctx.Done():
+					return
+				case _, ok := <-t.quitItem.ClickedCh:
+					if !ok {
+						return
+					}
+					a.quitFromTray()
+				}
 			}
 		}()
 	}, func() {
@@ -66,6 +86,7 @@ func (a *App) stopTray() {
 	if t == nil || t.end == nil {
 		return
 	}
+	t.cancel()
 	t.once.Do(t.end)
 }
 

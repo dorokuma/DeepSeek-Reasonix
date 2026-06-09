@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"path/filepath"
+	"strings"
 	"sync"
 
 	"reasonix/internal/agent"
@@ -312,12 +313,24 @@ func (s *service) closeAll() {
 
 // mcpSpecs converts ACP stdio MCP server declarations to plugin.Spec. ACP's
 // session/new only carries stdio servers (the agent advertises http/sse off).
+// Commands from the network are validated to prevent arbitrary code execution.
 func mcpSpecs(in []MCPServerSpec) []plugin.Spec {
 	if len(in) == 0 {
 		return nil
 	}
 	out := make([]plugin.Spec, 0, len(in))
 	for _, m := range in {
+		if m.Command == "" {
+			continue
+		}
+		// Path traversal guard: reject relative paths and traversal patterns.
+		if m.Command == "." || m.Command == ".." || strings.Contains(m.Command, "..") {
+			continue
+		}
+		// If the command is a path, it must be absolute.
+		if strings.ContainsAny(m.Command, `/\`) && !filepath.IsAbs(m.Command) {
+			continue
+		}
 		out = append(out, plugin.Spec{
 			Name:    m.Name,
 			Type:    "stdio",

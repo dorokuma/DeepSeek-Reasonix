@@ -210,13 +210,15 @@ func (s *Server) handler() http.Handler {
 	return logMiddleware(csrfGuard(mux))
 }
 
-// csrfGuard rejects state-changing requests that don't carry a JSON content type.
-// The command endpoints have no auth and bind to localhost, so a page the user
-// visits could otherwise drive them with a simple cross-origin POST (text/plain,
-// no preflight) — submitting prompts or auto-approving tool calls. Requiring
-// application/json forces a CORS preflight the unauthenticated server never
-// answers, blocking cross-site requests; the same-origin frontend (which always
-// sends JSON) is unaffected.
+// csrfGuard rejects state-changing requests that don't carry a JSON content type
+// AND don't come from a same-origin context. The command endpoints have no auth
+// and bind to localhost, so a page the user visits could otherwise drive them
+// with a simple cross-origin POST (text/plain, no preflight) — submitting
+// prompts or auto-approving tool calls. Requiring application/json forces a CORS
+// preflight the unauthenticated server never answers, blocking cross-site
+// requests; the same-origin frontend (which always sends JSON) is unaffected.
+// Additionally, the Origin/Referer check prevents requests from pages served
+// on other localhost ports.
 func csrfGuard(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPost {
@@ -227,6 +229,18 @@ func csrfGuard(next http.Handler) http.Handler {
 			if strings.TrimSpace(ct) != "application/json" {
 				http.Error(w, "Content-Type must be application/json", http.StatusUnsupportedMediaType)
 				return
+			}
+			// Origin/Referer check: reject requests from cross-origin pages.
+			origin := r.Header.Get("Origin")
+			if origin != "" {
+				allowedOrigin := "http://" + r.Host
+				if r.TLS != nil {
+					allowedOrigin = "https://" + r.Host
+				}
+				if origin != allowedOrigin {
+					http.Error(w, "cross-origin request rejected", http.StatusForbidden)
+					return
+				}
 			}
 		}
 		next.ServeHTTP(w, r)
@@ -245,6 +259,7 @@ func (s *Server) RunGraceful(ctx context.Context, addr string) error {
 		Addr:              addr,
 		Handler:           s.Handler(),
 		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       30 * time.Second,
 		IdleTimeout:       120 * time.Second,
 	}
 	errCh := make(chan error, 1)
@@ -645,16 +660,37 @@ func (s *Server) resume(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "missing path", http.StatusBadRequest)
 		return
 	}
+	// Path traversal guard: ensure the path stays within the session directory.
+	dir := s.ctl().SessionDir()
+	if dir == "" {
+		http.Error(w, "sessions disabled", http.StatusBadRequest)
+		return
+	}
+	abs, err := filepath.Abs(body.Path)
+	if err != nil {
+		http.Error(w, "invalid session path", http.StatusBadRequest)
+		return
+	}
+	absDir, err := filepath.Abs(dir)
+	if err != nil {
+		http.Error(w, "invalid session dir", http.StatusBadRequest)
+		return
+	}
+	rel, err := filepath.Rel(absDir, abs)
+	if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
+		http.Error(w, "path outside session dir", http.StatusForbidden)
+		return
+	}
 	// Snapshot the current session before switching away.
 	if err := s.ctl().Snapshot(); err != nil {
 		slog.Warn("serve: snapshot before resume", "err", err)
 	}
-	loaded, err := agent.LoadSession(body.Path)
+	loaded, err := agent.LoadSession(abs)
 	if err != nil {
 		http.Error(w, "load session: "+err.Error(), http.StatusBadRequest)
 		return
 	}
-	s.ctl().Resume(loaded, body.Path)
+	s.ctl().Resume(loaded, abs)
 	w.WriteHeader(http.StatusNoContent)
 }
 

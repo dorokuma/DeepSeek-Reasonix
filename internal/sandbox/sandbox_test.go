@@ -188,11 +188,16 @@ func TestCommandNonDarwin(t *testing.T) {
 	}
 	spec := Spec{Mode: "enforce", WriteRoots: []string{"/tmp"}}
 	cmd, wrapped := Command(spec, Shell{Kind: ShellBash, Path: "sh"}, "echo hi")
-	if wrapped {
-		t.Error("non-darwin should never wrap")
+	// Non-Darwin wraps via bwrap when available; otherwise it runs unwrapped.
+	if _, bwrapErr := exec.LookPath("bwrap"); bwrapErr == nil && !wrapped {
+		t.Error("bwrap available but not wrapped")
+	} else if bwrapErr != nil && wrapped {
+		t.Error("bwrap not available but wrapped")
 	}
-	if len(cmd) != 3 || cmd[0] != "sh" || cmd[1] != "-c" || cmd[2] != "echo hi" {
-		t.Errorf("unexpected cmd: %v", cmd)
+	if !wrapped {
+		if len(cmd) != 3 || cmd[0] != "sh" || cmd[1] != "-c" || cmd[2] != "echo hi" {
+			t.Errorf("unexpected cmd: %v", cmd)
+		}
 	}
 }
 
@@ -233,7 +238,11 @@ func TestAvailableNonDarwin(t *testing.T) {
 	if runtime.GOOS == "darwin" {
 		t.Skip("testing non-darwin path")
 	}
-	if Available() {
-		t.Error("non-darwin should report unavailable")
+	// Non-Darwin may support sandbox via bwrap on Linux.
+	// Just verify Available() matches whether bwrap is reachable.
+	_, lookupErr := exec.LookPath("bwrap")
+	avail := Available()
+	if (lookupErr == nil) != avail {
+		t.Errorf("Available() = %v, but bwrap LookPath err = %v", avail, lookupErr)
 	}
 }

@@ -1195,9 +1195,19 @@ func (e *ProviderEntry) Configured() bool {
 }
 
 // ResolveSystemPrompt returns the system prompt, reading system_prompt_file if set.
+// The file must be a relative path resolving within the project or home directory.
 func (c *Config) ResolveSystemPrompt() (string, error) {
 	if c.Agent.SystemPromptFile != "" {
-		b, err := os.ReadFile(c.Agent.SystemPromptFile)
+		path := c.Agent.SystemPromptFile
+		// Reject absolute paths to prevent arbitrary file reads.
+		if filepath.IsAbs(path) {
+			return "", fmt.Errorf("system_prompt_file must be a relative path, got absolute: %s", path)
+		}
+		// Prevent path traversal outside the project.
+		if strings.Contains(path, "..") {
+			return "", fmt.Errorf("system_prompt_file must not contain \"..\": %s", path)
+		}
+		b, err := os.ReadFile(path)
 		if err != nil {
 			return "", fmt.Errorf("system_prompt_file: %w", err)
 		}
