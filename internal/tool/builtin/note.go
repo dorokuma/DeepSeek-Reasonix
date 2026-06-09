@@ -34,7 +34,7 @@ var noteHeaderRe = regexp.MustCompile(`(?m)^## note #(\d+) ·`)
 func init() { tool.RegisterBuiltin(note{}) }
 
 // note appends a long-form text entry to the session's sidecar file and
-// returns a stable `note_id` the caller can cite (e.g. in a complete_step
+// returns a stable `note_id` the caller can cite (e.g. in a follow-up
 // conversation history. The default file is <workdir>/.notes.md; the
 // confined instance registered by ConfineWriters inherits the same workspace
 // roots as the other writer tools, so the file always lives inside the
@@ -47,7 +47,7 @@ type note struct {
 func (note) Name() string { return "note" }
 
 func (note) Description() string {
-	return "Append a long-form note (audit evidence, command output, file diffs) to the session's sidecar notes file and return a `note_id` you can cite in `complete_step` evidence summaries. This keeps long evidence OUT of the conversation history (preserves the model context window) while keeping it on disk for the user to review. Default file is `<workdir>/.notes.md`; override with `path`. `kind` is `evidence` | `summary` | `scratch` (default `scratch`). Single content > 256 KiB is rejected — use `write_file` for that size.\n\n**Final-answer contract**: after writing notes you MUST (a) call `read_file` on the sidecar to re-load the content into context, (b) call `audit_finish(summary=...)` with a substantive summary, and (c) include the full audit findings in your final assistant message — the user sees THAT, not the file. The tool's return value includes a reminder so you don't forget."
+	return "Append a long-form note (audit evidence, command output, file diffs) to the session's sidecar notes file and return a `note_id` you can cite in follow-up summaries. This keeps long evidence OUT of the conversation history (preserves the model context window) while keeping it on disk for the user to review. Default file is `<workdir>/.notes.md`; override with `path`. `kind` is `evidence` | `summary` | `scratch` (default `scratch`). Single content > 256 KiB is rejected — use `write_file` for that size.\n\n**Final-answer contract**: after writing notes you MUST (a) call `read_file` on the sidecar to re-load the content into context, (b) call `audit_finish(summary=...)` with a substantive summary, and (c) include the full audit findings in your final assistant message — the user sees THAT, not the file. The tool's return value includes a reminder so you don't forget."
 }
 
 func (note) Schema() json.RawMessage {

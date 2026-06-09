@@ -167,21 +167,6 @@ func (p *MockProvider) Reset() {
 	p.seen = 0
 }
 
-// UsageTurn is a convenience: a Turn whose text is empty but usage is set.
-// Useful for simulating a tool-call round-trip where the final model response
-// that round is tested later.
-func UsageTurn(hit, miss, completion int) Turn {
-	return Turn{
-		Usage: &provider.Usage{
-			CacheHitTokens:   hit,
-			CacheMissTokens:  miss,
-			CompletionTokens: completion,
-			PromptTokens:     hit + miss,
-			TotalTokens:      hit + miss + completion,
-		},
-	}
-}
-
 // ErrorTurn is a convenience: a Turn that immediately returns the given error.
 func ErrorTurn(err error) Turn {
 	return Turn{StreamError: err}

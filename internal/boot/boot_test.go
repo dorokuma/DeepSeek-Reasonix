@@ -178,8 +178,6 @@ func TestAddBuiltinsWithWorkspaceRootKeepsSessionTools(t *testing.T) {
 	var stderr bytes.Buffer
 	addBuiltins(reg, nil, []string{t.TempDir()}, sandbox.Spec{}, builtin.SearchSpec{}, &stderr, t.TempDir())
 	for _, name := range []string{
-		"todo_write",
-		"complete_step",
 		"bash_output",
 		"kill_shell",
 		"wait",

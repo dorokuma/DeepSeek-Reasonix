@@ -49,7 +49,7 @@ func init() { tool.RegisterBuiltin(auditFinish{}) }
 // what the model SHOULD include in its final assistant message to the user
 // (the bridge auto-splits long messages into multiple Telegram bubbles).
 // This tool itself is a writer, so it joins the workspace confinement and
-// can cite the report file in a follow-up complete_step as proof the
+// can cite the report file in a follow-up note as proof the
 // audit was formally wrapped.
 type auditFinish struct {
 	roots   []string
@@ -59,7 +59,7 @@ type auditFinish struct {
 func (auditFinish) Name() string { return "audit_finish" }
 
 func (auditFinish) Description() string {
-	return "End-of-audit report tool. Call this once when all `complete_step` calls are done and the audit is finished. The `summary` you pass IS the report the user sees — write the full findings inline (P0/P1/P2 risks with file:line, remediation steps, etc). It must be 500–200,000 bytes; 'done' or 'see .notes.md' is rejected because the user needs the substance. The summary is also appended to `<workdir>/.audit-report.md` for archival. After this call, your final assistant message should contain the same content (or a tight paraphrase) so Telegram shows the full audit — not a pointer to a file. The flow: (1) call `note` for each long piece of evidence during the audit, (2) call `complete_step` with short 'see note#N' cite-summaries, (3) when done, re-read the sidecar via `read_file`, (4) call this `audit_finish` with the write-up, (5) include the report in your final assistant message."
+	return "End-of-audit report tool. Call this once all audit notes are written and the audit is finished. The `summary` you pass IS the report the user sees — write the full findings inline (P0/P1/P2 risks with file:line, remediation steps, etc). It must be 500–200,000 bytes; 'done' or 'see .notes.md' is rejected because the user needs the substance. The summary is also appended to `<workdir>/.audit-report.md` for archival. After this call, your final assistant message should contain the same content (or a tight paraphrase) so Telegram shows the full audit — not a pointer to a file. The flow: (1) call `note` for each long piece of evidence during the audit, (2) write short 'see note#N' cite-summaries inline, (3) when done, re-read the sidecar via `read_file`, (4) call this `audit_finish` with the write-up, (5) include the report in your final assistant message."
 }
 
 func (auditFinish) Schema() json.RawMessage {
@@ -90,7 +90,7 @@ func (a auditFinish) Execute(ctx context.Context, args json.RawMessage) (string,
 		return "", fmt.Errorf("summary is required and must be non-empty — write the actual report, not 'done'")
 	}
 	if len(summary) < minAuditSummaryBytes {
-		return "", fmt.Errorf("summary is %d bytes, min %d — that is not a real report. Write the full findings inline; the user is reading this in Telegram. (If the audit is genuinely tiny, complete_step with manual evidence is enough — don't bother with audit_finish.)", len(summary), minAuditSummaryBytes)
+		return "", fmt.Errorf("summary is %d bytes, min %d — that is not a real report. Write the full findings inline; the user is reading this in Telegram. (If the audit is genuinely tiny, inline notes are enough — don't bother with audit_finish.)", len(summary), minAuditSummaryBytes)
 	}
 	if len(summary) > maxAuditSummaryBytes {
 		return "", fmt.Errorf("summary is %d bytes, max %d — split into multiple audit_finish calls (each ≤ 200 KB). The bridge auto-splits the final assistant message into multiple Telegram bubbles too, so this is fine.", len(summary), maxAuditSummaryBytes)

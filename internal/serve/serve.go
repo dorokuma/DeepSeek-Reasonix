@@ -182,13 +182,6 @@ func (s *Server) Handler() http.Handler {
 	return s.handler()
 }
 
-// HandlerWithCORS returns the same routes as Handler but adds permissive CORS
-// headers so a dev frontend on a different origin (e.g. Vite on :5173) can
-// reach the server. Do NOT use in production — the server has no auth.
-func (s *Server) HandlerWithCORS(origin string) http.Handler {
-	return corsMiddleware(s.handler(), origin)
-}
-
 func (s *Server) handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /", s.index)
@@ -242,10 +235,6 @@ func csrfGuard(next http.Handler) http.Handler {
 
 // Run serves until the process is killed. Interactive approval is enabled so
 // "ask" decisions surface as approval_request events answered via POST /approve.
-func (s *Server) Run(addr string) error {
-	s.ctl().EnableInteractiveApproval()
-	return http.ListenAndServe(addr, s.Handler())
-}
 
 // RunGraceful serves with graceful shutdown. It listens for SIGINT/SIGTERM on
 // the provided context and drains active connections for up to 10 seconds
@@ -515,25 +504,6 @@ func writeJSONCached(w http.ResponseWriter, r *http.Request, v any) {
 	_, _ = w.Write(body)
 }
 
-// corsMiddleware adds CORS headers for a specific allowed origin. Only use for
-// local development — the server has no auth, so broad CORS would let any site
-// drive the agent. origin is the exact origin to allow (e.g.
-// "http://localhost:5173"); empty origin skips CORS entirely.
-func corsMiddleware(next http.Handler, origin string) http.Handler {
-	if origin == "" {
-		return next
-	}
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", origin)
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
-		if r.Method == http.MethodOptions {
-			w.WriteHeader(http.StatusNoContent)
-			return
-		}
-		next.ServeHTTP(w, r)
-	})
-}
 
 // logMiddleware logs each request's method, path, and status.
 func logMiddleware(next http.Handler) http.Handler {

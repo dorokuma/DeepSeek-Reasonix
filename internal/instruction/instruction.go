@@ -25,16 +25,6 @@ func WithChecks(ctx context.Context, checks []VerifyCheck) context.Context {
 	return context.WithValue(ctx, contextKey{}, cp)
 }
 
-func FromContext(ctx context.Context) []VerifyCheck {
-	checks, ok := ctx.Value(contextKey{}).([]VerifyCheck)
-	if !ok || len(checks) == 0 {
-		return nil
-	}
-	return append([]VerifyCheck(nil), checks...)
-}
-
-// ExtractHostChecks reads only the structured "Reasonix host checks" section.
-// Ordinary project instructions remain guidance and do not become hard gates.
 func ExtractHostChecks(docs []memory.Source) []VerifyCheck {
 	seen := map[string]bool{}
 	var checks []VerifyCheck
