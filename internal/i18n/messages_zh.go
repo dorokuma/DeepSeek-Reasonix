@@ -47,7 +47,7 @@ var Chinese = Messages{
 	ChatStatusIdle:         "就绪",
 	ChatStatusYoloIdle:     "已跳过批准",
 	ChatStatusCycleHint:    "shift+tab 循环切换",
-	ChatStatusCacheNowFmt:  "本次命中 %s",
+	ChatStatusCacheNowFmt:  "本次 %s",
 	ChatStatusCacheAvgFmt:  "平均 %s",
 	ChatStatusPlanApproval: "Enter/y 批准并执行 · n/Esc 继续规划 · PgUp/PgDn 滚动",
 	PlanApprovalPrompt:     "计划已生成（见上方）— Enter/y 批准执行,n/Esc 继续规划",

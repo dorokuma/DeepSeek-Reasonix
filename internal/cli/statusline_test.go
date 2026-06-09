@@ -334,3 +334,188 @@ func bottomStatusPlainLines(content string) []string {
 	}
 	return lines[len(lines)-2:]
 }
+
+// --- Narrow (phone) mode tests ---
+
+const narrowWidth = 50
+
+func renderNarrowStatuslineView(t *testing.T, yolo bool) string {
+	t.Helper()
+
+	ctrl := control.New(control.Options{})
+	ctrl.SetBypass(yolo)
+	m := newChatTUI(ctrl, "", make(chan event.Event, 1), narrowWidth)
+	m.label = "deepseek-v4-flash"
+	m.effortLevel = "auto"
+	next, _ := m.Update(tea.WindowSizeMsg{Width: narrowWidth, Height: 24})
+	return next.(chatTUI).View().Content
+}
+
+func renderNarrowStatuslineViewWithCache(t *testing.T) string {
+	t.Helper()
+
+	prov := testutil.NewMock("deepseek-v4-flash", testutil.Turn{
+		Text: "ok",
+		Usage: &provider.Usage{
+			CacheHitTokens:   900,
+			CacheMissTokens:  100,
+			CompletionTokens: 50,
+			PromptTokens:     1000,
+			TotalTokens:      1050,
+		},
+	})
+	exec := agent.New(prov, tool.NewRegistry(), agent.NewSession(""), agent.Options{MaxSteps: 1, ContextWindow: 200_000}, event.Discard)
+	if err := exec.Run(context.Background(), "hello"); err != nil {
+		t.Fatalf("seed agent usage: %v", err)
+	}
+	ctrl := control.New(control.Options{Executor: exec})
+	m := newChatTUI(ctrl, "", make(chan event.Event, 1), narrowWidth)
+	m.label = "deepseek-v4-flash"
+	m.effortLevel = "auto"
+	next, _ := m.Update(tea.WindowSizeMsg{Width: narrowWidth, Height: 24})
+	return next.(chatTUI).View().Content
+}
+
+func renderNarrowPlanView(t *testing.T) string {
+	t.Helper()
+
+	ctrl := control.New(control.Options{})
+	m := newChatTUI(ctrl, "", make(chan event.Event, 1), narrowWidth)
+	m.planMode = true
+	m.label = "deepseek-v4-flash"
+	m.effortLevel = "auto"
+	next, _ := m.Update(tea.WindowSizeMsg{Width: narrowWidth, Height: 24})
+	return next.(chatTUI).View().Content
+}
+
+func TestNarrowIdleStatuslineOmitsHints(t *testing.T) {
+	i18n.DetectLanguage("en")
+
+	content := renderNarrowStatuslineView(t, false)
+	lines := bottomStatusPlainLines(content)
+	if len(lines) != 2 {
+		t.Fatalf("narrow status lines = %d, want 2:\n%s", len(lines), strings.Join(lines, "\n"))
+	}
+	// Row 1: must have mode + effort, must NOT have idle hints.
+	if !strings.Contains(lines[0], "Auto") {
+		t.Errorf("narrow row 1 missing Auto mode:\n%s", lines[0])
+	}
+	if !strings.Contains(lines[0], "effort auto") {
+		t.Errorf("narrow row 1 missing effort tag:\n%s", lines[0])
+	}
+	if strings.Contains(lines[0], "ready") {
+		t.Errorf("narrow row 1 should not contain ready hint:\n%s", lines[0])
+	}
+	if strings.Contains(lines[0], "shift+tab") {
+		t.Errorf("narrow row 1 should not contain cycle hint:\n%s", lines[0])
+	}
+}
+
+func TestNarrowYoloStatuslineOmitsHints(t *testing.T) {
+	i18n.DetectLanguage("en")
+
+	content := renderNarrowStatuslineView(t, true)
+	lines := bottomStatusPlainLines(content)
+	if len(lines) != 2 {
+		t.Fatalf("narrow yolo lines = %d, want 2:\n%s", len(lines), strings.Join(lines, "\n"))
+	}
+	if !strings.Contains(lines[0], "YOLO") {
+		t.Errorf("narrow yolo row 1 missing YOLO mode:\n%s", lines[0])
+	}
+	if !strings.Contains(lines[0], "effort auto") {
+		t.Errorf("narrow yolo row 1 missing effort tag:\n%s", lines[0])
+	}
+	if strings.Contains(lines[0], "approvals skipped") {
+		t.Errorf("narrow yolo row 1 should not contain skipped text:\n%s", lines[0])
+	}
+	if strings.Contains(lines[0], "shift+tab") {
+		t.Errorf("narrow yolo row 1 should not contain cycle hint:\n%s", lines[0])
+	}
+}
+
+func TestNarrowPlanStatuslineOmitsHints(t *testing.T) {
+	i18n.DetectLanguage("en")
+
+	content := renderNarrowPlanView(t)
+	lines := bottomStatusPlainLines(content)
+	if len(lines) != 2 {
+		t.Fatalf("narrow plan lines = %d, want 2:\n%s", len(lines), strings.Join(lines, "\n"))
+	}
+	if !strings.Contains(lines[0], "Plan") {
+		t.Errorf("narrow plan row 1 missing Plan mode:\n%s", lines[0])
+	}
+	if !strings.Contains(lines[0], "effort auto") {
+		t.Errorf("narrow plan row 1 missing effort tag:\n%s", lines[0])
+	}
+}
+
+func TestNarrowDataRowKeepsCacheAndCostOnly(t *testing.T) {
+	i18n.DetectLanguage("en")
+
+	content := renderNarrowStatuslineViewWithCache(t)
+	lines := bottomStatusPlainLines(content)
+	if len(lines) != 2 {
+		t.Fatalf("narrow cache lines = %d, want 2:\n%s", len(lines), strings.Join(lines, "\n"))
+	}
+	// Row 2: must have cache rates, must NOT have model name or ctx.
+	if !strings.Contains(lines[1], "hit") || !strings.Contains(lines[1], "avg") {
+		t.Errorf("narrow cache row 2 missing cache rates:\n%s", lines[1])
+	}
+	if strings.Contains(lines[1], "deepseek") {
+		t.Errorf("narrow cache row 2 should not contain model name:\n%s", lines[1])
+	}
+	if strings.Contains(lines[1], "ctx") {
+		t.Errorf("narrow cache row 2 should not contain context tag:\n%s", lines[1])
+	}
+	// Row 1 must still have mode + effort.
+	if !strings.Contains(lines[0], "Auto") {
+		t.Errorf("narrow cache row 1 missing Auto mode:\n%s", lines[0])
+	}
+	if !strings.Contains(lines[0], "effort auto") {
+		t.Errorf("narrow cache row 1 missing effort tag:\n%s", lines[0])
+	}
+}
+
+func TestNarrowBoundaryIsEighty(t *testing.T) {
+	i18n.DetectLanguage("en")
+
+	// Width = 80 behaves as WIDE (not narrow).
+	ctrl := control.New(control.Options{})
+	m := newChatTUI(ctrl, "", make(chan event.Event, 1), 80)
+	m.label = "deepseek-v4-flash"
+	m.effortLevel = "auto"
+	next, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	content := next.(chatTUI).View().Content
+	lines := bottomStatusPlainLines(content)
+
+	// At width 80, row 1 should include idle hint (wide behavior).
+	if !strings.Contains(lines[0], "ready") {
+		t.Errorf("width=80: row 1 should show ready hint (wide):\n%s", lines[0])
+	}
+	// Row 2 should include model name (wide behavior).
+	if !strings.Contains(lines[1], "deepseek") {
+		t.Errorf("width=80: row 2 should show model name (wide):\n%s", lines[1])
+	}
+}
+
+func TestNarrowWidth79TriggersNarrow(t *testing.T) {
+	i18n.DetectLanguage("en")
+
+	// Width = 79 triggers narrow mode.
+	ctrl := control.New(control.Options{})
+	m := newChatTUI(ctrl, "", make(chan event.Event, 1), 79)
+	m.label = "deepseek-v4-flash"
+	m.effortLevel = "auto"
+	next, _ := m.Update(tea.WindowSizeMsg{Width: 79, Height: 24})
+	content := next.(chatTUI).View().Content
+	lines := bottomStatusPlainLines(content)
+
+	// At width 79, row 1 should NOT have idle hint (narrow behavior).
+	if strings.Contains(lines[0], "ready") {
+		t.Errorf("width=79: row 1 should NOT show ready hint (narrow):\n%s", lines[0])
+	}
+	// Row 2 should NOT include model name (narrow behavior).
+	if strings.Contains(lines[1], "deepseek") {
+		t.Errorf("width=79: row 2 should NOT show model name (narrow):\n%s", lines[1])
+	}
+}

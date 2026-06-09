@@ -111,6 +111,11 @@ func (s *Server) switchModel(ctx context.Context, ref string) error {
 	newPath := agent.ContinueSessionPath(prevPath, newCtrl.SessionDir(), newCtrl.Label())
 	if len(carried) > 0 {
 		newCtrl.Resume(&agent.Session{Messages: carried}, newPath)
+		// Transfer cumulative cost from the old controller so model switch
+		// preserves the session's running spend.
+		if cost, currency := cur.SessionCost(); cost > 0 {
+			newCtrl.SetSessionCost(cost, currency)
+		}
 	} else if newPath != "" {
 		newCtrl.SetSessionPath(newPath)
 	}
@@ -903,6 +908,8 @@ func (s *Server) deleteSession(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	// Clean up cost sidecar if one exists.
+	os.Remove(abs + ".cost")
 	w.WriteHeader(http.StatusNoContent)
 }
 

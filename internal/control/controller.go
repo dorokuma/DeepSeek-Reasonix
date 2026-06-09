@@ -1236,12 +1236,55 @@ func (c *Controller) summarizeAt(ctx context.Context, turn int, from bool) error
 func (c *Controller) Resume(s *agent.Session, path string) {
 	if c.executor != nil {
 		c.executor.SetSession(mergeResumedSession(c.systemPrompt, s))
-		c.executor.ResetSessionCost()
+		// Restore cumulative cost from sidecar file, if one exists.
+		if cost, currency := readSessionCost(path); cost > 0 {
+			c.executor.SetSessionCost(cost, currency)
+		}
 	}
 	c.mu.Lock()
 	c.sessionPath = path
 	c.mu.Unlock()
 	c.rebindCheckpoints(path)
+}
+
+// sessionCostSidecar is the path convention for cost metadata alongside a
+// session JSONL file.
+func sessionCostSidecar(sessionPath string) string {
+	return sessionPath + ".cost"
+}
+
+// readSessionCost reads the cost sidecar written by snapshot. Missing or
+// unparseable files are silently treated as "no cost" so resume never breaks.
+func readSessionCost(path string) (cost float64, currency string) {
+	b, err := os.ReadFile(sessionCostSidecar(path))
+	if err != nil {
+		return 0, ""
+	}
+	var v struct {
+		Cost     float64 `json:"cost"`
+		Currency string  `json:"currency"`
+	}
+	if json.Unmarshal(b, &v) != nil {
+		return 0, ""
+	}
+	return v.Cost, v.Currency
+}
+
+// writeSessionCost persists the cumulative cost alongside a session JSONL.
+func writeSessionCost(path string, cost float64, currency string) error {
+	if cost <= 0 || currency == "" {
+		os.Remove(sessionCostSidecar(path))
+		return nil
+	}
+	v := struct {
+		Cost     float64 `json:"cost"`
+		Currency string  `json:"currency"`
+	}{Cost: cost, Currency: currency}
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(sessionCostSidecar(path), b, 0o644)
 }
 
 func mergeResumedSession(systemPrompt string, loaded *agent.Session) *agent.Session {
@@ -1292,6 +1335,12 @@ func (c *Controller) snapshot(markActivity bool) error {
 	}
 	if err := s.Save(path); err != nil {
 		return err
+	}
+	// Persist cumulative cost alongside the session so resume restores it.
+	if cost, currency := c.executor.SessionCost(); cost > 0 && currency != "" {
+		if err := writeSessionCost(path, cost, currency); err != nil {
+			slog.Warn("controller: write session cost sidecar", "err", err)
+		}
 	}
 	if markActivity {
 		return agent.TouchBranchMeta(path)
@@ -1392,6 +1441,13 @@ func (c *Controller) SessionCost() (cost float64, currency string) {
 		return 0, ""
 	}
 	return c.executor.SessionCost()
+}
+
+// SetSessionCost restores cumulative cost from a loaded session sidecar.
+func (c *Controller) SetSessionCost(cost float64, currency string) {
+	if c.executor != nil {
+		c.executor.SetSessionCost(cost, currency)
+	}
 }
 
 // Balance queries the active provider's wallet balance, or (nil, nil) when the
