@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13,13 +14,16 @@ import (
 
 	"reasonix/internal/fileutil"
 	"reasonix/internal/provider"
+	"reasonix/internal/sessioncrypt"
 )
 
+// SessionEncryptionEnabled controls whether session files are encrypted at rest.
+// Set via [agent] encrypt_sessions in config. Default false for backward compat.
+var SessionEncryptionEnabled bool
+
 // Save writes the session's messages to path in JSONL — one provider.Message
-// per line — so a user can resume the conversation later. The file is
-// rewritten in full on every save: chat sessions are small (kilobytes), and
-// append-only would have to be reconciled with the compaction pass that
-// mutates the middle of session.Messages.
+// per line — so a user can resume the conversation later. When
+// SessionEncryptionEnabled is true, the file is AES-256-GCM encrypted at rest.
 func (s *Session) Save(path string) error {
 	if path == "" {
 		return fmt.Errorf("empty session path")
@@ -28,20 +32,45 @@ func (s *Session) Save(path string) error {
 		return fmt.Errorf("create session dir: %w", err)
 	}
 	// Write to a sibling tmp file then rename, so a crash mid-write can't
-	// leave a partial JSONL that won't reload.
+	// leave a partial file that won't reload.
 	tmp, err := os.CreateTemp(filepath.Dir(path), ".session.*.tmp")
 	if err != nil {
 		return fmt.Errorf("create session tmp: %w", err)
 	}
 	tmpPath := tmp.Name()
-	enc := json.NewEncoder(tmp)
-	for _, m := range s.Snapshot() { // copy under the lock — a turn may be appending
-		if err := enc.Encode(m); err != nil {
+
+	if SessionEncryptionEnabled {
+		var plaintext []byte
+		enc := json.NewEncoder(&plaintextBuffer{&plaintext})
+		for _, m := range s.Snapshot() {
+			if err := enc.Encode(m); err != nil {
+				tmp.Close()
+				os.Remove(tmpPath)
+				return fmt.Errorf("encode message: %w", err)
+			}
+		}
+		encrypted, err := sessioncrypt.Encrypt(plaintext)
+		if err != nil {
 			tmp.Close()
 			os.Remove(tmpPath)
-			return fmt.Errorf("encode message: %w", err)
+			return fmt.Errorf("encrypt session: %w", err)
+		}
+		if _, err := tmp.Write(encrypted); err != nil {
+			tmp.Close()
+			os.Remove(tmpPath)
+			return fmt.Errorf("write encrypted session: %w", err)
+		}
+	} else {
+		enc := json.NewEncoder(tmp)
+		for _, m := range s.Snapshot() { // copy under the lock — a turn may be appending
+			if err := enc.Encode(m); err != nil {
+				tmp.Close()
+				os.Remove(tmpPath)
+				return fmt.Errorf("encode message: %w", err)
+			}
 		}
 	}
+
 	if err := tmp.Close(); err != nil {
 		os.Remove(tmpPath)
 		return err
@@ -51,20 +80,26 @@ func (s *Session) Save(path string) error {
 
 // LoadSession reads a JSONL file written by Save into a fresh Session value.
 // Missing files surface as os.IsNotExist so callers can fall through to a
-// new session.
+// new session. It auto-detects encrypted files and decrypts transparently.
 func LoadSession(path string) (*Session, error) {
-	f, err := os.Open(path)
+	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
+	if sessioncrypt.IsEncrypted(data) {
+		plain, err := sessioncrypt.Decrypt(data)
+		if err != nil {
+			return nil, fmt.Errorf("decrypt %s: %w", path, err)
+		}
+		data = plain
+	}
 
 	s := &Session{}
 	// Decode a stream of JSON values rather than scanning lines: a single
 	// message (e.g. a multi-MiB bash output) can exceed any line-buffer cap, and
 	// Save's json.Encoder has no such limit — a Scanner here made sessions that
 	// saved fine fail to reload.
-	dec := json.NewDecoder(f)
+	dec := json.NewDecoder(bytes.NewReader(data))
 	for {
 		var m provider.Message
 		if err := dec.Decode(&m); err != nil {
@@ -163,16 +198,31 @@ func ListSessions(dir string) ([]SessionInfo, error) {
 	return out, nil
 }
 
+// plaintextBuffer is a bytes.Buffer-like type that implements io.Writer for
+// json.Encoder, writing into a []byte without the allocation overhead of bytes.Buffer.
+type plaintextBuffer struct{ dst *[]byte }
+
+func (b *plaintextBuffer) Write(p []byte) (int, error) {
+	*b.dst = append(*b.dst, p...)
+	return len(p), nil
+}
+
 // previewSession returns the first user message (truncated) and the number of
 // user-role messages so the picker can show "5 turns · 'help me debug the…'".
 // Errors are swallowed — a malformed file just shows up with an empty preview.
 func previewSession(path string) (string, int) {
-	f, err := os.Open(path)
+	data, err := os.ReadFile(path)
 	if err != nil {
 		return "", 0
 	}
-	defer f.Close()
-	dec := json.NewDecoder(f)
+	if sessioncrypt.IsEncrypted(data) {
+		plain, err := sessioncrypt.Decrypt(data)
+		if err != nil {
+			return "", 0
+		}
+		data = plain
+	}
+	dec := json.NewDecoder(bytes.NewReader(data))
 	first := ""
 	turns := 0
 	for {

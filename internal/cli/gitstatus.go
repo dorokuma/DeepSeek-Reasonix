@@ -76,7 +76,7 @@ func runGit(ctx context.Context, cwd string, args ...string) (string, error) {
 	if cwd != "" {
 		cmd.Dir = cwd
 	}
-	cmd.Env = append(os.Environ(), "GIT_OPTIONAL_LOCKS=0")
+	cmd.Env = append(stripCredentialEnv(os.Environ()), "GIT_OPTIONAL_LOCKS=0")
 	out, err := cmd.Output()
 	if err != nil {
 		return "", err
@@ -232,4 +232,36 @@ func (s gitStatus) render(repo, branch string) string {
 		b.WriteString(dim(")"))
 	}
 	return b.String()
+}
+
+// stripCredentialEnv removes env vars likely to carry secrets from the
+// inherited process environment so git subprocesses don't inherit API keys.
+func stripCredentialEnv(env []string) []string {
+	out := make([]string, 0, len(env))
+	for _, kv := range env {
+		k, _, ok := strings.Cut(kv, "=")
+		if !ok {
+			continue
+		}
+		upper := strings.ToUpper(k)
+		if strings.HasSuffix(upper, "_KEY") ||
+			strings.HasSuffix(upper, "_TOKEN") ||
+			strings.HasSuffix(upper, "_SECRET") ||
+			strings.HasSuffix(upper, "_PASSWORD") ||
+			strings.HasSuffix(upper, "_PASS") ||
+			strings.HasSuffix(upper, "_CREDENTIALS") ||
+			strings.HasSuffix(upper, "_CREDENTIAL") ||
+			strings.HasSuffix(upper, "_APIKEY") ||
+			strings.HasSuffix(upper, "_APITOKEN") ||
+			strings.HasSuffix(upper, "_ACCESS_KEY") ||
+			strings.HasSuffix(upper, "_AUTH") ||
+			strings.HasSuffix(upper, "_CERT") ||
+			strings.HasSuffix(upper, "_SIGNATURE") ||
+			upper == "TOKEN" || upper == "SECRET" || upper == "PASSWORD" ||
+			upper == "AUTHORIZATION" || upper == "BEARER" {
+			continue
+		}
+		out = append(out, kv)
+	}
+	return out
 }

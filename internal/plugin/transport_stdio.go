@@ -282,7 +282,12 @@ func stripCredentialEnv(env []string) []string {
 			strings.HasSuffix(upper, "_CREDENTIAL") ||
 			strings.HasSuffix(upper, "_APIKEY") ||
 			strings.HasSuffix(upper, "_APITOKEN") ||
-			upper == "TOKEN" || upper == "SECRET" || upper == "PASSWORD" {
+			strings.HasSuffix(upper, "_ACCESS_KEY") ||
+			strings.HasSuffix(upper, "_AUTH") ||
+			strings.HasSuffix(upper, "_CERT") ||
+			strings.HasSuffix(upper, "_SIGNATURE") ||
+			upper == "TOKEN" || upper == "SECRET" || upper == "PASSWORD" ||
+			upper == "AUTHORIZATION" || upper == "BEARER" {
 			continue
 		}
 		out = append(out, kv)

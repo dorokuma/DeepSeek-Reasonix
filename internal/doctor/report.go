@@ -3,6 +3,7 @@ package doctor
 
 import (
 	"fmt"
+	"net"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -433,10 +434,40 @@ func hostOnly(raw string) string {
 	if err != nil || u.Hostname() == "" {
 		return ""
 	}
-	if port := u.Port(); port != "" {
-		return u.Hostname() + ":" + port
+	host := u.Hostname()
+	if isInternalHost(host) {
+		host = redactHost(host)
 	}
-	return u.Hostname()
+	if port := u.Port(); port != "" {
+		return host + ":" + port
+	}
+	return host
+}
+
+// isInternalHost reports whether a hostname or IP is private/internal.
+func isInternalHost(host string) bool {
+	ip := net.ParseIP(host)
+	if ip != nil {
+		return ip.IsPrivate() || ip.IsLoopback() || ip.IsLinkLocalUnicast()
+	}
+	lower := strings.ToLower(host)
+	if lower == "localhost" {
+		return true
+	}
+	for _, suffix := range []string{".internal", ".local", ".corp", ".lan", ".home", ".intranet"} {
+		if strings.HasSuffix(lower, suffix) {
+			return true
+		}
+	}
+	return false
+}
+
+// redactHost shortens a hostname for display, keeping the first 4 chars.
+func redactHost(host string) string {
+	if len(host) <= 4 {
+		return host[:1] + "…"
+	}
+	return host[:4] + "…"
 }
 
 func valueOr(s, fallback string) string {

@@ -243,6 +243,11 @@ type NetworkConfig struct {
 	// process environment instead.
 	NoProxy string             `toml:"no_proxy"`
 	Proxy   NetworkProxyConfig `toml:"proxy"`
+	// CACertPath is an optional path to a PEM-encoded CA certificate file. When
+	// set, this CA is appended to the system root CAs for all outbound HTTP
+	// connections (provider APIs, balance lookups, updater, etc.). web_fetch uses
+	// its own SSRF-guarded transport and does NOT inherit this setting.
+	CACertPath string `toml:"ca_cert_path"`
 }
 
 // NetworkProxyConfig is the structured custom-proxy editor shape. Password is
@@ -465,6 +470,10 @@ type AgentConfig struct {
 	SoftCompactRatio  float64 `toml:"soft_compact_ratio"`
 	CompactRatio      float64 `toml:"compact_ratio"`
 	CompactForceRatio float64 `toml:"compact_force_ratio"`
+	// EncryptSessions controls whether session files are encrypted at rest with
+	// AES-256-GCM. The key is auto-generated and stored in the user config
+	// directory. Default false for backward compatibility.
+	EncryptSessions bool `toml:"encrypt_sessions"`
 }
 
 // ProviderEntry declares a model provider instance. ContextWindow is the model's
@@ -896,8 +905,12 @@ func LoadForEdit(path string) *Config {
 
 // mergeFile decodes a TOML file onto cfg if it exists. An absent file is not an error.
 func mergeFile(cfg *Config, path string) error {
-	if _, err := os.Stat(path); err != nil {
+	info, err := os.Stat(path)
+	if err != nil {
 		return nil
+	}
+	if mode := info.Mode().Perm(); mode&0o077 != 0 {
+		slog.Warn("config file has loose permissions; consider chmod 600", "path", path, "perm", fmt.Sprintf("%o", mode))
 	}
 	if _, err := toml.DecodeFile(path, cfg); err != nil {
 		return fmt.Errorf("config %s: %w", path, err)

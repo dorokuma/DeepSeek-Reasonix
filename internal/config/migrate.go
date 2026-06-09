@@ -252,7 +252,7 @@ func writeCredentialsEnv(home string, lines []string) error {
 	if path == "" {
 		path = filepath.Join(home, ".env")
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
 	}
 	target := make(map[string]bool, len(lines))

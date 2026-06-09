@@ -86,7 +86,7 @@ func (c ctxRun) Execute(ctx context.Context, args json.RawMessage) (string, erro
 	if c.workDir != "" {
 		cmd.Dir = c.workDir
 	}
-	cmd.Env = os.Environ()
+	cmd.Env = stripBashCredentialEnv(os.Environ())
 	if scriptPath != "" {
 		// Script already on disk; argv runs the shell command referencing it.
 		_ = scriptPath

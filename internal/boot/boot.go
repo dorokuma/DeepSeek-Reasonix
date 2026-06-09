@@ -140,10 +140,20 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	if err := netclient.Validate(proxySpec); err != nil {
 		return nil, err
 	}
-	balanceClient, err := netclient.NewHTTPClient(proxySpec, netclient.TransportOptions{})
+
+	caPool, err := netclient.LoadCACert(cfg.Network.CACertPath)
 	if err != nil {
 		return nil, err
 	}
+	netclient.SetGlobalCACerts(caPool)
+	trOpts := netclient.TransportOptions{RootCAs: caPool}
+
+	balanceClient, err := netclient.NewHTTPClient(proxySpec, trOpts)
+	if err != nil {
+		return nil, err
+	}
+
+	agent.SessionEncryptionEnabled = cfg.Agent.EncryptSessions
 
 	execProv, err := NewProviderWithProxy(entry, proxySpec)
 	if err != nil {
@@ -190,7 +200,7 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	reg := tool.NewRegistry()
 	bashSpec := sandbox.Spec{Mode: cfg.BashMode(), WriteRoots: cfg.WriteRootsForRoot(root), Network: cfg.Sandbox.Network}
 	if bashSpec.Mode == "enforce" && !sandbox.Available() {
-		fmt.Fprintln(stderr, "warning: bash sandbox requested but unavailable on this platform; running bash unconfined")
+		return nil, fmt.Errorf("sandbox.mode = \"enforce\" but bwrap is not installed on this system; install bubblewrap (bwrap) or set [sandbox] bash = \"off\" in reasonix.toml")
 	}
 	if sandbox.ResolveShell().Kind == sandbox.ShellPowerShell {
 		fmt.Fprintln(stderr, "warning: bash not found on PATH; the shell tool will run commands under Windows PowerShell. Install Git for Windows or WSL to use bash.")
@@ -286,7 +296,7 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 		case cfg.Codegraph.AutoInstall:
 			notify := func(msg string) { sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelInfo, Text: msg}) }
 			notify("codegraph: fetching code-intelligence runtime in the background (one-time) — symbol-graph tools available next session")
-			codegraphClient, err := netclient.NewHTTPClient(proxySpec, netclient.TransportOptions{})
+			codegraphClient, err := netclient.NewHTTPClient(proxySpec, trOpts)
 			if err != nil {
 				notify("codegraph: install skipped (" + err.Error() + ")")
 			} else {
