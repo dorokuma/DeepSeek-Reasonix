@@ -430,6 +430,13 @@ func TestLazyConcurrentExecuteOnlyOneSpawn(t *testing.T) {
 // turn until the user fixes config).
 func TestLazyHandshakeFailureSurfaced(t *testing.T) {
 	redirectCache(t)
+	// Disable shell PATH lookup: interactive login shell startup can hang
+	// (bash/zsh dotfiles, locks), and it's irrelevant — the command doesn't
+	// exist anywhere in PATH.
+	old := stdioShellPATH
+	stdioShellPATH = func(context.Context) string { return "" }
+	t.Cleanup(func() { stdioShellPATH = old })
+
 	// Bogus command: process exec will fail outright.
 	spec := Spec{Name: "missing", Command: "reasonix-nonexistent-binary-for-lazy-test"}
 
