@@ -139,7 +139,7 @@ func (s *mediaTokenStore) create(absPath, filename, mime, kind string, size int6
 
 	tok := make([]byte, 16)
 	if _, err := rand.Read(tok); err != nil {
-		panic("crypto/rand.Read failed: " + err.Error())
+		return "" // crypto/rand should never fail; fall back to empty token
 	}
 	token := hex.EncodeToString(tok)
 

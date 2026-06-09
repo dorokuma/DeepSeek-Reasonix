@@ -207,7 +207,17 @@ func (s *Server) handler() http.Handler {
 	mux.HandleFunc("GET /sessions", s.sessions)
 	mux.HandleFunc("GET /skills", s.skills)
 	mux.HandleFunc("POST /delete-session", s.deleteSession)
-	return logMiddleware(csrfGuard(mux))
+	return logMiddleware(securityHeadersMiddleware(csrfGuard(mux)))
+}
+
+// securityHeadersMiddleware sets standard security headers on every response.
+func securityHeadersMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("X-Frame-Options", "DENY")
+		w.Header().Set("Referrer-Policy", "same-origin")
+		next.ServeHTTP(w, r)
+	})
 }
 
 // csrfGuard rejects state-changing requests that don't carry a JSON content type
