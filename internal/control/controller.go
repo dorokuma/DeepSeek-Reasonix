@@ -1298,7 +1298,7 @@ func writeSessionCost(path string, cost float64, currency string) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(sessionCostSidecar(path), b, 0o644)
+	return os.WriteFile(sessionCostSidecar(path), b, 0o600)
 }
 
 func mergeResumedSession(systemPrompt string, loaded *agent.Session) *agent.Session {

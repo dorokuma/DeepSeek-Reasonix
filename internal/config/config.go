@@ -1128,7 +1128,7 @@ func SourcePathForRoot(root string) string {
 
 // WriteFile writes the configuration to path as annotated TOML.
 func (c *Config) WriteFile(path string) error {
-	return os.WriteFile(path, []byte(RenderTOMLForScope(c, renderScopeForPath(path))), 0o644)
+	return os.WriteFile(path, []byte(RenderTOMLForScope(c, renderScopeForPath(path))), 0o600)
 }
 
 // Provider returns the named provider entry.

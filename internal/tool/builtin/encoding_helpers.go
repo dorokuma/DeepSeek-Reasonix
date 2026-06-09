@@ -21,7 +21,7 @@ func readFileEncoded(path string) (content string, enc fileenc.Kind, err error) 
 
 // writeFileEncoded encodes content back to the given encoding and writes it.
 func writeFileEncoded(path string, content string, enc fileenc.Kind) error {
-	return os.WriteFile(path, fileenc.Encode(content, enc), 0o644)
+	return os.WriteFile(path, fileenc.Encode(content, enc), 0o600)
 }
 
 // matchLineEndings adapts an edit's old/new text to a CRLF file when the literal

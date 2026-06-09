@@ -110,7 +110,7 @@ func (s Store) Save(m Memory) (string, error) {
 		return "", err
 	}
 	path := filepath.Join(s.Dir, name+".md")
-	if err := os.WriteFile(path, []byte(render(m, name)), 0o644); err != nil {
+	if err := os.WriteFile(path, []byte(render(m, name)), 0o600); err != nil {
 		return "", err
 	}
 	if err := s.reindex(name, m); err != nil {
@@ -187,7 +187,7 @@ func (s Store) flushIndex(lines map[string]string) error {
 		b.WriteString(lines[n])
 		b.WriteString("\n")
 	}
-	return os.WriteFile(filepath.Join(s.Dir, indexFile), []byte(b.String()), 0o644)
+	return os.WriteFile(filepath.Join(s.Dir, indexFile), []byte(b.String()), 0o600)
 }
 
 // reindex rewrites the MEMORY.md line for name, preserving every other managed

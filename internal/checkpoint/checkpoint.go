@@ -179,7 +179,7 @@ func (s *Store) persist(c *Checkpoint) {
 		slog.Warn("checkpoint: create dir failed", "dir", s.dir, "err", err)
 		return
 	}
-	if err := os.WriteFile(filepath.Join(s.dir, fmt.Sprintf("turn-%d.json", c.Turn)), b, 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(s.dir, fmt.Sprintf("turn-%d.json", c.Turn)), b, 0o600); err != nil {
 		slog.Warn("checkpoint: persist failed", "turn", c.Turn, "err", err)
 	}
 }
@@ -276,7 +276,7 @@ func (s *Store) RestoreCode(fromTurn int) (written, deleted []string, err error)
 		} else if current := detectCurrentEncoding(abs); current != nil {
 			enc = *current
 		}
-		if wErr := os.WriteFile(abs, fileenc.Encode(*snap.Content, enc), 0o644); wErr != nil {
+		if wErr := os.WriteFile(abs, fileenc.Encode(*snap.Content, enc), 0o600); wErr != nil {
 			err = wErr
 			continue
 		}

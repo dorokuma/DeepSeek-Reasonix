@@ -441,7 +441,7 @@ end try
 func createAttachmentFile(ext string) (string, *os.File, error) {
 	for range maxAttachmentCreateAttempts {
 		rel := attachmentPath(ext)
-		f, err := os.OpenFile(rel, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+		f, err := os.OpenFile(rel, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 		if os.IsExist(err) {
 			continue
 		}

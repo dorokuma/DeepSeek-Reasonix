@@ -453,7 +453,7 @@ func (s *Store) CreateWithContent(name string, scope Scope, content string) (str
 		return "", err
 	}
 	// O_EXCL so a concurrent create (or an existing file) is reported, not clobbered.
-	f, err := os.OpenFile(flat, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
+	f, err := os.OpenFile(flat, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 	if err != nil {
 		if os.IsExist(err) {
 			return "", fmt.Errorf("skill %q already exists at %s", name, flat)

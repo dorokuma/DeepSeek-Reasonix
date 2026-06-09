@@ -132,7 +132,7 @@ func (a auditFinish) Execute(ctx context.Context, args json.RawMessage) (string,
 			return "", fmt.Errorf("mkdir %s: %w", dir, err)
 		}
 	}
-	if err := os.WriteFile(path, []byte(b.String()), 0o644); err != nil {
+	if err := os.WriteFile(path, []byte(b.String()), 0o600); err != nil {
 		return "", fmt.Errorf("write %s: %w", path, err)
 	}
 
