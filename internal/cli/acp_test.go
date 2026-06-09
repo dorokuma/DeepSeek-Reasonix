@@ -35,6 +35,76 @@ func TestACPBuiltinToolsKeepSessionLevelBuiltins(t *testing.T) {
 	}
 }
 
+func TestACPInitializesWithoutAPIKey(t *testing.T) {
+	isolateCLIConfigHome(t)
+	t.Setenv("DEEPSEEK_API_KEY", "")
+	oldStdin := os.Stdin
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = w.WriteString(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":1}}` + "\n")
+	_ = w.Close()
+	os.Stdin = r
+	t.Cleanup(func() {
+		os.Stdin = oldStdin
+		_ = r.Close()
+	})
+
+	out := captureStdout(t, func() {
+		if rc := Run([]string{"--acp"}, "test-version"); rc != 0 {
+			t.Fatalf("Run --acp initialize rc = %d, want 0", rc)
+		}
+	})
+	if !strings.Contains(out, `"protocolVersion":1`) || !strings.Contains(out, `"name":"reasonix"`) {
+		t.Fatalf("initialize output = %s", out)
+	}
+}
+
+func TestACPFactoryLoadsSessionCwdProjectConfig(t *testing.T) {
+	home := isolateCLIConfigHome(t)
+	t.Setenv("REASONIX_TEST_KEY", "test-key")
+	project := t.TempDir()
+	if err := os.WriteFile(filepath.Join(project, "reasonix.toml"), []byte(`
+default_model = "local"
+
+[codegraph]
+enabled = false
+
+[[providers]]
+name = "local"
+kind = "acp-test-provider"
+base_url = "http://example.invalid"
+model = "fake-model"
+api_key_env = "REASONIX_TEST_KEY"
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cmdDir := filepath.Join(project, ".reasonix", "commands")
+	if err := os.MkdirAll(cmdDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(cmdDir, "acp-only.md"), []byte("ACP project command"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(home); err != nil {
+		t.Fatal(err)
+	}
+
+	ctrl, err := (&acpFactory{}).NewSession(context.Background(), acp.SessionParams{Cwd: project, Sink: event.Discard})
+	if err != nil {
+		t.Fatalf("NewSession: %v", err)
+	}
+	defer ctrl.Close()
+
+	for _, cmd := range ctrl.Commands() {
+		if cmd.Name == "acp-only" {
+			return
+		}
+	}
+	t.Fatalf("ACP session did not load project command from cwd; commands=%v", ctrl.Commands())
+}
+
 func TestACPTaskProfileDefaults(t *testing.T) {
 	cfg := config.Default()
 	cfg.Agent.SubagentModel = "default-model"
