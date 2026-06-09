@@ -97,9 +97,6 @@ func ReadFileDefaultLimit() int {
 	return defaultReadLimitRTK
 }
 
-// BinPath returns the resolved rtk binary path, or "" if missing.
-func BinPath() string { return binPath }
-
 // Rewrite runs "rtk rewrite <cmd>" and returns a compact equivalent, or ""
 // when RTK has no filter. Exit codes follow RTK semantics: 0 and 3 mean a
 // rewrite is offered; 1 and 2 mean pass-through.
@@ -170,11 +167,6 @@ func acceptRewrite(exitCode int, stdout string) string {
 	default:
 		return ""
 	}
-}
-
-// ApplySegments rewrites a compound shell command segment by segment.
-func ApplySegments(cmd string) string {
-	return ApplySegmentsCtx(context.Background(), cmd)
 }
 
 func ApplySegmentsCtx(ctx context.Context, cmd string) string {

@@ -34,14 +34,5 @@ func (m *mockProvider) Stream(ctx context.Context, req provider.Request) (<-chan
 	return ch, nil
 }
 
-func lastUser(req provider.Request) string {
-	for i := len(req.Messages) - 1; i >= 0; i-- {
-		if req.Messages[i].Role == provider.RoleUser {
-			return req.Messages[i].Content
-		}
-	}
-	return ""
-}
-
 // TestCoordinatorHandsPlanToExecutor checks the two-session handoff: the planner
 // sees the raw task in its own session, and the executor receives the plan.

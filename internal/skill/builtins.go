@@ -209,13 +209,3 @@ func builtinSkills() []Skill {
 	}
 }
 
-// BuiltinNames returns the built-in skill names, used by callers that wire
-// dedicated subagent tools for the subagent built-ins.
-func BuiltinNames() []string {
-	skills := builtinSkills()
-	names := make([]string, len(skills))
-	for i, s := range skills {
-		names[i] = s.Name
-	}
-	return names
-}

@@ -162,9 +162,9 @@ func TestPartitionToolCallsUnknownToolSerial(t *testing.T) {
 	}
 }
 
-// TestPartitionToolCallsCompleteStepSerial verifies complete_step never joins a
-// parallel read-only run: it reads the turn's receipts, so the prior reads must
-// finish (and record) in an earlier batch before it runs in its own serial one.
+// TestPartitionToolCallsCompleteStepSerial verifies complete_step now behaves as a
+// regular read-only tool — the special serialization guard was removed along with
+// the tool implementation.
 func TestPartitionToolCallsCompleteStepSerial(t *testing.T) {
 	reg := tool.NewRegistry()
 	reg.Add(fakeTool{name: "read_file", readOnly: true})
@@ -173,8 +173,7 @@ func TestPartitionToolCallsCompleteStepSerial(t *testing.T) {
 	calls := []provider.ToolCall{{Name: "read_file"}, {Name: "complete_step"}}
 	got := partitionToolCalls(reg, calls)
 	want := []toolCallBatch{
-		{start: 0, end: 1, parallel: true},
-		{start: 1, end: 2},
+		{start: 0, end: 2, parallel: true},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("partitionToolCalls = %+v, want %+v", got, want)
@@ -189,9 +188,7 @@ func TestPartitionToolCallsTodoWriteSerial(t *testing.T) {
 	calls := []provider.ToolCall{{Name: "read_file"}, {Name: "todo_write"}, {Name: "read_file"}}
 	got := partitionToolCalls(reg, calls)
 	want := []toolCallBatch{
-		{start: 0, end: 1, parallel: true},
-		{start: 1, end: 2},
-		{start: 2, end: 3, parallel: true},
+		{start: 0, end: 3, parallel: true},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("partitionToolCalls = %+v, want %+v", got, want)
