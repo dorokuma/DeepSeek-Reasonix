@@ -10,23 +10,14 @@ import (
 // RunMetrics is the machine-readable token/cache/cost summary `run --metrics`
 // writes, so a benchmark harness can read a run's cost without scraping stdout.
 type RunMetrics struct {
-	PromptTokens                  int     `json:"prompt_tokens"`
-	CompletionTokens              int     `json:"completion_tokens"`
-	CacheHitTokens                int     `json:"cache_hit_tokens"`
-	CacheMissTokens               int     `json:"cache_miss_tokens"`
-	Steps                         int     `json:"steps"` // model calls (one per stream, incl. tool rounds)
-	Cost                          float64 `json:"cost"`
-	Currency                      string  `json:"currency"`
-	Compactions                   int     `json:"compactions"`
-	ReadinessChecks               int     `json:"readiness_checks"`
-	ReadinessAllowed              int     `json:"readiness_allowed"`
-	ReadinessBlocks               int     `json:"readiness_blocks"`
-	ReadinessRecoveries           int     `json:"readiness_recoveries"`
-	ReadinessErrors               int     `json:"readiness_errors"`
-	ReadinessMissingProjectChecks int     `json:"readiness_missing_project_checks"`
-	ReadinessMissingCompleteSteps int     `json:"readiness_missing_complete_steps"`
-	ReadinessIncompleteTodos      int     `json:"readiness_incomplete_todos"`
-	ReadinessCommandMismatches    int     `json:"readiness_command_mismatches"`
+	PromptTokens     int     `json:"prompt_tokens"`
+	CompletionTokens int     `json:"completion_tokens"`
+	CacheHitTokens   int     `json:"cache_hit_tokens"`
+	CacheMissTokens  int     `json:"cache_miss_tokens"`
+	Steps            int     `json:"steps"` // model calls (one per stream, incl. tool rounds)
+	Cost             float64 `json:"cost"`
+	Currency         string  `json:"currency"`
+	Compactions      int     `json:"compactions"`
 }
 
 // metricsSink forwards every event to the real sink and accumulates the per-call

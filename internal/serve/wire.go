@@ -17,6 +17,8 @@ type wireEvent struct {
 	Approval   *wireApproval   `json:"approval,omitempty"`
 	Ask        *wireAsk        `json:"ask,omitempty"`
 	Compaction *wireCompaction `json:"compaction,omitempty"`
+	RetryAttempt int `json:"retryAttempt,omitempty"`
+	RetryMax     int `json:"retryMax,omitempty"`
 	Err        string          `json:"err,omitempty"`
 }
 
@@ -122,6 +124,8 @@ var kindNames = map[event.Kind]string{
 	event.CompactionStarted: "compaction_started",
 	event.CompactionDone:    "compaction_done",
 	event.ToolProgress:      "tool_progress",
+	event.MCPSurfaceReady:   "mcp_surface_ready",
+	event.Retrying:          "retrying",
 }
 
 // toWireAsk converts an event.Ask into its JSON wire form.
@@ -186,6 +190,11 @@ func toWire(e event.Event) wireEvent {
 			Trigger: e.Compaction.Trigger, Messages: e.Compaction.Messages,
 			Summary: e.Compaction.Summary, Archive: e.Compaction.Archive,
 		}
+	case event.Retrying:
+		w.RetryAttempt = e.RetryAttempt
+		w.RetryMax = e.RetryMax
+	case event.MCPSurfaceReady:
+		// Text is already set on w.Text
 	case event.TurnDone:
 		if e.Err != nil {
 			w.Err = e.Err.Error()

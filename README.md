@@ -286,7 +286,7 @@ Three tiers of extensibility, all behind registries the core resolves by name:
 
 Done: registry-based providers/tools, OpenAI-compatible streaming with tool
 calls (bounded retry on 429/5xx), built-in tools (read_file, write_file,
-edit_file, multi_edit, bash, ls, glob, grep, web_fetch, task, todo_write, ask),
+edit_file, multi_edit, bash, ls, glob, grep, web_fetch, task, ask),
 TOML config, an interactive `reasonix setup` wizard, two-model collaboration
 (executor + planner in separate, cache-stable sessions), low-frequency context
 compaction, sub-agents (`task`), a bubbletea chat TUI (markdown, plan mode with
