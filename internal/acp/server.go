@@ -6,14 +6,20 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"log/slog"
 	"strconv"
 	"sync"
 	"sync/atomic"
+	"time"
 )
 
 // maxMessageBytes caps a single inbound NDJSON line. ACP messages can embed
 // resource text, so the limit is generous; a line past it is a framing error.
-const maxMessageBytes = 32 << 20 // 32 MiB
+const maxMessageBytes = 4 << 20 // 4 MiB
+
+// rateLimitInterval is the minimum interval between dispatched messages per
+// connection, providing a basic DoS throttle (~100 msg/s).
+const rateLimitInterval = 10 * time.Millisecond
 
 // RequestHandler answers an inbound JSON-RPC request. The returned value is
 // marshaled as the response result. To control the error code, return a
@@ -127,11 +133,16 @@ func (c *Conn) Serve(ctx context.Context) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
+	limiter := NewRateLimiter(rateLimitInterval)
 	br := bufio.NewReaderSize(c.r, 64<<10)
 	var loopErr error
 	for {
 		line, err := readLine(br)
 		if len(line) > 0 {
+			if err := limiter.Wait(ctx); err != nil {
+				slog.Warn("acp: rate limit exceeded, dropping message", "len", len(line))
+				continue
+			}
 			c.dispatch(ctx, line)
 		}
 		if err != nil {
@@ -328,4 +339,35 @@ func (c *Conn) shutdown() {
 		}
 		c.pmu.Unlock()
 	})
+}
+
+// RateLimiter provides a per-connection message throttle.
+type RateLimiter struct {
+	interval time.Duration
+	last     time.Time
+}
+
+// NewRateLimiter creates a rate limiter that allows one message per interval.
+func NewRateLimiter(interval time.Duration) *RateLimiter {
+	return &RateLimiter{interval: interval}
+}
+
+// Wait blocks until the next message is allowed, or returns ctx.Err().
+func (rl *RateLimiter) Wait(ctx context.Context) error {
+	if rl.interval == 0 {
+		return nil
+	}
+	now := time.Now()
+	elapsed := now.Sub(rl.last)
+	if elapsed >= rl.interval {
+		rl.last = now
+		return nil
+	}
+	select {
+	case <-time.After(rl.interval - elapsed):
+		rl.last = time.Now()
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }

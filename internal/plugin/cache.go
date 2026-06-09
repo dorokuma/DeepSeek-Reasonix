@@ -147,6 +147,11 @@ func SaveCachedSchema(name string, cs CachedSchema) error {
 		return err
 	}
 	tmpPath := tmp.Name()
+	if err := tmp.Chmod(0o600); err != nil {
+		tmp.Close()
+		os.Remove(tmpPath)
+		return err
+	}
 	if _, err := tmp.Write(b); err != nil {
 		tmp.Close()
 		os.Remove(tmpPath)

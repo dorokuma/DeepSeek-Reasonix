@@ -205,10 +205,20 @@ func stdioShell() string {
 	if shell := strings.TrimSpace(os.Getenv("SHELL")); shell != "" {
 		if hasPathSeparator(shell) {
 			if isExecutableFile(shell) {
-				return shell
+				// Only allow known shell paths to prevent $SHELL abuse.
+				switch shell {
+				case "/bin/sh", "/bin/bash", "/bin/zsh", "/bin/dash", "/bin/fish",
+					"/usr/bin/sh", "/usr/bin/bash", "/usr/bin/zsh",
+					"/usr/bin/dash", "/usr/bin/fish":
+					return shell
+				}
 			}
 		} else if exe, ok := lookPathInEnv(shell, os.Environ()); ok {
-			return exe
+			// Only allow known shell names (no arbitrary PATH lookup hijacking).
+			switch shell {
+			case "sh", "bash", "zsh", "dash", "fish":
+				return exe
+			}
 		}
 	}
 	for _, shell := range []string{"/bin/zsh", "/bin/bash", "/bin/sh"} {
