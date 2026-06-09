@@ -415,6 +415,7 @@ func (c *Controller) runTurnWithRaw(ctx context.Context, input, raw string) erro
 		c.mu.Unlock()
 	}()
 	if err := c.runner.Run(ctx, planApprovedMessage); err != nil {
+		c.completePlanTodos(seededTodos) // clean up task list even on failure
 		return err
 	}
 	c.completePlanTodos(seededTodos)
@@ -1906,7 +1907,10 @@ func (c *Controller) completePlanTodos(args string) {
 	if done == "" {
 		return
 	}
-	t := event.Tool{ID: "plan-seed", Name: "todo_write", Args: done, ReadOnly: true}
+	// Use merge: true so intermediate items the model added during execution
+	// are preserved — only the original seeded items are marked completed.
+	mergeDone := mergeCompletedJSON(done)
+	t := event.Tool{ID: "plan-seed", Name: "todo_write", Args: mergeDone, ReadOnly: true}
 	c.sink.Emit(event.Event{Kind: event.ToolDispatch, Tool: t})
 	t.Output = "approved plan finished"
 	c.sink.Emit(event.Event{Kind: event.ToolResult, Tool: t})
@@ -1943,6 +1947,16 @@ func completedPlanTodosJSON(args string) string {
 	if err != nil {
 		return ""
 	}
+	return string(b)
+}
+
+func mergeCompletedJSON(args string) string {
+	var m map[string]any
+	if err := json.Unmarshal([]byte(args), &m); err != nil {
+		return args
+	}
+	m["merge"] = true
+	b, _ := json.Marshal(m)
 	return string(b)
 }
 
