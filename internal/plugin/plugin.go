@@ -77,9 +77,17 @@ type Host struct {
 	resources []Resource
 	failures  []Failure
 
+	// ctx/cancel controls the host lifecycle. Close() cancels the context so
+	// background goroutines (auto-restart, phase-B fetches) bail out promptly.
+	ctx    context.Context
+	cancel context.CancelFunc
+
 	// Detached stats/schema-cache writers from Start; off the boot path but
 	// drained by Close so cleanup can't race a still-open cache file.
 	bgWrites sync.WaitGroup
+
+	// phaseBWg tracks StartPhaseB goroutines so Close() can wait for them.
+	phaseBWg sync.WaitGroup
 }
 
 // Prompts returns every MCP prompt discovered across connected servers.
@@ -219,7 +227,8 @@ func Start(ctx context.Context, specs []Spec, p StartPolicy) (*Host, []tool.Tool
 	ch := make(chan result, len(specs))
 
 	// Created before the fan-out so the detached cache writers can join bgWrites.
-	h := &Host{}
+	ctx, cancel := context.WithCancel(ctx)
+	h := &Host{ctx: ctx, cancel: cancel}
 
 	for i, s := range specs {
 		go func(idx int, spec Spec) {
@@ -321,12 +330,17 @@ func Start(ctx context.Context, specs []Spec, p StartPolicy) (*Host, []tool.Tool
 
 // Close terminates all plugin connections.
 func (h *Host) Close() {
-	h.mu.RLock()
-	clients := append([]*Client(nil), h.clients...) // snapshot; close outside the lock
-	h.mu.RUnlock()
+	if h.cancel != nil {
+		h.cancel() // signal shutdown to all background goroutines
+	}
+	h.mu.Lock()
+	clients := h.clients
+	h.clients = nil // clear so auto-restart goroutines see empty list
+	h.mu.Unlock()
 	for _, c := range clients {
 		c.close()
 	}
+	h.phaseBWg.Wait() // wait for StartPhaseB goroutines
 	h.bgWrites.Wait() // drain detached stats/schema writers before returning
 }
 
@@ -344,10 +358,18 @@ func (h *Host) StartPhaseB(ctx context.Context, sink event.Sink) {
 	h.mu.RUnlock()
 	for _, c := range clients {
 		if c.hasPrompts {
-			go h.fetchPrompts(ctx, c, sink)
+			h.phaseBWg.Add(1)
+			go func(cl *Client) {
+				defer h.phaseBWg.Done()
+				h.fetchPrompts(ctx, cl, sink)
+			}(c)
 		}
 		if c.hasResources {
-			go h.fetchResources(ctx, c, sink)
+			h.phaseBWg.Add(1)
+			go func(cl *Client) {
+				defer h.phaseBWg.Done()
+				h.fetchResources(ctx, cl, sink)
+			}(c)
 		}
 	}
 }
@@ -586,25 +608,69 @@ func (h *Host) addConnected(ctx context.Context, s Spec) ([]tool.Tool, error) {
 	// calls cannot starve a /mcp add of its return value. nil sink keeps hot-add
 	// quiet — the chat UI re-queries Host.Prompts()/Resources() on demand.
 	if c.hasPrompts {
-		go h.fetchPrompts(ctx, c, nil)
+		h.phaseBWg.Add(1)
+		go func() {
+			defer h.phaseBWg.Done()
+			h.fetchPrompts(ctx, c, nil)
+		}()
 	}
 	if c.hasResources {
-		go h.fetchResources(ctx, c, nil)
+		h.phaseBWg.Add(1)
+		go func() {
+			defer h.phaseBWg.Done()
+			h.fetchResources(ctx, c, nil)
+		}()
 	}
 	// Auto-restart monitoring: when the subprocess exits unexpectedly
 	// (e.g. CodeGraph daemon idle timeout), restart it transparently so the
 	// user never sees a "failed" status that needs manual reconnect.
 	// Uses exponential backoff (2s, 4s, 8s, 16s, 32s, capped at 32s) and
 	// stops after maxRetries consecutive failures to avoid infinite loops.
+	h.phaseBWg.Add(1)
 	go func() {
+		defer h.phaseBWg.Done()
 		const maxRetries = 5
 		backoff := 2 * time.Second
 		const maxBackoff = 32 * time.Second
 
-		<-c.t.Done()
-		time.Sleep(backoff)
+		// Wait for transport to die, or host shutdown. When ctx is nil
+		// (tests that bypass Start()), just wait for the transport.
+		if h.ctx != nil {
+			select {
+			case <-c.t.Done():
+			case <-h.ctx.Done():
+				return
+			}
+		} else {
+			<-c.t.Done()
+		}
+
+		// Use a select on h.ctx.Done() so shutdown doesn't wait for backoff.
+		sleepOrDone := func(d time.Duration) bool {
+			if h.ctx != nil {
+				select {
+				case <-time.After(d):
+					return false
+				case <-h.ctx.Done():
+					return true
+				}
+			}
+			time.Sleep(d)
+			return false
+		}
+		if sleepOrDone(backoff) {
+			return
+		}
 
 		for attempt := 1; attempt <= maxRetries; attempt++ {
+			if h.ctx != nil {
+				select {
+				case <-h.ctx.Done():
+					return // host shutting down
+				default:
+				}
+			}
+
 			h.mu.Lock()
 			stillPresent := false
 			for _, cl := range h.clients {
@@ -619,8 +685,12 @@ func (h *Host) addConnected(ctx context.Context, s Spec) ([]tool.Tool, error) {
 			}
 			h.mu.Unlock()
 
+			restartCtx := h.ctx
+			if restartCtx == nil {
+				restartCtx = context.Background()
+			}
 			h.Remove(s.Name)
-			if _, err := h.Add(context.Background(), s); err == nil {
+			if _, err := h.Add(restartCtx, s); err == nil {
 				return // success
 			}
 
@@ -628,7 +698,9 @@ func (h *Host) addConnected(ctx context.Context, s Spec) ([]tool.Tool, error) {
 			if attempt == maxRetries {
 				return // give up
 			}
-			time.Sleep(backoff)
+			if sleepOrDone(backoff) {
+				return
+			}
 			backoff *= 2
 			if backoff > maxBackoff {
 				backoff = maxBackoff
