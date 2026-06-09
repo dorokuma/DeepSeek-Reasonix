@@ -24,6 +24,7 @@ import (
 	"strings"
 	"time"
 
+	"reasonix/internal/envutil"
 	"reasonix/internal/proc"
 )
 
@@ -379,6 +380,7 @@ func DefaultSpawner(ctx context.Context, in SpawnInput) SpawnResult {
 	proc.HideWindow(cmd)
 	cmd.Dir = in.Cwd
 	cmd.Stdin = strings.NewReader(in.Stdin)
+	cmd.Env = envutil.StripCredentialEnv(os.Environ())
 	var outBuf, errBuf cappedBuffer
 	cmd.Stdout = &outBuf
 	cmd.Stderr = &errBuf

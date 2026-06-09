@@ -8,12 +8,12 @@ import (
 	"io"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"runtime"
 	"strings"
 	"sync"
 	"time"
 
+	"reasonix/internal/envutil"
 	"reasonix/internal/jobs"
 	"reasonix/internal/rtk"
 	"reasonix/internal/sandbox"
@@ -234,14 +234,14 @@ func commandPreview(cmd string) string {
 }
 
 func bashCommandEnv(ctx context.Context) []string {
-	env := stripBashCredentialEnv(os.Environ())
+	env := envutil.StripCredentialEnv(os.Environ())
 	if runtime.GOOS == "windows" {
 		return env
 	}
-	currentPath, _ := envValue(env, "PATH")
+	currentPath, _ := envutil.EnvValue(env, "PATH")
 	if shellPath := strings.TrimSpace(bashShellPATH(ctx)); shellPath != "" {
-		if merged := mergePathLists(shellPath, currentPath); merged != currentPath {
-			env = setEnvValue(env, "PATH", merged)
+		if merged := envutil.MergePathLists(shellPath, currentPath); merged != currentPath {
+			env = envutil.SetEnvValue(env, "PATH", merged)
 		}
 	}
 	return env
@@ -249,36 +249,6 @@ func bashCommandEnv(ctx context.Context) []string {
 
 // stripBashCredentialEnv removes env vars likely to carry secrets from the
 // bash subprocess environment so API keys, tokens, and passwords don't leak
-// into child processes.
-func stripBashCredentialEnv(env []string) []string {
-	out := make([]string, 0, len(env))
-	for _, kv := range env {
-		k, _, ok := strings.Cut(kv, "=")
-		if !ok {
-			continue
-		}
-		upper := strings.ToUpper(k)
-		if strings.HasSuffix(upper, "_KEY") ||
-			strings.HasSuffix(upper, "_TOKEN") ||
-			strings.HasSuffix(upper, "_SECRET") ||
-			strings.HasSuffix(upper, "_PASSWORD") ||
-			strings.HasSuffix(upper, "_PASS") ||
-			strings.HasSuffix(upper, "_CREDENTIALS") ||
-			strings.HasSuffix(upper, "_CREDENTIAL") ||
-			strings.HasSuffix(upper, "_APIKEY") ||
-			strings.HasSuffix(upper, "_APITOKEN") ||
-			strings.HasSuffix(upper, "_ACCESS_KEY") ||
-			strings.HasSuffix(upper, "_AUTH") ||
-			strings.HasSuffix(upper, "_CERT") ||
-			strings.HasSuffix(upper, "_SIGNATURE") ||
-			upper == "TOKEN" || upper == "SECRET" || upper == "PASSWORD" ||
-			upper == "AUTHORIZATION" || upper == "BEARER" {
-			continue
-		}
-		out = append(out, kv)
-	}
-	return out
-}
 
 func defaultBashShellPATH(ctx context.Context) string {
 	if runtime.GOOS == "windows" {
@@ -350,59 +320,4 @@ func isExecutableFile(path string) bool {
 		return false
 	}
 	return info.Mode().Perm()&0o111 != 0
-}
-
-func setEnvValue(env []string, key, value string) []string {
-	out := make([]string, 0, len(env)+1)
-	replaced := false
-	for _, kv := range env {
-		k, _, ok := strings.Cut(kv, "=")
-		if ok && envKeyEqual(k, key) {
-			if !replaced {
-				out = append(out, key+"="+value)
-				replaced = true
-			}
-			continue
-		}
-		out = append(out, kv)
-	}
-	if !replaced {
-		out = append(out, key+"="+value)
-	}
-	return out
-}
-
-func envValue(env []string, key string) (string, bool) {
-	for i := len(env) - 1; i >= 0; i-- {
-		k, v, ok := strings.Cut(env[i], "=")
-		if ok && envKeyEqual(k, key) {
-			return v, true
-		}
-	}
-	return "", false
-}
-
-func envKeyEqual(a, b string) bool {
-	if runtime.GOOS == "windows" {
-		return strings.EqualFold(a, b)
-	}
-	return a == b
-}
-
-func mergePathLists(primary, secondary string) string {
-	var out []string
-	seen := map[string]bool{}
-	add := func(path string) {
-		for _, part := range filepath.SplitList(path) {
-			part = strings.TrimSpace(part)
-			if part == "" || seen[part] {
-				continue
-			}
-			seen[part] = true
-			out = append(out, part)
-		}
-	}
-	add(primary)
-	add(secondary)
-	return strings.Join(out, string(os.PathListSeparator))
 }

@@ -2,6 +2,7 @@ package builtin
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -12,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"reasonix/internal/netclient"
 	"reasonix/internal/tool"
 )
 
@@ -123,7 +125,16 @@ func (webFetch) Execute(ctx context.Context, args json.RawMessage) (string, erro
 	req.Header.Set("User-Agent", "reasonix-web-fetch/1.0")
 	req.Header.Set("Accept", "text/html,text/plain,text/markdown,application/json,*/*;q=0.5")
 
-	resp, err := ssrfGuardedClient().Do(req)
+	client := ssrfGuardedClient()
+	if caPool := netclient.GlobalCACerts(); caPool != nil {
+		if tr, ok := client.Transport.(*http.Transport); ok {
+			if tr.TLSClientConfig == nil {
+				tr.TLSClientConfig = new(tls.Config)
+			}
+			tr.TLSClientConfig.RootCAs = caPool
+		}
+	}
+	resp, err := client.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("fetch %s: %w", p.URL, err)
 	}

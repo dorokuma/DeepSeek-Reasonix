@@ -7,6 +7,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/url"
@@ -35,6 +36,9 @@ var globalCACerts *x509.CertPool
 // SetGlobalCACerts sets the global CA certificate pool used by all HTTP
 // clients. Called once during boot; nil is safe (uses system pool).
 func SetGlobalCACerts(pool *x509.CertPool) { globalCACerts = pool }
+
+// GlobalCACerts returns the global CA certificate pool, or nil if not set.
+func GlobalCACerts() *x509.CertPool { return globalCACerts }
 
 // ProxySpec is the resolved proxy configuration used by network clients. URL is
 // an advanced override; otherwise Type/Server/Port/Credentials are composed into a
@@ -311,6 +315,7 @@ func LoadCACert(path string) (*x509.CertPool, error) {
 	}
 	pool, err := x509.SystemCertPool()
 	if err != nil {
+		slog.Warn("netclient: system cert pool unavailable, using only user CA", "err", err)
 		pool = x509.NewCertPool()
 	}
 	if !pool.AppendCertsFromPEM(pem) {

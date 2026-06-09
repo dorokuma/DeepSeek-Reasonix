@@ -11,8 +11,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
+	"strconv"
+	"time"
 )
 
 // KeyPath returns the path to the session key file.
@@ -28,14 +31,27 @@ func KeyPath() string {
 func Enabled() bool { return KeyPath() != "" }
 
 // loadOrCreateKey loads the session key from disk, creating a new random key if
-// none exists yet. The key file gets 0o600 permissions.
+// none exists yet. The key file gets 0o600 permissions. If the existing key file
+// is corrupted (exists but not exactly 32 bytes), it is backed up before
+// generating a new key, and a warning is logged.
 func loadOrCreateKey() ([]byte, error) {
 	path := KeyPath()
 	if path == "" {
 		return nil, errors.New("sessioncrypt: cannot resolve user config dir")
 	}
-	if data, err := os.ReadFile(path); err == nil && len(data) == 32 {
-		return data, nil
+	if data, err := os.ReadFile(path); err == nil {
+		if len(data) == 32 {
+			return data, nil
+		}
+		// File exists but length != 32 — corrupted. Back it up and warn.
+		backup := path + ".corrupt." + strconv.FormatInt(time.Now().UnixMilli(), 36)
+		if renameErr := os.Rename(path, backup); renameErr != nil {
+			slog.Warn("sessioncrypt: key file corrupted, backup failed", "path", path, "backup", backup, "err", renameErr)
+		} else {
+			slog.Warn("sessioncrypt: key file corrupted, backed up", "path", path, "backup", backup)
+		}
+	} else if !os.IsNotExist(err) {
+		slog.Warn("sessioncrypt: reading key file", "path", path, "err", err)
 	}
 	key := make([]byte, 32) // AES-256
 	if _, err := rand.Read(key); err != nil {

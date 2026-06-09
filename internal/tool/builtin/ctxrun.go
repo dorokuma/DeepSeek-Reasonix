@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"reasonix/internal/ctxmode"
+	"reasonix/internal/envutil"
 	"reasonix/internal/sandbox"
 	"reasonix/internal/tool"
 )
@@ -86,7 +87,7 @@ func (c ctxRun) Execute(ctx context.Context, args json.RawMessage) (string, erro
 	if c.workDir != "" {
 		cmd.Dir = c.workDir
 	}
-	cmd.Env = stripBashCredentialEnv(os.Environ())
+	cmd.Env = envutil.StripCredentialEnv(os.Environ())
 	if scriptPath != "" {
 		// Script already on disk; argv runs the shell command referencing it.
 		_ = scriptPath
