@@ -31,7 +31,6 @@ func init() { tool.RegisterBuiltin(readFile{}) }
 // at init resolves against the process working directory.
 type readFile struct{ workDir string }
 
-const readFileDefaultLimit = 2000 // lines when RTK is off and limit is unset
 
 func (readFile) Name() string { return "read_file" }
 
