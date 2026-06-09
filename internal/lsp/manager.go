@@ -159,7 +159,31 @@ func (m *Manager) spawn(_ string, spec ServerSpec) (*client, error) {
 	if err != nil {
 		return nil, &notInstalledError{command: spec.Command, hint: spec.InstallHint}
 	}
+	// Security: reject LSP binaries in world-writable directories (e.g. /tmp)
+	// that could be planted by another user or a compromised process.
+	absBin, err := filepath.Abs(bin)
+	if err == nil {
+		dir := filepath.Dir(absBin)
+		if isWorldWritable(dir) {
+			return nil, fmt.Errorf("language server %q at %q is in a world-writable directory %q — refusing to start for security", spec.Command, absBin, dir)
+		}
+	}
 	return startClient(m.root, bin, spec.Args, spec.Env, spec.LanguageID, m.wsRoot)
+}
+
+// isWorldWritable checks whether dir has its sticky bit set (world-writable
+// dirs with the sticky bit, like /tmp, are still unsafe for binary execution).
+// It returns true if the directory is writable by non-owners.
+func isWorldWritable(dir string) bool {
+	info, err := os.Stat(dir)
+	if err != nil {
+		return false
+	}
+	mode := info.Mode()
+	// Check "other" write permission; /tmp mode is 0o1777 (sticky + world-writable).
+	// The sticky bit doesn't help here — we're checking where a binary *resides*,
+	// not where someone else writes a file.
+	return mode.Perm()&0o002 != 0
 }
 
 func (m *Manager) prepare(ctx context.Context, file string, line int, symbol string) (*client, string, Position, error) {

@@ -231,7 +231,7 @@ func commandPreview(cmd string) string {
 }
 
 func bashCommandEnv(ctx context.Context) []string {
-	env := os.Environ()
+	env := stripBashCredentialEnv(os.Environ())
 	if runtime.GOOS == "windows" {
 		return env
 	}
@@ -242,6 +242,34 @@ func bashCommandEnv(ctx context.Context) []string {
 		}
 	}
 	return env
+}
+
+// stripBashCredentialEnv removes env vars likely to carry secrets from the
+// bash subprocess environment so API keys, tokens, and passwords don't leak
+// into child processes.
+func stripBashCredentialEnv(env []string) []string {
+	out := make([]string, 0, len(env))
+	for _, kv := range env {
+		k, _, ok := strings.Cut(kv, "=")
+		if !ok {
+			continue
+		}
+		upper := strings.ToUpper(k)
+		if strings.HasSuffix(upper, "_KEY") ||
+			strings.HasSuffix(upper, "_TOKEN") ||
+			strings.HasSuffix(upper, "_SECRET") ||
+			strings.HasSuffix(upper, "_PASSWORD") ||
+			strings.HasSuffix(upper, "_PASS") ||
+			strings.HasSuffix(upper, "_CREDENTIALS") ||
+			strings.HasSuffix(upper, "_CREDENTIAL") ||
+			strings.HasSuffix(upper, "_APIKEY") ||
+			strings.HasSuffix(upper, "_APITOKEN") ||
+			upper == "TOKEN" || upper == "SECRET" || upper == "PASSWORD" {
+			continue
+		}
+		out = append(out, kv)
+	}
+	return out
 }
 
 func defaultBashShellPATH(ctx context.Context) string {
