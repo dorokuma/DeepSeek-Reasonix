@@ -529,6 +529,13 @@ func chatREPL(args []string) int {
 	slg := slog.New(slog.NewTextHandler(slogFile(), nil))
 	slog.SetDefault(slg)
 
+	if m.nativeScrollback {
+		reserveNativeScrollbackFrame(os.Stdout, m.bottomRows())
+	}
+
+	// Non-Termux terminals use an alt-screen transcript viewport. Termux stays
+	// in the normal buffer so native touch scrollback and soft-keyboard focus
+	// keep working; finalized transcript lines are emitted via tea.Println.
 	p := tea.NewProgram(m)
 	final, runErr := p.Run()
 	// Close the active controller plus any retired ones from /model switches.
@@ -570,6 +577,13 @@ func slogFile() io.Writer {
 	// Best-effort: leave the file open for the TUI's lifetime; the OS
 	// reclaims the fd on process exit. No need to track and close it.
 	return f
+}
+
+func reserveNativeScrollbackFrame(w io.Writer, rows int) {
+	for i := 0; i < rows; i++ {
+		fmt.Fprintln(w)
+	}
+}
 }
 
 // setupTargets is where the wizard writes: the TOML config and the secrets file.
