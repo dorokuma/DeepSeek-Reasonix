@@ -240,9 +240,43 @@ func parseShellPATH(out []byte, marker string) string {
 }
 
 func mergeEnv(base []string, overrides map[string]string) []string {
+	// Strip known credential env vars from the inherited environment so
+	// MCP subprocesses don't inherit API keys, tokens, or passwords unless
+	// explicitly declared in the spec's Env. This prevents credential
+	// leakage via /proc/self/environ or child process inheritance.
+	base = stripCredentialEnv(base)
 	out := append([]string(nil), base...)
 	for k, v := range overrides {
 		out = setEnvValue(out, k, v)
+	}
+	return out
+}
+
+// stripCredentialEnv removes env vars likely to carry secrets from the
+// inherited process environment. Callers should declare needed credentials
+// explicitly in the spec's Env field instead of relying on inheritance.
+func stripCredentialEnv(env []string) []string {
+	out := make([]string, 0, len(env))
+	for _, kv := range env {
+		k, _, ok := strings.Cut(kv, "=")
+		if !ok {
+			continue
+		}
+		// Remove env vars matching common credential patterns.
+		upper := strings.ToUpper(k)
+		if strings.HasSuffix(upper, "_KEY") ||
+			strings.HasSuffix(upper, "_TOKEN") ||
+			strings.HasSuffix(upper, "_SECRET") ||
+			strings.HasSuffix(upper, "_PASSWORD") ||
+			strings.HasSuffix(upper, "_PASS") ||
+			strings.HasSuffix(upper, "_CREDENTIALS") ||
+			strings.HasSuffix(upper, "_CREDENTIAL") ||
+			strings.HasSuffix(upper, "_APIKEY") ||
+			strings.HasSuffix(upper, "_APITOKEN") ||
+			upper == "TOKEN" || upper == "SECRET" || upper == "PASSWORD" {
+			continue
+		}
+		out = append(out, kv)
 	}
 	return out
 }

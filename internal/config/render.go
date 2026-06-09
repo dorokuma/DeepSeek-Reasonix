@@ -125,7 +125,7 @@ func RenderTOMLForScope(c *Config, scope RenderScope) string {
 			b.WriteString("# username = \"\"\n")
 		}
 		if c.Network.Proxy.Password != "" {
-			fmt.Fprintf(&b, "password = %q   # supports ${VAR} expansion\n", c.Network.Proxy.Password)
+			fmt.Fprintf(&b, "password = \"****\"   # set via credential store; supports ${VAR} expansion\n")
 		} else {
 			b.WriteString("# password = \"${REASONIX_PROXY_PASSWORD}\"   # optional; supports ${VAR} expansion\n")
 		}

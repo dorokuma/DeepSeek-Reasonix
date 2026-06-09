@@ -121,7 +121,10 @@ var bufPool = sync.Pool{
 }
 
 func (c *client) Stream(ctx context.Context, req provider.Request) (<-chan provider.Chunk, error) {
-	buf := bufPool.Get().(*bytes.Buffer)
+	buf, ok := bufPool.Get().(*bytes.Buffer)
+	if !ok {
+		return nil, fmt.Errorf("%s: bufPool type mismatch: got %T, want *bytes.Buffer", c.name, buf)
+	}
 	buf.Reset()
 	if err := json.NewEncoder(buf).Encode(c.buildRequest(req)); err != nil {
 		bufPool.Put(buf)
