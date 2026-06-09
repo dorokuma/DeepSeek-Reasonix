@@ -4,16 +4,20 @@
 package netclient
 
 import (
+	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"golang.org/x/net/http/httpproxy"
@@ -28,14 +32,24 @@ const (
 	ModeOff    = "off"
 )
 
-// globalCACerts is set by SetGlobalCACerts (called during boot) and read by
-// all HTTP clients that go through NewTransport. When non-nil, it is the
-// default RootCAs for TransportOptions that don't explicitly specify one.
-var globalCACerts *x509.CertPool
+// globalCACerts is set once by SetGlobalCACerts and read by NewTransport.
+// Guarded by globalCACertsOnce so test/edge re-initialization panics early.
+var (
+	globalCACerts     *x509.CertPool
+	globalCACertsOnce sync.Once
+)
 
 // SetGlobalCACerts sets the global CA certificate pool used by all HTTP
-// clients. Called once during boot; nil is safe (uses system pool).
-func SetGlobalCACerts(pool *x509.CertPool) { globalCACerts = pool }
+// clients. It panics if called more than once (catches accidental re-init).
+// Called during boot; passing nil is safe (uses system pool).
+func SetGlobalCACerts(pool *x509.CertPool) {
+	globalCACertsOnce.Do(func() {
+		globalCACerts = pool
+	})
+	if globalCACerts != pool {
+		panic("netclient: SetGlobalCACerts called more than once")
+	}
+}
 
 // GlobalCACerts returns the global CA certificate pool, or nil if not set.
 func GlobalCACerts() *x509.CertPool { return globalCACerts }
@@ -99,7 +113,10 @@ func NewHTTPClient(spec ProxySpec, opts TransportOptions) (*http.Client, error) 
 	if err != nil {
 		return nil, err
 	}
-	return &http.Client{Transport: tr}, nil
+	return &http.Client{
+		Transport:     tr,
+		CheckRedirect: safeRedirect(),
+	}, nil
 }
 
 // NewTransport clones net/http's default transport and overlays the requested
@@ -138,6 +155,31 @@ func NewTransport(spec ProxySpec, opts TransportOptions) (*http.Transport, error
 		tr.TLSClientConfig.RootCAs = globalCACerts
 	}
 	return tr, nil
+}
+
+// safeRedirect returns a CheckRedirect function that limits redirects to 5 hops
+// and rejects redirects to private/internal IP addresses (SSRF protection).
+func safeRedirect() func(req *http.Request, via []*http.Request) error {
+	return func(req *http.Request, via []*http.Request) error {
+		if len(via) >= 5 {
+			return errors.New("too many redirects (max 5)")
+		}
+		// Reject redirects to private IP ranges.
+		host := req.URL.Hostname()
+		if ips, err := net.DefaultResolver.LookupNetIP(context.Background(), "ip", host); err == nil {
+			for _, ip := range ips {
+				if isPrivateIP(ip) {
+					return fmt.Errorf("redirect to private IP %s rejected (SSRF protection)", ip)
+				}
+			}
+		}
+		return nil
+	}
+}
+
+// isPrivateIP reports whether ip is in a private or link-local range.
+func isPrivateIP(ip netip.Addr) bool {
+	return ip.IsPrivate() || ip.IsLoopback() || ip.IsLinkLocalUnicast()
 }
 
 // Summary returns a redacted, user-facing description for diagnostics.

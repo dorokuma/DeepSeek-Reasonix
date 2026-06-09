@@ -109,10 +109,16 @@ func (e *notInstalledError) Error() string {
 }
 
 func (m *Manager) abs(p string) string {
-	if filepath.IsAbs(p) {
-		return filepath.Clean(p)
+	cleaned := filepath.Clean(p)
+	if !filepath.IsAbs(cleaned) {
+		return filepath.Join(m.wsRoot, cleaned)
 	}
-	return filepath.Join(m.wsRoot, p)
+	// Absolute path: ensure it's within the workspace root.
+	rel, err := filepath.Rel(m.wsRoot, cleaned)
+	if err != nil || strings.HasPrefix(rel, "..") {
+		return filepath.Join(m.wsRoot, cleaned)
+	}
+	return cleaned
 }
 
 // resolve returns the running client for the file's language, spawning it on

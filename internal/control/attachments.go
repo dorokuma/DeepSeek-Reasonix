@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/exec"
@@ -55,11 +56,11 @@ func SaveAttachmentDataURL(origName, dataURL string) (string, error) {
 	}
 	if _, err := f.Write(raw); err != nil {
 		_ = f.Close()
-		_ = os.Remove(rel)
+		removeOrLog(rel)
 		return "", err
 	}
 	if err := f.Close(); err != nil {
-		_ = os.Remove(rel)
+		removeOrLog(rel)
 		return "", err
 	}
 	return filepath.ToSlash(rel), nil
@@ -104,15 +105,15 @@ func SaveImageBytes(declaredMime string, raw []byte) (string, error) {
 	}
 	if n, err := f.Write(raw); err != nil {
 		_ = f.Close()
-		_ = os.Remove(rel)
+		removeOrLog(rel)
 		return "", err
 	} else if n != len(raw) {
 		_ = f.Close()
-		_ = os.Remove(rel)
+		removeOrLog(rel)
 		return "", io.ErrShortWrite
 	}
 	if err := f.Close(); err != nil {
-		_ = os.Remove(rel)
+		removeOrLog(rel)
 		return "", err
 	}
 	return filepath.ToSlash(rel), nil
@@ -204,11 +205,11 @@ func SaveAttachmentFile(path string) (string, error) {
 	}
 	if _, err := dst.Write(raw); err != nil {
 		_ = dst.Close()
-		_ = os.Remove(rel)
+		removeOrLog(rel)
 		return "", err
 	}
 	if err := dst.Close(); err != nil {
-		_ = os.Remove(rel)
+		removeOrLog(rel)
 		return "", err
 	}
 	return filepath.ToSlash(rel), nil
@@ -399,12 +400,12 @@ func saveDarwinClipboardClass(class string) (string, error) {
 		return "", err
 	}
 	if err := f.Close(); err != nil {
-		_ = os.Remove(rel)
+		removeOrLog(rel)
 		return "", err
 	}
 	abs, err := filepath.Abs(rel)
 	if err != nil {
-		_ = os.Remove(rel)
+		removeOrLog(rel)
 		return "", err
 	}
 	script := fmt.Sprintf(`
@@ -427,11 +428,11 @@ on error errMsg
 end try
 `, abs, class)
 	if out, err := exec.Command("osascript", "-e", script).CombinedOutput(); err != nil {
-		_ = os.Remove(rel)
+		removeOrLog(rel)
 		return "", fmt.Errorf("read clipboard image: %s", strings.TrimSpace(string(out)))
 	}
 	raw, err := os.ReadFile(rel)
-	_ = os.Remove(rel)
+	removeOrLog(rel)
 	if err != nil {
 		return "", err
 	}
@@ -482,4 +483,12 @@ func imageExt(mime string) string {
 		return ".webp"
 	}
 	return ""
+}
+
+// removeOrLog removes a file and logs a warning if the removal fails.
+// Used in defer/cleanup paths where the error cannot be returned to the caller.
+func removeOrLog(path string) {
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		slog.Warn("attachment cleanup: remove failed", "path", path, "err", err)
+	}
 }

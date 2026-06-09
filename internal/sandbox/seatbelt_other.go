@@ -21,8 +21,8 @@ func Command(spec Spec, sh Shell, command string) ([]string, bool) {
 		argv := append([]string{bwrap}, bwrapArgs(spec, sh, command)...)
 		return argv, true
 	}
-	// enforce requested but bwrap unavailable — boot/acp already warned at
-	// startup; fall back to unconfined (the false result signals "not sandboxed").
+	// enforce requested but bwrap unavailable — return the command unwrapped
+	// with false so the caller can refuse to run it.
 	return sh.argv(command), false
 }
 

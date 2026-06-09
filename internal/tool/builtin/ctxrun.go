@@ -79,7 +79,10 @@ func (c ctxRun) Execute(ctx context.Context, args json.RawMessage) (string, erro
 	}
 
 	sh := sandbox.ResolveShell()
-	argv, _ := sandbox.Command(c.sb, sh, shellCmd)
+	argv, confined := sandbox.Command(c.sb, sh, shellCmd)
+	if c.sb.Mode == "enforce" && !confined {
+		return "", fmt.Errorf("sandbox is configured in enforce mode but bubblewrap (bwrap) is not available on this system")
+	}
 	runCtx, cancel := context.WithTimeout(ctx, ctxRunTimeout)
 	defer cancel()
 
