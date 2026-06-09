@@ -56,7 +56,7 @@ func (w writeFile) Execute(ctx context.Context, args json.RawMessage) (string, e
 			return "", fmt.Errorf("mkdir %s: %w", dir, err)
 		}
 	}
-	if err := os.WriteFile(p.Path, []byte(p.Content), 0o644); err != nil {
+	if err := os.WriteFile(p.Path, []byte(p.Content), 0o600); err != nil {
 		return "", fmt.Errorf("write %s: %w", p.Path, err)
 	}
 	return fmt.Sprintf("wrote %d bytes to %s", len(p.Content), p.Path), nil

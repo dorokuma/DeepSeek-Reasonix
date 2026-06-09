@@ -74,7 +74,12 @@ func (bashOutput) Execute(ctx context.Context, args json.RawMessage) (string, er
 }
 
 // filterLines keeps only the lines of s matching the regular expression re.
+// re is limited to 512 characters to prevent ReDoS attacks.
 func filterLines(s, re string) (string, error) {
+	const maxPatternLen = 512
+	if len(re) > maxPatternLen {
+		return "", fmt.Errorf("filter regexp too long (%d chars, max %d)", len(re), maxPatternLen)
+	}
 	rx, err := regexp.Compile(re)
 	if err != nil {
 		return "", fmt.Errorf("invalid filter regexp: %w", err)
