@@ -29,9 +29,6 @@ import (
 // window before the next compaction runs.
 const maxToolOutputBytes = 32 * 1024
 
-const maxFinalReadinessBlocks = 3
-const maxEmptyFinalBlocks = 3
-
 // Renderer redraws the assistant's final-answer text as styled output. It is
 // applied only after a turn's text stream completes, so the user sees raw
 // markdown stream live, then a single redraw replaces it with formatted
@@ -533,11 +530,8 @@ func (a *Agent) Run(ctx context.Context, input string) error {
 			}
 
 			a.trimEmptyResponseScaffolding()
-			if hasVisibleAssistantText(text) {
-				
-			}
 			a.session.Add(assistantMsg)
-			return nil // model gave a final answer
+			return nil // model gave a normal final answer
 		}
 		// Keep reasoning_content on tool-call turns for session archive.
 		a.session.Add(assistantMsg)

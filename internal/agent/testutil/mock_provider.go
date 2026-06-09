@@ -137,7 +137,7 @@ func (p *MockProvider) LastRequest() *provider.Request {
 	return &r
 }
 
-// MessageCount is a shortcut for len(Requests()).
+// CallCount is a shortcut for len(Requests()).
 func (p *MockProvider) CallCount() int {
 	p.mu.Lock()
 	defer p.mu.Unlock()
