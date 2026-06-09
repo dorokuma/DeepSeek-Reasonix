@@ -50,6 +50,7 @@ func (s *metricsSink) Emit(e event.Event) {
 }
 
 
+
 func writeMetrics(path string, m RunMetrics) error {
 	b, err := json.MarshalIndent(m, "", "  ")
 	if err != nil {
