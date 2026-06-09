@@ -134,7 +134,10 @@ func (b bash) Execute(ctx context.Context, args json.RawMessage) (string, error)
 	}
 
 	// Wrap in the OS sandbox when configured; otherwise argv is just the shell.
-	argv, _ := sandbox.Command(b.sb, sh, p.Command)
+	argv, confined := sandbox.Command(b.sb, sh, p.Command)
+	if b.sb.Mode == "enforce" && !confined {
+		return "", fmt.Errorf("sandbox is configured in enforce mode but bubblewrap (bwrap) is not available on this system")
+	}
 	cmdEnv := bashCommandEnv(ctx)
 
 	if p.RunInBackground {

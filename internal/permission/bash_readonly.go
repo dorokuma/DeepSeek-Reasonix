@@ -22,6 +22,12 @@ var readOnlyBashCommands = map[string]bool{
 	"man": true, "info": true, "help": true,
 	"true": true, "false": true, "test": true, "[": true,
 	"basename": true, "dirname": true, "realpath": true, "readlink": true,
+	// Read-only utilities
+	"jq": true, "yq": true,
+	"dig": true, "nslookup": true, "host": true,
+	"ping": true, "traceroute": true, "mtr": true,
+	"ss": true, "ip": true, "ifconfig": true, "netstat": true, "lsof": true,
+	"journalctl": true,
 }
 
 // readOnlyBashPrefixes are command prefixes where the second word
@@ -90,16 +96,22 @@ func isReadOnlyBashSubject(subject string) bool {
 }
 
 func containsShellSyntax(cmd string) bool {
-	return strings.ContainsAny(cmd, ";|&<>\n`") || strings.Contains(cmd, "$(")
+	// Case-insensitive $() catches both $(...) and $(...) variants.
+	upper := strings.ToUpper(cmd)
+	return strings.ContainsAny(cmd, ";|&<>\n`") || strings.Contains(upper, "$(") || strings.Contains(cmd, "${")
 }
 
 func hasUnsafeReadOnlyArgs(base string, args []string) bool {
 	switch base {
 	case "find":
-		return hasAnyArg(args, "-exec", "-execdir", "-delete")
+		return hasAnyArg(args, "-exec", "-execdir", "-delete", "-ok")
 	case "sed":
 		for _, arg := range args {
 			if strings.HasPrefix(arg, "-i") || strings.HasPrefix(arg, "--in-place") {
+				return true
+			}
+			// sed -e 'w /etc/crontab' writes to arbitrary paths.
+			if arg == "w" || strings.HasPrefix(arg, "w ") {
 				return true
 			}
 		}

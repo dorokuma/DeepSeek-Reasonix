@@ -33,8 +33,22 @@ func StripCredentialEnv(env []string) []string {
 			strings.HasSuffix(upper, "_AUTH") ||
 			strings.HasSuffix(upper, "_CERT") ||
 			strings.HasSuffix(upper, "_SIGNATURE") ||
+			strings.HasSuffix(upper, "_PWD") ||
+			strings.HasSuffix(upper, "_PAT") ||
+			strings.HasSuffix(upper, "_JWT") ||
+			strings.HasSuffix(upper, "_PASSPHRASE") ||
+			strings.HasSuffix(upper, "_DSN") ||
+			strings.HasSuffix(upper, "_URI") ||
+			strings.HasSuffix(upper, "_KEY_ID") ||
+			strings.HasSuffix(upper, "_ACCESS_KEY_ID") ||
+			strings.HasSuffix(upper, "_CONNECTION_STRING") ||
+			strings.HasSuffix(upper, "_CONNSTR") ||
+			strings.HasSuffix(upper, "_URL") ||
+			strings.HasPrefix(upper, "PG") && (strings.HasSuffix(upper, "PASSWORD") || strings.HasSuffix(upper, "PASS") || strings.HasSuffix(upper, "HOST") || strings.HasSuffix(upper, "DATABASE") || strings.HasSuffix(upper, "USER")) ||
+			strings.HasPrefix(upper, "AWS_") && strings.HasSuffix(upper, "_ID") ||
 			upper == "TOKEN" || upper == "SECRET" || upper == "PASSWORD" ||
-			upper == "AUTHORIZATION" || upper == "BEARER" {
+			upper == "AUTHORIZATION" || upper == "BEARER" ||
+			upper == "PGPASSWORD" || upper == "PGPASS" {
 			continue
 		}
 		out = append(out, kv)
@@ -44,24 +58,27 @@ func StripCredentialEnv(env []string) []string {
 
 // SetEnvValue sets a key=value entry, replacing any existing entry with the
 // same key. The new entry is placed at the position of the last existing
-// occurrence, or appended if absent.
+// occurrence, or appended if absent. When multiple entries with the same key
+// exist (unusual but possible in a hand-crafted slice), only the last
+// occurrence is replaced and duplicates are preserved.
 func SetEnvValue(env []string, key, value string) []string {
-	out := make([]string, 0, len(env)+1)
-	replaced := false
-	for _, kv := range env {
-		k, _, ok := strings.Cut(kv, "=")
+	// Find the last occurrence index.
+	lastIdx := -1
+	for i := len(env) - 1; i >= 0; i-- {
+		k, _, ok := strings.Cut(env[i], "=")
 		if ok && envKeyEqual(k, key) {
-			if !replaced {
-				out = append(out, key+"="+value)
-				replaced = true
-			}
-			continue
+			lastIdx = i
+			break
 		}
-		out = append(out, kv)
 	}
-	if !replaced {
-		out = append(out, key+"="+value)
+	if lastIdx < 0 {
+		// Not found — append.
+		return append(append([]string(nil), env...), key+"="+value)
 	}
+	// Replace the last occurrence in-place.
+	out := make([]string, len(env))
+	copy(out, env)
+	out[lastIdx] = key + "=" + value
 	return out
 }
 
