@@ -96,15 +96,16 @@ func (c *Controller) detectRefs(line string) []ref {
 		}
 	}
 	exists := func(p string) bool {
-		if _, err := os.Stat(p); err == nil {
-			return true
-		}
 		if c.cpRoot != "" {
-			if _, err := os.Stat(filepath.Join(c.cpRoot, p)); err == nil {
-				return true
+			absPath, _, ok := resolveAbsRef(p, c.cpRoot)
+			if !ok {
+				return false
 			}
+			_, err := os.Stat(absPath)
+			return err == nil
 		}
-		return false
+		_, err := os.Stat(p)
+		return err == nil
 	}
 
 	var refs []ref
@@ -134,7 +135,15 @@ func resolveBareNames(refs []ref, workspaceRoot string) []ref {
 		if r.kind != refFile || strings.ContainsAny(r.raw, "/\\") {
 			continue
 		}
-		if _, err := os.Stat(r.raw); err == nil {
+		statPath := r.raw
+		if workspaceRoot != "" {
+			absPath, _, ok := resolveAbsRef(r.raw, workspaceRoot)
+			if !ok {
+				continue
+			}
+			statPath = absPath
+		}
+		if _, err := os.Stat(statPath); err == nil {
 			continue
 		}
 		need[r.raw] = r
@@ -276,7 +285,7 @@ func readFileRef(path, baseDir string) (content string, isDir bool, err error) {
 	}
 
 	if strings.EqualFold(filepath.Ext(rel), ".pdf") {
-		return readPDFRef(rel, info.Size()), false, nil
+		return readPDFRef(absPath, info.Size()), false, nil
 	}
 
 	f, err := root.Open(rel)
