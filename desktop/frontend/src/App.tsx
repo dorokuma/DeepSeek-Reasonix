@@ -80,7 +80,7 @@ import logoWordmark from "./assets/logo-wordmark.svg";
 
 const SIDEBAR_COLLAPSED_KEY = "reasonix.sidebar.collapsed";
 const SIDEBAR_DEFAULT_WIDTH = 264;
-const SIDEBAR_MIN_WIDTH = 248;
+const SIDEBAR_MIN_WIDTH = 264;
 const SIDEBAR_MAX_WIDTH = 300;
 const SIDEBAR_VIEWPORT_RATIO = 0.18;
 const CHAT_MIN_WIDTH = 400;
