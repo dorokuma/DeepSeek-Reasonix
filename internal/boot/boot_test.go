@@ -176,7 +176,7 @@ api_key_env = "REASONIX_TEST_KEY_UNSET"
 func TestAddBuiltinsWithWorkspaceRootKeepsSessionTools(t *testing.T) {
 	reg := tool.NewRegistry()
 	var stderr bytes.Buffer
-	addBuiltins(reg, nil, []string{robustTempDir(t)}, sandbox.Spec{}, 120*time.Second, builtin.SearchSpec{}, &stderr, robustTempDir(t))
+	addBuiltins(reg, nil, []string{t.TempDir()}, sandbox.Spec{}, 120*time.Second, builtin.SearchSpec{}, &stderr, robustTempDir(t))
 	for _, name := range []string{
 		"bash_output",
 		"kill_shell",
@@ -243,8 +243,8 @@ api_key_env = "REASONIX_TEST_KEY_UNSET"
 }
 
 func TestBuildOmitsExcludedSkillRootsFromPromptAndRuntimeList(t *testing.T) {
-	dir := robustTempDir(t)
-	home := robustTempDir(t)
+	dir := t.TempDir()
+	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
 	t.Chdir(dir)

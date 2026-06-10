@@ -24,7 +24,13 @@ var English = Messages{
 	StepRunDesc:    "one-shot task",
 	HelpFooter:     "reasonix help · all commands",
 
-	ChatTip:           "Context is kept across turns. Type 'exit' or Ctrl-D to quit.",
+	ChatTip:                   "Context is kept across turns. Type 'exit' or Ctrl-D to quit.",
+	ChatThoughtForFmt:         "thought for %d s",
+	ChatStatusThinkingFmt:     "%s thinking… (%d s · Esc cancel)",
+	ChatToolWorkingFmt:        "%s working · %d s",
+	ChatStatusRetryingFmt:     "%s retrying (%d/%d)… (Esc cancel)",
+	ChatStatusCacheNowFmt:     "cached %s",
+	ChatStatusCacheAvgFmt:     "avg %s",
 	TurnCancelled:     "cancelled — back to prompt",
 	NoSessionToResume: "no saved session to resume — start a new one with `reasonix chat`",
 	ResumeRequiresTTY: "--resume needs an interactive terminal; pass --continue for the most recent session",
@@ -303,4 +309,7 @@ Configuration:
   Secrets come from the environment via api_key_env (e.g. DEEPSEEK_API_KEY).
   Run 'reasonix setup' to scaffold a config; see docs/SPEC.md.
 `,
+	ToolApprovalPromptFmt:  "needs your permission\n\ntool %s%s\n%s\n",
+	ToolApprovalSourceFmt:  "Source: %s",
+	DiffFoldedFmt:          "… %d more lines",
 }
