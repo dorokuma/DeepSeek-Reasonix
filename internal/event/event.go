@@ -12,6 +12,8 @@
 package event
 
 import (
+	"reasonix/internal/evidence"
+	"reasonix/internal/nilutil"
 	"reasonix/internal/provider"
 )
 
@@ -225,6 +227,24 @@ type Event struct {
 // Sink consumes a turn's events. The agent calls Emit from multiple goroutines
 // (tool progress is streamed from parallel execution goroutines), so a Sink
 // must be safe for concurrent Emit. A channel-backed sink with a draining
+// ReadinessAuditSink is an optional extension for sinks that want to record
+// host final-answer readiness audits. The audit is a structured, non-rendered
+// receipt so the sink can persist or display it without parsing event text.
+type ReadinessAuditSink interface {
+	Sink
+	RecordReadinessAudit(evidence.ReadinessAudit)
+}
+
+// RecordReadinessAudit forwards a readiness audit receipt to sinks that opt in.
+func RecordReadinessAudit(s Sink, a evidence.ReadinessAudit) {
+	if nilutil.IsNil(s) {
+		return
+	}
+	if rs, ok := s.(ReadinessAuditSink); ok {
+		rs.RecordReadinessAudit(a)
+	}
+}
+
 // reader is the simplest correct implementation.
 // block indefinitely — a channel-backed sink should be buffered or drained by
 // a live reader.

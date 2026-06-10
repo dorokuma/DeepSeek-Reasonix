@@ -1300,3 +1300,9 @@ func (c *Config) providerNames() string {
 	}
 	return strings.Join(names, ", ")
 }
+
+// BuildModelFetchURLs builds candidate URLs for fetching available models from a provider.
+func BuildModelFetchURLs(baseURL, apiVersion string) ([]string, error) {
+	return []string{strings.TrimRight(baseURL, "/") + "/models"}, nil
+}
+

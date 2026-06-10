@@ -584,7 +584,6 @@ func reserveNativeScrollbackFrame(w io.Writer, rows int) {
 		fmt.Fprintln(w)
 	}
 }
-}
 
 // setupTargets is where the wizard writes: the TOML config and the secrets file.
 // Keys always go to the reasonix-owned global credentials file so they never land

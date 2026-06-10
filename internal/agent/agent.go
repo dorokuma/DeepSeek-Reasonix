@@ -15,7 +15,7 @@ import (
 	"reasonix/internal/ctxmode"
 	"reasonix/internal/diff"
 	"reasonix/internal/event"
-
+	"reasonix/internal/evidence"
 	"reasonix/internal/instruction"
 	"reasonix/internal/jobs"
 	"reasonix/internal/memory"
@@ -195,6 +195,9 @@ type Agent struct {
 	// reach it. nil leaves those tools to degrade gracefully.
 	jobs *jobs.Manager
 
+	// evidence is a per-user-turn ledger of host-observed tool receipts. It lets
+	// complete_step validate that cited evidence happened before the claim.
+	evidence *evidence.Ledger
 
 	// projectChecks are structured project instructions the agent gates tool
 	// calls against after each turn that wrote files.
@@ -438,7 +441,6 @@ func New(prov provider.Provider, tools *tool.Registry, session *Session, opts Op
 	if strings.TrimSpace(maxStepsKey) == "" {
 		maxStepsKey = "agent.max_steps"
 	}
-	}
 	return &Agent{
 		prov:              prov,
 		tools:             tools,
@@ -452,6 +454,7 @@ func New(prov provider.Provider, tools *tool.Registry, session *Session, opts Op
 		hooks:             hooks,
 		jobs:              opts.Jobs,
 		ctxStore:          ctxStore,
+		evidence:          evidence.NewLedger(),
 		projectChecks:        append([]instruction.VerifyCheck(nil), opts.ProjectChecks...),
 		writeFailureVerifier: true,
 		contextWindow:        opts.ContextWindow,
@@ -605,6 +608,7 @@ func (a *Agent) Run(ctx context.Context, input string) error {
 				a.maybeCompact(ctx, usage)
 				continue
 			}
+			readiness := a.finalReadinessCheck()
 			if readiness.applies {
 				event.RecordReadinessAudit(a.sink, readiness.audit(evidence.ReadinessAllowed, finalReadinessBlocks > 0))
 			}
@@ -1435,3 +1439,6 @@ func finishReasonMessage(u *provider.Usage) (string, bool) {
 		return "", false
 	}
 }
+func PlannerMaxSteps(maxSteps int) int { return maxSteps }
+
+

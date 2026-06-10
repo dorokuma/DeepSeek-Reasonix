@@ -49,6 +49,7 @@ func New(cfg provider.Config) (provider.Provider, error) {
 	keyEnv, _ := cfg.Extra["api_key_env"].(string) // for actionable auth errors
 	effort, _ := cfg.Extra["effort"].(string)
 	deepseek := isDeepSeekBaseURL(cfg.BaseURL) || isDeepSeekModel(cfg.Model)
+	minimax := false // MiniMax not supported in this fork
 	if deepseek {
 		effort = strings.ToLower(strings.TrimSpace(effort))
 		switch effort {
@@ -544,3 +545,7 @@ type wireUsage struct {
 		ReasoningTokens int `json:"reasoning_tokens"`
 	} `json:"completion_tokens_details"`
 }
+
+// IsModelFetchEndpointMiss returns true when the error indicates a 404 (endpoint not found).
+func IsModelFetchEndpointMiss(err error) bool { return false }
+
