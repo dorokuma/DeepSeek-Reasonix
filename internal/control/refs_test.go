@@ -372,3 +372,79 @@ func TestReadFileRefBlocksPathTraversal(t *testing.T) {
 		t.Errorf("expected traversal to fail, got isDir=%v err=%v", isDir, err)
 	}
 }
+
+func TestDetectRefsUsesWorkspaceRootNotProcessCWD(t *testing.T) {
+	cwd := t.TempDir()
+	workspace := t.TempDir()
+	if err := os.WriteFile(filepath.Join(cwd, "cwd-only.txt"), []byte("wrong"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(workspace, "workspace.txt"), []byte("right"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	oldCwd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(cwd); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chdir(oldCwd); err != nil {
+			t.Error(err)
+		}
+	})
+
+	refs := (&Controller{cpRoot: workspace}).detectRefs("see @cwd-only.txt and @workspace.txt")
+	if len(refs) != 1 || refs[0].raw != "workspace.txt" {
+		t.Fatalf("detectRefs should only see workspace files, got %+v", refs)
+	}
+
+	block, errs := (&Controller{cpRoot: workspace}).ResolveRefs(context.Background(), "see @cwd-only.txt")
+	if block != "" || len(errs) != 0 {
+		t.Fatalf("cwd-only file should not be treated as a ref, block=%q errs=%v", block, errs)
+	}
+}
+
+func TestReadFileRefPDFExtractionWithBaseDirUsesAbsPath(t *testing.T) {
+	base := t.TempDir()
+	pdfPath := filepath.Join(base, "docs", "report.pdf")
+	if err := os.MkdirAll(filepath.Dir(pdfPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(pdfPath, []byte("%PDF-1.4 fake"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	outside := t.TempDir()
+	oldCwd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(outside); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chdir(oldCwd); err != nil {
+			t.Error(err)
+		}
+	})
+
+	oldExtract := extractPDFText
+	t.Cleanup(func() { extractPDFText = oldExtract })
+	extractPDFText = func(path string) (pdfExtractResult, error) {
+		if path != pdfPath {
+			t.Fatalf("extract path = %q, want %q", path, pdfPath)
+		}
+		return pdfExtractResult{text: "workspace pdf", tool: "test-extractor"}, nil
+	}
+
+	got, isDir, err := readFileRef("docs/report.pdf", base)
+	if err != nil || isDir {
+		t.Fatalf("scoped pdf = (isDir=%v, err=%v)", isDir, err)
+	}
+	if !strings.Contains(got, "workspace pdf") {
+		t.Fatalf("scoped pdf extraction missing text: %s", got)
+	}
+}
