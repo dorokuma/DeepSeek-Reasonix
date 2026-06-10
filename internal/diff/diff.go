@@ -153,6 +153,7 @@ func myers(a, b []string) ([]op, bool) {
 	if n == 0 && m == 0 {
 		return nil, true
 	}
+<<<<<<< HEAD
 	// Clamp each side to the cap before summing so neither n+m nor the 2*maxD
 	// allocation can overflow int; maxD stays min(n+m, maxDiffEdits).
 	cn, cm := n, m
@@ -165,6 +166,11 @@ func myers(a, b []string) ([]op, bool) {
 	maxD := cn + cm
 	if maxD > maxDiffEdits {
 		maxD = maxDiffEdits // bound the trace's O(D²) footprint
+=======
+	maxD := n + m
+	if maxD > maxDiffEdits || maxD < 0 {
+		maxD = maxDiffEdits // bound the trace's O(D²) footprint (and any n+m overflow)
+>>>>>>> 175d43d4 (fix(security): resolve open code-scanning alerts (archive extraction, command injection, untrusted checkout, integer bounds) (#3718))
 	}
 	}
 	offset := maxD // shift negative k into a non-negative array index
