@@ -7417,15 +7417,16 @@ a[href] {
 }
 .cap-failures {
   margin-bottom: 12px;
-  padding: 10px;
-  border: 1px solid rgba(231, 103, 103, 0.3);
+  padding: 9px 10px;
+  border: 1px solid color-mix(in srgb, var(--err) 24%, var(--border-soft));
   border-radius: 8px;
-  background: color-mix(in srgb, var(--err) 10%, var(--bg-soft));
+  background: color-mix(in srgb, var(--err) 6%, var(--bg-soft));
 }
 .cap-failures__head {
   display: flex;
+  align-items: flex-start;
   justify-content: space-between;
-  gap: 10px;
+  gap: 12px;
 }
 .cap-failures__title {
   color: var(--err);
@@ -7438,22 +7439,64 @@ a[href] {
   font-size: 11.5px;
   line-height: 1.4;
 }
+.cap-failures__actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+  flex: 0 0 auto;
+}
+.cap-failures__actions .btn,
+.cap-failures__actions .inline-confirm .btn {
+  min-height: 24px;
+  padding-inline: 8px;
+}
+.cap-failures__chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 8px;
+}
+.cap-failure-chip {
+  display: inline-flex;
+  align-items: center;
+  min-height: 20px;
+  padding: 1px 7px;
+  border: 1px solid color-mix(in srgb, var(--err) 20%, var(--border-soft));
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--err) 7%, var(--bg));
+  color: color-mix(in srgb, var(--err) 78%, var(--fg-dim));
+  font-size: 10.5px;
+  font-weight: 600;
+  line-height: 1.25;
+}
+.cap-failures__collapsed {
+  margin-top: 7px;
+  color: var(--fg-faint);
+  font-size: 11px;
+  line-height: 1.35;
+}
 .cap-failures__list {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  margin-top: 10px;
+  gap: 6px;
+  margin-top: 9px;
 }
 .cap-failure {
-  padding: 8px;
-  border: 1px solid color-mix(in srgb, var(--err) 24%, var(--border-soft));
-  border-radius: 8px;
-  background: color-mix(in srgb, var(--bg-elev) 74%, transparent);
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 7px 10px;
+  align-items: start;
+  padding: 7px 8px;
+  border: 1px solid color-mix(in srgb, var(--err) 18%, var(--border-soft));
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--bg-elev) 54%, transparent);
 }
 .cap-failure__main {
   display: flex;
   align-items: flex-start;
   gap: 8px;
+  min-width: 0;
 }
 .cap-failure__text {
   min-width: 0;
@@ -7474,13 +7517,16 @@ a[href] {
 .cap-failure__actions {
   display: flex;
   flex-wrap: wrap;
+  justify-content: flex-end;
   gap: 6px;
-  margin-top: 8px;
+  margin-top: 0;
 }
 .cap-failure__mode {
+  grid-column: 1 / -1;
   margin-top: 9px;
 }
 .cap-failure__logbox {
+  grid-column: 1 / -1;
   margin: 8px 0 0;
   border: 1px solid var(--border-soft);
   border-radius: 7px;
@@ -7511,6 +7557,18 @@ a[href] {
   line-height: 1.5;
   white-space: pre-wrap;
   word-break: break-word;
+}
+@media (max-width: 760px) {
+  .cap-failures__head,
+  .cap-failure {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .cap-failures__actions,
+  .cap-failure__actions {
+    justify-content: flex-start;
+  }
 }
 .cap-skills {
   display: flex;
