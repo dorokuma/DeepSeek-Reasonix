@@ -25,6 +25,13 @@ func WithChecks(ctx context.Context, checks []VerifyCheck) context.Context {
 	return context.WithValue(ctx, contextKey{}, cp)
 }
 
+func FromContext(ctx context.Context) []VerifyCheck {
+	if v, _ := ctx.Value(contextKey{}).([]VerifyCheck); v != nil {
+		return v
+	}
+	return nil
+}
+
 func ExtractHostChecks(docs []memory.Source) []VerifyCheck {
 	seen := map[string]bool{}
 	var checks []VerifyCheck

@@ -116,9 +116,9 @@ func resolveStdioExecutable(ctx context.Context, s Spec, env []string) (string, 
 		}
 	}
 	if runtime.GOOS == "windows" {
-		fallbackPath := mergePathLists(windowsStdioFallbackPATH(env), currentPath)
+		fallbackPath := envutil.MergePathLists(windowsStdioFallbackPATH(env), currentPath)
 		if fallbackPath != currentPath {
-			fallbackEnv := setEnvValue(env, "PATH", fallbackPath)
+			fallbackEnv := envutil.SetEnvValue(env, "PATH", fallbackPath)
 			if exe, ok := lookPathInEnv(s.Command, fallbackEnv); ok {
 				return exe, fallbackEnv, nil
 			}
@@ -194,12 +194,12 @@ func windowsStdioFallbackPATH(env []string) string {
 	if runtime.GOOS != "windows" {
 		return ""
 	}
-	programFiles, _ := envValue(env, "ProgramFiles")
-	programFilesX86, _ := envValue(env, "ProgramFiles(x86)")
-	localAppData, _ := envValue(env, "LOCALAPPDATA")
-	appData, _ := envValue(env, "APPDATA")
-	userProfile, _ := envValue(env, "USERPROFILE")
-	chocolatey, _ := envValue(env, "ChocolateyInstall")
+	programFiles, _ := envutil.EnvValue(env, "ProgramFiles")
+	programFilesX86, _ := envutil.EnvValue(env, "ProgramFiles(x86)")
+	localAppData, _ := envutil.EnvValue(env, "LOCALAPPDATA")
+	appData, _ := envutil.EnvValue(env, "APPDATA")
+	userProfile, _ := envutil.EnvValue(env, "USERPROFILE")
+	chocolatey, _ := envutil.EnvValue(env, "ChocolateyInstall")
 	if localAppData == "" && userProfile != "" {
 		localAppData = filepath.Join(userProfile, "AppData", "Local")
 	}
