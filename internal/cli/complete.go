@@ -322,7 +322,15 @@ func (m *chatTUI) fileItems(token string) []compItem {
 	dir, frag := splitPathToken(token)
 	readDir := dir
 	if readDir == "" {
-		readDir = "."
+		if m.ctrl != nil {
+			if wr := m.ctrl.WorkspaceRoot(); wr != "" {
+				readDir = wr
+			} else {
+				readDir = "."
+			}
+		} else {
+			readDir = "."
+		}
 	}
 	entries, err := os.ReadDir(readDir)
 	if err != nil {
@@ -391,7 +399,13 @@ func (m *chatTUI) searchFileRefs(frag string) []string {
 	if r, ok := m.fileSearchCache[frag]; ok {
 		return r
 	}
-	r := fileref.Search(".", frag, maxFileSearchItems)
+	searchRoot := "."
+	if m.ctrl != nil {
+		if wr := m.ctrl.WorkspaceRoot(); wr != "" {
+			searchRoot = wr
+		}
+	}
+	r := fileref.Search(searchRoot, frag, maxFileSearchItems)
 	m.fileSearchCache[frag] = r
 	return r
 }
