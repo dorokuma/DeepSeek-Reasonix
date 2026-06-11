@@ -2585,80 +2585,6 @@ func todoPanelWindow(todos []todoPanelTodo) (int, int) {
 	return start, start + todoPanelMaxRows
 }
 
-// markTodoCompleted checks if complete_step args reference a todo step title
-// in the current todoArgs JSON and, if found, marks that item completed.
-// (case-insensitive, Content + ActiveForm) and numeric index fallback.
-// Preserves any extra top-level fields in the original todoArgs.
-// Returns the original todoArgs unchanged when there's nothing to update.
-func markTodoCompleted(todoArgs, stepArgs string) string {
-	if todoArgs == "" || stepArgs == "" {
-		return todoArgs
-	}
-	var step struct {
-		Step string `json:"step"`
-	}
-	if err := json.Unmarshal([]byte(stepArgs), &step); err != nil {
-		return todoArgs
-	}
-	stepName := strings.TrimSpace(step.Step)
-	if stepName == "" {
-		return todoArgs
-	}
-
-	// Parse into raw message to preserve unknown top-level keys.
-	var doc map[string]json.RawMessage
-	if err := json.Unmarshal([]byte(todoArgs), &doc); err != nil {
-		return todoArgs
-	}
-	rawTodos, ok := doc["todos"]
-	if !ok {
-		return todoArgs
-	}
-	var todos []todoPanelTodo
-	if err := json.Unmarshal(rawTodos, &todos); err != nil || len(todos) == 0 {
-		return todoArgs
-	}
-
-	// Match — same logic as matchTodoStep + sameStepText.
-	idx := -1
-	for i, t := range todos {
-		if sameStepText(stepName, t.Content) || sameStepText(stepName, t.ActiveForm) {
-			idx = i
-			break
-		}
-	}
-	// Numeric index fallback: "3" → third item (1-based).
-	if idx < 0 {
-		if n, err := strconv.Atoi(stepName); err == nil && n >= 1 && n <= len(todos) {
-			idx = n - 1
-		}
-	}
-	if idx < 0 || todos[idx].Status == "completed" {
-		return todoArgs
-	}
-
-	todos[idx].Status = "completed"
-	doc["todos"] = mustMarshal(todos)
-	b, err := json.Marshal(doc)
-	if err != nil {
-		return todoArgs
-	}
-	return string(b)
-}
-
-// sameStepText is a case-insensitive string equality check for matching step
-func sameStepText(a, b string) bool {
-	return a != "" && b != "" && strings.EqualFold(a, b)
-}
-
-// mustMarshal marshals v to RawMessage, panicking only if the input is
-// impossible to marshal (always succeeds for the types used here).
-func mustMarshal(v any) json.RawMessage {
-	b, _ := json.Marshal(v)
-	return b
-}
-
-// isMergeTodoWrite checks whether a todo_write arg blob has merge=true.
 func isMergeTodoWrite(args string) bool {
 	var p struct {
 		Merge bool `json:"merge"`
@@ -2733,6 +2659,15 @@ func mergeTodoWrite(currentArgs, mergeArgs string) string {
 		return currentArgs
 	}
 	return string(b)
+}
+
+// mustMarshal panics if v cannot be marshalled (used where failure is impossible).
+func mustMarshal(v any) json.RawMessage {
+	b, err := json.Marshal(v)
+	if err != nil {
+		panic(err)
+	}
+	return b
 }
 
 // truncateSubject trims a tool subject so the approval banner fits one line.
@@ -3247,11 +3182,6 @@ func (m *chatTUI) ingestEvent(e event.Event) {
 			} else {
 				m.todoArgs = e.Tool.Args
 			}
-		}
-		if e.Tool.Name == "complete_step" && e.Tool.Err == "" {
-			// Update the matching todo item in-place so the panel reflects real
-			// progress immediately, without waiting for a follow-up todo_write.
-			m.todoArgs = markTodoCompleted(m.todoArgs, e.Tool.Args)
 		}
 		if e.Tool.Err != "" {
 			m.finalizeStreamed()

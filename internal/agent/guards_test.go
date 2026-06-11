@@ -162,24 +162,6 @@ func TestPartitionToolCallsUnknownToolSerial(t *testing.T) {
 	}
 }
 
-// TestPartitionToolCallsCompleteStepSerial verifies complete_step now behaves as a
-// regular read-only tool — the special serialization guard was removed along with
-// the tool implementation.
-func TestPartitionToolCallsCompleteStepSerial(t *testing.T) {
-	reg := tool.NewRegistry()
-	reg.Add(fakeTool{name: "read_file", readOnly: true})
-	reg.Add(fakeTool{name: "complete_step", readOnly: true})
-
-	calls := []provider.ToolCall{{Name: "read_file"}, {Name: "complete_step"}}
-	got := partitionToolCalls(reg, calls)
-	want := []toolCallBatch{
-		{start: 0, end: 2, parallel: true},
-	}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("partitionToolCalls = %+v, want %+v", got, want)
-	}
-}
-
 func TestPartitionToolCallsTodoWriteSerial(t *testing.T) {
 	reg := tool.NewRegistry()
 	reg.Add(fakeTool{name: "read_file", readOnly: true})
