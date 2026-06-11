@@ -27,7 +27,6 @@ TypeScript line; a new codebase that becomes the default (`main-v2`).
   (`codegraph_*` tools) replaces embedding semantic search — no embedding service
   or API cost. Fetched into a local cache on first use (or `reasonix codegraph
   install`) and indexed in the background, so installs and startup stay fast.
-- **Plan mode** with evidence-backed step sign-off (`complete_step`).
 - **Memory**: `REASONIX.md` hierarchy + auto-memory, folded into the cache-stable
   prefix.
 - **ACP** (`reasonix acp`) and an HTTP/SSE server frontend; desktop app (Wails).

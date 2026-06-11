@@ -195,10 +195,6 @@ type Agent struct {
 	// reach it. nil leaves those tools to degrade gracefully.
 	jobs *jobs.Manager
 
-	// evidence is a per-user-turn ledger of host-observed tool receipts. It lets
-	// complete_step validate that cited evidence happened before the claim.
-	evidence *evidence.Ledger
-
 	// projectChecks are structured project instructions the agent gates tool
 	// calls against after each turn that wrote files.
 	projectChecks []instruction.VerifyCheck
@@ -454,7 +450,6 @@ func New(prov provider.Provider, tools *tool.Registry, session *Session, opts Op
 		hooks:             hooks,
 		jobs:              opts.Jobs,
 		ctxStore:          ctxStore,
-		evidence:          evidence.NewLedger(),
 		projectChecks:        append([]instruction.VerifyCheck(nil), opts.ProjectChecks...),
 		writeFailureVerifier: true,
 		contextWindow:        opts.ContextWindow,
@@ -660,19 +655,12 @@ func (c finalReadinessCheck) audit(result evidence.ReadinessAuditResult, recover
 }
 
 func (a *Agent) finalReadinessCheck() finalReadinessCheck {
-	if a.evidence == nil {
-		return finalReadinessCheck{}
-	}
 	var missing []string
 	out := finalReadinessCheck{}
 	if !a.planMode.Load() {
-		if incomplete, hasTodos := a.evidence.IncompleteLatestTodos(); hasTodos && len(incomplete) > 0 {
-			out.applies = true
-			out.incompleteTodos = len(incomplete)
-			missing = append(missing, finalReadinessIncompleteTodos(incomplete))
-		}
+		// evidence ledger removed; no incomplete-todo check possible
 	}
-	writer, hasWriter := a.evidence.LatestSuccessfulWriterIndex()
+	hasWriter := false
 	if !hasWriter {
 		if len(missing) > 0 {
 			out.reason = strings.Join(missing, "; ")
@@ -680,7 +668,7 @@ func (a *Agent) finalReadinessCheck() finalReadinessCheck {
 		return out
 	}
 	hasProjectChecks := len(a.projectChecks) > 0
-	hasTodoReceipt := a.evidence.HasSuccessfulTodoWrite()
+	hasTodoReceipt := false
 	if !hasProjectChecks && !hasTodoReceipt && len(missing) == 0 {
 		return finalReadinessCheck{}
 	}
@@ -690,7 +678,7 @@ func (a *Agent) finalReadinessCheck() finalReadinessCheck {
 		if command == "" {
 			continue
 		}
-		if !a.evidence.HasSuccessfulCommandAfter(command, writer) {
+		if true { /* no ledger to check against */
 			out.missingProjectChecks++
 			missing = append(missing, fmt.Sprintf("run %q from %s after the latest write", command, finalReadinessCheckSource(check)))
 		}
@@ -703,17 +691,7 @@ func (a *Agent) finalReadinessCheck() finalReadinessCheck {
 	return out
 }
 
-func finalReadinessIncompleteTodos(items []evidence.TodoStepMatch) string {
-	parts := make([]string, 0, len(items))
-	for _, item := range items {
-		label := strings.TrimSpace(item.Content)
-		if label == "" {
-			label = fmt.Sprintf("todo %d", item.Index)
-		}
-		parts = append(parts, fmt.Sprintf("%s: %s", label, item.Status))
-	}
-	return "latest successful todo_write still has incomplete items: " + strings.Join(parts, ", ")
-}
+
 
 func finalReadinessCheckSource(check instruction.VerifyCheck) string {
 	source := strings.TrimSpace(check.SourcePath)
@@ -1166,10 +1144,6 @@ func (a *Agent) executeOne(ctx context.Context, call provider.ToolCall) toolOutc
 		}
 	}
 	cctx := withCallContext(ctx, call.ID, a.sink, a.asker)
-	if a.evidence != nil {
-		cctx = evidence.WithLedger(cctx, a.evidence)
-		cctx = evidence.WithSessionMessages(cctx, a.session.Snapshot())
-	}
 	if len(a.projectChecks) > 0 {
 		cctx = instruction.WithChecks(cctx, a.projectChecks)
 	}

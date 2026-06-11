@@ -69,7 +69,7 @@ copy any missing values across by hand.
 ## What's the same
 
 The agent core carries over: the loop, tools (read/write/edit/glob/grep/bash/…),
-subagents (`task`, explore/research/review), skills, hooks, plan mode, MCP client,
+subagents (`task`, explore/research/review), skills, hooks, MCP client,
 and DeepSeek prefix-cache–oriented design.
 
 ## What's different
@@ -79,7 +79,6 @@ and DeepSeek prefix-cache–oriented design.
   API cost. New (first-run) configs start with it off; existing configs keep it
   on across upgrades. Toggle `[codegraph]` in the MCP manager or config, and set
   `[codegraph].tier` to choose lazy, background, or eager startup.
-- **Plan mode** + `complete_step` (evidence-backed step sign-off).
 - **No web dashboard** — the v2 line is terminal + desktop (Wails), by design.
 - Some granular v1 tools are intentionally consolidated (e.g. file-management ops
   go through `bash`); a few v1 tools are not yet ported (tracked on Discussions).
