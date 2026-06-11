@@ -99,10 +99,7 @@ func TestIdleStatuslineIsCompact(t *testing.T) {
 	if !strings.Contains(plain, "Auto") || !strings.Contains(plain, "ready") {
 		t.Fatalf("idle status line missing mode status:\n%s", plain)
 	}
-	if !strings.Contains(plain, "(shift+tab to cycle)") {
-		t.Fatalf("idle status line missing mode-cycle hint:\n%s", plain)
-	}
-	for _, old := range []string{"Shift-Tab", "Ctrl-O", "Ctrl-D", "Enter sends", "Esc clears/exits state", "PgUp/PgDn"} {
+	for _, old := range []string{"Shift-Tab", "Ctrl-O", "Ctrl-D", "Enter sends", "Esc clears/exits state", "PgUp/PgDn", "shift+tab"} {
 		if strings.Contains(plain, old) {
 			t.Fatalf("idle status line should not contain %q:\n%s", old, plain)
 		}
@@ -120,7 +117,7 @@ func TestYoloStatuslineUsesDangerPill(t *testing.T) {
 
 	content := renderStatuslineView(t, true)
 	plain := bottomStatusPlain(content)
-	if !strings.Contains(plain, "YOLO") || !strings.Contains(plain, "approvals skipped") || !strings.Contains(plain, "(shift+tab to cycle)") {
+	if !strings.Contains(plain, "YOLO") || !strings.Contains(plain, "approvals skipped") {
 		t.Fatalf("YOLO status line missing warning text:\n%s", plain)
 	}
 	if strings.Contains(plain, "[YOLO]") {
@@ -128,19 +125,6 @@ func TestYoloStatuslineUsesDangerPill(t *testing.T) {
 	}
 	if !strings.Contains(content, "\x1b[48;2;229;72;77m") {
 		t.Fatalf("YOLO status line should use danger pill background, got:\n%q", content)
-	}
-}
-
-func TestPlanStatuslineUsesBluePill(t *testing.T) {
-	i18n.DetectLanguage("en")
-
-	content := renderPlanStatuslineView(t)
-	plain := bottomStatusPlain(content)
-	if !strings.Contains(plain, "Plan") || !strings.Contains(plain, "ready") || !strings.Contains(plain, "(shift+tab to cycle)") {
-		t.Fatalf("plan status line missing mode status:\n%s", plain)
-	}
-	if !strings.Contains(content, "\x1b[48;2;37;99;235m") {
-		t.Fatalf("Plan status line should use blue pill background, got:\n%q", content)
 	}
 }
 
@@ -153,7 +137,7 @@ func TestAllowConfigShowsYoloPill(t *testing.T) {
 	next, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 	content := next.(chatTUI).View().Content
 	plain := bottomStatusPlain(content)
-	if !strings.Contains(plain, "YOLO") || !strings.Contains(plain, "approvals skipped") || !strings.Contains(plain, "(shift+tab to cycle)") {
+	if !strings.Contains(plain, "YOLO") || !strings.Contains(plain, "approvals skipped") {
 		t.Fatalf("allow config status line should show YOLO pill:\n%s", plain)
 	}
 	if !strings.Contains(content, "\x1b[48;2;229;72;77m") {
@@ -167,8 +151,8 @@ func TestStatuslineCycleHintFollowsLanguage(t *testing.T) {
 
 	content := renderStatuslineView(t, false)
 	plain := bottomStatusPlain(content)
-	if !strings.Contains(plain, "Auto") || !strings.Contains(plain, "就绪") || !strings.Contains(plain, "(shift+tab 循环切换)") {
-		t.Fatalf("localized mode-cycle hint missing:\n%s", plain)
+	if !strings.Contains(plain, "Auto") || !strings.Contains(plain, "就绪") {
+		t.Fatalf("localized status line missing:\n%s", plain)
 	}
 	if strings.Contains(plain, "ready") || strings.Contains(plain, "shift+tab to cycle") {
 		t.Fatalf("localized status line should not fall back to English:\n%s", plain)
@@ -313,16 +297,6 @@ func renderStatuslineViewWithCache(t *testing.T) string {
 	return next.(chatTUI).View().Content
 }
 
-func renderPlanStatuslineView(t *testing.T) string {
-	t.Helper()
-
-	ctrl := control.New(control.Options{})
-	m := newChatTUI(ctrl, "", make(chan event.Event, 1), 80)
-	m.planMode = true
-	next, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
-	return next.(chatTUI).View().Content
-}
-
 func bottomStatusPlain(content string) string {
 	return strings.Join(bottomStatusPlainLines(content), "\n")
 }
@@ -376,18 +350,6 @@ func renderNarrowStatuslineViewWithCache(t *testing.T) string {
 	return next.(chatTUI).View().Content
 }
 
-func renderNarrowPlanView(t *testing.T) string {
-	t.Helper()
-
-	ctrl := control.New(control.Options{})
-	m := newChatTUI(ctrl, "", make(chan event.Event, 1), narrowWidth)
-	m.planMode = true
-	m.label = "deepseek-v4-flash"
-	m.effortLevel = "auto"
-	next, _ := m.Update(tea.WindowSizeMsg{Width: narrowWidth, Height: 24})
-	return next.(chatTUI).View().Content
-}
-
 func TestNarrowIdleStatuslineOmitsHints(t *testing.T) {
 	i18n.DetectLanguage("en")
 
@@ -430,22 +392,6 @@ func TestNarrowYoloStatuslineOmitsHints(t *testing.T) {
 	}
 	if strings.Contains(lines[0], "shift+tab") {
 		t.Errorf("narrow yolo row 1 should not contain cycle hint:\n%s", lines[0])
-	}
-}
-
-func TestNarrowPlanStatuslineOmitsHints(t *testing.T) {
-	i18n.DetectLanguage("en")
-
-	content := renderNarrowPlanView(t)
-	lines := bottomStatusPlainLines(content)
-	if len(lines) != 2 {
-		t.Fatalf("narrow plan lines = %d, want 2:\n%s", len(lines), strings.Join(lines, "\n"))
-	}
-	if !strings.Contains(lines[0], "Plan") {
-		t.Errorf("narrow plan row 1 missing Plan mode:\n%s", lines[0])
-	}
-	if !strings.Contains(lines[0], "effort auto") {
-		t.Errorf("narrow plan row 1 missing effort tag:\n%s", lines[0])
 	}
 }
 

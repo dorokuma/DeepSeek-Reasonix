@@ -196,13 +196,11 @@ func (s *Server) handler() http.Handler {
 	mux.HandleFunc("POST /submit", s.submit)
 	mux.HandleFunc("POST /cancel", s.cancel)
 	mux.HandleFunc("POST /approve", s.approve)
-	mux.HandleFunc("POST /plan", s.plan)
 	mux.HandleFunc("POST /compact", s.compact)
 	mux.HandleFunc("POST /new", s.newSession)
 	mux.HandleFunc("POST /rewind", s.rewind)
 	mux.HandleFunc("POST /fork", s.fork)
 	mux.HandleFunc("POST /summarize", s.summarize)
-	mux.HandleFunc("POST /bypass", s.bypass)
 	mux.HandleFunc("POST /answer", s.answer)
 	mux.HandleFunc("POST /resume", s.resume)
 	mux.HandleFunc("POST /forget", s.forget)
@@ -427,18 +425,6 @@ func (s *Server) approve(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func (s *Server) plan(w http.ResponseWriter, r *http.Request) {
-	var body struct {
-		On bool `json:"on"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		http.Error(w, "bad body", http.StatusBadRequest)
-		return
-	}
-	s.ctl().SetPlanMode(body.On)
-	w.WriteHeader(http.StatusNoContent)
-}
-
 func (s *Server) compact(w http.ResponseWriter, r *http.Request) {
 	if err := s.ctl().Compact(r.Context(), ""); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -538,7 +524,6 @@ func writeJSONCached(w http.ResponseWriter, r *http.Request, v any) {
 	w.Header().Set("Cache-Control", "private, max-age=0, must-revalidate")
 	_, _ = w.Write(body)
 }
-
 
 // logMiddleware logs each request's method, path, and status.
 func logMiddleware(next http.Handler) http.Handler {
@@ -641,19 +626,6 @@ func (s *Server) summarize(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	w.WriteHeader(http.StatusNoContent)
-}
-
-// bypass toggles YOLO/bypass mode.
-func (s *Server) bypass(w http.ResponseWriter, r *http.Request) {
-	var body struct {
-		On bool `json:"on"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		http.Error(w, "bad body", http.StatusBadRequest)
-		return
-	}
-	s.ctl().SetBypass(body.On)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -763,8 +735,6 @@ func (s *Server) status(w http.ResponseWriter, r *http.Request) {
 	sess := map[string]any{
 		"label":     s.ctl().Label(),
 		"running":   s.ctl().Running(),
-		"plan":      s.ctl().PlanMode(),
-		"bypass":    s.ctl().Bypass(),
 		"cwd":       s.ctl().SessionDir(),
 		"used":      used,
 		"window":    window,

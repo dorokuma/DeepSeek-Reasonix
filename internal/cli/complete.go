@@ -77,7 +77,6 @@ func (m *chatTUI) slashItems() []compItem {
 		{label: "/verbose", insert: "/verbose", hint: i18n.M.CmdVerbose},
 		{label: "/sandbox", insert: "/sandbox", hint: i18n.M.CmdSandbox},
 		{label: "/effort", insert: "/effort ", hint: i18n.M.CmdEffort, descend: true},
-		{label: "/auto-plan", insert: "/auto-plan ", hint: i18n.M.CmdAutoPlan, descend: true},
 		{label: "/theme", insert: "/theme ", hint: i18n.M.CmdTheme, descend: true},
 		{label: "/language", insert: "/language ", hint: i18n.M.CmdLanguage, descend: true},
 		{label: "/help", insert: "/help ", hint: i18n.M.CmdHelp},

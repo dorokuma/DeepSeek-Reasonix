@@ -89,11 +89,6 @@ type chatTUI struct {
 	// Persists across turns until the work completes or a new session starts.
 	todoArgs string
 
-	// planMode mirrors the agent's read-only gate (Shift+Tab cycles it). The marker
-	// rides in outgoing user messages so the cache-stable prompt prefix is left
-	// untouched.
-	planMode bool
-
 	// permMode is the config-level permissions writer-fallback mode ("ask",
 	// "allow", or "deny"). When "allow", the TUI shows "YOLO" because writer
 	// tools never prompt — the same effective behaviour as the runtime bypass flag.
@@ -1036,11 +1031,6 @@ func (m chatTUI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "ctrl+b":
 			m.toggleShellOutput()
 			return m, finalize(m, cmds)
-		case "shift+tab":
-			// Cycle auto → plan → YOLO; allowed mid-turn so the user can flip the
-			// gate while a run is in flight (the controller's mode is atomic).
-			m.cycleMode()
-			return m, nil
 		case "enter":
 			if m.state == tuiRunning {
 				line := strings.TrimSpace(m.input.Value())
@@ -1111,7 +1101,7 @@ func (m chatTUI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.pendingRestore = line
 				m.bubbleStartIdx = len(m.transcript)
 				m.commitLine("")
-				m.commitLine(renderUserBubble(line, m.width, m.planMode))
+				m.commitLine(renderUserBubble(line, m.width))
 				m.bubblePending = true
 				m.turnDiscarded = false
 				m.confirmBubbleSent() // shell events arrive instantly
@@ -1988,23 +1978,12 @@ func flushableMarkdownPrefix(buf string) string {
 	return strings.Join(lines[:boundary], "\n")
 }
 
-// planApprovalTool is the Tool name the controller puts on the ApprovalRequest it
-// emits to gate a plan (mirrors control's constant). The banner, status line, and
-// approval handler key on it to render the plan-specific prompt and to keep the
-// [plan] tag in sync when the plan is approved.
-const planApprovalTool = "exit_plan_mode"
-
 // handleApprovalKey resolves a pending approval from a keystroke and re-arms the
 // listener. 1/y/Enter allows once, 2/a allows for the rest of the session,
 // 3/p writes an "always allow" rule to the config file, 4/n/Esc denies.
-// Ctrl-C cancels the whole turn via the run context. For a plan approval
-// (planApprovalTool), allowing also drops the local [plan] tag — the
-// controller turns plan mode off on its side.
+// Ctrl-C cancels the whole turn via the run context.
 func (m chatTUI) handleApprovalKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	answer := func(allow, session, persist bool) (tea.Model, tea.Cmd) {
-		if allow && m.pendingApproval.Tool == planApprovalTool {
-			m.planMode = false
-		}
 		m.ctrl.Approve(m.pendingApproval.ID, allow, session, persist)
 		m.pendingApproval = nil
 		return m, nil // the next ApprovalRequest / event arrives on eventCh
@@ -2074,13 +2053,6 @@ func (m chatTUI) View() tea.View {
 			Bold(true).
 			Padding(0, 1).
 			Render("YOLO")
-	case m.planMode:
-		modeTag = lipgloss.NewStyle().
-			Background(lipgloss.Color(statusPlanColor.hex)).
-			Foreground(lipgloss.Color("#ffffff")).
-			Bold(true).
-			Padding(0, 1).
-			Render("Plan")
 	default:
 		modeTag = lipgloss.NewStyle().
 			Background(lipgloss.Color(statusAutoColor.hex)).
@@ -2133,16 +2105,14 @@ func (m chatTUI) View() tea.View {
 			status = "  " + modeTag + " · " + i18n.M.SkillPickerStatusLabel
 		case m.chooser != nil:
 			status = "  " + modeTag + " · " + i18n.M.ChatStatusQuestion
-		case m.pendingApproval != nil && m.pendingApproval.Tool == planApprovalTool:
-			status = "  " + modeTag + " · " + i18n.M.ChatStatusPlanApproval
 		case m.pendingApproval != nil:
 			status = "  " + modeTag + " · " + i18n.M.ChatStatusToolApproval
 		case shellMode:
 			status = "  " + modeTag + " · " + i18n.M.ShellModeHint
 		case m.ctrl.Bypass() || m.permMode == "allow":
-			status = "  " + modeTag + " · " + i18n.M.ChatStatusYoloIdle + " " + dim("("+i18n.M.ChatStatusCycleHint+")")
+			status = "  " + modeTag + " · " + i18n.M.ChatStatusYoloIdle
 		default:
-			status = "  " + modeTag + " · " + i18n.M.ChatStatusIdle + " " + dim("("+i18n.M.ChatStatusCycleHint+")")
+			status = "  " + modeTag + " · " + i18n.M.ChatStatusIdle
 		}
 		if et := m.effortTag(); et != "" {
 			status += " · " + et
@@ -2468,11 +2438,6 @@ func (m chatTUI) renderApprovalBanner() string {
 	}
 	if m.pendingApproval == nil {
 		return ""
-	}
-	// A plan approval shows the gate prompt (the plan itself is already printed as
-	// the assistant's reply); a tool approval names the tool + subject.
-	if m.pendingApproval.Tool == planApprovalTool {
-		return approvalBannerStyle.Width(w).Render("⏸ " + i18n.M.PlanApprovalPrompt)
 	}
 	name, detail := approvalToolDetails(m.pendingApproval.Tool)
 	subj := strings.TrimSpace(m.pendingApproval.Subject)
@@ -2981,24 +2946,6 @@ func pastedFileRef(content string) (string, bool) {
 	return "@" + path, true
 }
 
-// cycleMode advances the input mode normal → plan → YOLO → normal (Shift+Tab),
-// mirroring the desktop composer. plan is read-only; YOLO
-// auto-approves every tool call for the session (deny rules still apply). The
-// status line's mode tag ([auto]/[plan]/[YOLO]) reflects the result.
-func (m *chatTUI) cycleMode() {
-	switch {
-	case m.ctrl.Bypass():
-		m.ctrl.SetBypass(false) // YOLO → normal
-	case m.planMode:
-		m.planMode = false
-		m.ctrl.SetPlanMode(false)
-		m.ctrl.SetBypass(true) // plan → YOLO
-	default:
-		m.planMode = true
-		m.ctrl.SetPlanMode(true) // normal → plan
-	}
-}
-
 func (m *chatTUI) toggleVerboseReasoning(notify bool) {
 	m.showReasoning = !m.showReasoning
 	if !notify {
@@ -3020,8 +2967,7 @@ func (m *chatTUI) startTurn(sent, displayed, restore string) tea.Cmd {
 }
 
 // startTurnWithRaw is startTurn plus an explicit `raw` (the un-resolved user
-// prompt) used only for the controller's auto-plan scoring, so resolved
-// @-reference payloads can't inflate the complexity signal.
+// prompt), so resolved @-reference payloads can't inflate the complexity signal.
 func (m *chatTUI) startTurnWithRaw(sent, displayed, restore, raw string) tea.Cmd {
 	// Flush any half-streamed leftover before the new turn (defensive).
 	m.commitReasoning()
@@ -3035,7 +2981,7 @@ func (m *chatTUI) startTurnWithRaw(sent, displayed, restore, raw string) tea.Cmd
 	m.pendingPastes = m.pasteLabelsIn(restore)
 	m.bubbleStartIdx = len(m.transcript)
 	m.commitLine("") // blank line separating turns
-	m.commitLine(renderUserBubble(displayed, m.width, m.planMode))
+	m.commitLine(renderUserBubble(displayed, m.width))
 	m.bubblePending = true
 	m.turnDiscarded = false
 
@@ -3152,8 +3098,6 @@ func (m *chatTUI) ingestEvent(e event.Event) {
 		case "todo_write":
 			// The result decides whether this list becomes canonical; dispatch only
 			// means the model asked for an update.
-		case planApprovalTool:
-			// No longer a tool, but guard anyway: the plan is the assistant's reply.
 		default:
 			m.commitSpacer()
 			if block := diffBlock(e.Tool.Name, e.Tool.Args, e.Tool.FileDiff, m.width, diffScrollbackMaxLines); block != nil {
@@ -3336,9 +3280,6 @@ func (m *chatTUI) runSlashCommand(input string) tea.Cmd {
 		m.showSandboxStatus()
 	case "/effort":
 		return m.runEffortCommand(input)
-	case "/auto-plan":
-		m.echoLocalCommand(input)
-		m.runAutoPlanCommand(input)
 	case "/rewind":
 		m.echoLocalCommand(input)
 		m.openRewind()
@@ -3594,8 +3535,7 @@ func replaySectionsFor(history []provider.Message, width int, renderer *mdRender
 	for _, m := range history {
 		switch m.Role {
 		case provider.RoleUser:
-			content := strings.TrimPrefix(m.Content, control.PlanModeMarker+"\n\n")
-			out = append(out, renderUserBubble(content, width, false)+"\n\n")
+			out = append(out, renderUserBubble(m.Content, width)+"\n\n")
 		case provider.RoleAssistant:
 			body := strings.TrimSpace(m.Content)
 			if body == "" {
@@ -3634,12 +3574,9 @@ func wrapForViewport(text string, width int, fg cliColor) string {
 // renderUserBubble renders the just-submitted prompt as a transcript line. Keep
 // it visually lighter than the real bottom composer so a fresh session does not
 // look like it has a second input box in the transcript.
-func renderUserBubble(line string, width int, planMode bool) string {
+func renderUserBubble(line string, width int) string {
 	line = displayLineForImageRefs(line)
 	prefix := "› "
-	if planMode {
-		prefix = "› [plan] "
-	}
 	if !colorEnabled {
 		return "│ " + prefix + line
 	}

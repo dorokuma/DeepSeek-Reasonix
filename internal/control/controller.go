@@ -1,6 +1,6 @@
 // Package control is the transport-agnostic session driver. A Controller owns
 // the agent run loop and session lifecycle, takes commands (Send/Cancel/Approve/
-// SetPlanMode/Compact/NewSession/…), and emits everything that happens —
+// Compact/NewSession/…), and emits everything that happens —
 // reasoning, tool calls, approvals, turn completion — as a typed event stream to
 // a single event.Sink.
 //
@@ -68,8 +68,6 @@ type Controller struct {
 	hooks         *hook.Runner // session hook runner; nil-safe (no hooks configured)
 	mem           *memory.Set
 	cleanup       func()
-	autoPlan      string
-	classifier    autoPlanClassifier
 	startedOnce   bool              // guards the one-shot SessionStart hook on first turn
 	onRemember    func(rule string) // set via Options; invoked when user picks "always allow"
 
@@ -122,7 +120,6 @@ type Controller struct {
 	mu          sync.Mutex
 	cancel      context.CancelFunc
 	running     bool
-	planMode    bool
 	sessionPath string
 	approvals   map[string]chan approvalReply
 	asks        map[string]chan []event.AskAnswer
@@ -130,12 +127,6 @@ type Controller struct {
 	nextID      int
 	// turn counts model turns this session, passed to hooks in their payload.
 	turn int
-	// autoApprove auto-allows writer tool calls without prompting. Set only while
-	// executing a just-approved plan: approving the plan is the go-ahead, so the
-	// model shouldn't re-prompt for every write of the work it just got cleared to
-	// do. Deny rules still bite (those never reach the approver). Reset when the
-	// execution turn returns.
-	autoApprove bool
 
 	// bypass is "YOLO" mode: while set, every approval prompt is auto-allowed for
 	// the rest of the session (writers and bash run without asking). It is a
@@ -193,8 +184,6 @@ type Options struct {
 	// WorkspaceRoot is the project root checkpoint restores are confined to ("" =
 	// no confinement). Frontends pass the cwd they launched the session in.
 	WorkspaceRoot string
-	AutoPlan      string
-	Classifier    autoPlanClassifier
 	// OnRemember, when set, is invoked with a new allow rule the user chose to
 	// persist to disk (e.g. "bash(go build*)"). The callback is wired into the
 	// permission Gate on EnableInteractiveApproval.
@@ -206,10 +195,6 @@ func New(opts Options) *Controller {
 	sink := opts.Sink
 	if nilutil.IsNil(sink) {
 		sink = event.Discard
-	}
-	classifier := opts.Classifier
-	if nilutil.IsNil(classifier) {
-		classifier = nil
 	}
 	pluginCtx := opts.PluginCtx
 	if pluginCtx == nil {
@@ -239,8 +224,6 @@ func New(opts Options) *Controller {
 		hooks:         opts.Hooks,
 		mem:           opts.Memory,
 		cleanup:       opts.Cleanup,
-		autoPlan:      normalizeAutoPlan(opts.AutoPlan),
-		classifier:    classifier,
 		onRemember:    opts.OnRemember,
 		balanceURL:    opts.BalanceURL,
 		balanceKey:    opts.BalanceKey,
@@ -336,54 +319,34 @@ func (c *Controller) runGuarded(body func(ctx context.Context) error) {
 }
 
 // Send starts a turn with an uncomposed message. The controller applies
-// auto-plan, plan-mode, memory, and background-job framing inside the async turn
-// path so frontends do not block on classifier I/O.
+// memory and background-job framing inside the async turn path so frontends
+// do not block.
 func (c *Controller) Send(input string) {
 	c.SendWithRaw(input, input)
 }
 
-// SendWithRaw starts a turn with separate model input and raw prompt text. The
-// raw prompt is used only for auto-plan scoring; it deliberately excludes
-// resolved @-reference payloads so referenced file contents cannot inflate the
-// complexity score.
+// SendWithRaw starts a turn with separate model input and raw prompt text.
+// The raw parameter is preserved for API compatibility.
 func (c *Controller) SendWithRaw(input, raw string) {
 	c.runGuarded(func(ctx context.Context) error { return c.runTurnWithRaw(ctx, input, raw) })
 }
 
-// planApprovalTool is the Tool name on the ApprovalRequest the controller emits
-// to gate a proposed plan. Frontends key their plan-approval UI on it (the
-// desktop renders a plan card; the chat TUI a plan banner).
-const planApprovalTool = "exit_plan_mode"
-
-// planApprovedMessage is the follow-up turn sent once the user approves a plan —
-// the in-context nudge to execute and keep the (already-seeded) task list honest.
-const planApprovedMessage = "Plan approved — plan mode is off; you're cleared to make the changes without asking again. Implement the plan now. Keep the task list current, preserving its two-level shape (phases at level 0, their sub-steps at level 1): mark the sub-step you start as in_progress, one in_progress at a time. Sign off each finished sub-step with evidence it's done — the verification you ran, the diff/files you changed, or a manual check. Don't claim a step is done without "
-
-// runTurn runs one model turn, then applies the plan-approval gate. This is the
-// single, frontend-agnostic plan flow: in plan mode the model just researches
-// (writers are blocked) and writes its plan as a normal answer — no special tool.
-// When the turn ends with a text proposal, the controller asks the user to
-// approve (reusing the ApprovalRequest channel both frontends already render);
-// on approval it exits plan mode, seeds the task list from the plan, and
-// continues straight into execution; on rejection it stays in plan mode so the
-// next turn can revise. Plan mode is only ever set interactively, so the headless
-// `Run` path (which doesn't call this) never blocks on a prompt.
+// runTurn runs one model turn.
 func (c *Controller) runTurn(ctx context.Context, input string) error {
 	return c.runTurnWithRaw(ctx, input, input)
 }
 
 func (c *Controller) runTurnWithRaw(ctx context.Context, input, raw string) error {
 	c.maybeSessionStart(ctx)
-	c.maybeAutoPlan(ctx, raw)
 	input = c.Compose(input)
 	startMessages := c.messageCount()
 	defer c.snapshotActivityIfChanged(startMessages)
 	// Open a checkpoint for this turn before the user message is appended, so the
 	// recorded message boundary precedes it and pre-edit snapshots land here.
 	c.beginCheckpoint(input)
-	// UserPromptSubmit / Stop hooks bracket the whole turn (incl. the plan
-	// research + approved-execution sub-turns below): a gating UserPromptSubmit
-	// aborts before any model call; Stop fires once when the turn returns.
+	// UserPromptSubmit / Stop hooks bracket the whole turn: a gating
+	// UserPromptSubmit aborts before any model call; Stop fires once when the
+	// turn returns.
 	if c.hooks.Enabled() {
 		c.mu.Lock()
 		c.turn++
@@ -397,47 +360,11 @@ func (c *Controller) runTurnWithRaw(ctx context.Context, input, raw string) erro
 	if err := c.runner.Run(ctx, input); err != nil {
 		return err
 	}
-	c.mu.Lock()
-	plan := c.planMode
-	c.mu.Unlock()
-	if !plan {
-		return nil
-	}
-	proposal := lastAssistantText(c.History())
-	if proposal == "" {
-		return nil // no substantive proposal to gate
-	}
-	// The plan is already visible as the assistant's answer, so the request
-	// carries no subject — it's purely the gate.
-	allow, _, err := c.requestApproval(ctx, planApprovalTool, "")
-	if err != nil {
-		return err
-	}
-	if !allow {
-		return nil // keep planning; plan mode stays on
-	}
-	c.SetPlanMode(false)
-	seededTodos := c.seedPlanTodos(proposal)
-	// The plan is the go-ahead: don't re-prompt for each write of the approved
-	// work. Auto-approve writers for the duration of this execution turn only.
-	c.mu.Lock()
-	c.autoApprove = true
-	c.mu.Unlock()
-	defer func() {
-		c.mu.Lock()
-		c.autoApprove = false
-		c.mu.Unlock()
-	}()
-	if err := c.runner.Run(ctx, planApprovedMessage); err != nil {
-		c.completePlanTodos(seededTodos) // clean up task list even on failure
-		return err
-	}
-	c.completePlanTodos(seededTodos)
 	return nil
 }
 
 // lastAssistantText returns the content of the most recent assistant message with
-// non-empty text — the model's final answer for the turn (its plan, in plan mode).
+// non-empty text — the model's final answer for the turn.
 func lastAssistantText(msgs []provider.Message) string {
 	for i := len(msgs) - 1; i >= 0; i-- {
 		if msgs[i].Role == provider.RoleAssistant && strings.TrimSpace(msgs[i].Content) != "" {
@@ -809,33 +736,6 @@ func (c *Controller) AnswerQuestion(id string, answers []event.AskAnswer) {
 	if reply != nil {
 		reply <- answers // buffered, never blocks
 	}
-}
-
-// SetPlanMode flips the executor's read-only gate without touching the
-// cache-stable prompt prefix, and remembers the state so Compose can prepend the
-// plan-mode marker to outgoing turns.
-func (c *Controller) SetPlanMode(v bool) {
-	c.mu.Lock()
-	c.planMode = v
-	c.mu.Unlock()
-	if c.executor != nil {
-		c.executor.SetPlanMode(v)
-	}
-}
-
-// SetAutoPlan updates the interactive auto-plan gate for subsequent turns.
-func (c *Controller) SetAutoPlan(mode string) {
-	c.mu.Lock()
-	c.autoPlan = normalizeAutoPlan(mode)
-	c.mu.Unlock()
-}
-
-// PlanMode reports whether outgoing turns currently receive the plan-mode
-// marker. Frontends use it after Compose because auto-plan may flip the mode.
-func (c *Controller) PlanMode() bool {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.planMode
 }
 
 // Compact runs one compaction pass on the executor's session on demand.
@@ -1825,51 +1725,9 @@ func (c *Controller) Jobs() []jobs.View {
 // approval prompt is auto-allowed (writers and bash run without asking). Deny
 // rules still block. Runtime-only — never written to config.
 func (c *Controller) SetBypass(on bool) {
-	var pending []chan approvalReply
-
 	c.mu.Lock()
 	c.bypass = on
-	if on {
-		pending = c.drainApprovalsLocked()
-	}
 	c.mu.Unlock()
-
-	for _, reply := range pending {
-		reply <- approvalReply{allow: true}
-	}
-}
-
-// SetMode applies plan (read-only) and bypass (auto-approve) together so a turn
-// submitted right after a composer mode switch can't observe a half-applied
-// gate. Turning bypass on drains any approval already waiting.
-func (c *Controller) SetMode(plan, bypass bool) {
-	var pending []chan approvalReply
-
-	c.mu.Lock()
-	c.planMode = plan
-	c.bypass = bypass
-	if bypass {
-		pending = c.drainApprovalsLocked()
-	}
-	c.mu.Unlock()
-
-	if c.executor != nil {
-		c.executor.SetPlanMode(plan)
-	}
-	for _, reply := range pending {
-		reply <- approvalReply{allow: true}
-	}
-}
-
-// drainApprovalsLocked removes every pending approval gate and returns their
-// reply channels; caller holds c.mu and sends {allow:true} after unlocking.
-func (c *Controller) drainApprovalsLocked() []chan approvalReply {
-	pending := make([]chan approvalReply, 0, len(c.approvals))
-	for id, reply := range c.approvals {
-		delete(c.approvals, id)
-		pending = append(pending, reply)
-	}
-	return pending
 }
 
 // Bypass reports whether YOLO/bypass mode is on, for the status-bar indicator.
@@ -1985,11 +1843,10 @@ func (c *Controller) refreshMemoryLocked() {
 type gateApprover struct{ c *Controller }
 
 func (g gateApprover) Approve(ctx context.Context, tool, subject string, args json.RawMessage) (bool, bool, error) {
-	// Auto-allow without prompting while executing a just-approved plan (the plan
-	// was the approval) or while YOLO/bypass mode is on. Deny rules already bit
-	// before this point, so they still block.
+	// Auto-allow without prompting while YOLO/bypass mode is on. Deny rules
+	// already bit before this point, so they still block.
 	g.c.mu.Lock()
-	auto := g.c.autoApprove || g.c.bypass
+	auto := g.c.bypass
 	g.c.mu.Unlock()
 	if auto {
 		return true, false, nil
@@ -2214,10 +2071,9 @@ func (c *Controller) requestApproval(ctx context.Context, tool, subject string) 
 	key := tool
 
 	c.mu.Lock()
-	// YOLO/bypass and the just-approved-plan window auto-allow every approval
-	// without prompting; the plan gate routes through here too, so this is what
-	// stops a bypass session from blocking on plan approval. Deny rules bit upstream.
-	if c.bypass || c.autoApprove || c.granted[key] {
+	// YOLO/bypass auto-allows every approval without prompting.
+	// Deny rules bit upstream.
+	if c.bypass || c.granted[key] {
 		c.mu.Unlock()
 		return true, false, nil
 	}
@@ -2229,7 +2085,7 @@ func (c *Controller) requestApproval(ctx context.Context, tool, subject string) 
 	// Re-check the grant: a session grant may have landed while we queued behind
 	// another prompt for the same subject.
 	c.mu.Lock()
-	if c.bypass || c.autoApprove || c.granted[key] {
+	if c.bypass || c.granted[key] {
 		c.mu.Unlock()
 		return true, false, nil
 	}
@@ -2250,16 +2106,14 @@ func (c *Controller) requestApproval(ctx context.Context, tool, subject string) 
 
 	select {
 	case r := <-reply:
-		// Plan approvals are one-shot — never persist a session grant for them, or
-		// every future plan would auto-approve.
-		if r.allow && r.session && tool != planApprovalTool {
+		if r.allow && r.session {
 			c.mu.Lock()
 			c.granted[key] = true
 			c.mu.Unlock()
 		}
 		// When persist is true, remember=true signals Gate.OnRemember to write
-		// the rule to the on-disk config. Plan approvals are excluded.
-		remember := r.persist && tool != planApprovalTool
+		// the rule to the on-disk config.
+		remember := r.persist
 		return r.allow, remember, nil
 	case <-ctx.Done():
 		c.mu.Lock()
