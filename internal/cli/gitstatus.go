@@ -128,7 +128,6 @@ func (m chatTUI) gitTag(maxWidth int) string {
 
 var (
 	statusAutoColor  = cliColor{"#f59e0b", 214}
-	statusPlanColor  = cliColor{"#2563eb", 27}
 	statusYoloColor  = cliColor{"#e5484d", 167}
 	statusShellColor = cliColor{"#16a34a", 71} // green — shell mode indicator
 )
@@ -137,8 +136,6 @@ func (m chatTUI) statusModeColor() cliColor {
 	switch {
 	case m.ctrl != nil && (m.ctrl.Bypass() || m.permMode == "allow"):
 		return statusYoloColor
-	case m.planMode:
-		return statusPlanColor
 	default:
 		return statusAutoColor
 	}

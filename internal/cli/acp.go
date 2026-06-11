@@ -190,7 +190,7 @@ func (f *acpFactory) NewSession(ctx context.Context, p acp.SessionParams) (*cont
 				CompactRatio:      cfg.Agent.CompactRatio,
 				CompactForceRatio: cfg.Agent.CompactForceRatio,
 				ArchiveDir:        config.ArchiveDir(),
-			}, executor, cfg.Agent.Temperature, p.Sink, control.TaskWarrantsPlanner)
+			}, executor, cfg.Agent.Temperature, p.Sink, nil)
 			label = entry.Model + " + planner " + pe.Model
 		}
 	}

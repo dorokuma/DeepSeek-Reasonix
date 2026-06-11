@@ -314,7 +314,6 @@ input,textarea{font:inherit;color:inherit}
       <div class="welcome__tag">__('welcome_tag')</div>
       <div class="welcome__hints">
         <span><kbd>/</kbd> __('hint_commands')</span>
-        <span><kbd>Shift+Tab</kbd> __('hint_mode')</span>
         <span><kbd>Esc&times;2</kbd> __('hint_rewind')</span>
       </div>
       <div class="welcome__examples">
@@ -328,18 +327,6 @@ input,textarea{font:inherit;color:inherit}
   <footer class="footer">
     <div id="slash-menu-anchor"></div>
     <div class="toolbar">
-      <button class="toolbar__btn toolbar__btn--ok" id="btn-auto" title="__('auto_mode')">
-        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M8 12l2 2 4-4"/></svg>
-        __('auto')
-      </button>
-      <button class="toolbar__btn" id="btn-plan" title="__('plan_mode')">
-        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>
-        __('plan')
-      </button>
-      <button class="toolbar__btn" id="btn-bypass" title="__('yolo_mode')">
-        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
-        __('yolo')
-      </button>
       <div class="toolbar__sep"></div>
       <div class="status">
         <span class="status__dot" id="status-dot-footer"></span>
@@ -458,12 +445,6 @@ const __T = {
     'allow': 'Allow',
     'session': 'Session',
     'deny': 'Deny',
-    'auto_mode': 'Auto mode',
-    'plan_mode': 'Plan mode (read-only)',
-    'yolo_mode': 'YOLO mode (auto-approve)',
-    'auto': 'Auto',
-    'plan': 'Plan',
-    'yolo': 'YOLO',
     'send': 'Send (Enter)',
     'cancel': 'Cancel (Esc)',
     'no_sessions': 'No sessions',
@@ -481,7 +462,6 @@ const __T = {
     'delete_confirm': 'Delete this session?',
     'welcome_tag': 'AI coding agent',
     'hint_commands': '/ commands',
-    'hint_mode': 'Shift+Tab mode',
     'hint_rewind': 'Esc×2 rewind',
     'example_explain': 'Explain the project structure',
     'example_fix': 'Find and fix any bugs',
@@ -544,12 +524,6 @@ const __T = {
     'allow': '允许',
     'session': '会话期',
     'deny': '拒绝',
-    'auto_mode': '自动模式',
-    'plan_mode': '计划模式（只读）',
-    'yolo_mode': 'YOLO 模式（自动批准）',
-    'auto': '自动',
-    'plan': '计划',
-    'yolo': 'YOLO',
     'send': '发送 (Enter)',
     'cancel': '取消 (Esc)',
     'no_sessions': '暂无会话',
@@ -567,7 +541,6 @@ const __T = {
     'delete_confirm': '删除此会话？',
     'welcome_tag': 'AI 编码助手',
     'hint_commands': '/ 命令',
-    'hint_mode': 'Shift+Tab 模式',
     'hint_rewind': 'Esc×2 回退',
     'example_explain': '解释项目结构',
     'example_fix': '查找并修复错误',
@@ -629,7 +602,7 @@ const welcome = $('#welcome');
 const slashAnchor = $('#slash-menu-anchor');
 
 // ── state ──
-let running = false, planMode = false, bypassMode = false;
+let running = false;
 let currentMsg = null, currentText = null, currentReasoning = null;
 let turnStartAt = 0, turnTokens = 0, tickTimer = null;
 let toolCards = {};
@@ -916,9 +889,6 @@ es.onerror=()=>{
 function fetchStatus(){
   fetch('/status').then(r=>r.json()).then(s=>{
     if(s.label)statusModel.textContent=s.label;
-    // sync mode UI without triggering POST (server is source of truth)
-    planMode=!!s.plan; bypassMode=!!s.bypass;
-    updateModeButtons();
     // sidebar metrics
     const cacheTotal=(s.cacheHit||0)+(s.cacheMiss||0);
     $('#sm-cache').textContent=cacheTotal>0?Math.round((s.cacheHit||0)/cacheTotal*100)+'%':'—';
@@ -987,11 +957,7 @@ function loadSessions(){
 loadSessions();
 
 // ── input handling ──
-async function syncModeBeforeSubmit(){
-  if(planMode){ await post('/bypass',{on:false}); await post('/plan',{on:true}); }
-  else if(bypassMode){ await post('/plan',{on:false}); await post('/bypass',{on:true}); }
-}
-async function send(){ const v=input.value.trim(); if(!v)return; await syncModeBeforeSubmit(); addUserMsg(v); post('/submit',{input:v}).then(r=>{if(r.ok&&r.status===204){fetchStatus();loadSessions();}}); input.value='';input.style.height='';closeSlashMenu(); }
+async function send(){ const v=input.value.trim(); if(!v)return; addUserMsg(v); post('/submit',{input:v}).then(r=>{if(r.ok&&r.status===204){fetchStatus();loadSessions();}}); input.value='';input.style.height='';closeSlashMenu(); }
 
 input.addEventListener('input',()=>{input.style.height='auto';input.style.height=Math.min(input.scrollHeight,140)+'px';updateSlashMenu();});
 input.addEventListener('keydown',e=>{
@@ -1011,30 +977,14 @@ input.addEventListener('keydown',e=>{
   }
 });
 
-// shift+tab mode cycle
+// keyboard shortcuts
 document.addEventListener('keydown',e=>{
-  if(e.target===input&&e.key==='Tab'&&e.shiftKey){e.preventDefault();cycleMode();return;}
   if(e.key==='/'&&e.target!==input){e.preventDefault();input.focus();return;}
 });
-
-// mode helpers — plan and bypass are mutually exclusive
-function updateModeButtons(){
-  const auto=!planMode&&!bypassMode;
-  $('#btn-auto').classList.toggle('toolbar__btn--ok',auto);
-  $('#btn-plan').classList.toggle('toolbar__btn--active',planMode);
-  $('#btn-bypass').classList.toggle('toolbar__btn--danger',bypassMode);
-}
-async function setPlan(on){planMode=on;if(on){bypassMode=false;}updateModeButtons();if(on){await post('/bypass',{on:false});}await post('/plan',{on});}
-async function setBypass(on){bypassMode=on;if(on){planMode=false;}updateModeButtons();if(on){await post('/plan',{on:false});}await post('/bypass',{on});}
-async function cycleMode(){if(!planMode&&!bypassMode)await setPlan(true);else if(planMode){await setPlan(false);await setBypass(true);}else await setBypass(false);setTimeout(fetchStatus,200);}
-async function setMode(m){if(m==='auto'){if(planMode)await setPlan(false);if(bypassMode)await setBypass(false);}else if(m==='plan'){await setPlan(true);}else if(m==='yolo'){await setBypass(true);}}
 
 // toolbar buttons
 btnSend.onclick=()=>void send();
 btnStop.onclick=()=>post('/cancel');
-$('#btn-auto').onclick=()=>void setMode('auto');
-$('#btn-plan').onclick=()=>void setPlan(!planMode);
-$('#btn-bypass').onclick=()=>void setBypass(!bypassMode);
 $('#btn-new').onclick=()=>{if(running)return;post('/new').then(()=>{log.innerHTML='';log.appendChild(welcome);welcome.style.display='';loadSessions();});};
 $('#btn-compact').onclick=()=>{if(!running)post('/compact');};
 $('#btn-rewind').onclick=()=>openRewindPicker();
