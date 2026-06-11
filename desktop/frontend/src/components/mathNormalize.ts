@@ -1,23 +1,16 @@
 // Pre-pass that converts LLM-typical math delimiters into the $/$$ syntax
-// that remark-math expects, and runs KaTeX-specific normalisations on the
-// resulting math sources.
+// that remark-math expects, and runs KaTeX-specific normalisations on each
+// recognised math source.
 //
-// Pipeline:
 //   1. Protect Markdown code spans/fences from all math rewrites.
 //   2. Protect LaTeX line-break spacing (\\[...]) from the LLM-delimiter rewrite.
 //   3. \(...)/\[...] → $/$$.
-//   4. $$...$$ is recognised first and replaced with display placeholders so
-//      the single-$ classifier pass can't accidentally match dollars that
-//      belong to a display-math block.
-//   5. $\cmd{...}$ patterns (e.g. $\text{cost is $5}$) are recognised before
-//      plain $...$ so that a stray $ inside \text{} doesn't terminate the
-//      match early — KaTeX needs that internal $ to be escaped as
-//      \textdollar{}.
-//   6. The remaining $...$ pairs go through isLikelyInlineMath; non-math
-//      pairs use Markdown dollar entities so remark-math leaves them alone
-//      while the rendered prose still shows normal dollar signs.
-//   7. Each recognised math source is run through latexNormalizeForKatex
-//      (text-mode escapes, |→\vert).
+//   4. Inline `$$` glued to prose gets a blank line inserted before it
+//      (CommonMark requires that block math be paragraph-separated).
+//   5. $$…$$ → display placeholders, $…$ → inline placeholders, gated by
+//      isLikelyInlineMath so currency / env-var tokens pass through.
+//   6. Each recognised math source is run through latexNormalizeForKatex
+//      (text-mode escapes, |→\vert, %→\%).
 
 import { isLikelyInlineMath } from "./mathClassify";
 import { latexNormalizeForKatex } from "./latexNormalize";
@@ -48,9 +41,9 @@ function normalizeMathText(s: string): string {
   // \[ → $$ rewrite below doesn't swallow it.
   let r = s.replace(/\\\\\[/g, LB);
 
-  // Step 2: convert LLM-native delimiters to standard $/$$ syntax.
-  // Arrow functions are required because "$$" in a JS replace string means
-  // a single literal $.
+  // Step 2: convert LLM-native delimiters to standard $/$$ syntax. Arrow
+  // functions are required because "$$" in a JS replace string means a
+  // single literal $.
   r = r
     .replace(/\\\[/g, () => "$$")
     .replace(/\\\]/g, () => "$$")
@@ -58,32 +51,43 @@ function normalizeMathText(s: string): string {
     .replace(/\\\)/g, () => "$");
   r = r.replace(new RegExp(LB, "g"), "\\\\[");
 
-  // Step 3: $$…$$ → display placeholders. The KaTeX-specific normalisation
-  // runs here so |→\vert (with \| protected) and \text{} escapes both apply
-  // to display math.
+  // Step 3: repair inline $$. CommonMark requires a blank line before
+  // block math; without it remark-math parses the opening $$ as an
+  // empty math node and the formula leaks out as literal text.
+  // Digits are excluded so `c^2$$` inside a formula is left alone.
+  r = r.replace(/([A-Za-z\)\]\>\.。！？])\$\$/g, (_m, prev) => prev + "\n\n$$");
+
+  // Orphan opening $$ (model forgot the closing $$) is left alone:
+  // converting it to a lone $ would interact badly with the $…$
+  // matcher below and wrap whole prose paragraphs in math spans. The
+  // right fix is upstream — a post-generation lint or stricter prompt.
+
+  // Step 4: $$…$$ → display placeholders. KaTeX-specific normalisation
+  // runs here so |→\vert (with \| protected) and \text{} escapes both
+  // apply to display math.
   r = r.replace(/\$\$([\s\S]*?)\$\$/g, (_m, m) => `${DM}${latexNormalizeForKatex(m)}${DM}`);
 
-  // Step 4: $\cmd{...}$ pairs where the body may contain a stray $ (e.g.
-  // $\text{price is $5}$). We recognise these first so the stray $ doesn't
-  // terminate a plain $...$ match early, then run latexNormalizeForKatex
-  // which escapes the inner $ to \textdollar{}.
+  // Step 5: $\cmd{...}$ pairs where the body may contain a stray $
+  // (e.g. $\text{price is $5}$). Recognised first so the inner $ doesn't
+  // terminate a plain $...$ match; latexNormalizeForKatex then escapes
+  // the inner $ to \textdollar{}.
   r = r.replace(TEXT_MODE_PAIR, (_match, m) => {
     if (!isLikelyInlineMath(m.trim())) return `${DOLLAR}${m}${DOLLAR}`;
     return `${IM}${latexNormalizeForKatex(m)}${IM}`;
   });
 
-  // Step 5: remaining $…$ → classifier-gated inline math. Non-math pairs
-  // use Markdown dollar entities so remark-math leaves them as literal text
-  // instead of raising on bare currency / env-var / version tokens.
+  // Step 6: remaining $…$ → classifier-gated inline math. Non-math
+  // pairs (e.g. currency like "$5 and $6") are left unchanged so the
+  // dollars remain visible; remark-math will not try to parse them.
   r = r.replace(/\$([^$\n]+)\$/g, (_m, m) => {
-    if (!isLikelyInlineMath(m.trim())) return `${DOLLAR}${m}${DOLLAR}`;
+    if (!isLikelyInlineMath(m.trim())) return _m;
     return `${IM}${latexNormalizeForKatex(m)}${IM}`;
   });
 
-  // Step 6: restore standard $/$$ delimiters for remark-math to parse.
+  // Step 7: restore standard $/$$ delimiters for remark-math to parse.
   return r
     .replace(new RegExp(DM, "g"), () => "$$")
-    .replace(new RegExp(IM, "g"), () => "$");
+    .replace(new RegExp(IM, "g"), "$");
 }
 
 function protectMarkdownCode(s: string): { text: string; prefix: string; segments: string[] } {
@@ -133,6 +137,9 @@ function unusedPlaceholderPrefix(s: string): string {
 }
 
 function fencedCodeEnd(s: string, start: number): number {
+  // Fence must be at the start of a line (or the document) — CommonMark
+  // requirement. Allowing mid-line fences would swallow prose like
+  // "wrap code in ```blocks``` here" into the code region.
   if (start !== 0 && s[start - 1] !== "\n") return -1;
 
   let markerStart = start;
@@ -150,7 +157,14 @@ function fencedCodeEnd(s: string, start: number): number {
   if (fenceLen < 3) return -1;
 
   const openingLineEnd = lineEnd(s, markerStart + fenceLen);
-  if (openingLineEnd >= s.length) return s.length;
+
+  // Single-line doc: treat the next matching fence as the closing fence.
+  if (openingLineEnd >= s.length) {
+    const fencePattern = marker.repeat(fenceLen);
+    const nextFence = s.indexOf(fencePattern, markerStart + fenceLen);
+    if (nextFence === -1) return s.length;
+    return nextFence + fenceLen;
+  }
 
   let lineStart = openingLineEnd + 1;
   while (lineStart < s.length) {
