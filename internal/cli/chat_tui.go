@@ -3764,6 +3764,11 @@ func replaySectionsFor(history []provider.Message, width int, renderer *mdRender
 	for _, m := range history {
 		switch m.Role {
 		case provider.RoleUser:
+			// Steer messages are surfaced as a notice line, not a user bubble.
+			if steerText, isSteer := agent.SteerText(m.Content); isSteer {
+				out = append(out, fmt.Sprintf("  ↪ %s\n\n", steerText))
+				continue
+			}
 			content := control.StripComposePrefixes(m.Content)
 			out = append(out, renderUserBubble(content, width, false)+"\n\n")
 		case provider.RoleAssistant:

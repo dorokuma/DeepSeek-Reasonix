@@ -1531,6 +1531,16 @@ func historyMessages(msgs []provider.Message, resolveUserContent func(string) st
 	for _, m := range msgs {
 		content := m.Content
 		if m.Role == provider.RoleUser {
+			// Mid-turn steer messages are persisted in the session so they
+			// survive tab switches. They are surfaced as a notice (↪ text)
+			// — matching the live Steer event look — rather than as a
+			// regular user bubble or being filtered as synthetic (#4044).
+			// Check against the raw m.Content: resolveUserContent applies
+			// StripComposePrefixes which trims trailing whitespace.
+			if steerText, isSteer := agent.SteerText(m.Content); isSteer {
+				out = append(out, HistoryMessage{Role: "notice", Content: "↪ " + steerText})
+				continue
+			}
 			content = resolveUserContent(m.Content)
 			if control.IsSyntheticUserMessage(content) {
 				continue
