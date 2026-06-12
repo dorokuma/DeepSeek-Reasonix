@@ -183,7 +183,7 @@ func TestStatuslineKeepsCacheRatesInPrimaryDataRow(t *testing.T) {
 	if len(lines) != 2 {
 		t.Fatalf("status block lines = %d, want 2:\n%s", len(lines), strings.Join(lines, "\n"))
 	}
-	want := "deepseek-v4-flash · turn hit 90.00% · avg 90.00%"
+	want := "deepseek-v4-flash · cached 90.00% · avg 90.00%"
 	if !strings.Contains(lines[1], want) {
 		t.Fatalf("data row should keep cache rates next to model:\n%s", strings.Join(lines, "\n"))
 	}
@@ -404,7 +404,7 @@ func TestNarrowDataRowKeepsCacheAndCostOnly(t *testing.T) {
 		t.Fatalf("narrow cache lines = %d, want 2:\n%s", len(lines), strings.Join(lines, "\n"))
 	}
 	// Row 2: must have cache rates, must NOT have model name or ctx.
-	if !strings.Contains(lines[1], "hit") || !strings.Contains(lines[1], "avg") {
+	if !strings.Contains(lines[1], "cached") || !strings.Contains(lines[1], "avg") {
 		t.Errorf("narrow cache row 2 missing cache rates:\n%s", lines[1])
 	}
 	if strings.Contains(lines[1], "deepseek") {

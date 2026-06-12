@@ -2618,7 +2618,7 @@ func mergeTodoWrite(currentArgs, mergeArgs string) string {
 	}
 	existing = append(existing, appended...)
 
-	doc["todos"] = mustMarshal(existing)
+	doc["todos"] = marshalRaw(existing)
 	b, err := json.Marshal(doc)
 	if err != nil {
 		return currentArgs
@@ -2626,11 +2626,11 @@ func mergeTodoWrite(currentArgs, mergeArgs string) string {
 	return string(b)
 }
 
-// mustMarshal panics if v cannot be marshalled (used where failure is impossible).
-func mustMarshal(v any) json.RawMessage {
+// marshalRaw marshals v into a RawMessage; returns nil on error.
+func marshalRaw(v any) json.RawMessage {
 	b, err := json.Marshal(v)
 	if err != nil {
-		panic(err)
+		return nil
 	}
 	return b
 }

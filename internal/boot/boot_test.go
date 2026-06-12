@@ -45,6 +45,7 @@ enabled = false
 
 [agent]
 system_prompt = "BASE SYSTEM PROMPT"
+system_prompt_file = ""
 
 [[providers]]
 name = "test-model"
@@ -135,6 +136,7 @@ enabled = false
 
 [agent]
 system_prompt = "BASE"
+system_prompt_file = ""
 
 [[providers]]
 name = "test-model"
@@ -355,6 +357,7 @@ enabled = false
 
 [agent]
 system_prompt = "BASE"
+system_prompt_file = ""
 
 [[providers]]
 name = "test-model"
@@ -387,6 +390,7 @@ enabled = false
 
 [agent]
 system_prompt = "BASE"
+system_prompt_file = ""
 
 [[providers]]
 name = "test-model"
@@ -688,6 +692,7 @@ enabled = false
 
 [agent]
 system_prompt = "BASE"
+system_prompt_file = ""
 
 [[providers]]
 name = "test-model"
@@ -736,6 +741,7 @@ enabled = false
 
 [agent]
 system_prompt = "BASE"
+system_prompt_file = ""
 
 [[providers]]
 name = "test-model"
@@ -788,6 +794,7 @@ tier = "background"
 
 [agent]
 system_prompt = "BASE"
+system_prompt_file = ""
 
 [[providers]]
 name = "test-model"
@@ -859,6 +866,7 @@ enabled = false
 
 [agent]
 system_prompt = "BASE"
+system_prompt_file = ""
 
 [[providers]]
 name = "test-model"

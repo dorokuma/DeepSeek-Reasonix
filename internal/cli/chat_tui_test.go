@@ -417,6 +417,7 @@ func TestInputOwnedOverlaysKeepComposerBox(t *testing.T) {
 // results, usage, notices, and coordinator phases each commit as their own
 // scrollback line. Routing is by Kind, not by sniffing line prefixes.
 func TestIngestEventRoutesByKind(t *testing.T) {
+	i18n.DetectLanguage("en")
 	// Reasoning shows a marker plus the live thinking text streamed below it.
 	m := newTestChatTUI()
 	m.ingestEvent(event.Event{Kind: event.Reasoning, Text: "weighing options"})
@@ -659,13 +660,14 @@ func TestEffortCommandWritesCurrentDeepSeekProvider(t *testing.T) {
 }
 
 func TestEffortCommandRejectsUnsupportedProvider(t *testing.T) {
+	i18n.DetectLanguage("en")
 	isolateUserConfig(t)
 
 	m := newTestChatTUI()
-	m.ctrl = control.New(control.Options{Label: "mimo-pro"})
-	m.modelRef = "mimo-pro/mimo-v2.5-pro"
+	m.ctrl = control.New(control.Options{Label: "nonexistent"})
+	m.modelRef = "nonexistent/nonexistent"
 	m.buildController = func(_ string, _ []provider.Message, _ string) (*control.Controller, error) {
-		return control.New(control.Options{Label: "mimo-pro"}), nil
+		return control.New(control.Options{Label: "nonexistent"}), nil
 	}
 
 	if cmd := m.runEffortCommand("/effort max"); cmd != nil {
@@ -1138,7 +1140,7 @@ func TestApprovalToolDetailsShortensMCPNames(t *testing.T) {
 	if name != "understand_image" {
 		t.Fatalf("name = %q, want understand_image", name)
 	}
-	for _, want := range []string{"provided image input", "minimax-coding-plan-mcp"} {
+	for _, want := range []string{"read the provided image", "minimax-coding-plan-mcp"} {
 		if !strings.Contains(detail, want) {
 			t.Errorf("detail = %q, want it to contain %q", detail, want)
 		}
