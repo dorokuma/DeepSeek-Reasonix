@@ -33,22 +33,41 @@ func StripCredentialEnv(env []string) []string {
 			strings.HasSuffix(upper, "_AUTH") ||
 			strings.HasSuffix(upper, "_CERT") ||
 			strings.HasSuffix(upper, "_SIGNATURE") ||
+			strings.HasSuffix(upper, "_SIGNING_KEY") ||
+			strings.HasSuffix(upper, "_SIGNKEY") ||
+			strings.HasSuffix(upper, "_ENCRYPTION_KEY") ||
+			strings.HasSuffix(upper, "_SESSION_KEY") ||
+			strings.HasSuffix(upper, "_PRIVATE_KEY") ||
+			strings.HasSuffix(upper, "_PRIVKEY") ||
+			strings.HasSuffix(upper, "_API_SECRET") ||
+			strings.HasSuffix(upper, "_CLIENT_SECRET") ||
+			strings.HasSuffix(upper, "_MASTER_KEY") ||
+			strings.HasSuffix(upper, "_REFRESH_TOKEN") ||
+			strings.HasSuffix(upper, "_ACCESS_TOKEN") ||
+			strings.HasSuffix(upper, "_BEARER_TOKEN") ||
+			strings.HasSuffix(upper, "_SSH_KEY") ||
+			strings.HasSuffix(upper, "_TLS_KEY") ||
+			strings.HasSuffix(upper, "_OAUTH") ||
+			strings.HasSuffix(upper, "_SALT") ||
 			strings.HasSuffix(upper, "_PWD") ||
 			strings.HasSuffix(upper, "_PAT") ||
 			strings.HasSuffix(upper, "_JWT") ||
 			strings.HasSuffix(upper, "_PASSPHRASE") ||
 			strings.HasSuffix(upper, "_DSN") ||
 			strings.HasSuffix(upper, "_URI") ||
+			strings.HasSuffix(upper, "_URL") ||
 			strings.HasSuffix(upper, "_KEY_ID") ||
 			strings.HasSuffix(upper, "_ACCESS_KEY_ID") ||
 			strings.HasSuffix(upper, "_CONNECTION_STRING") ||
 			strings.HasSuffix(upper, "_CONNSTR") ||
-			strings.HasSuffix(upper, "_URL") ||
 			strings.HasPrefix(upper, "PG") && (strings.HasSuffix(upper, "PASSWORD") || strings.HasSuffix(upper, "PASS") || strings.HasSuffix(upper, "HOST") || strings.HasSuffix(upper, "DATABASE") || strings.HasSuffix(upper, "USER")) ||
 			strings.HasPrefix(upper, "AWS_") && strings.HasSuffix(upper, "_ID") ||
 			upper == "TOKEN" || upper == "SECRET" || upper == "PASSWORD" ||
 			upper == "AUTHORIZATION" || upper == "BEARER" ||
-			upper == "PGPASSWORD" || upper == "PGPASS" {
+			upper == "PGPASSWORD" || upper == "PGPASS" ||
+			upper == "NPM_TOKEN" || upper == "GITHUB_TOKEN" ||
+			upper == "GITLAB_TOKEN" || upper == "SLACK_TOKEN" ||
+			upper == "DISCORD_TOKEN" || upper == "TELEGRAM_BOT_TOKEN" {
 			continue
 		}
 		out = append(out, kv)

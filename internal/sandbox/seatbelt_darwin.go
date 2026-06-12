@@ -15,9 +15,9 @@ import (
 // the permission layer still gates the call).
 func Command(spec Spec, sh Shell, command string) ([]string, bool) {
 	if !spec.enforce() || !Available() {
-		return sh.argv(command), false
+		return sh.Argv(command), false
 	}
-	return append([]string{"sandbox-exec", "-p", seatbeltProfile(spec)}, sh.argv(command)...), true
+	return append([]string{"sandbox-exec", "-p", seatbeltProfile(spec)}, sh.Argv(command)...), true
 }
 
 // Available reports whether sandbox-exec is on PATH (it ships with macOS).

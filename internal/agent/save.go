@@ -28,7 +28,7 @@ func (s *Session) Save(path string) error {
 	if path == "" {
 		return fmt.Errorf("empty session path")
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return fmt.Errorf("create session dir: %w", err)
 	}
 	// Write to a sibling tmp file then rename, so a crash mid-write can't
