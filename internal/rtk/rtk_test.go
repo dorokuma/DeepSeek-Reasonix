@@ -86,7 +86,7 @@ func TestActive_defaultRewrite(t *testing.T) {
 
 func TestReadFileDefaultLimit(t *testing.T) {
 	t.Setenv("REASONIX_RTK", "off")
-	if ReadFileDefaultLimit() != 2000 {
+	if ReadFileDefaultLimit() != 200 {
 		t.Fatalf("off = %d", ReadFileDefaultLimit())
 	}
 	if !Available() {
