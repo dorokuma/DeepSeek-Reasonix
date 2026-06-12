@@ -1303,6 +1303,10 @@ func (c *Config) providerNames() string {
 
 // BuildModelFetchURLs builds candidate URLs for fetching available models from a provider.
 func BuildModelFetchURLs(baseURL, apiVersion string) ([]string, error) {
-	return []string{strings.TrimRight(baseURL, "/") + "/models"}, nil
+	root := strings.TrimRight(baseURL, "/")
+	if strings.HasSuffix(root, "/v1") {
+		return []string{root + "/models"}, nil
+	}
+	return []string{root + "/models", root + "/v1/models"}, nil
 }
 

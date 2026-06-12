@@ -7,6 +7,7 @@ import (
 	"charm.land/bubbles/v2/textarea"
 
 	"reasonix/internal/event"
+	"reasonix/internal/i18n"
 )
 
 // newTestChatTUI builds a chatTUI with just the pieces the streaming/commit and
@@ -50,6 +51,7 @@ func TestCacheRateLabelKeepsTwoDecimals(t *testing.T) {
 // streamed text removed) when the answer begins, and the answer commits as its
 // own distinct entry.
 func TestIngestSeparatesReasoningFromAnswer(t *testing.T) {
+	i18n.DetectLanguage("en")
 	m := newTestChatTUI()
 
 	m.ingestEvent(event.Event{Kind: event.Reasoning, Text: "…reasoning…"}) // thinking → marker + live text

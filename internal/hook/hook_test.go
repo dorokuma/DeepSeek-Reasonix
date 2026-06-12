@@ -2,6 +2,7 @@ package hook
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -201,5 +202,76 @@ func TestDefaultSpawnerOutputCap(t *testing.T) {
 	}
 	if len(r.Stdout) > outputCapBytes {
 		t.Errorf("captured output %d exceeds cap %d", len(r.Stdout), outputCapBytes)
+	}
+}
+
+// TestPreToolUseArgRewrite verifies that a PreToolUse hook which exits 0 and
+// emits valid JSON on stdout rewrites the tool arguments for the caller.
+func TestPreToolUseArgRewrite(t *testing.T) {
+	hooks := []ResolvedHook{
+		{HookConfig: HookConfig{Command: "rewrite"}, Event: PreToolUse, Scope: ScopeProject},
+	}
+	spawner := func(_ context.Context, in SpawnInput) SpawnResult {
+		return SpawnResult{ExitCode: 0, Stdout: `{"path":"foo.txt","limit":200}`}
+	}
+	rep := Run(context.Background(), Payload{Event: PreToolUse, ToolName: "read_file", ToolArgs: json.RawMessage(`{"path":"foo.txt"}`)}, hooks, spawner)
+	if rep.Blocked {
+		t.Fatal("exit 0 should not block")
+	}
+	if rep.ModifiedArgs == nil {
+		t.Fatal("hook wrote JSON to stdout — ModifiedArgs should be set")
+	}
+	var got struct {
+		Path  string `json:"path"`
+		Limit int    `json:"limit"`
+	}
+	if err := json.Unmarshal(rep.ModifiedArgs, &got); err != nil {
+		t.Fatalf("invalid modified args: %v", err)
+	}
+	if got.Path != "foo.txt" || got.Limit != 200 {
+		t.Errorf("expected path=foo.txt limit=200, got %+v", got)
+	}
+}
+
+// TestPreToolUseArgRewriteChaining verifies the rewrite propagates: a second
+// hook sees the first hook's modified ToolArgs, and the final report carries
+// the second hook's output.
+func TestPreToolUseArgRewriteChaining(t *testing.T) {
+	hooks := []ResolvedHook{
+		{HookConfig: HookConfig{Command: "first"}, Event: PreToolUse, Scope: ScopeProject},
+		{HookConfig: HookConfig{Command: "second"}, Event: PreToolUse, Scope: ScopeProject},
+	}
+	var steps []string
+	spawner := func(_ context.Context, in SpawnInput) SpawnResult {
+		var p Payload
+		json.Unmarshal([]byte(in.Stdin), &p)
+		steps = append(steps, string(p.ToolArgs))
+		if p.ToolName == "read_file" {
+			return SpawnResult{ExitCode: 0, Stdout: `{"path":"bar.txt","limit":100}`}
+		}
+		return SpawnResult{ExitCode: 0}
+	}
+	rep := Run(context.Background(), Payload{Event: PreToolUse, ToolName: "read_file", ToolArgs: json.RawMessage(`{"path":"foo.txt"}`)}, hooks, spawner)
+	if rep.Blocked {
+		t.Fatal("exit 0 should not block")
+	}
+	if len(steps) != 2 {
+		t.Fatalf("expected 2 steps, got %d", len(steps))
+	}
+	if steps[0] != `{"path":"foo.txt"}` {
+		t.Errorf("first hook should see original args: %s", steps[0])
+	}
+	if steps[1] != `{"path":"bar.txt","limit":100}` {
+		t.Errorf("second hook should see first hook's rewritten args: %s", steps[1])
+	}
+	var got struct {
+		Path  string `json:"path"`
+		Limit int    `json:"limit"`
+	}
+	if err := json.Unmarshal(rep.ModifiedArgs, &got); err != nil {
+		t.Fatalf("invalid modified args: %v", err)
+	}
+	if got.Path != "bar.txt" || got.Limit != 100 {
+		t.Errorf("expected path=bar.txt limit=100, got %+v", got)
 	}
 }

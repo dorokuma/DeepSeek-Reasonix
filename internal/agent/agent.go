@@ -96,11 +96,13 @@ type Gate interface {
 
 // ToolHooks fires user-configured shell hooks around each tool call. PreToolUse
 // runs before the call and may block it (block=true; message is the reason fed
-// back to the model); PostToolUse runs after and only surfaces output to the
-// user (it can't block). It is interface-shaped so the agent stays independent
-// of the hook package — a nil hooks field disables hook firing entirely.
+// back to the model); when modified is non-nil the caller MUST use those args
+// instead of the original. PostToolUse runs after and only surfaces output to
+// the user (it can't block). It is interface-shaped so the agent stays
+// independent of the hook package — a nil hooks field disables hook firing
+// entirely.
 type ToolHooks interface {
-	PreToolUse(ctx context.Context, name string, args json.RawMessage) (block bool, message string)
+	PreToolUse(ctx context.Context, name string, args json.RawMessage) (block bool, message string, modified json.RawMessage)
 	PostToolUse(ctx context.Context, name string, args json.RawMessage, result string)
 	// PostLLMCall fires after each model turn completes (streaming finishes)
 	// but before reasoning_content is stored. It returns the (possibly
@@ -1097,8 +1099,11 @@ func (a *Agent) executeOne(ctx context.Context, call provider.ToolCall) toolOutc
 	}
 	// PreToolUse hooks run after permission is granted but before the call: a
 	// gating hook (exit 2) refuses it, surfaced to the model like a gate denial.
+	// A hook may also emit replacement args on stdout; if so the tool executes
+	// with those instead of the model's original Arguments.
+	effectiveArgs := json.RawMessage(call.Arguments)
 	if a.hooks != nil {
-		if block, msg := a.hooks.PreToolUse(ctx, call.Name, json.RawMessage(call.Arguments)); block {
+		if block, msg, modified := a.hooks.PreToolUse(ctx, call.Name, effectiveArgs); block {
 			if msg == "" {
 				msg = "blocked by a PreToolUse hook"
 			}
@@ -1107,6 +1112,8 @@ func (a *Agent) executeOne(ctx context.Context, call provider.ToolCall) toolOutc
 				blocked: true,
 				errMsg:  "blocked by PreToolUse hook",
 			}
+		} else if modified != nil {
+			effectiveArgs = modified
 		}
 	}
 	// Checkpoint the file this writer is about to change, so the turn can be
@@ -1115,7 +1122,7 @@ func (a *Agent) executeOne(ctx context.Context, call provider.ToolCall) toolOutc
 	// likely fail anyway, so we skip rather than snapshot a stale state.
 	if a.onPreEdit != nil && !t.ReadOnly() {
 		if pv, ok := t.(tool.Previewer); ok {
-			if change, perr := pv.Preview(json.RawMessage(call.Arguments)); perr == nil {
+			if change, perr := pv.Preview(effectiveArgs); perr == nil {
 				a.onPreEdit(change)
 			}
 		}
@@ -1137,13 +1144,15 @@ func (a *Agent) executeOne(ctx context.Context, call provider.ToolCall) toolOutc
 	cctx = tool.WithProgress(cctx, func(chunk string) {
 		a.sink.Emit(event.Event{Kind: event.ToolProgress, Tool: event.Tool{ID: callID, Output: chunk}})
 	})
-	result, err := t.Execute(cctx, json.RawMessage(call.Arguments))
+	result, err := t.Execute(cctx, effectiveArgs)
 	if a.ctxStore != nil {
-		ctxmode.RecordTool(a.ctxStore.Journal(), call.Name, json.RawMessage(call.Arguments), result, err)
+		ctxmode.RecordTool(a.ctxStore.Journal(), call.Name, effectiveArgs, result, err)
 	}
 
 	// PostToolUse hooks observe the result (they can't block); fired whether the
-	// call succeeded or errored, since the tool did run.
+	// call succeeded or errored, since the tool did run. We pass the original
+	// args here (not effectiveArgs) so the hook sees what the model intended, not
+	// what a previous hook rewrote it to.
 	if a.hooks != nil {
 		a.hooks.PostToolUse(ctx, call.Name, json.RawMessage(call.Arguments), result)
 	}

@@ -57,6 +57,9 @@ default_model = "x"
 [codegraph]
 enabled = false
 
+[agent]
+system_prompt_file = ""
+
 [[providers]]
 name = "x"
 kind = "openai"

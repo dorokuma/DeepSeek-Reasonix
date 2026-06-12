@@ -267,6 +267,10 @@ type Report struct {
 	Event    Event
 	Outcomes []Outcome
 	Blocked  bool // at least one outcome blocked (only meaningful on gating events)
+	// ModifiedArgs, when non-nil on a PreToolUse report, holds the replacement
+	// tool arguments a hook emitted on stdout. The caller (agent.executeOne)
+	// uses these in place of the original call.Arguments.
+	ModifiedArgs json.RawMessage `json:"-"`
 }
 
 // decideOutcome maps a spawn result to a verdict.
@@ -314,14 +318,14 @@ const outputCapBytes = 256 * 1024
 // Run executes the hooks matching payload.Event (and, for tool events, the tool
 // name), feeding each the JSON payload on stdin. It stops at the first block so
 // a gating hook can prevent later hooks running against a phantom success.
+// When a PreToolUse hook exits 0 and writes valid JSON to stdout, that JSON
+// replaces payload.ToolArgs for subsequent hooks and is recorded as
+// report.ModifiedArgs — the caller uses it in place of the original tool args.
 func Run(ctx context.Context, payload Payload, hooks []ResolvedHook, spawner Spawner) Report {
 	if spawner == nil {
 		spawner = DefaultSpawner
 	}
 	event := payload.Event
-	stdinBytes, _ := json.Marshal(payload)
-	stdin := string(stdinBytes) + "\n"
-
 	report := Report{Event: event}
 	for _, h := range hooks {
 		if h.Event != event || !MatchesTool(h, payload.ToolName) {
@@ -332,8 +336,14 @@ func Run(ctx context.Context, payload Payload, hooks []ResolvedHook, spawner Spa
 			cwd = payload.Cwd
 		}
 		timeout := h.timeout()
+
+		// Re-marshal the payload each loop so earlier hooks' stdout modifications
+		// to ToolArgs are visible to later hooks in the chain.
+		payloadBytes, _ := json.Marshal(payload)
+		hookStdin := string(payloadBytes) + "\n"
+
 		start := time.Now()
-		r := spawner(ctx, SpawnInput{Command: h.Command, Cwd: cwd, Stdin: stdin, Timeout: timeout})
+		r := spawner(ctx, SpawnInput{Command: h.Command, Cwd: cwd, Stdin: hookStdin, Timeout: timeout})
 		decision := decideOutcome(event, r)
 		report.Outcomes = append(report.Outcomes, Outcome{
 			Hook:      h,
@@ -348,6 +358,14 @@ func Run(ctx context.Context, payload Payload, hooks []ResolvedHook, spawner Spa
 		if decision == DecisionBlock {
 			report.Blocked = true
 			break
+		}
+		// A PreToolUse hook that exits 0 with valid JSON on stdout replaces the
+		// tool arguments for downstream hooks and for the final report.
+		if event == PreToolUse && decision == DecisionPass {
+			if s := strings.TrimSpace(r.Stdout); s != "" && json.Valid([]byte(s)) {
+				payload.ToolArgs = json.RawMessage(s)
+				report.ModifiedArgs = json.RawMessage(s)
+			}
 		}
 	}
 	return report

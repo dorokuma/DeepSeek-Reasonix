@@ -331,7 +331,7 @@ func TestMCPEditConfigLaunchUsesVisualBeforeEditor(t *testing.T) {
 	if len(launch.cmd.Args) != 3 || launch.cmd.Args[0] != "sh" || launch.cmd.Args[1] != "-lc" {
 		t.Fatalf("VISUAL should run through shell, args=%v", launch.cmd.Args)
 	}
-	if want := "vim " + shellQuote(path); launch.cmd.Args[2] != want {
+	if want := shellQuote("vim") + " " + shellQuote(path); launch.cmd.Args[2] != want {
 		t.Fatalf("shell command = %q, want %q", launch.cmd.Args[2], want)
 	}
 }

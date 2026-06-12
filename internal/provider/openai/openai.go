@@ -547,5 +547,9 @@ type wireUsage struct {
 }
 
 // IsModelFetchEndpointMiss returns true when the error indicates a 404 (endpoint not found).
-func IsModelFetchEndpointMiss(err error) bool { return false }
-
+func IsModelFetchEndpointMiss(err error) bool {
+	if err == nil {
+		return false
+	}
+	return strings.Contains(err.Error(), "status 404")
+}
