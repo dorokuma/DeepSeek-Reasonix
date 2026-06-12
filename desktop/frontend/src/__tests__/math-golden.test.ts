@@ -198,6 +198,20 @@ check("inline $$ after closing bracket", () => {
   const out = normalizeMath("(octet)$$ \\mathbf{56}.$$");
   return out.startsWith("(octet)\n\n$$");
 });
+check("inline $$ after comma on same line as content", () => {
+  // User-reported (2026-06-12, soft-pion chat): the model wrote the
+  // closing $$ of a display block on the same line as the trailing
+  // comma of the equation content, like
+  //   …D(q^2),$$
+  //   with $P=…$
+  // Without a blank line before the closing $$, micromark-extension-math
+  // does not recognise the closing fence (it only checks for $$ at
+  // the start of a new line) and consumes the rest of the document
+  // as math, which then fails to render with "Can't use function '$'
+  // in math mode" on the stray $ inside the equation body.
+  const out = normalizeMath("…D(q^2),$$\nwith $P=…$");
+  return out.includes("D(q^2),\n\n$$");
+});
 check("well-formed $$ already on own line is normalised consistently", () => {
   // Whether the model writes `decomposes as$$\n\mathbf{6}.$$` or
   // `decomposes as\n\n$$\n\mathbf{6}.$$`, both must produce the same

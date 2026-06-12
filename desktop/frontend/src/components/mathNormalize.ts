@@ -55,7 +55,12 @@ function normalizeMathText(s: string): string {
   // block math; without it remark-math parses the opening $$ as an
   // empty math node and the formula leaks out as literal text.
   // Digits are excluded so `c^2$$` inside a formula is left alone.
-  r = r.replace(/([A-Za-z\)\]\>\.。！？])\$\$/g, (_m, prev) => prev + "\n\n$$");
+  // Comma is included so `…D(q^2),$$` (closing $$ on the same line as
+  // the trailing content) is repaired: micromark-extension-math only
+  // recognises a closing $$ fence at the start of a new line, so
+  // without this repair it consumes the rest of the document as math
+  // and katex fails on the stray $ in the next paragraph.
+  r = r.replace(/([A-Za-z\)\]\>\.。！？,])\$\$/g, (_m, prev) => prev + "\n\n$$");
 
   // Orphan opening $$ (model forgot the closing $$) is left alone:
   // converting it to a lone $ would interact badly with the $…$
