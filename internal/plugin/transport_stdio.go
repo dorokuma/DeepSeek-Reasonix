@@ -52,6 +52,8 @@ func newStdioTransport(ctx context.Context, s Spec) (*stdioTransport, error) {
 		return nil, fmt.Errorf("stdio plugin %q: command is required", s.Name)
 	}
 	env := mergeEnv(os.Environ(), s.Env)
+	// Strip credential env vars so MCP plugin subprocesses don't inherit API keys.
+	env = envutil.StripCredentialEnv(env)
 	exe, env, err := resolveStdioExecutable(ctx, s, env)
 	if err != nil {
 		return nil, err

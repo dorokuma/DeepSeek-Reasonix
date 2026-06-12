@@ -15,7 +15,7 @@ import "os/exec"
 // (boot and acp warn about this once at startup).
 func Command(spec Spec, sh Shell, command string) ([]string, bool) {
 	if !spec.enforce() {
-		return sh.argv(command), false
+		return sh.Argv(command), false
 	}
 	if bwrap, err := exec.LookPath("bwrap"); err == nil {
 		argv := append([]string{bwrap}, bwrapArgs(spec, sh, command)...)
@@ -23,7 +23,7 @@ func Command(spec Spec, sh Shell, command string) ([]string, bool) {
 	}
 	// enforce requested but bwrap unavailable — return the command unwrapped
 	// with false so the caller can refuse to run it.
-	return sh.argv(command), false
+	return sh.Argv(command), false
 }
 
 // Available reports whether an OS sandbox is available on this platform.
@@ -52,5 +52,5 @@ func bwrapArgs(spec Spec, sh Shell, command string) []string {
 	for _, root := range spec.WriteRoots {
 		args = append(args, "--bind", root, root)
 	}
-	return append(args, sh.argv(command)...)
+	return append(args, sh.Argv(command)...)
 }

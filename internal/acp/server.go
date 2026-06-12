@@ -1,3 +1,12 @@
+// Package acp implements the Agent Client Protocol — NDJSON JSON-RPC 2.0 over
+// stdio — used by reasonix-plugin and other local clients to drive the agent.
+//
+// SECURITY: ACP has NO authentication or transport security. It is designed
+// EXCLUSIVELY for local stdio (pipe or Unix socket) between the reasonix binary
+// and a co-located frontend. Exposing an ACP endpoint to a network — even a
+// loopback network port — bypasses all access controls and allows arbitrary
+// agent commands from any local process. Do NOT bind ACP to a TCP listener
+// without adding authentication, TLS, and authorization layers.
 package acp
 
 import (

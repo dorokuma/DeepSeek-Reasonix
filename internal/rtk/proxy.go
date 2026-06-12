@@ -4,9 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
 	"time"
+
+	"reasonix/internal/envutil"
+	"reasonix/internal/sandbox"
 )
 
 // ErrNotRewritten means rtk rewrite declined this command — callers must use
@@ -85,10 +89,15 @@ func execShell(ctx context.Context, workDir, cmd, surface string) (string, error
 	}
 	tctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	c := exec.CommandContext(tctx, "/bin/sh", "-c", cmd)
+	// Use the same shell resolution as the bash tool, not hardcoded /bin/sh.
+	sh := sandbox.ResolveShell()
+	argv := sh.Argv(cmd)
+	c := exec.CommandContext(tctx, argv[0], argv[1:]...)
 	if workDir != "" {
 		c.Dir = workDir
 	}
+	// Strip credential env vars so RTK subprocesses don't inherit API keys.
+	c.Env = envutil.StripCredentialEnv(os.Environ())
 	out, err := c.CombinedOutput()
 	text := strings.TrimSpace(string(out))
 	if err != nil {

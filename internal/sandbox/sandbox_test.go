@@ -172,10 +172,10 @@ func TestSupportsChaining(t *testing.T) {
 }
 
 func TestShellArgvDefaultsPath(t *testing.T) {
-	if got := (Shell{Kind: ShellBash}).argv("ls"); got[0] != "bash" {
+	if got := (Shell{Kind: ShellBash}).Argv("ls"); got[0] != "bash" {
 		t.Errorf("empty bash path argv[0] = %q, want bash", got[0])
 	}
-	if got := (Shell{Kind: ShellPowerShell}).argv("ls"); got[0] != "powershell" {
+	if got := (Shell{Kind: ShellPowerShell}).Argv("ls"); got[0] != "powershell" {
 		t.Errorf("empty powershell path argv[0] = %q, want powershell", got[0])
 	}
 }

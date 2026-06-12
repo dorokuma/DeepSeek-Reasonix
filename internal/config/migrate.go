@@ -256,6 +256,10 @@ func writeCredentialsEnv(home string, lines []string) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
 	}
+	// Re-enforce directory permissions (umask may have relaxed MkdirAll's mode).
+	if err := os.Chmod(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
 	target := make(map[string]bool, len(lines))
 	for _, l := range lines {
 		if k, _, ok := strings.Cut(l, "="); ok {

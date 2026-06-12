@@ -1259,9 +1259,17 @@ func (c *Config) ResolveSystemPrompt() (string, error) {
 		if filepath.IsAbs(path) {
 			return "", fmt.Errorf("system_prompt_file must be a relative path, got absolute: %s", path)
 		}
-		// Prevent path traversal outside the project.
-		if strings.Contains(path, "..") {
+		// Prevent path traversal outside the current directory.
+		cleaned := filepath.Clean(path)
+		if cleaned != path {
+			return "", fmt.Errorf("system_prompt_file must not contain traversal components: %s", path)
+		}
+		if strings.HasPrefix(cleaned, "..") || strings.Contains(cleaned, "/../") || strings.HasSuffix(cleaned, "/..") {
 			return "", fmt.Errorf("system_prompt_file must not contain \"..\": %s", path)
+		}
+		// Also handle Windows-style backslash traversal.
+		if strings.HasPrefix(cleaned, ".."+string(filepath.Separator)) || strings.Contains(cleaned, string(filepath.Separator)+".."+string(filepath.Separator)) || cleaned == ".." {
+			return "", fmt.Errorf("system_prompt_file must not traverse upward: %s", path)
 		}
 		b, err := os.ReadFile(path)
 		if err != nil {

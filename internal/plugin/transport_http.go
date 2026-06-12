@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"strings"
 	"sync"
@@ -47,10 +48,17 @@ func newHTTPTransport(s Spec) (*httpTransport, error) {
 		return nil, fmt.Errorf("http plugin %q: url is required", s.Name)
 	}
 	var transport http.RoundTripper
+	base := &http.Transport{
+		TLSClientConfig: &tls.Config{},
+		DialContext:     ssrfGuardDial,
+	}
 	if caPool := netclient.GlobalCACerts(); caPool != nil {
-		transport = &http.Transport{
-			TLSClientConfig: &tls.Config{RootCAs: caPool},
-		}
+		base.TLSClientConfig.RootCAs = caPool
+	}
+	base.TLSClientConfig = nil // nil means use the default
+	transport = base
+	if caPool := netclient.GlobalCACerts(); caPool != nil {
+		base.TLSClientConfig = &tls.Config{RootCAs: caPool}
 	}
 	return &httpTransport{
 		name:    s.Name,
@@ -59,6 +67,59 @@ func newHTTPTransport(s Spec) (*httpTransport, error) {
 		client:  &http.Client{Transport: transport},
 		done:    make(chan struct{}),
 	}, nil
+}
+
+// ssrfGuardDial is a net.Dialer-style function that blocks connections to
+// private, link-local, CGNAT, and unspecified addresses — the SSRF surface an
+// MCP server pointing at a cloud metadata service or internal network would
+// target. Loopback is allowed: the plugin host already communicates over
+// localhost for stdio-based plugins, and the user explicitly configured this
+// URL. The check runs at dial time on the resolved IP, so a hostname that
+// DNS-rebinds to an internal address is caught.
+func ssrfGuardDial(ctx context.Context, network, addr string) (net.Conn, error) {
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return nil, err
+	}
+	ips, err := net.DefaultResolver.LookupIPAddr(ctx, host)
+	if err != nil {
+		return nil, err
+	}
+	for _, ip := range ips {
+		if blockedMCPIP(ip.IP) {
+			return nil, fmt.Errorf("refusing to connect to internal address %s (resolves to %s)", host, ip.IP)
+		}
+	}
+	// Dial the vetted IP, not the hostname, so the connection can't re-resolve
+	// to a different (internal) address (DNS rebinding).
+	var d net.Dialer
+	return d.DialContext(ctx, network, net.JoinHostPort(ips[0].IP.String(), port))
+}
+
+// mcpCGNAT is RFC 6598 shared address space (100.64.0.0/10). Go's IsPrivate
+// doesn't cover it, yet it's an SSRF target.
+var mcpCGNAT = mustMCPCIDR("100.64.0.0/10")
+
+func mustMCPCIDR(s string) *net.IPNet {
+	_, n, err := net.ParseCIDR(s)
+	if err != nil {
+		panic(err)
+	}
+	return n
+}
+
+// blockedMCPIP reports whether ip is an address the MCP HTTP transport must
+// not connect to. Loopback is allowed (user-configured MCP servers often run
+// locally).
+func blockedMCPIP(ip net.IP) bool {
+	if ip.IsLoopback() {
+		return false
+	}
+	return ip.IsPrivate() ||
+		ip.IsLinkLocalUnicast() ||
+		ip.IsLinkLocalMulticast() ||
+		ip.IsUnspecified() ||
+		mcpCGNAT.Contains(ip)
 }
 
 func (t *httpTransport) call(ctx context.Context, method string, params any) (json.RawMessage, error) {

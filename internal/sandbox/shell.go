@@ -132,8 +132,8 @@ func windowsBashCandidates() []string {
 	return out
 }
 
-// argv builds the exec argv that runs command under this shell.
-func (s Shell) argv(command string) []string {
+// Argv builds the exec argv that runs command under this shell.
+func (s Shell) Argv(command string) []string {
 	path := s.Path
 	if path == "" {
 		path = s.Kind.String()
