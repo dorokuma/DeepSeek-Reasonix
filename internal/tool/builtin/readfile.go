@@ -44,7 +44,7 @@ func (readFile) Schema() json.RawMessage {
 "properties":{
   "path":{"type":"string","description":"File path"},
   "offset":{"type":"integer","description":"0-based line offset to start reading from (default 0)","minimum":0},
-  "limit":{"type":"integer","description":"Maximum lines to return (default 2000)","minimum":1}
+  "limit":{"type":"integer","description":"Maximum lines to return (default 200)","minimum":1}
 },
 "required":["path"]
 }`)

@@ -25,7 +25,7 @@ const (
 const (
 	defaultRewriteTimeout = 3 * time.Second
 	defaultReadLimitRTK   = 800
-	readFileLimitDefault  = 2000
+	readFileLimitDefault  = 200
 )
 
 var (
