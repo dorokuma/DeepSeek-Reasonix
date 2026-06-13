@@ -734,6 +734,12 @@ export function useController() {
     return () => window.clearTimeout(timer);
   }, [activeTabId, reconcileTabRuntime, activeState.running, activeState.live]);
 
+  // Replay any pending approval/ask prompts when switching tabs, so a
+  // plan-mode session left awaiting confirmation rebuilds its modal (#4275).
+  useEffect(() => {
+    if (activeTabId) void app.ReplayPendingPrompts().catch(() => {});
+  }, [activeTabId]);
+
   const send = useCallback((displayText: string, submitText = displayText) => {
     const submitForTab = (tabId: string) => {
       const seq = getOrCreateState(statesRef.current, tabId).seq;
