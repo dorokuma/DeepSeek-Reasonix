@@ -520,7 +520,16 @@ export function reducer(s: State, a: Action): State {
     case "message_action_done": return { ...s, messageAction: undefined };
     case "history": {
       const { items, seq } = historyMessagesToItems(a.messages, "h", s.seq);
-      return { ...s, items, seq };
+      // Archive all tool items loaded from history: collapsed cards only need
+      // tool name + command; full data is loaded on demand from the backend.
+      const archived = items.map((it) => {
+        if (it.kind !== "tool") return it;
+        const t = it;
+        const shortArgs = t.args && t.args.length > 200 ? t.args.slice(0, 200) + "…" : t.args;
+        if (shortArgs === t.args && t.output === undefined) return it;
+        return { ...t, args: shortArgs, output: undefined, dataArchived: true };
+      });
+      return { ...s, items: archived, seq };
     }
     case "local_notice": return { ...s, running: false, turnActive: false, seq: s.seq + 1, items: [...s.items, { kind: "notice", id: `n${s.seq}`, level: a.level, text: a.text }] };
     case "clearApproval": return { ...s, approval: undefined };
