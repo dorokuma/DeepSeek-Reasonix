@@ -1393,6 +1393,11 @@ func backfillDeepSeekPro(c *Config) {
 	if flash == nil {
 		return
 	}
+	// If the user has explicitly curated a model list for the flash provider
+	// (e.g. unchecked pro in Settings), respect that choice and do not backfill.
+	if len(flash.Models) > 0 {
+		return
+	}
 	for _, bp := range Default().Providers {
 		if bp.Name == "deepseek-pro" {
 			bp.APIKeyEnv = flash.APIKeyEnv
@@ -1644,6 +1649,11 @@ func ensureProviderModels(p *ProviderEntry, required []string, fallbackDefault s
 	if p == nil {
 		return
 	}
+	// If the user has explicitly curated a model list (via Settings), respect
+	// that choice and do not merge additional required models.
+	if len(p.Models) > 0 {
+		return
+	}
 	models := mergeModelLists(required, p.ModelList())
 	if len(models) == 0 {
 		return
@@ -1872,6 +1882,11 @@ func isOpenAIProviderKind(e *ProviderEntry) bool {
 }
 
 func mergeCuratedModelsIntoProvider(e *ProviderEntry, models []string, fallback string) {
+	// If the user has explicitly curated a model list (via Settings), respect
+	// that choice and do not merge additional curated models.
+	if len(e.Models) > 0 {
+		return
+	}
 	currentDefault := e.Default
 	if strings.TrimSpace(currentDefault) == "" {
 		currentDefault = e.Model
