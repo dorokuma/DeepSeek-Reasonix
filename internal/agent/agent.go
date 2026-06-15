@@ -464,8 +464,6 @@ func (a *Agent) Run(ctx context.Context, input string) error {
 		ctxmode.RecordUserPrompt(a.ctxStore.Journal(), input)
 	}
 
-	var emptyRecovery emptyRecoveryState
-	var visibilityRecovery visibilityRecoveryState
 	finalReadinessBlocks := 0
 	emptyFinalBlocks := 0
 	handoffNudges := 0
@@ -537,44 +535,6 @@ func (a *Agent) Run(ctx context.Context, input string) error {
 		}
 
 		if len(calls) == 0 {
-			if !hasVisibleAssistantText(text) {
-				action, notice := decideEmptyRecovery(&emptyRecovery, text, reasoning, a.session.Snapshot())
-				switch action {
-				case emptyRecoveryContinuePrefill, emptyRecoveryContinueRetry:
-					a.session.Add(assistantMsg)
-					if notice != "" {
-						a.sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelInfo, Text: notice})
-					}
-					a.maybeCompact(ctx, usage)
-					continue
-				case emptyRecoveryContinueNudge:
-					a.session.Add(assistantMsg)
-					a.session.Add(provider.Message{Role: provider.RoleUser, Content: postToolEmptyNudge})
-					if notice != "" {
-						a.sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelInfo, Text: notice})
-					}
-					a.maybeCompact(ctx, usage)
-					continue
-				case emptyRecoveryExhausted:
-					a.trimEmptyResponseScaffolding()
-					a.emitEmptyResponseFallback()
-					a.session.Add(provider.Message{Role: provider.RoleAssistant, Content: emptyResponseUserMessage})
-					return nil
-				}
-			}
-
-			if action, notice := decideVisibilityRecovery(&visibilityRecovery, text, lastUserMessage(a.session.Snapshot())); action == visibilityRecoveryContinueNudge {
-				a.session.Add(assistantMsg)
-				a.session.Add(provider.Message{Role: provider.RoleUser, Content: visibilityNudge})
-				if notice != "" {
-					a.sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelInfo, Text: notice})
-				}
-				a.maybeCompact(ctx, usage)
-				continue
-			}
-
-
-			a.trimEmptyResponseScaffolding()
 			if !hasVisibleFinalAnswer(text) {
 				emptyFinalBlocks++
 				if emptyFinalBlocks >= maxEmptyFinalBlocks {
