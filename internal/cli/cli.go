@@ -530,11 +530,7 @@ func chatREPL(args []string) int {
 	m.refreshEffortStatus()
 
 	if m.nativeScrollback {
-		// Clear the terminal's scrollback history so a reopened chat starts
-		// with a clean slate (Termux stays in the normal buffer, so prior
-		// output would otherwise remain visible above the banner).
-		fmt.Fprint(os.Stdout, "\x1B[3J\x1B[2J\x1B[H")
-		reserveNativeScrollbackFrame(os.Stdout, m.bottomRows())
+		prepareNativeScrollback(os.Stdout, m.bottomRows())
 	}
 
 	// Non-Termux terminals use an alt-screen transcript viewport. Termux stays
@@ -576,6 +572,14 @@ func chatREPL(args []string) int {
 		return 1
 	}
 	return 0
+}
+
+func prepareNativeScrollback(w io.Writer, rows int) {
+	// Clear the terminal's scrollback history so a reopened chat starts
+	// with a clean slate (Termux stays in the normal buffer, so prior
+	// output would otherwise remain visible above the banner).
+	fmt.Fprint(w, "\x1B[3J\x1B[2J\x1B[H")
+	reserveNativeScrollbackFrame(w, rows)
 }
 
 func reserveNativeScrollbackFrame(w io.Writer, rows int) {
