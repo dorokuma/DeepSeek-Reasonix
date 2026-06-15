@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Brain, Check, ChevronsUpDown, Search } from "lucide-react";
 import { asArray } from "../lib/array";
 import { app } from "../lib/bridge";
@@ -17,15 +17,23 @@ export function ModelSwitcher({ label, tabId, onPick }: { label: string; tabId?:
   const inputRef = useRef<HTMLInputElement>(null);
   const triggerWidth = triggerRef.current?.getBoundingClientRect().width;
 
+  const loadModels = useCallback(() => {
+    return (tabId ? app.ModelsForTab(tabId) : app.Models()).then((next) => setModels(asArray(next))).catch(() => {});
+  }, [tabId]);
+
+  useEffect(() => {
+    void loadModels();
+  }, [loadModels]);
+
   useEffect(() => {
     if (open) {
       setQuery("");
-      // focus the search input after the popover renders
-      requestAnimationFrame(() => inputRef.current?.focus());
+      void loadModels();
+      window.requestAnimationFrame(() => inputRef.current?.focus());
     }
-  }, [open]);
+  }, [loadModels, open]);
 
-  const keyword = query.toLowerCase();
+  const keyword = query.trim().toLowerCase();
   const filtered = useMemo(
     () => keyword
       ? models.filter((m) => m.model.toLowerCase().includes(keyword) || m.provider.toLowerCase().includes(keyword))
@@ -56,13 +64,13 @@ export function ModelSwitcher({ label, tabId, onPick }: { label: string; tabId?:
       }));
   }, [filtered, t]);
 
-  useEffect(() => {
-    if (open) {
-      (tabId ? app.ModelsForTab(tabId) : app.Models()).then((next) => setModels(asArray(next))).catch(() => {});
-    }
-  }, [open, tabId]);
+  const currentProvider = useMemo(() => {
+    const cur = models.find((m) => m.current) ?? models.find((m) => m.model === label || m.ref === label);
+    return cur ? providerLabel(cur.provider, t) : null;
+  }, [label, models, t]);
 
   const pick = (name: string) => {
+    setModels((prev) => prev.map((m) => ({ ...m, current: m.ref === name })));
     setOpen(false);
     onPick(name);
   };
@@ -77,7 +85,7 @@ export function ModelSwitcher({ label, tabId, onPick }: { label: string; tabId?:
         onClick={() => setOpen((v) => !v)}
       >
         <Brain size={13} className="modelsw__kind" />
-        <span className="modelsw__label">{label}</span>
+        <span className="modelsw__label">{label}{currentProvider ? ` · ${currentProvider}` : ""}</span>
         <ChevronsUpDown size={11} />
       </button>
       <AnchoredPopover
