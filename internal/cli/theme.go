@@ -386,9 +386,6 @@ func refreshCLIStyles() {
 		Border(lipgloss.NormalBorder(), true, false, true, false), activeCLITheme.warn), activeCLITheme.warn).
 		Bold(true).
 		PaddingLeft(1)
-	todoPanelStyle = withThemeBorderFG(lipgloss.NewStyle().
-		Border(lipgloss.NormalBorder(), true, false, false, false), activeCLITheme.border).
-		PaddingLeft(1)
 	statusBlockStyle = themeStyle(activeCLITheme.faint)
 	workingStyle = themeStyle(activeCLITheme.faint)
 	compSelStyle = themeStyle(activeCLITheme.accent).Bold(true)

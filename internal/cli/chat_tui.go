@@ -84,10 +84,7 @@ type chatTUI struct {
 	// blocking the event loop.
 	balance string
 
-	// todoArgs is the latest todo_write call's raw args; it drives the task list
-	// pinned just above the input (see renderTodoPanel). "" when there's no list.
 	// Persists across turns until the work completes or a new session starts.
-	todoArgs string
 
 	// permMode is the config-level permissions writer-fallback mode ("ask",
 	// "allow", or "deny"). When "allow", the TUI shows "YOLO" because writer
@@ -660,7 +657,7 @@ func (m chatTUI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		cm.wrappedLines = strings.Split(wrapped, "\n")
 	}
 	// Tail-follow: stay pinned to newest output. Also re-pin on viewport
-	// resize (e.g. todo/approval/chooser panel appears/disappears) when the
+	// resize (e.g. approval/chooser panel appears/disappears) when the
 	// user was at the bottom so they don't get stranded with blank space.
 	if wasAtBottom && (contentChanged || cm.viewport.Height() != prevHeight) {
 		cm.viewport.GotoBottom()
@@ -1405,14 +1402,13 @@ func (m *chatTUI) commitSpacer() {
 }
 
 // bottomRows is the terminal-row height of the pinned bottom region: any open
-// bottom panels (todo / approval / chooser / rewind / completion), the composer
+// bottom panels (approval / chooser / rewind / completion), the composer
 // when visible, and the two fixed status rows. Full-screen managers such as MCP
 // and skills normally render inside the main transcript area; in native
 // scrollback mode they join the bottom rail because there is no main viewport.
 func (m chatTUI) bottomRows() int {
 	rows := 0
 	for _, s := range []string{
-		m.renderTodoPanel(),
 		m.renderApprovalBanner(),
 		m.renderChooser(),
 		m.renderRewind(),
@@ -2015,7 +2011,6 @@ var (
 	// refreshed from the active CLI theme during startup.
 	inputBoxStyle       lipgloss.Style
 	approvalBannerStyle lipgloss.Style
-	todoPanelStyle      lipgloss.Style
 	statusBlockStyle    lipgloss.Style
 	workingStyle        lipgloss.Style
 )
@@ -2185,10 +2180,6 @@ func (m chatTUI) View() tea.View {
 	// transcriptHeight so the viewport above fills exactly the rest of the screen.
 	var parts []string
 	rowsAboveBox := 0 // terminal rows occupied by panels/working line before the composer
-	if todo := m.renderTodoPanel(); todo != "" {
-		parts = append(parts, todo)
-		rowsAboveBox += strings.Count(todo, "\n") + 1
-	}
 	if banner := m.renderApprovalBanner(); banner != "" {
 		parts = append(parts, banner)
 		rowsAboveBox += strings.Count(banner, "\n") + 1
@@ -2463,170 +2454,6 @@ func approvalToolDetails(toolName string) (name, detail string) {
 	return toolName, fmt.Sprintf(i18n.M.ToolApprovalSourceFmt, i18n.M.ToolApprovalBuiltIn)
 }
 
-// todoPanelMaxRows caps how many task lines the pinned panel shows; a long list
-// is truncated with a "+N more" footer so the bottom region stays compact.
-const todoPanelMaxRows = 8
-
-type todoPanelTodo struct {
-	Content    string `json:"content"`
-	Status     string `json:"status"`
-	ActiveForm string `json:"activeForm,omitempty"`
-	Level      int    `json:"level,omitempty"`
-}
-
-// renderTodoPanel renders the task list pinned above the input from the latest
-// todo_write call (m.todoArgs): a "Tasks done/total" header, completed items
-// dimmed/checked, the in-progress one highlighted (its activeForm if given),
-// pending ones muted. It returns "" when there's no list or every item is done,
-// so the panel appears while work is outstanding and clears itself when finished.
-func (m chatTUI) renderTodoPanel() string {
-	var p struct {
-		Todos []todoPanelTodo `json:"todos"`
-	}
-	if err := json.Unmarshal([]byte(m.todoArgs), &p); err != nil || len(p.Todos) == 0 {
-		return ""
-	}
-	done := 0
-	for _, t := range p.Todos {
-		if t.Status == "completed" {
-			done++
-		}
-	}
-	if done == len(p.Todos) {
-		return "" // all finished — clear the panel
-	}
-
-	var b strings.Builder
-	fmt.Fprintf(&b, "%s %s\n", accent("To-dos"), dim(fmt.Sprintf("%d/%d", done, len(p.Todos))))
-	start, end := todoPanelWindow(p.Todos)
-	if start > 0 {
-		b.WriteString(dim(fmt.Sprintf("  +%d above", start)) + "\n")
-	}
-	for _, t := range p.Todos[start:end] {
-		indent := "  "
-		if t.Level >= 1 {
-			indent = "      " // sub-steps sit under their phase
-		}
-		switch t.Status {
-		case "completed":
-			b.WriteString(indent + green("✔") + " " + dim(t.Content) + "\n")
-		case "in_progress":
-			label := t.Content
-			if t.ActiveForm != "" {
-				label = t.ActiveForm
-			}
-			b.WriteString(indent + yellow("▶ "+label) + "\n")
-		default:
-			b.WriteString(indent + dim("○ "+t.Content) + "\n")
-		}
-	}
-	if end < len(p.Todos) {
-		b.WriteString(dim(fmt.Sprintf("  +%d more", len(p.Todos)-end)) + "\n")
-	}
-	return todoPanelStyle.Width(max(m.width, 10)).Render(strings.TrimRight(b.String(), "\n"))
-}
-
-func todoPanelWindow(todos []todoPanelTodo) (int, int) {
-	if len(todos) <= todoPanelMaxRows {
-		return 0, len(todos)
-	}
-	active := -1
-	for i, t := range todos {
-		if t.Status == "in_progress" {
-			active = i
-			break
-		}
-	}
-	if active < 0 {
-		return 0, todoPanelMaxRows
-	}
-	start := active - todoPanelMaxRows/2
-	if start < 0 {
-		start = 0
-	}
-	if maxStart := len(todos) - todoPanelMaxRows; start > maxStart {
-		start = maxStart
-	}
-	return start, start + todoPanelMaxRows
-}
-
-func isMergeTodoWrite(args string) bool {
-	var p struct {
-		Merge bool `json:"merge"`
-	}
-	if err := json.Unmarshal([]byte(args), &p); err != nil {
-		return false
-	}
-	return p.Merge
-}
-
-// mergeTodoWrite takes the current todoArgs and a merge payload, and merges
-// the incoming items into existing ones matched by content. Items in the
-// payload replace existing ones (same content); items not in the payload
-// keep their existing status; new items in the payload are appended.
-func mergeTodoWrite(currentArgs, mergeArgs string) string {
-	if currentArgs == "" {
-		return mergeArgs
-	}
-	var payload struct {
-		Todos []todoPanelTodo `json:"todos"`
-	}
-	if err := json.Unmarshal([]byte(mergeArgs), &payload); err != nil || len(payload.Todos) == 0 {
-		return currentArgs
-	}
-	var doc map[string]json.RawMessage
-	if err := json.Unmarshal([]byte(currentArgs), &doc); err != nil {
-		return currentArgs
-	}
-	rawExisting, ok := doc["todos"]
-	if !ok {
-		return mergeArgs
-	}
-	var existing []todoPanelTodo
-	if err := json.Unmarshal(rawExisting, &existing); err != nil {
-		return currentArgs
-	}
-
-	// Build lookup by normalized content.
-	type entry struct {
-		idx    int
-		status string
-	}
-	byContent := make(map[string]entry, len(existing))
-	for i, t := range existing {
-		key := strings.TrimSpace(t.Content)
-		if key != "" {
-			byContent[key] = entry{idx: i, status: t.Status}
-		}
-	}
-
-	// Apply merge: update existing items in-place; collect truly new items.
-	var appended []todoPanelTodo
-	for _, t := range payload.Todos {
-		key := strings.TrimSpace(t.Content)
-		if key == "" {
-			continue
-		}
-		if e, ok := byContent[key]; ok {
-			existing[e.idx].Status = t.Status
-			if t.ActiveForm != "" {
-				existing[e.idx].ActiveForm = t.ActiveForm
-			}
-		} else {
-			appended = append(appended, t)
-		}
-	}
-	existing = append(existing, appended...)
-
-	doc["todos"] = marshalRaw(existing)
-	b, err := json.Marshal(doc)
-	if err != nil {
-		return currentArgs
-	}
-	return string(b)
-}
-
-// marshalRaw marshals v into a RawMessage; returns nil on error.
 func marshalRaw(v any) json.RawMessage {
 	b, err := json.Marshal(v)
 	if err != nil {
@@ -3095,9 +2922,6 @@ func (m *chatTUI) ingestEvent(e event.Event) {
 		}
 		m.finalizeStreamed()
 		switch e.Tool.Name {
-		case "todo_write":
-			// The result decides whether this list becomes canonical; dispatch only
-			// means the model asked for an update.
 		default:
 			m.commitSpacer()
 			if block := diffBlock(e.Tool.Name, e.Tool.Args, e.Tool.FileDiff, m.width, diffScrollbackMaxLines); block != nil {
@@ -3118,15 +2942,6 @@ func (m *chatTUI) ingestEvent(e event.Event) {
 		// call surfaces a red "⏺ Verb ⊘ <reason>" card. A live-output block (bash)
 		// collapses to a one-line "⎿ N lines" summary first.
 		m.collapseToolOutput(e.Tool.ID)
-		if e.Tool.Name == "todo_write" && e.Tool.Err == "" {
-			// When merge=true, update only the provided items and keep the rest.
-			// Otherwise, replace the entire list.
-			if isMergeTodoWrite(e.Tool.Args) {
-				m.todoArgs = mergeTodoWrite(m.todoArgs, e.Tool.Args)
-			} else {
-				m.todoArgs = e.Tool.Args
-			}
-		}
 		if e.Tool.Err != "" {
 			m.finalizeStreamed()
 			m.commitLine("  " + red("●") + " " + bold(toolDisplayName(e.Tool.Name)) + " " + red("⊘ "+e.Tool.Err))
@@ -3259,7 +3074,6 @@ func (m *chatTUI) runSlashCommand(input string) tea.Cmd {
 		// banner and reset live state.
 		m.pending.Reset()
 		m.reasoning.Reset()
-		m.todoArgs = ""
 		m.chooser = nil
 		// Pull fresh cost from the new session (controller.ResetSessionCost already zeroed it).
 		m.sessCost, m.sessCurrency = m.ctrl.SessionCost()
@@ -3268,11 +3082,6 @@ func (m *chatTUI) runSlashCommand(input string) tea.Cmd {
 		m.notice(i18n.M.SlashNewDone)
 	case "/resume":
 		m.runResumeCommand(input)
-	case "/todo":
-		m.echoLocalCommand(input)
-		// Dismiss the pinned task list; a later todo_write brings it back.
-		m.todoArgs = ""
-		m.notice(i18n.M.SlashTodoCleared)
 	case "/verbose":
 		m.toggleVerboseReasoning(true)
 	case "/sandbox":

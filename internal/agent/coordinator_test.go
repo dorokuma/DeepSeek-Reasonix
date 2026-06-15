@@ -148,7 +148,7 @@ func TestCoordinatorPlannerUsesReadOnlyResearchTools(t *testing.T) {
 	parentReg := tool.NewRegistry()
 	parentReg.Add(coordinatorTestTool{name: "read_file", readOnly: true, output: "Rule: keep changes narrow."})
 	parentReg.Add(coordinatorTestTool{name: "write_file", readOnly: false})
-	parentReg.Add(coordinatorTestTool{name: "todo_write", readOnly: true})
+	parentReg.Add(coordinatorTestTool{name: "note", readOnly: true})
 
 	executor := New(exec, tool.NewRegistry(), NewSession("exec-sys"), Options{}, event.Discard)
 	plannerSess := NewSession(PlannerPromptWithContext("Rule: keep changes narrow."))
@@ -165,7 +165,7 @@ func TestCoordinatorPlannerUsesReadOnlyResearchTools(t *testing.T) {
 	if !contains(tools, "read_file") {
 		t.Fatalf("planner tools = %v, want read_file", tools)
 	}
-	for _, forbidden := range []string{"write_file", "todo_write"} {
+	for _, forbidden := range []string{"write_file", "note"} {
 		if contains(tools, forbidden) {
 			t.Fatalf("planner tools = %v, must not include %s", tools, forbidden)
 		}
@@ -352,7 +352,7 @@ func BenchmarkPlannerToolRegistry(b *testing.B) {
 			readOnly: i%3 != 0,
 		})
 	}
-	parentReg.Add(coordinatorTestTool{name: "todo_write", readOnly: true})
+	parentReg.Add(coordinatorTestTool{name: "note", readOnly: true})
 	parentReg.Add(coordinatorTestTool{name: "write_file", readOnly: false})
 
 	b.ReportAllocs()

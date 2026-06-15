@@ -99,7 +99,6 @@ func (m *chatTUI) replayActiveBranch(title string) {
 	m.finalizeStreamed()
 	m.pending.Reset()
 	m.reasoning.Reset()
-	m.todoArgs = ""
 	m.chooser = nil
 	m.pendingApproval = nil
 	m.bubblePending = false

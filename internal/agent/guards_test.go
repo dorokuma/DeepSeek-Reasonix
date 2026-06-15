@@ -165,9 +165,9 @@ func TestPartitionToolCallsUnknownToolSerial(t *testing.T) {
 func TestPartitionToolCallsTodoWriteSerial(t *testing.T) {
 	reg := tool.NewRegistry()
 	reg.Add(fakeTool{name: "read_file", readOnly: true})
-	reg.Add(fakeTool{name: "todo_write", readOnly: true})
+	reg.Add(fakeTool{name: "note", readOnly: true})
 
-	calls := []provider.ToolCall{{Name: "read_file"}, {Name: "todo_write"}, {Name: "read_file"}}
+	calls := []provider.ToolCall{{Name: "read_file"}, {Name: "note"}, {Name: "read_file"}}
 	got := partitionToolCalls(reg, calls)
 	want := []toolCallBatch{
 		{start: 0, end: 3, parallel: true},
