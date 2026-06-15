@@ -2866,6 +2866,7 @@ export default function App() {
               <Transcript
                 items={displayItems}
                 live={state.live}
+                tabId={activeTabId}
                 footerHeight={footerHeight}
                 onPrompt={commitThenSend}
                 onRewind={handleMessageAction}

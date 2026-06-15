@@ -157,6 +157,7 @@ function buildTurnGroups(items: Item[], questions: QuestionAnchor[]): TurnGroup[
 export function Transcript({
   items,
   live,
+  tabId,
   footerHeight = 0,
   onPrompt,
   onRewind,
@@ -169,6 +170,7 @@ export function Transcript({
 }: {
   items: Item[];
   live?: LiveStream;
+  tabId?: string;
   footerHeight?: number;
   onPrompt: (text: string) => void;
   onRewind?: (turn: number, scope: string) => void;
@@ -439,6 +441,7 @@ export function Transcript({
             durationMs={dur}
             mode={displayMode}
             subcalls={subcallsByParent}
+            tabId={tabId}
           />,
         );
         collapseBatch = [];
@@ -481,6 +484,7 @@ export function Transcript({
               durationMs={dur}
               mode={displayMode}
               subcalls={subcallsByParent}
+              tabId={tabId}
             />,
           );
         } else if (nonAssistantItems.length > 0) {
@@ -488,7 +492,7 @@ export function Transcript({
             if (it.kind === "tool") {
               if (it.parentId) continue;
               if (it.name === "todo_write" || it.name === "exit_plan_mode") continue;
-              out.push(<ToolCard key={it.id} item={it as ToolItem} subcalls={subcallsByParent.get(it.id)} />);
+              out.push(<ToolCard key={it.id} item={it as ToolItem} subcalls={subcallsByParent.get(it.id)} tabId={tabId} />);
             }
             if (it.kind === "phase") out.push(<PhaseCard key={it.id} text={it.text} />);
           }
@@ -518,7 +522,7 @@ export function Transcript({
       const roBatch: ToolItem[] = [];
       const flushRO = () => {
         if (roBatch.length === 0) return;
-        out.push(<ReadOnlyBatch key={`rob-${roBatch[0].id}`} items={[...roBatch]} subcalls={subcallsByParent} />);
+        out.push(<ReadOnlyBatch key={`rob-${roBatch[0].id}`} items={[...roBatch]} subcalls={subcallsByParent} tabId={tabId} />);
         roBatch.length = 0;
       };
       for (let i = hotStartIdx; i < items.length; i++) {
@@ -556,7 +560,7 @@ export function Transcript({
             if (it.parentId) break;
             if (it.name === "todo_write") break;
             if (it.name === "exit_plan_mode") break;
-            out.push(<ToolCard key={it.id} item={it} subcalls={subcallsByParent.get(it.id)} />);
+            out.push(<ToolCard key={it.id} item={it} subcalls={subcallsByParent.get(it.id)} tabId={tabId} />);
             break;
           case "phase": out.push(<PhaseCard key={it.id} text={it.text} />); break;
           case "notice": out.push(<NoticeCard key={it.id} level={it.level} text={it.text} />); break;
@@ -567,7 +571,7 @@ export function Transcript({
       if (!running) pushTurnActions();
     }
     return out;
-  }, [hotStartIdx, items, openAction, actionPending, rewindDisabled, running, onRewind, subcallsByParent, userTurn, checkpointsByTurn, displayMode, stepGroups]);
+  }, [hotStartIdx, items, openAction, actionPending, rewindDisabled, running, onRewind, subcallsByParent, userTurn, checkpointsByTurn, displayMode, stepGroups, tabId]);
 
   // ── Assemble rendered output ──────────────────────────────────────────────
   // Warm/cold zone is a separate memo'd WarmZone component so streaming tokens
@@ -602,6 +606,7 @@ export function Transcript({
             warmRewindDisabled={rewindDisabled}
             warmOnRewind={onRewind}
             warmSetOpenAction={setOpenAction}
+            tabId={tabId}
             onToggleColdPage={() => setColdPage((p) => p + 1)}
             onToggleWarmTurn={(g, expand) => {
               setExpandedWarmTurns((prev) => {
@@ -639,6 +644,7 @@ const WarmZone = memo(function WarmZone({
   warmRewindDisabled,
   warmOnRewind,
   warmSetOpenAction,
+  tabId,
   onToggleColdPage,
   onToggleWarmTurn,
 }: {
@@ -656,6 +662,7 @@ const WarmZone = memo(function WarmZone({
   warmRewindDisabled: boolean;
   warmOnRewind: ((turn: number, scope: string) => void) | undefined;
   warmSetOpenAction: (action: OpenTurnAction | null) => void;
+  tabId?: string;
   onToggleColdPage: () => void;
   onToggleWarmTurn: (g: number, expand: boolean) => void;
 }) {
@@ -710,6 +717,7 @@ const WarmZone = memo(function WarmZone({
               rewindDisabled={warmRewindDisabled}
               onRewind={warmOnRewind}
               setOpenAction={warmSetOpenAction}
+              tabId={tabId}
             />
           </WarmTurnCard>,
         );
@@ -753,6 +761,7 @@ function WarmTurnItems({
   rewindDisabled,
   onRewind,
   setOpenAction,
+  tabId,
 }: {
   startIdx: number;
   endIdx: number;
@@ -765,6 +774,7 @@ function WarmTurnItems({
   rewindDisabled: boolean;
   onRewind: ((turn: number, scope: string) => void) | undefined;
   setOpenAction: (action: OpenTurnAction | null) => void;
+  tabId?: string;
 }) {
   const nodes: React.ReactNode[] = [];
   let actionText = "";
@@ -798,7 +808,7 @@ function WarmTurnItems({
   const roBatch: ToolItem[] = [];
   const flushRO = () => {
     if (roBatch.length === 0) return;
-    nodes.push(<ReadOnlyBatch key={`rob-${roBatch[0].id}`} items={[...roBatch]} subcalls={subcalls} />);
+    nodes.push(<ReadOnlyBatch key={`rob-${roBatch[0].id}`} items={[...roBatch]} subcalls={subcalls} tabId={tabId} />);
     roBatch.length = 0;
   };
 
@@ -834,7 +844,7 @@ function WarmTurnItems({
         if (it.parentId) break;
         if (it.name === "todo_write") break;
         if (it.name === "exit_plan_mode") break;
-        nodes.push(<ToolCard key={it.id} item={it} subcalls={subcalls.get(it.id)} />);
+        nodes.push(<ToolCard key={it.id} item={it} subcalls={subcalls.get(it.id)} tabId={tabId} />);
         break;
       }
       case "phase": nodes.push(<PhaseCard key={it.id} text={it.text} />); break;
@@ -912,9 +922,10 @@ type TurnCollapseProps = {
   durationMs: number;  // summed tool execution time across the batch; 0 when unknown
   mode: DisplayMode;
   subcalls: Map<string, ToolItem[]>;
+  tabId?: string;
 };
 
-function TurnCollapse({ items, durationMs, mode, subcalls }: TurnCollapseProps) {
+function TurnCollapse({ items, durationMs, mode, subcalls, tabId }: TurnCollapseProps) {
   const t = useT();
   const [open, setOpen] = useState(false);
   const bodyRef = useRef<HTMLDivElement>(null);
@@ -945,7 +956,7 @@ function TurnCollapse({ items, durationMs, mode, subcalls }: TurnCollapseProps) 
   const roBatch: ToolItem[] = [];
   const flushRO = () => {
     if (roBatch.length === 0) return;
-    body.push(<ReadOnlyBatch key={`rob-${roBatch[0].id}`} items={[...roBatch]} subcalls={subcalls} />);
+    body.push(<ReadOnlyBatch key={`rob-${roBatch[0].id}`} items={[...roBatch]} subcalls={subcalls} tabId={tabId} />);
     roBatch.length = 0;
   };
   for (const it of displayItems) {
@@ -959,7 +970,7 @@ function TurnCollapse({ items, durationMs, mode, subcalls }: TurnCollapseProps) 
         if (it.parentId) break;
         if (it.name === "todo_write") break;
         if (it.name === "exit_plan_mode") break;
-        body.push(<ToolCard key={it.id} item={it as ToolItem} subcalls={subcalls.get(it.id)} />);
+        body.push(<ToolCard key={it.id} item={it as ToolItem} subcalls={subcalls.get(it.id)} tabId={tabId} />);
         break;
       case "phase": body.push(<PhaseCard key={it.id} text={it.text} />); break;
       case "assistant": {

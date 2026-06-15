@@ -232,6 +232,8 @@ export interface HistoryMessage {
   toolCalls?: HistoryToolCall[];
   toolCallId?: string;
   toolName?: string;
+  toolResultArchived?: boolean;
+  toolResultError?: string;
   pending?: boolean;
   trigger?: string;
   messages?: number;
@@ -243,6 +245,9 @@ export interface HistoryToolCall {
   id: string;
   name: string;
   arguments: string;
+  subject?: string;
+  summary?: string;
+  argumentsArchived?: boolean;
 }
 
 export interface PromptHistoryEntry {

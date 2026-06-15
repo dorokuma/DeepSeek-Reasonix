@@ -41,7 +41,7 @@ function splitPreview(text: string, n: number): { preview: string; total: number
 // ToolCard renders one tool call. `subcalls` are sub-agent calls nested under a
 // `task` card (their ParentID points at this call); they render inline, live, so
 // the sub-agent's work is visible as it happens.
-export const ToolCard = memo(function ToolCard({ item, subcalls }: { item: ToolItem; subcalls?: ToolItem[] }) {
+export const ToolCard = memo(function ToolCard({ item, subcalls, tabId }: { item: ToolItem; subcalls?: ToolItem[]; tabId?: string }) {
   const t = useT();
   const nested = subcalls ?? [];
   const hasNested = nested.length > 0;
@@ -63,10 +63,11 @@ export const ToolCard = memo(function ToolCard({ item, subcalls }: { item: ToolI
   // Lazy-load full tool data from the backend when the card is expanded and
   // the in-memory copy was archived for memory efficiency.
   const [fullData, setFullData] = useState<{ args: string; output?: string } | null>(null);
-  const effectiveArgs = fullData?.args ?? item.args;
+  const archivedWithoutFullData = Boolean(item.dataArchived && !fullData);
+  const effectiveArgs = archivedWithoutFullData ? "" : fullData?.args ?? item.args;
   const effectiveOutput = fullData?.output ?? item.output;
-  const diffs = diffsFor(item.name, effectiveArgs);
-  const subject = subjectOf(item.name, effectiveArgs);
+  const diffs = archivedWithoutFullData ? [] : diffsFor(item.name, effectiveArgs);
+  const subject = fullData ? subjectOf(item.name, effectiveArgs) : item.subject || subjectOf(item.name, effectiveArgs);
   // Reset cached fullData when the item identity changes (e.g. after rewind).
   useEffect(() => {
     return () => setFullData(null);
@@ -75,22 +76,23 @@ export const ToolCard = memo(function ToolCard({ item, subcalls }: { item: ToolI
   // edit diffs are the point of the card, so they're shown inline; everything
   // else folds its args/output away by default.  Open while running so the
   // user sees progress; closed by default once settled.
-  const hasArgsOrOutput = diffs.length === 0 && (!!effectiveArgs || !!effectiveOutput || item.dataArchived);
+  const hasArchivedOnDemandBody = Boolean(item.dataArchived && tabId);
+  const hasArgsOrOutput = diffs.length === 0 && (!!effectiveArgs || !!effectiveOutput || hasArchivedOnDemandBody);
 
   // Shell output: split into preview + "show all" toggle.
   const shellOutput = item.isShell && effectiveOutput ? effectiveOutput : null;
   const shellPreview = shellOutput ? splitPreview(shellOutput, SHELL_PREVIEW_LINES) : null;
   const hasBody = Boolean(diffs.length || hasNested || shellPreview || (!shellPreview && hasArgsOrOutput) || item.error);
   useEffect(() => {
-    if (!open || !item.dataArchived || fullData) return;
+    if (!open || !item.dataArchived || fullData || !tabId) return;
     let cancelled = false;
     import("../lib/bridge").then(({ app }) =>
-      app.ToolResultForTab("", item.id).then((d) => {
+      app.ToolResultForTab(tabId, item.id).then((d) => {
         if (!cancelled && d) setFullData(d);
       }).catch(() => {}),
     );
     return () => { cancelled = true; };
-  }, [open, item.id, item.dataArchived, fullData]);
+  }, [open, item.id, item.dataArchived, fullData, tabId]);
 
   // Register this shell card's toggle with the global ShellExpand context so
   // Ctrl/Cmd+B can expand/collapse the most recent shell output. openRef keeps the
@@ -157,7 +159,7 @@ export const ToolCard = memo(function ToolCard({ item, subcalls }: { item: ToolI
               const roBatch: typeof nested = [];
               const flush = () => {
                 if (roBatch.length === 0) return;
-                out.push(<ReadOnlyBatch key={`rob-${roBatch[0].id}`} items={[...roBatch]} subcalls={new Map()} />);
+                out.push(<ReadOnlyBatch key={`rob-${roBatch[0].id}`} items={[...roBatch]} subcalls={new Map()} tabId={tabId} />);
                 roBatch.length = 0;
               };
               for (const c of nested) {
@@ -166,7 +168,7 @@ export const ToolCard = memo(function ToolCard({ item, subcalls }: { item: ToolI
                   continue;
                 }
                 flush();
-                out.push(<ToolCard key={c.id} item={c} />);
+                out.push(<ToolCard key={c.id} item={c} tabId={tabId} />);
               }
               flush();
               return out;

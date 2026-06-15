@@ -2466,24 +2466,29 @@ func (a *App) SwitchWorkspace(dir string) (string, error) {
 // HistoryMessage is one prior turn, for the frontend to repopulate its transcript
 // after a reload.
 type HistoryMessage struct {
-	Role       string            `json:"role"`
-	Content    string            `json:"content"`
-	Reasoning  string            `json:"reasoning,omitempty"`
-	Level      string            `json:"level,omitempty"`
-	ToolCalls  []HistoryToolCall `json:"toolCalls,omitempty"`
-	ToolCallID string            `json:"toolCallId,omitempty"`
-	ToolName   string            `json:"toolName,omitempty"`
-	Pending    bool              `json:"pending,omitempty"`
-	Trigger    string            `json:"trigger,omitempty"`
-	Messages   int               `json:"messages,omitempty"`
-	Summary    string            `json:"summary,omitempty"`
-	Archive    string            `json:"archive,omitempty"`
+	Role               string            `json:"role"`
+	Content            string            `json:"content"`
+	Reasoning          string            `json:"reasoning,omitempty"`
+	Level              string            `json:"level,omitempty"`
+	ToolCalls          []HistoryToolCall `json:"toolCalls,omitempty"`
+	ToolCallID         string            `json:"toolCallId,omitempty"`
+	ToolName           string            `json:"toolName,omitempty"`
+	ToolResultArchived bool              `json:"toolResultArchived,omitempty"`
+	ToolResultError    string            `json:"toolResultError,omitempty"`
+	Pending            bool              `json:"pending,omitempty"`
+	Trigger            string            `json:"trigger,omitempty"`
+	Messages           int               `json:"messages,omitempty"`
+	Summary            string            `json:"summary,omitempty"`
+	Archive            string            `json:"archive,omitempty"`
 }
 
 type HistoryToolCall struct {
-	ID        string `json:"id"`
-	Name      string `json:"name"`
-	Arguments string `json:"arguments"`
+	ID                string `json:"id"`
+	Name              string `json:"name"`
+	Arguments         string `json:"arguments"`
+	Subject           string `json:"subject,omitempty"`
+	Summary           string `json:"summary,omitempty"`
+	ArgumentsArchived bool   `json:"argumentsArchived,omitempty"`
 }
 
 // History returns the session's message log.
@@ -2503,6 +2508,7 @@ func (a *App) HistoryForTab(tabID string) []HistoryMessage {
 func historyMessages(msgs []provider.Message, resolveUserContent func(string) string) []HistoryMessage {
 	out := make([]HistoryMessage, 0, len(msgs))
 	replayedTodoArgs := historyTodoArgsWithCompleteSteps(msgs)
+	toolResults := historyToolResultsByID(msgs)
 	for _, m := range msgs {
 		content := m.Content
 		if m.Role == provider.RoleUser {
@@ -2535,16 +2541,219 @@ func historyMessages(msgs []provider.Message, resolveUserContent func(string) st
 						args = replayed
 					}
 				}
-				hm.ToolCalls[i] = HistoryToolCall{ID: tc.ID, Name: tc.Name, Arguments: args}
+				hm.ToolCalls[i] = historyToolCall(tc.ID, tc.Name, args, toolResults[tc.ID])
 			}
 		}
 		if m.Role == provider.RoleTool {
 			hm.ToolCallID = m.ToolCallID
 			hm.ToolName = m.Name
+			hm.Content, hm.ToolResultArchived, hm.ToolResultError = historyToolResultContent(m.Content, m.ToolCallID != "")
 		}
 		out = append(out, hm)
 	}
 	return out
+}
+
+const historyToolPreviewLimit = 2_000
+
+func historyToolCall(id, name, args string, result provider.Message) HistoryToolCall {
+	call := HistoryToolCall{
+		ID:      id,
+		Name:    name,
+		Subject: historyToolSubject(name, args),
+		Summary: historyToolSummary(name, args, result.Content),
+	}
+	if name == "todo_write" {
+		call.Arguments = args
+		return call
+	}
+	if id == "" {
+		call.Arguments = args
+		return call
+	}
+	if args != "" {
+		call.ArgumentsArchived = true
+	}
+	return call
+}
+
+func historyToolResultsByID(msgs []provider.Message) map[string]provider.Message {
+	out := map[string]provider.Message{}
+	for _, msg := range msgs {
+		if msg.Role != provider.RoleTool || msg.ToolCallID == "" {
+			continue
+		}
+		out[msg.ToolCallID] = msg
+	}
+	return out
+}
+
+func historyToolResultContent(content string, canArchive bool) (display string, archived bool, errPreview string) {
+	if content == "" {
+		return "", false, ""
+	}
+	if !canArchive {
+		if historyToolResultFailed(content) {
+			return content, false, content
+		}
+		return content, false, ""
+	}
+	if historyToolResultFailed(content) {
+		display = clipHistoryToolPreview(strings.TrimSpace(content))
+		return display, display != content, display
+	}
+	return "", true, ""
+}
+
+func clipHistoryToolPreview(s string) string {
+	if len(s) <= historyToolPreviewLimit {
+		return s
+	}
+	return strings.TrimSpace(clipStringBytes(s, historyToolPreviewLimit)) + "\n..."
+}
+
+func historyToolSubject(name, args string) string {
+	a := parseHistoryToolArgs(args)
+	var subject string
+	switch name {
+	case "bash":
+		subject = historyArgString(a, "command")
+	case "grep", "glob":
+		subject = firstNonEmpty(historyArgString(a, "pattern"), historyArgString(a, "path"))
+	case "web_fetch":
+		subject = historyArgString(a, "url")
+	case "task":
+		subject = firstNonEmpty(historyArgString(a, "description"), historyArgString(a, "prompt"))
+	case "move_file":
+		src := historyArgString(a, "source_path")
+		dst := historyArgString(a, "destination_path")
+		if src != "" && dst != "" {
+			subject = src + " -> " + dst
+		} else {
+			subject = firstNonEmpty(src, dst)
+		}
+	case "remember":
+		subject = firstNonEmpty(historyArgString(a, "name"), historyArgString(a, "description"))
+	case "todo_write", "exit_plan_mode":
+		subject = ""
+	default:
+		subject = firstNonEmpty(historyArgString(a, "path"), historyArgString(a, "file_path"))
+	}
+	return clipSingleLine(subject, 240)
+}
+
+func historyToolSummary(name, args, output string) string {
+	if historyToolResultFailed(output) {
+		return ""
+	}
+	a := parseHistoryToolArgs(args)
+	switch name {
+	case "write_file":
+		if content := historyArgString(a, "content"); content != "" {
+			return fmt.Sprintf("%d lines", historyLineCount(content))
+		}
+	case "edit_file":
+		oldText := historyArgString(a, "old_string")
+		newText := historyArgString(a, "new_string")
+		if oldText != "" || newText != "" {
+			return fmt.Sprintf("%d -> %d lines", historyLineCount(oldText), historyLineCount(newText))
+		}
+	case "multi_edit":
+		if edits, ok := a["edits"].([]any); ok && len(edits) > 0 {
+			return fmt.Sprintf("%d edits", len(edits))
+		}
+	}
+	if output == "" {
+		return ""
+	}
+	switch name {
+	case "read_file":
+		if strings.HasPrefix(output, "(empty file)") {
+			return "empty file"
+		}
+		if arrows := strings.Count(output, "→"); arrows > 0 {
+			return fmt.Sprintf("%d lines", arrows)
+		}
+		return fmt.Sprintf("%d lines", historyLineCount(output))
+	case "grep":
+		return fmt.Sprintf("%d matches", historyNonEmptyLineCount(output))
+	case "glob":
+		return fmt.Sprintf("%d files", historyNonEmptyLineCount(output))
+	case "ls":
+		return fmt.Sprintf("%d entries", historyNonEmptyLineCount(output))
+	case "web_fetch":
+		return clipSingleLine(strings.SplitN(output, "\n", 2)[0], 80)
+	case "bash":
+		if strings.TrimSpace(output) == "" {
+			return "no output"
+		}
+		return fmt.Sprintf("%d lines", historyLineCount(output))
+	default:
+		return ""
+	}
+}
+
+func parseHistoryToolArgs(args string) map[string]any {
+	if args == "" {
+		return map[string]any{}
+	}
+	var out map[string]any
+	if err := json.Unmarshal([]byte(args), &out); err != nil {
+		return map[string]any{}
+	}
+	return out
+}
+
+func historyArgString(args map[string]any, key string) string {
+	if v, ok := args[key].(string); ok {
+		return v
+	}
+	return ""
+}
+
+func historyLineCount(s string) int {
+	if s == "" {
+		return 0
+	}
+	s = strings.TrimSuffix(s, "\n")
+	if s == "" {
+		return 0
+	}
+	return strings.Count(s, "\n") + 1
+}
+
+func historyNonEmptyLineCount(s string) int {
+	count := 0
+	for _, line := range strings.Split(s, "\n") {
+		if strings.TrimSpace(line) != "" {
+			count++
+		}
+	}
+	return count
+}
+
+func clipSingleLine(s string, max int) string {
+	s = strings.Join(strings.Fields(strings.TrimSpace(s)), " ")
+	if len(s) <= max {
+		return s
+	}
+	if max <= 3 {
+		return clipStringBytes(s, max)
+	}
+	return clipStringBytes(s, max-3) + "..."
+}
+
+func clipStringBytes(s string, max int) string {
+	if max <= 0 {
+		return ""
+	}
+	if len(s) <= max {
+		return s
+	}
+	for max > 0 && !utf8.RuneStart(s[max]) {
+		max--
+	}
+	return s[:max]
 }
 
 func historyTodoArgsWithCompleteSteps(msgs []provider.Message) map[string]string {
@@ -2740,7 +2949,7 @@ func previewEventSessionMessages(path string) ([]HistoryMessage, bool, error) {
 				id := tc.ID
 				name := firstNonEmpty(tc.Name, tc.Function.Name)
 				args := firstNonEmpty(tc.Arguments, tc.Function.Arguments)
-				hm.ToolCalls = append(hm.ToolCalls, HistoryToolCall{ID: id, Name: name, Arguments: args})
+				hm.ToolCalls = append(hm.ToolCalls, historyToolCall(id, name, args, provider.Message{}))
 				if id != "" {
 					toolName[id] = name
 				}
@@ -2748,11 +2957,18 @@ func previewEventSessionMessages(path string) ([]HistoryMessage, bool, error) {
 			out = append(out, hm)
 		case "tool.result":
 			callID := firstNonEmpty(rec.CallID, rec.ToolCallID)
+			content := firstNonEmpty(rec.Output, rec.Content)
+			display, archived, errPreview := historyToolResultContent(content, callID != "")
+			if len(out) > 0 && callID != "" {
+				updateHistoryToolCallSummary(out, callID, content)
+			}
 			out = append(out, HistoryMessage{
-				Role:       "tool",
-				ToolCallID: callID,
-				ToolName:   firstNonEmpty(rec.ToolName, rec.Name, toolName[callID]),
-				Content:    firstNonEmpty(rec.Output, rec.Content),
+				Role:               "tool",
+				ToolCallID:         callID,
+				ToolName:           firstNonEmpty(rec.ToolName, rec.Name, toolName[callID]),
+				Content:            display,
+				ToolResultArchived: archived,
+				ToolResultError:    errPreview,
 			})
 		case "phase":
 			out = append(out, HistoryMessage{Role: "phase", Content: firstNonEmpty(rec.Text, rec.Content)})
@@ -2784,6 +3000,24 @@ func (r previewEventRecord) compactionPayload() previewCompaction {
 		return *r.Compaction
 	}
 	return previewCompaction{Trigger: r.Trigger, Messages: r.Messages, Summary: r.Summary, Archive: r.Archive}
+}
+
+func updateHistoryToolCallSummary(out []HistoryMessage, callID, output string) {
+	if callID == "" {
+		return
+	}
+	for i := len(out) - 1; i >= 0; i-- {
+		for j := range out[i].ToolCalls {
+			call := &out[i].ToolCalls[j]
+			if call.ID != callID {
+				continue
+			}
+			if call.Summary == "" {
+				call.Summary = historyToolSummary(call.Name, call.Arguments, output)
+			}
+			return
+		}
+	}
 }
 
 func firstNonEmpty(values ...string) string {
