@@ -19,6 +19,9 @@ const (
 	// through write_file directly — `note`'s job is to keep audit-trail text out
 	// of the conversation context, not to be a general-purpose file writer.
 	maxNoteContentBytes = 256 * 1024
+	// maxNoteFileBytes caps the total size of the notes file to prevent
+	// unbounded growth from a runaway model.
+	maxNoteFileBytes = 10 * 1024 * 1024
 
 	// noteDefaultBasename is the sidecar file the tool appends to when the
 	// caller doesn't pass `path`. Sits at the workspace root so a user can
@@ -95,6 +98,11 @@ func (n note) Execute(ctx context.Context, args json.RawMessage) (string, error)
 	path, err := n.resolveNotePath(p.Path)
 	if err != nil {
 		return "", err
+	}
+
+	// Check total file size before appending.
+	if info, serr := os.Stat(path); serr == nil && info.Size()+int64(len(p.Content)) > maxNoteFileBytes {
+		return "", fmt.Errorf("notes file is %d bytes, total would exceed %d MB limit — archive or clear old notes", info.Size(), maxNoteFileBytes>>20)
 	}
 
 	// nextID is derived from the file's existing entries — restart-safe and

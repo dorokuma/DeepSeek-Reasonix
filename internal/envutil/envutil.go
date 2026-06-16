@@ -12,6 +12,29 @@ import (
 // StripCredentialEnv removes env vars likely to carry secrets from the
 // inherited process environment. Callers should declare needed credentials
 // explicitly instead of relying on inheritance.
+// isAllowedURL returns true for env var names that are known to contain
+// non-secret URLs (public endpoints, app URLs, etc.).
+func isAllowedURL(upper string) bool {
+	switch upper {
+	case "PUBLIC_URL", "WEBSITE_URL", "APP_URL", "HOMEPAGE_URL",
+		"BASE_URL", "API_URL", "SITE_URL", "FRONTEND_URL",
+		"BACKEND_URL", "SERVER_URL", "CLIENT_URL",
+		"REASONIX_BASE_URL", "OPENCODE_API_URL":
+		return true
+	}
+	return false
+}
+
+// isAllowedDSN returns true for env var names that are known to contain
+// non-secret DSNs (public identifiers, not credentials).
+func isAllowedDSN(upper string) bool {
+	switch upper {
+	case "SENTRY_DSN":
+		return true
+	}
+	return false
+}
+
 func StripCredentialEnv(env []string) []string {
 	out := make([]string, 0, len(env))
 	for _, kv := range env {
@@ -53,9 +76,9 @@ func StripCredentialEnv(env []string) []string {
 			strings.HasSuffix(upper, "_PAT") ||
 			strings.HasSuffix(upper, "_JWT") ||
 			strings.HasSuffix(upper, "_PASSPHRASE") ||
-			strings.HasSuffix(upper, "_DSN") ||
-			strings.HasSuffix(upper, "_URI") ||
-			strings.HasSuffix(upper, "_URL") ||
+			(strings.HasSuffix(upper, "_DSN") && !isAllowedDSN(upper)) ||
+			(strings.HasSuffix(upper, "_URI") && !isAllowedURL(upper)) ||
+			(strings.HasSuffix(upper, "_URL") && !isAllowedURL(upper)) ||
 			strings.HasSuffix(upper, "_KEY_ID") ||
 			strings.HasSuffix(upper, "_ACCESS_KEY_ID") ||
 			strings.HasSuffix(upper, "_CONNECTION_STRING") ||

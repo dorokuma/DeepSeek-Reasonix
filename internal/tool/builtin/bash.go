@@ -65,6 +65,25 @@ func cachedBashShellPATH(ctx context.Context) string {
 // empty uses the process cwd. timeout optionally caps foreground commands;
 // zero or negative means no tool-local cap, while parent context cancellation
 // still kills the process tree.
+// limitedWriter discards writes beyond a byte limit, preventing OOM from
+// runaway command output.
+type limitedWriter struct {
+	written int64
+	limit   int64
+}
+
+func (lw *limitedWriter) Write(p []byte) (int, error) {
+	remaining := lw.limit - lw.written
+	if remaining <= 0 {
+		return len(p), nil // discard silently
+	}
+	if int64(len(p)) > remaining {
+		p = p[:remaining]
+	}
+	lw.written += int64(len(p))
+	return len(p), nil
+}
+
 type bash struct {
 	sb      sandbox.Spec
 	shell   sandbox.Shell
@@ -154,13 +173,16 @@ func (b bash) Execute(ctx context.Context, args json.RawMessage) (string, error)
 		// The job runs under the manager's session context (no foreground timeout), so it
 		// survives this turn; its combined output streams to the job buffer.
 		job := jm.Start("bash", commandPreview(p.Command), func(jobCtx context.Context, out io.Writer) (string, error) {
+			// Cap background output at 16 MB to prevent OOM from runaway commands.
+			const bgMaxOutput = 16 << 20
+			limitedOut := io.MultiWriter(out, &limitedWriter{limit: bgMaxOutput})
 			cmd := exec.CommandContext(jobCtx, argv[0], argv[1:]...)
 			cmd.Dir = workDir
 			cmd.Env = cmdEnv
 			setKillTree(cmd)
 			cmd.WaitDelay = bashWaitDelay
-			cmd.Stdout = out
-			cmd.Stderr = out
+			cmd.Stdout = limitedOut
+			cmd.Stderr = limitedOut
 			return "", cmd.Run()
 		})
 		return fmt.Sprintf("Started background job %q. It keeps running across turns; read new output with bash_output(job_id=%q), wait for it with wait, or stop it with kill_shell(job_id=%q).", job.ID, job.ID, job.ID), nil

@@ -201,11 +201,14 @@ func (r *Runner) handle(rep Report) (bool, string) {
 }
 
 // FormatOutcome renders a non-pass outcome as a one-line human message.
+// Stderr/stdout detail is sanitized to prevent prompt injection via hook output.
 func FormatOutcome(o Outcome) string {
 	detail := strings.TrimSpace(o.Stderr)
 	if detail == "" {
 		detail = strings.TrimSpace(o.Stdout)
 	}
+	// Sanitize: strip control characters and cap length to prevent prompt injection.
+	detail = sanitizeHookOutput(detail)
 	tag := string(o.Hook.Scope) + "/" + string(o.Hook.Event)
 	cmd := clipRunes(o.Hook.Command, 60)
 	trunc := ""
@@ -217,6 +220,30 @@ func FormatOutcome(o Outcome) string {
 		return head + ": " + detail
 	}
 	return head
+}
+
+// sanitizeHookOutput strips control characters and truncates hook output
+// to prevent prompt injection via malicious stderr/stdout.
+func sanitizeHookOutput(s string) string {
+	// Strip control characters (keep newlines and tabs for readability).
+	var b strings.Builder
+	for _, r := range s {
+		if r < 0x20 && r != '\n' && r != '\t' {
+			continue
+		}
+		if r >= 0x7f && r < 0xa0 {
+			continue
+		}
+		b.WriteRune(r)
+	}
+	s = b.String()
+	// Cap at 500 runes — hook output is diagnostic, not content.
+	const maxHookOutput = 500
+	runes := []rune(s)
+	if len(runes) > maxHookOutput {
+		s = string(runes[:maxHookOutput]) + "…"
+	}
+	return s
 }
 
 func clipRunes(s string, max int) string {

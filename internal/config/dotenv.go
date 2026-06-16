@@ -2,10 +2,13 @@ package config
 
 import (
 	"bufio"
+	"regexp"
 	"os"
 	"path/filepath"
 	"strings"
 )
+
+var dotenvKeyRe = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
 // loadDotEnv loads KEY=value files into the process environment without
 // overriding variables that are already set (first file to set a key wins).

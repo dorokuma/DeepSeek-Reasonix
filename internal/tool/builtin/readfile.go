@@ -98,10 +98,14 @@ func (r readFile) Execute(ctx context.Context, args json.RawMessage) (string, er
 	switch fileenc.DetectQuick(peek) {
 	case fileenc.UTF16LE, fileenc.UTF16BE:
 		// UTF-16 is not self-synchronising and can't be streamed line-by-line, so
-		// buffer it fully (these files are rare and usually small).
-		rest, rerr := io.ReadAll(f)
+		// buffer it fully — but cap at 64 MB to prevent OOM on large files.
+		const utf16MaxBytes = 64 << 20
+		rest, rerr := io.ReadAll(io.LimitReader(f, utf16MaxBytes+1))
 		if rerr != nil {
 			return "", fmt.Errorf("read %s: %w", p.Path, rerr)
+		}
+		if int64(len(rest)) > utf16MaxBytes {
+			return "", fmt.Errorf("read %s: UTF-16 file exceeds %d MB limit", p.Path, utf16MaxBytes>>20)
 		}
 		all := append(peek, rest...)
 		bom := fileenc.DetectQuick(all)
@@ -119,9 +123,13 @@ func (r readFile) Execute(ctx context.Context, args json.RawMessage) (string, er
 	// no BOM, so it reaches here; recognise it by its NUL pattern and decode it
 	// rather than rejecting it as binary.
 	if k, ok := fileenc.DetectUTF16NoBOM(peek); ok {
-		rest, rerr := io.ReadAll(f)
+		const utf16MaxBytes = 64 << 20
+		rest, rerr := io.ReadAll(io.LimitReader(f, utf16MaxBytes+1))
 		if rerr != nil {
 			return "", fmt.Errorf("read %s: %w", p.Path, rerr)
+		}
+		if int64(len(rest)) > utf16MaxBytes {
+			return "", fmt.Errorf("read %s: UTF-16 file exceeds %d MB limit", p.Path, utf16MaxBytes>>20)
 		}
 		all := append(peek, rest...)
 		return r.scan(bytes.NewReader(fileenc.Decode(all, k)), p.Offset, p.Limit)
