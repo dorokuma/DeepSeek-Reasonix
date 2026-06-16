@@ -3,7 +3,7 @@ import { asArray } from "../lib/array";
 import { app, openExternal } from "../lib/bridge";
 import { useT } from "../lib/i18n";
 import { mcpServerLifecycleActions } from "../lib/mcpServerLifecycle";
-import type { CapabilitiesView, MCPServerInput, ServerView, SkillRootSkillView, SkillRootView, SkillsSettingsView, SkillView } from "../lib/types";
+import type { CapabilitiesView, MCPServerInput, ServerView, SkillRootSkillView, SkillRootView, SkillsSettingsView, SkillView, TabMeta } from "../lib/types";
 import { InlineConfirmButton } from "./InlineConfirmButton";
 import { ResizableDrawer } from "./ResizableDrawer";
 import { Tooltip } from "./Tooltip";
@@ -15,8 +15,18 @@ import { ModalCloseButton } from "./ModalCloseButton";
 // counts, with add / remove / retry; skills list their scope and run mode.
 type CapTab = "servers" | "skills";
 
-let mcpSettingsSnapshot: ServerView[] | null = null;
-let skillsSettingsSnapshot: SkillsSettingsView | null = null;
+type SettingsSnapshot<T> = { key: string; value: T };
+
+let mcpSettingsSnapshot: SettingsSnapshot<ServerView[]> | null = null;
+let skillsSettingsSnapshot: SettingsSnapshot<SkillsSettingsView> | null = null;
+
+function settingsSnapshotKey(meta: Awaited<ReturnType<typeof app.Meta>> | null | undefined, tabs: TabMeta[] | null | undefined): string {
+  const active = tabs?.find((tab) => tab.active);
+  const tabID = (active?.id || "").trim();
+  const root = (active?.workspaceRoot || active?.workspacePath || active?.cwd || meta?.workspaceRoot || meta?.workspacePath || meta?.cwd || "").trim();
+  const channel = (meta?.eventChannel || "").trim();
+  return `${channel}|${tabID}|${root}`;
+}
 
 export function CapabilitiesPanel({
   onClose,
@@ -1445,7 +1455,8 @@ function AddServerForm({
 // embedded inside the settings centre.
 export function MCPServersSettingsPage() {
 	const t = useT();
-	const [servers, setServers] = useState<ServerView[] | null>(() => mcpSettingsSnapshot);
+	const [snapshotKey, setSnapshotKey] = useState("");
+	const [servers, setServers] = useState<ServerView[] | null>(null);
 	const [busy, setBusy] = useState(false);
 	const [err, setErr] = useState<string | null>(null);
 	const [adding, setAdding] = useState(false);
@@ -1455,8 +1466,20 @@ export function MCPServersSettingsPage() {
 	const [expandedServerTools, setExpandedServerTools] = useState<Set<string>>(() => new Set());
 
 	const reload = useCallback(async () => {
+		const [meta, tabs] = await Promise.all([
+			app.Meta().catch(() => null),
+			app.ListTabs().catch(() => []),
+		]);
+		const key = settingsSnapshotKey(meta, tabs);
+		setSnapshotKey(key);
+		const cached = key ? mcpSettingsSnapshot : null;
+		if (cached?.key === key) {
+			setServers(cached.value);
+		} else {
+			setServers(null);
+		}
 		const next = normalizeServerViews(await app.MCPServers().catch(() => []));
-		mcpSettingsSnapshot = next;
+		mcpSettingsSnapshot = { key, value: next };
 		setServers(next);
 	}, []);
 	useEffect(() => { void reload(); }, [reload]);
@@ -1504,6 +1527,7 @@ export function MCPServersSettingsPage() {
 	}, [servers, t]);
 
 	const loading = !servers;
+	const actionBusy = busy || !snapshotKey || loading;
 
 		return (
 			<section className="mem-section">
@@ -1512,7 +1536,7 @@ export function MCPServersSettingsPage() {
 				{servers && servers.length > 0 ? <div className="drawer__summary">{summary}</div> : <span />}
 				<div className="cap-mcp-toolbar__actions">
 					{!adding && (
-						<button className="btn btn--small" disabled={busy} onClick={() => setAdding(true)}>
+						<button className="btn btn--small" disabled={actionBusy} onClick={() => setAdding(true)}>
 							{t("caps.addServer")}
 						</button>
 					)}
@@ -1522,7 +1546,7 @@ export function MCPServersSettingsPage() {
 					<FailedServersNotice
 						servers={serverGroups.failed}
 						expanded={expandedErrors}
-						busy={busy}
+						busy={actionBusy}
 						onToggle={toggleError}
 						onRetry={(name) => void mutate(() => app.ReconnectMCPServer(name))}
 						onRetryMany={(names) => void mutate(() => Promise.allSettled(names.map((name) => app.ReconnectMCPServer(name))))}
@@ -1541,7 +1565,7 @@ export function MCPServersSettingsPage() {
 				<div className="cap-server-section">
 					<div className="cap-server-section__title">{t("caps.availableServers")}</div>
 						<ServerGroup
-							busy={busy}
+							busy={actionBusy}
 							servers={serverGroups.active}
 							expanded={expandedServers}
 						expandedTools={expandedServerTools}
@@ -1574,15 +1598,28 @@ export function MCPServersSettingsPage() {
 // the settings centre.
 export function SkillsSettingsPage() {
 	const t = useT();
-	const [view, setView] = useState<SkillsSettingsView | null>(() => skillsSettingsSnapshot);
+	const [snapshotKey, setSnapshotKey] = useState("");
+	const [view, setView] = useState<SkillsSettingsView | null>(null);
 	const [busy, setBusy] = useState(false);
 	const [err, setErr] = useState<string | null>(null);
 	const [skillQuery, setSkillQuery] = useState("");
 	const [expandedSkills, setExpandedSkills] = useState<Set<string>>(() => new Set());
 
 	const reload = useCallback(async () => {
+		const [meta, tabs] = await Promise.all([
+			app.Meta().catch(() => null),
+			app.ListTabs().catch(() => []),
+		]);
+		const key = settingsSnapshotKey(meta, tabs);
+		setSnapshotKey(key);
+		const cached = key ? skillsSettingsSnapshot : null;
+		if (cached?.key === key) {
+			setView(cached.value);
+		} else {
+			setView(null);
+		}
 		const next = normalizeSkillsSettingsView(await app.SkillsSettings().catch(() => ({ skills: [], skillRoots: [] })));
-		skillsSettingsSnapshot = next;
+		skillsSettingsSnapshot = { key, value: next };
 		setView(next);
 	}, []);
 	useEffect(() => { void reload(); }, [reload]);
@@ -1623,6 +1660,7 @@ export function SkillsSettingsPage() {
 	}, []);
 
 	if (!view) return <div className="empty">{t("caps.loading")}</div>;
+	const actionBusy = busy || !snapshotKey;
 
 	return (
 		<section className="mem-section">
@@ -1638,7 +1676,7 @@ export function SkillsSettingsPage() {
 			</div>
 			<SkillSources
 				roots={view.skillRoots ?? []}
-				busy={busy}
+				busy={actionBusy}
 				onAdd={() => mutate(async () => {
 					const path = await app.PickSkillFolder();
 					if (path) await app.AddSkillPath(path);
@@ -1662,7 +1700,7 @@ export function SkillsSettingsPage() {
 						<SkillRow
 							key={sk.name}
 							skill={sk}
-							busy={busy}
+							busy={actionBusy}
 							expanded={expandedSkills.has(sk.name)}
 							onToggle={() => toggleSkill(sk.name)}
 							onToggleEnabled={(enabled) => void mutate(() => app.SetSkillEnabled(sk.name, enabled))}
