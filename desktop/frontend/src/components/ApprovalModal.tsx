@@ -18,10 +18,11 @@ export function ApprovalModal({
   onExitPlan?: () => void;
 }) {
   const t = useT();
+  const isPlanApproval = approval.tool === "exit_plan_mode";
   const [revisionOpen, setRevisionOpen] = useState(false);
   const [revisionText, setRevisionText] = useState("");
   const [detailsOpen, setDetailsOpen] = useState(false);
-  const [selectedIndex, setSelectedIndex] = useState(0);
+  const [selectedIndex, setSelectedIndex] = useState(() => (isPlanApproval ? 1 : 0));
   const cardRef = useRef<HTMLDivElement | null>(null);
   const shelfRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
@@ -29,7 +30,6 @@ export function ApprovalModal({
   // the new one slides in.  GSAP fromTo on the shelf wrapper avoids the
   // jarring pop when the API cycles through 4+ pending approvals.
   const closingRef = useRef(false);
-  const isPlanApproval = approval.tool === "exit_plan_mode";
   const subject = approval.subject.trim();
   const subjectSummary = subject.split("\n").find((line) => line.trim())?.trim() ?? "";
 
@@ -69,9 +69,9 @@ export function ApprovalModal({
     setRevisionOpen(false);
     setRevisionText("");
     setDetailsOpen(false);
-    setSelectedIndex(0);
+    setSelectedIndex(isPlanApproval ? 1 : 0);
     playAttentionChime();
-  }, [approval.id]);
+  }, [approval.id, isPlanApproval]);
 
   const actionCount = isPlanApproval ? 3 : 4;
   const selectedIndexRef = useRef(selectedIndex);
@@ -79,9 +79,11 @@ export function ApprovalModal({
 
   useEffect(() => {
     const onKeyDown = (event: globalThis.KeyboardEvent) => {
-      const target = event.target as HTMLElement | null;
+      const target = event.target instanceof Element ? event.target : null;
       const tag = target?.tagName.toLowerCase();
-      if (tag === "input" || tag === "textarea" || target?.isContentEditable) return;
+      if (tag === "input" || tag === "textarea" || tag === "select" || (target instanceof HTMLElement && target.isContentEditable)) return;
+      const interactiveTarget = target?.closest("button, a, [role='button'], [role='link']");
+      if (interactiveTarget && (event.key === "ArrowLeft" || event.key === "ArrowRight" || event.key === "Enter")) return;
       if (event.key === "ArrowLeft") {
         event.preventDefault();
         setSelectedIndex((i) => (i - 1 + actionCount) % actionCount);
