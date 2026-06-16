@@ -77,9 +77,7 @@ func confine(roots []string, target string) error {
 			return nil
 		}
 	}
-	return fmt.Errorf("path %q is outside the workspace (writes are confined to %s); "+
-		"write inside it, or widen [sandbox] workspace_root / allow_write in reasonix.toml",
-		target, strings.Join(roots, ", "))
+	return fmt.Errorf("path %q is outside the allowed workspace", target)
 }
 
 // realPath resolves path to an absolute, symlink-free form. Because a write

@@ -138,7 +138,7 @@ func TestNote_ConfinedToRoots(t *testing.T) {
 	n := note{roots: []string{dir}, workDir: dir}
 	leak := filepath.Join(outside, "leak.md")
 	_, err := n.Execute(context.Background(), json.RawMessage(`{"content":"x","path":"`+leak+`"}`))
-	if err == nil || !strings.Contains(err.Error(), "outside the workspace") {
+	if err == nil || !strings.Contains(err.Error(), "outside the allowed workspace") {
 		t.Fatalf("path outside roots should be rejected, got %v", err)
 	}
 }

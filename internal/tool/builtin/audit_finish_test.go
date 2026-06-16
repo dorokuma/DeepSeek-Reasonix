@@ -214,7 +214,7 @@ func TestAuditFinish_ConfinedToRoots(t *testing.T) {
 	path, _ := json.Marshal(leak)
 	args := []byte(`{"summary":` + string(summary) + `,"path":` + string(path) + `}`)
 	_, err := a.Execute(context.Background(), args)
-	if err == nil || !strings.Contains(err.Error(), "outside the workspace") {
+	if err == nil || !strings.Contains(err.Error(), "outside the allowed workspace") {
 		t.Fatalf("path outside roots should be rejected, got %v", err)
 	}
 }
