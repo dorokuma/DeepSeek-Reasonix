@@ -161,7 +161,7 @@ func TestSnapshotDoesNotRefreshSessionActivity(t *testing.T) {
 	sess := agent.NewSession("sys")
 	sess.Add(provider.Message{Role: provider.RoleUser, Content: "first"})
 	exec := agent.New(nil, nil, sess, agent.Options{}, event.Discard)
-	c := New(Options{Executor: exec, SessionDir: dir, Label: "test"})
+	c := New(Options{Executor: exec, SessionDir: dir, Label: "test", ModelRef: "provider/model-a"})
 	c.SetSessionPath(filepath.Join(dir, "session.jsonl"))
 
 	if err := c.SnapshotActivity(); err != nil {
@@ -183,6 +183,9 @@ func TestSnapshotDoesNotRefreshSessionActivity(t *testing.T) {
 	}
 	if !second.UpdatedAt.Equal(first.UpdatedAt) {
 		t.Fatalf("Snapshot refreshed activity: first=%s second=%s", first.UpdatedAt, second.UpdatedAt)
+	}
+	if second.Model != "provider/model-a" {
+		t.Fatalf("snapshot model = %q, want provider/model-a", second.Model)
 	}
 }
 
