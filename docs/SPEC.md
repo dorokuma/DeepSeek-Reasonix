@@ -436,9 +436,11 @@ at `~/.reasonix/config.toml` on macOS/Linux and
 `%AppData%\reasonix\config.toml` on Windows. See
 [Configuration paths](./CONFIG_PATHS.md) for migration and related data paths.
 Secrets come from the environment via `api_key_env` and are never stored in
-config files. A `.env` in the working directory is loaded if present. Step-limit
-preferences usually belong in the user config; project `reasonix.toml` should
-override them only when the repository needs shared runtime bounds.
+config files. `credentials_store = "auto"` prefers the OS credential store and
+falls back to the file under Reasonix home. A `.env` in the working directory is
+loaded if present. Step-limit preferences usually belong in the user config;
+project `reasonix.toml` should override them only when the repository needs
+shared runtime bounds.
 
 ```toml
 default_model = "deepseek"   # provider name (→ its default model) or "provider/model"

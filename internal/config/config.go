@@ -39,23 +39,27 @@ func SkillNameKey(name string) string {
 
 // Config is Reasonix's runtime configuration.
 type Config struct {
-	ConfigVersion int                 `toml:"config_version"`
-	DefaultModel  string              `toml:"default_model"`
-	Language      string              `toml:"language"` // ui/model language tag (e.g. "zh"); empty = auto-detect from $LANG / $REASONIX_LANG
-	UI            UIConfig            `toml:"ui"`
-	Desktop       DesktopConfig       `toml:"desktop"`
-	Notifications NotificationsConfig `toml:"notifications"`
-	Agent         AgentConfig         `toml:"agent"`
-	Providers     []ProviderEntry     `toml:"providers"`
-	Tools         ToolsConfig         `toml:"tools"`
-	Permissions   PermissionsConfig   `toml:"permissions"`
-	Sandbox       SandboxConfig       `toml:"sandbox"`
-	Network       NetworkConfig       `toml:"network"`
-	Plugins       []PluginEntry       `toml:"plugins"`
-	Skills        SkillsConfig        `toml:"skills"`
-	Statusline    StatuslineConfig    `toml:"statusline"`
-	LSP           LSPConfig           `toml:"lsp"`
-	Bot           BotConfig           `toml:"bot"`
+	ConfigVersion     int                     `toml:"config_version"`
+	DefaultModel      string                  `toml:"default_model"`
+	Language          string                  `toml:"language"` // ui/model language tag (e.g. "zh"); empty = auto-detect from $LANG / $REASONIX_LANG
+	CredentialsStore  string                  `toml:"credentials_store"`
+	UI                UIConfig                `toml:"ui"`
+	Desktop           DesktopConfig           `toml:"desktop"`
+	Notifications     NotificationsConfig     `toml:"notifications"`
+	Agent             AgentConfig             `toml:"agent"`
+	Providers         []ProviderEntry         `toml:"providers"`
+	Tools             ToolsConfig             `toml:"tools"`
+	Permissions       PermissionsConfig       `toml:"permissions"`
+	Sandbox           SandboxConfig           `toml:"sandbox"`
+	Network           NetworkConfig           `toml:"network"`
+	Plugins           []PluginEntry           `toml:"plugins"`
+	Skills            SkillsConfig            `toml:"skills"`
+	Codegraph         CodegraphConfig         `toml:"codegraph"`
+	BuiltInMCP        BuiltInMCPConfig        `toml:"builtin_mcp"`
+	BuiltInMCPUpdates BuiltInMCPUpdatesConfig `toml:"builtin_mcp_updates"`
+	Statusline        StatuslineConfig        `toml:"statusline"`
+	LSP               LSPConfig               `toml:"lsp"`
+	Bot               BotConfig               `toml:"bot"`
 
 	providerSources map[string]providerSourceScope
 }
@@ -1134,9 +1138,10 @@ const LanguagePolicy = `Reply in the same language the user is using in their mo
 // Default returns the built-in default configuration (DeepSeek + MiMo presets).
 func Default() *Config {
 	return &Config{
-		ConfigVersion: 3,
-		DefaultModel:  "deepseek-flash",
-		UI:            UIConfig{Theme: "auto"},
+		ConfigVersion:    3,
+		DefaultModel:     "deepseek-flash",
+		CredentialsStore: CredentialsStoreAuto,
+		UI:               UIConfig{Theme: "auto"},
 		Notifications: NotificationsConfig{
 			Enabled:         false,
 			TurnDone:        true,
@@ -1444,6 +1449,7 @@ func LoadForRoot(root string) (*Config, error) {
 	root = resolveRoot(root)
 	loadDotEnvForRoot(root)
 	cfg := Default()
+	cfg.CredentialsStore = credentialsStoreMode()
 
 	projectTOML := "reasonix.toml"
 	if root != "." {
@@ -1512,6 +1518,13 @@ func LoadForRoot(root string) (*Config, error) {
 	backfillDeepSeekOfficialPrices(cfg)
 	normalizeEffortConfig(cfg)
 	backfillDeepSeekPro(cfg)
+	// First run (no config file anywhere): keep CodeGraph off until the user opts
+	// in. An existing config — even one without a [codegraph] section — keeps the
+	// built-in default (on), so an upgrade never silently drops code intelligence.
+	if !sawConfigFile {
+		cfg.Codegraph.Enabled = false
+	}
+	cfg.CredentialsStore = credentialsStoreMode()
 	return cfg, nil
 }
 

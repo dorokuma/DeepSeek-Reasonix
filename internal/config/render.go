@@ -55,6 +55,9 @@ func RenderTOMLForScope(c *Config, scope RenderScope) string {
 	} else {
 		b.WriteString("# language      = \"zh\"   # ui/model language; empty = auto-detect from $LANG / $REASONIX_LANG\n")
 	}
+	if scope != RenderScopeProject {
+		fmt.Fprintf(&b, "credentials_store = %q   # auto|keyring|file; auto prefers the OS keychain and falls back to ~/.reasonix/credentials\n", normalizeCredentialsStore(c.CredentialsStore))
+	}
 	b.WriteString("\n")
 
 	if shouldRenderUI(c, defaults, scope) {

@@ -28,6 +28,7 @@
 **Reasonix v1.8.1** 开始，用户配置位于 macOS/Linux 的
 `~/.reasonix/config.toml`，Windows 为 `%AppData%\reasonix\config.toml`；迁移和相关数据路径见
 [配置路径](./CONFIG_PATHS.zh-CN.md)。密钥经环境变量通过 `api_key_env` 注入，绝不写入配置文件。
+credentials 默认使用 `credentials_store = "auto"`：优先系统密钥库，不可用时 fallback 到 Reasonix home 下的文件。
 
 桌面端和 CLI 端的可见思考语言设置，见 [思考语言](./REASONING_LANGUAGE.zh-CN.md)。
 桌面端 Hooks 的 JSON 配置、事件 key 和 payload 字段，见 [桌面端 Hooks](./DESKTOP_HOOKS.zh-CN.md)。

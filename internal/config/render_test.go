@@ -15,6 +15,7 @@ func isolateUserConfigHome(t *testing.T) string {
 	t.Helper()
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("REASONIX_CREDENTIALS_STORE", "file")
 	t.Setenv("USERPROFILE", home)
 	t.Setenv("AppData", filepath.Join(home, "AppData", "Roaming"))
 	return home

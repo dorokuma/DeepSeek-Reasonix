@@ -116,8 +116,9 @@ Resolution order is **flag > `./reasonix.toml` > the user config file >
 built-in defaults**; starting with **Reasonix v1.8.1**, the user file lives at
 `~/.reasonix/config.toml` on macOS/Linux and
 `%AppData%\reasonix\config.toml` on Windows. See
-**[Configuration paths](./docs/CONFIG_PATHS.md)** for migration details. Secrets come from the environment via `api_key_env` and are
-never written to config files. Permissions, the sandbox, plugins (MCP), slash
+**[Configuration paths](./docs/CONFIG_PATHS.md)** for migration details. Secrets come from the environment via `api_key_env`, are
+never written to config files, and default to the OS credential store with a
+Reasonix-owned file fallback. Permissions, the sandbox, plugins (MCP), slash
 commands, `@` references, and two-model setup are all in the
 **[Guide](./docs/GUIDE.md)**.
 

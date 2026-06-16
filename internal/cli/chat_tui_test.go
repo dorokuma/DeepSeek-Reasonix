@@ -862,6 +862,7 @@ func isolateUserConfig(t *testing.T) {
 	t.Helper()
 	root := t.TempDir()
 	t.Setenv("HOME", root)
+	t.Setenv("REASONIX_CREDENTIALS_STORE", "file")
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(root, "config"))
 	t.Setenv("AppData", filepath.Join(root, "AppData")) // os.UserConfigDir reads AppData on Windows
 	t.Chdir(root)

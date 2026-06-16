@@ -112,7 +112,8 @@ api_key_env = "DEEPSEEK_API_KEY"
 **Reasonix v1.8.1** 开始，用户配置位于 macOS/Linux 的 `~/.reasonix/config.toml`，
 Windows 为 `%AppData%\reasonix\config.toml`。迁移细节见
 **[配置路径](./docs/CONFIG_PATHS.zh-CN.md)**。
-密钥经环境变量通过 `api_key_env` 注入,绝不写入配置文件。权限、沙盒、插件(MCP)、
+密钥经环境变量通过 `api_key_env` 注入，绝不写入配置文件；默认优先保存到系统凭据存储，
+不可用时才 fallback 到 Reasonix 管理的凭据文件。权限、沙盒、插件(MCP)、
 斜杠命令、`@` 引用与双模型设置,全部在 **[指南](./docs/GUIDE.zh-CN.md)** 里。
 
 ## 文档

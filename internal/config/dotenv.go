@@ -10,11 +10,10 @@ import (
 // loadDotEnv loads KEY=value files into the process environment without
 // overriding variables that are already set (first file to set a key wins).
 // Order: a project ./.env (read-only back-compat, so a manual project override
-// takes precedence), then the reasonix-owned global credentials file under
-// Reasonix home (where `reasonix setup` writes keys, so they resolve from any
-// directory without ever touching a project's own .env), then legacy credentials
-// beside older config files, then ~/.env as a legacy fallback. Existing
-// environment variables always win over all files.
+// takes precedence), then the configured Reasonix credential store (where
+// `reasonix setup` writes keys, so they resolve from any directory without ever
+// touching a project's own .env), then ~/.env as a legacy fallback. Existing
+// environment variables always win over all credential sources.
 func loadDotEnv() {
 	loadDotEnvForRoot(".")
 }
@@ -27,12 +26,7 @@ func loadDotEnvForRoot(root string) {
 		dotEnvPath = filepath.Join(root, ".env")
 	}
 	loadDotEnvFile(dotEnvPath)
-	if p := UserCredentialsPath(); p != "" {
-		loadDotEnvFile(p)
-	}
-	for _, p := range legacyCredentialsPaths() {
-		loadDotEnvFile(p)
-	}
+	loadCredentialStoreForRoot(root)
 	if home, err := os.UserHomeDir(); err == nil {
 		loadDotEnvFile(filepath.Join(home, ".env"))
 	}

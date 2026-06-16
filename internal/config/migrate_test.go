@@ -13,6 +13,7 @@ func legacyHome(t *testing.T) (src, dest, home string) {
 	t.Helper()
 	home = t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("REASONIX_CREDENTIALS_STORE", "file")
 	t.Setenv("USERPROFILE", home)                               // os.UserHomeDir on Windows
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config")) // os.UserConfigDir on Linux
 	t.Setenv("AppData", filepath.Join(home, "AppData"))         // os.UserConfigDir on Windows

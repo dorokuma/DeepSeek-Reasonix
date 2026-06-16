@@ -17,7 +17,7 @@
 | 数据 | 路径 |
 | --- | --- |
 | 全局配置 | `<Reasonix home>/config.toml` |
-| 全局 credentials | `<Reasonix home>/credentials` |
+| 全局 credentials 文件 fallback | `<Reasonix home>/credentials` |
 | 全局斜杠命令 | `<Reasonix home>/commands/` |
 | 全局 skills | `<Reasonix home>/skills/` |
 | 全局 hooks | `<Reasonix home>/settings.json` |
@@ -25,6 +25,12 @@
 | 会话 | `<Reasonix home>/sessions/` |
 | 归档 | `<Reasonix home>/archive/` |
 | 记忆 | `<Reasonix home>/memory/` 与 `<Reasonix home>/projects/` |
+
+全局 credentials 默认使用 `credentials_store = "auto"`。在 auto 模式下，
+Reasonix 会优先尝试系统密钥库；如果 keyring 不可用，再 fallback 到
+`<Reasonix home>/credentials`。设置 `credentials_store = "keyring"` 可强制使用系统密钥库；
+设置 `credentials_store = "file"` 可始终使用文件 fallback。`REASONIX_CREDENTIALS_STORE`
+可在 CI、测试或便携安装中覆盖该模式。
 
 缓存仍放在系统缓存目录，例如 macOS 的 `~/Library/Caches/reasonix`、
 Linux 的 `$XDG_CACHE_HOME/reasonix` 或 `~/.cache/reasonix`、Windows 的
@@ -62,4 +68,4 @@ Windows:     %APPDATA%\reasonix\config.toml
 ~/.reasonix/config.json
 ```
 
-旧 credentials 和 sessions 也会在新文件不存在时复制到 Reasonix home。若新的全局配置已经存在，则新配置优先；旧配置只作为兼容 fallback 保留。
+旧 credentials 和 sessions 也会在新目标不存在时导入到配置的 credential store / Reasonix home。若新的全局配置已经存在，则新配置优先；旧配置只作为兼容 fallback 保留。

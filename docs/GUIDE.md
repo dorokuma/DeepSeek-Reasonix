@@ -29,7 +29,8 @@ built-in defaults**. Starting with **Reasonix v1.8.1**, the user config lives at
 `%AppData%\reasonix\config.toml` on Windows; see
 [Configuration paths](./CONFIG_PATHS.md) for migration and related data paths.
 Secrets come from the environment via `api_key_env` and are never stored in
-config files.
+config files. Credentials default to `credentials_store = "auto"`, which prefers
+the OS credential store and falls back to the file under Reasonix home.
 
 For the desktop and CLI usage of visible reasoning language, see
 [Reasoning language](./REASONING_LANGUAGE.md).
