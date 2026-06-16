@@ -149,8 +149,8 @@ func TestRenderTOMLRoundTrips(t *testing.T) {
 	if got.DefaultModel != "mimo-pro" {
 		t.Errorf("default_model = %q, want mimo-pro", got.DefaultModel)
 	}
-	if got.ConfigVersion != 2 {
-		t.Errorf("config_version = %d, want 2", got.ConfigVersion)
+	if got.ConfigVersion != 3 {
+		t.Errorf("config_version = %d, want 3", got.ConfigVersion)
 	}
 	if got.Language != "zh" {
 		t.Errorf("language = %q, want zh", got.Language)
@@ -332,7 +332,7 @@ func TestRenderTOMLRoundTrips(t *testing.T) {
 
 func TestScopedRenderPreservesLSPConfig(t *testing.T) {
 	const src = `
-config_version = 2
+config_version = 3
 default_model = "mimo"
 
 [lsp]
@@ -455,7 +455,7 @@ func TestScopedRenderSeparatesUserAndProjectConfig(t *testing.T) {
 	c.Desktop.CheckUpdates = boolPtr(false)
 
 	user := RenderTOMLForScope(c, RenderScopeUser)
-	for _, want := range []string{"config_version = 2", "[desktop]", `theme = "dark"`, `close_behavior = "background"`, `status_bar_style = "text"`, `check_updates = false`, "[notifications]", "[builtin_mcp_updates]"} {
+	for _, want := range []string{"config_version = 3", "[desktop]", `theme = "dark"`, `close_behavior = "background"`, `status_bar_style = "text"`, `check_updates = false`, "[notifications]", "[builtin_mcp_updates]"} {
 		if !strings.Contains(user, want) {
 			t.Fatalf("user render missing %q:\n%s", want, user)
 		}
@@ -511,7 +511,7 @@ func TestRenderTOMLRoundTripsPerModelPrices(t *testing.T) {
 	if !ok {
 		t.Fatal("deepseek provider missing after round trip")
 	}
-	if p.Prices["deepseek-v4-flash"].Input != 0.14 || p.Prices["deepseek-v4-pro"].Output != 0.87 {
+	if p.Prices["deepseek-v4-flash"].Input != 1 || p.Prices["deepseek-v4-pro"].Output != 6 {
 		t.Fatalf("prices after round trip = %+v", p.Prices)
 	}
 }

@@ -128,6 +128,8 @@ export interface TabMeta {
   scope: string;
   workspaceRoot: string;
   workspaceName: string;
+  workspacePath?: string;
+  gitBranch?: string;
   topicId: string;
   topicTitle: string;
   sessionPath?: string;
@@ -336,6 +338,10 @@ export interface Meta {
   startupErr?: string;
   eventChannel: string;
   cwd: string;
+  workspaceRoot?: string;
+  workspaceName?: string;
+  workspacePath?: string;
+  gitBranch?: string;
   autoApproveTools?: boolean;
   bypass?: boolean; // legacy JSON key for YOLO/full-access tool auto-approval
   collaborationMode?: CollaborationMode;
