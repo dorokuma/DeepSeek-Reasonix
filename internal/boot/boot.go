@@ -147,7 +147,7 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	if !opts.RequireKey && entry.APIKeyEnv != "" && entry.APIKey() == "" {
 		sink.Emit(event.Event{Kind: event.Notice, Text: fmt.Sprintf("model %q is selected but its API key %s is not set — requests will fail until you set it", modelName, entry.APIKeyEnv)})
 	}
-	jm := jobs.NewManager(sink)
+	jm := jobs.NewManager(sink, jobs.WithStalledWarningAfter(time.Duration(cfg.BackgroundJobStalledWarningSeconds())*time.Second))
 	sessionDir := opts.SessionDir
 	if sessionDir == "" {
 		sessionDir = config.SessionDir()

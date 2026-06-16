@@ -120,6 +120,64 @@ func TestKill(t *testing.T) {
 	}
 }
 
+func TestJobPanicRecoveredAsFailed(t *testing.T) {
+	sink := &recordingSink{}
+	m := NewManager(sink)
+	defer m.Close()
+
+	j := m.Start("task", "panic", func(context.Context, io.Writer) (string, error) {
+		panic("boom")
+	})
+	res := m.Wait(context.Background(), []string{j.ID}, 5)
+	if len(res) != 1 || res[0].Status != Failed {
+		t.Fatalf("want Failed result after panic, got %+v", res)
+	}
+	if !strings.Contains(res[0].Output, "internal error: panic: boom") {
+		t.Fatalf("panic output = %q, want internal panic message", res[0].Output)
+	}
+	waitFor(t, func() bool {
+		for _, text := range sink.texts() {
+			if strings.Contains(text, "background task failed") && strings.Contains(text, j.ID) && strings.Contains(text, "panic: boom") {
+				return true
+			}
+		}
+		return false
+	})
+}
+
+func TestStalledWarningEmitsNoticeAndDrainNote(t *testing.T) {
+	sink := &recordingSink{}
+	m := NewManager(sink, WithStalledWarningAfter(20*time.Millisecond))
+	defer m.Close()
+
+	j := m.Start("bash", "quiet", func(ctx context.Context, _ io.Writer) (string, error) {
+		<-ctx.Done()
+		return "", ctx.Err()
+	})
+	defer m.Kill(j.ID)
+
+	waitFor(t, func() bool {
+		for _, text := range sink.texts() {
+			if strings.Contains(text, "may be stalled") && strings.Contains(text, j.ID) {
+				return true
+			}
+		}
+		return false
+	})
+	if _, st, ok := m.Output(j.ID); !ok || st != Running {
+		t.Fatalf("stalled job output status = %q ok=%v, want running", st, ok)
+	}
+	note := m.DrainCompletedNote()
+	if !strings.Contains(note, "may be stalled") || !strings.Contains(note, j.ID) {
+		t.Fatalf("stalled drain note = %q, want stalled update for %s", note, j.ID)
+	}
+	// The warning is once per job.
+	time.Sleep(30 * time.Millisecond)
+	if again := m.DrainCompletedNote(); again != "" {
+		t.Fatalf("second stalled drain note = %q, want empty", again)
+	}
+}
+
 // Killed status is observable as soon as Kill returns, before the run goroutine
 // unwinds — otherwise a slow cancelled process tree (Windows taskkill + WaitDelay
 // drain) leaves Wait reporting Running until the goroutine finally returns, which
