@@ -52,7 +52,6 @@ func init() { tool.RegisterBuiltin(auditFinish{}) }
 // can cite the report file in a follow-up note as proof the
 // audit was formally wrapped.
 type auditFinish struct {
-	roots   []string
 	workDir string
 }
 
@@ -147,7 +146,7 @@ func (a auditFinish) Execute(ctx context.Context, args json.RawMessage) (string,
 // Used by Execute (which returns error) and PostCallGuidance (which returns
 // empty string on failure).
 func (a auditFinish) resolveAuditPath(raw string) (string, error) {
-	return resolveWorkspacePath(a.workDir, auditReportBasename, raw, a.roots)
+	return resolveWorkspacePath(a.workDir, auditReportBasename, raw)
 }
 
 // PostCallGuidance teaches the model to include the audit report in its final

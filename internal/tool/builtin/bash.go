@@ -15,9 +15,9 @@ import (
 	"time"
 
 	"reasonix/internal/envutil"
+	"reasonix/internal/shell"
 	"reasonix/internal/jobs"
 	"reasonix/internal/rtk"
-	"reasonix/internal/sandbox"
 	"reasonix/internal/tool"
 )
 
@@ -58,7 +58,7 @@ func cachedBashShellPATH(ctx context.Context) string {
 }
 
 // bash runs a shell command. sb, when it enforces, wraps the command in an OS
-// sandbox; the zero value registered at init runs unconfined and is overridden
+// sandbox; the zero value registered at init runs unrestricted and is overridden
 // per run by ConfineBash. shell is the resolved interpreter (real bash, or
 // PowerShell on a Windows host without bash); the zero value resolves lazily.
 // workDir, when non-empty, is the directory the command runs in (cmd.Dir);
@@ -85,8 +85,7 @@ func (lw *limitedWriter) Write(p []byte) (int, error) {
 }
 
 type bash struct {
-	sb      sandbox.Spec
-	shell   sandbox.Shell
+	shell   shell.Shell
 	workDir string
 	timeout time.Duration
 }
@@ -94,7 +93,7 @@ type bash struct {
 func (bash) Name() string { return "bash" }
 
 func (b bash) Description() string {
-	if b.resolved().Kind == sandbox.ShellPowerShell {
+	if b.resolved().Kind == shell.ShellPowerShell {
 		return "Execute a command in the shell and return combined stdout/stderr. " +
 			"NOTE: bash is not available on this host — commands run under Windows PowerShell, so write PowerShell, not bash:\n" +
 			"  - chaining: ';' runs both regardless; 'if ($?) { ... }' is conditional. '&&' and '||' are NOT parsed.\n" +
@@ -114,11 +113,11 @@ const bashToolSteer = " Use for builds, tests, git, package managers, etc. To se
 
 // resolved returns the bound shell, resolving lazily for the zero-value instance
 // (e.g. a registry that never went through ConfineBash).
-func (b bash) resolved() sandbox.Shell {
+func (b bash) resolved() shell.Shell {
 	if b.shell.Path != "" {
 		return b.shell
 	}
-	return sandbox.ResolveShell()
+	return shell.ResolveShell()
 }
 
 func (bash) Schema() json.RawMessage {
@@ -157,11 +156,8 @@ func (b bash) Execute(ctx context.Context, args json.RawMessage) (string, error)
 			"conditional chaining, or issue the commands as separate calls")
 	}
 
-	// Wrap in the OS sandbox when configured; otherwise argv is just the shell.
-	argv, confined := sandbox.Command(b.sb, sh, p.Command)
-	if b.sb.Mode == "enforce" && !confined {
-		return "", fmt.Errorf("sandbox is configured in enforce mode but bubblewrap (bwrap) is not available on this system")
-	}
+	// Wrap in the OS when configured; otherwise argv is just the shell.
+	argv := sh.Argv(p.Command)
 	cmdEnv := bashCommandEnv(ctx)
 
 	if p.RunInBackground {

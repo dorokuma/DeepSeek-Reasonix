@@ -434,7 +434,7 @@ func walkRootDir(root *os.Root, dir string, b *strings.Builder, n *int, depth in
 
 // resolveAbsRef resolves the user-supplied @-reference path against baseDir
 // and returns the absolute path plus the absolute base root to sandbox I/O
-// under. With a baseDir, the path is confined under it (a relative path that
+// under. With a baseDir, the path is bound under it (a relative path that
 // escapes via ".." is rejected). With an empty baseDir, the path is returned
 // as-is and the caller falls back to plain os.Stat/os.Open so CLI usage
 // (where there is no controller-scoped workspace) keeps working.

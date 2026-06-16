@@ -13,7 +13,7 @@ import (
 
 	"reasonix/internal/ctxmode"
 	"reasonix/internal/envutil"
-	"reasonix/internal/sandbox"
+	"reasonix/internal/shell"
 	"reasonix/internal/tool"
 )
 
@@ -25,9 +25,9 @@ const (
 func init() { tool.RegisterBuiltin(ctxRun{}) }
 
 // ctxRun executes a short script and returns stdout only — the Think-in-Code path.
-// Large stdout can still be sandboxed by ctxmode on the way into model context.
+// Large stdout can still be compacted by ctxmode on the way into model context.
 type ctxRun struct {
-	sb      sandbox.Spec
+
 	workDir string
 }
 
@@ -78,11 +78,8 @@ func (c ctxRun) Execute(ctx context.Context, args json.RawMessage) (string, erro
 		defer cleanup()
 	}
 
-	sh := sandbox.ResolveShell()
-	argv, confined := sandbox.Command(c.sb, sh, shellCmd)
-	if c.sb.Mode == "enforce" && !confined {
-		return "", fmt.Errorf("sandbox is configured in enforce mode but bubblewrap (bwrap) is not available on this system")
-	}
+	sh := shell.ResolveShell()
+	argv := sh.Argv(shellCmd)
 	runCtx, cancel := context.WithTimeout(ctx, ctxRunTimeout)
 	defer cancel()
 

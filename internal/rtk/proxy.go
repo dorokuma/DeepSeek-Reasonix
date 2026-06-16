@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"reasonix/internal/envutil"
-	"reasonix/internal/sandbox"
+	"reasonix/internal/shell"
 )
 
 // ErrNotRewritten means rtk rewrite declined this command — callers must use
@@ -90,7 +90,7 @@ func execShell(ctx context.Context, workDir, cmd, surface string) (string, error
 	tctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	// Use the same shell resolution as the bash tool, not hardcoded /bin/sh.
-	sh := sandbox.ResolveShell()
+	sh := shell.ResolveShell()
 	argv := sh.Argv(cmd)
 	c := exec.CommandContext(tctx, argv[0], argv[1:]...)
 	if workDir != "" {

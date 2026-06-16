@@ -17,7 +17,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"reasonix/internal/agent"
 	"reasonix/internal/codegraph"
@@ -36,8 +35,8 @@ import (
 	"reasonix/internal/permission"
 	"reasonix/internal/plugin"
 	"reasonix/internal/provider"
-	"reasonix/internal/sandbox"
 	"reasonix/internal/skill"
+	"reasonix/internal/shell"
 	"reasonix/internal/tool"
 	"reasonix/internal/tool/builtin"
 )
@@ -202,16 +201,11 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	sysPrompt = skill.ApplyIndex(sysPrompt, skills)
 
 	reg := tool.NewRegistry()
-	bashSpec := sandbox.Spec{Mode: cfg.BashMode(), WriteRoots: cfg.WriteRootsForRoot(root), Network: cfg.Sandbox.Network}
-	if bashSpec.Mode == "enforce" && !sandbox.Available() {
-		return nil, fmt.Errorf("sandbox.mode = \"enforce\" but bwrap is not installed on this system; install bubblewrap (bwrap) or set [sandbox] bash = \"off\" in reasonix.toml")
-	}
-	if sandbox.ResolveShell().Kind == sandbox.ShellPowerShell {
+	if shell.ResolveShell().Kind == shell.ShellPowerShell {
 		fmt.Fprintln(stderr, "warning: bash not found on PATH; the shell tool will run commands under Windows PowerShell. Install Git for Windows or WSL to use bash.")
 	}
 	searchSpec := builtin.ResolveSearch(cfg.Tools.Search.Engine, cfg.Tools.Search.RgPath, stderr)
-	bashTimeout := time.Duration(cfg.BashTimeoutSeconds()) * time.Second
-	addBuiltins(reg, cfg.Tools.Enabled, cfg.WriteRootsForRoot(root), bashSpec, bashTimeout, searchSpec, stderr, root)
+	addBuiltins(reg, cfg.Tools.Enabled, cfg.WriteRootsForRoot(root), searchSpec, stderr, root)
 	// Always construct a host, even with no plugins configured, so the controller's
 	// host pointer is stable for the session and `/mcp add` can hot-add into it.
 	pluginHost := plugin.NewHost()
@@ -850,12 +844,12 @@ func NewProviderWithProxy(e *config.ProviderEntry, proxy netclient.ProxySpec) (p
 // instance bound to writeRoots (preserving registry order).
 // When workDir is non-empty, tools resolve relative paths against it instead of
 // the process cwd, enabling concurrent multi-project sessions.
-func addBuiltins(reg *tool.Registry, enabled, writeRoots []string, bashSpec sandbox.Spec, bashTimeout time.Duration, searchSpec builtin.SearchSpec, stderr io.Writer, workDir string) {
+func addBuiltins(reg *tool.Registry, enabled, writeRoots []string, searchSpec builtin.SearchSpec, stderr io.Writer, workDir string) {
 	// If a workspace directory is set, use workspace-bound tools that resolve
 	// paths relative to that directory. Otherwise fall back to the process-cwd
 	// compile-time builtins.
 	if workDir != "" {
-		ws := builtin.Workspace{Dir: workDir, WriteRoots: writeRoots, Bash: bashSpec, BashTimeout: bashTimeout, Search: searchSpec}
+		ws := builtin.Workspace{Dir: workDir, Search: searchSpec}
 		for _, t := range ws.Tools(enabled...) {
 			reg.Add(t)
 		}
@@ -878,15 +872,7 @@ func addBuiltins(reg *tool.Registry, enabled, writeRoots []string, bashSpec sand
 	// Replace the unconfined defaults with confined instances (registry order is
 	// preserved on replace): file-writers bound to the workspace, bash to the OS
 	// sandbox. Only replace tools actually enabled/present.
-	confined := append(builtin.ConfineWriters(writeRoots), builtin.ConfineBash(bashSpec, bashTimeout), builtin.ConfineSearch(searchSpec))
-	if workDir != "" {
-		confined = append(confined, builtin.ConfineCtxRun(bashSpec, workDir))
-	}
-	for _, t := range confined {
-		if _, ok := reg.Get(t.Name()); ok {
-			reg.Add(t)
-		}
-	}
+
 }
 
 // partitionByTier splits configured plugin entries into the three startup

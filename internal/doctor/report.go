@@ -16,7 +16,6 @@ import (
 	"reasonix/internal/netclient"
 	"reasonix/internal/ctxmode"
 	"reasonix/internal/rtk"
-	"reasonix/internal/sandbox"
 )
 
 type Options struct {
@@ -35,7 +34,6 @@ type Report struct {
 	Codegraph  CodegraphReport  `json:"codegraph"`
 	LSP        LSPReport        `json:"lsp"`
 	Sessions   SessionsReport   `json:"sessions"`
-	Sandbox    SandboxReport    `json:"sandbox"`
 	RTK        RTKReport        `json:"rtk"`
 	Ctx        CtxReport        `json:"ctx"`
 	Network    NetworkReport    `json:"network"`
@@ -112,15 +110,7 @@ type RTKReport struct {
 	Warning   string            `json:"warning,omitempty"`
 }
 
-type SandboxReport struct {
-	Bash       string   `json:"bash"`
-	Network    bool     `json:"network"`
-	WriteRoots []string `json:"write_roots,omitempty"`
-	// Available is whether an OS sandbox actually backs an "enforce" request on
-	// this host (bwrap/seatbelt present). Without it "enforce" runs unconfined —
-	// e.g. always on Windows, where there is no OS sandbox.
-	Available bool `json:"available"`
-}
+
 
 type NetworkReport struct {
 	ProxyMode string `json:"proxy_mode"`
@@ -168,12 +158,7 @@ func Collect(opts Options) Report {
 			Servers: len(cfg.LSP.Servers),
 		},
 		Sessions: collectSessions(config.SessionDir()),
-		Sandbox: SandboxReport{
-			Bash:       cfg.BashMode(),
-			Network:    cfg.Sandbox.Network,
-			WriteRoots: redactHomeAll(cfg.WriteRoots()),
-			Available:  sandbox.Available(),
-		},
+
 		RTK: collectRTK(),
 		Ctx: collectCtx(),
 		Network: NetworkReport{
@@ -344,15 +329,6 @@ func RenderText(r Report) string {
 			fmt.Fprintf(&b, "  %-14s %s\n", key, v)
 		}
 	}
-
-	fmt.Fprintf(&b, "\nsandbox\n")
-	bashLine := r.Sandbox.Bash
-	if r.Sandbox.Bash == "enforce" && !r.Sandbox.Available {
-		bashLine += " (inactive: no OS sandbox on this host — bash runs unconfined)"
-	}
-	fmt.Fprintf(&b, "  bash         %s\n", bashLine)
-	fmt.Fprintf(&b, "  network      %v\n", r.Sandbox.Network)
-	fmt.Fprintf(&b, "  write_roots  %s\n", strings.Join(r.Sandbox.WriteRoots, ", "))
 
 	fmt.Fprintf(&b, "\nnetwork\n")
 	fmt.Fprintf(&b, "  proxy_mode   %s\n", r.Network.ProxyMode)

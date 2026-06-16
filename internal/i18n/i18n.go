@@ -154,7 +154,6 @@ type Messages struct {
 	CmdLanguage     string // /language
 	CmdSkill        string // /skills
 	CmdVerbose      string // /verbose
-	CmdSandbox      string // /sandbox
 	CmdEffort       string // /effort
 	CmdAutoPlan     string // /auto-plan
 	CmdHelp         string // /help

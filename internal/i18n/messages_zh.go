@@ -127,7 +127,6 @@ var Chinese = Messages{
 	CmdSkill:	"/skills — 管理技能",
 
 	CmdVerbose:	"/verbose — 切换详细输出",
-	CmdSandbox:	"/sandbox — 沙箱状态",
 	CmdEffort:	"/effort — 设置推理力度",
 	CmdAutoPlan:	"/auto-plan — 自动计划",
 	CmdHelp:	"/help — 帮助",

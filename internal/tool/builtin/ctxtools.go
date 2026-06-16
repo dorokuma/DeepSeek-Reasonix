@@ -19,7 +19,7 @@ type ctxRead struct{}
 func (ctxRead) Name() string { return "ctx_read" }
 
 func (ctxRead) Description() string {
-	return "Page through tool output previously sandboxed by ctxmode (read_file, grep, MCP, etc.). Use the ref from the [ctx] summary (e.g. ctx-1)."
+	return "Page through tool output previously compacted by ctxmode (read_file, grep, MCP, etc.). Use the ref from the [ctx] summary (e.g. ctx-1)."
 }
 
 func (ctxRead) Schema() json.RawMessage {

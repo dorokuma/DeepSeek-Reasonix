@@ -17,7 +17,6 @@ func init() { tool.RegisterBuiltin(writeFile{}) }
 // is overridden per run by ConfineWriters. workDir, when non-empty, is the
 // directory a relative path resolves against (see resolveIn).
 type writeFile struct {
-	roots   []string
 	workDir string
 }
 
@@ -45,9 +44,6 @@ func (w writeFile) Execute(ctx context.Context, args json.RawMessage) (string, e
 		return "", fmt.Errorf("path is required")
 	}
 	p.Path = resolveIn(w.workDir, p.Path)
-	if err := confine(w.roots, p.Path); err != nil {
-		return "", err
-	}
 	// Preserve the existing file's encoding (GBK/UTF-16/BOM) on overwrite instead
 	// of always writing UTF-8, which would silently corrupt a non-UTF-8 file.
 	// readFileEncoded returns enc=UTF8 for a missing file — the right default for

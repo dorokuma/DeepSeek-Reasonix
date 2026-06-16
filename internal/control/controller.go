@@ -43,7 +43,7 @@ import (
 	"reasonix/internal/permission"
 	"reasonix/internal/plugin"
 	"reasonix/internal/provider"
-	"reasonix/internal/sandbox"
+	"reasonix/internal/shell"
 	"reasonix/internal/skill"
 	"reasonix/internal/tool"
 )
@@ -181,7 +181,7 @@ type Options struct {
 	// context; both are needed for hot-adding MCP servers via AddMCPServer.
 	Registry  *tool.Registry
 	PluginCtx context.Context
-	// WorkspaceRoot is the project root checkpoint restores are confined to ("" =
+	// WorkspaceRoot is the project root checkpoint restores are bound to ("" =
 	// no confinement). Frontends pass the cwd they launched the session in.
 	WorkspaceRoot string
 	// OnRemember, when set, is invoked with a new allow rule the user chose to
@@ -537,7 +537,7 @@ func (w *shellWriter) Write(p []byte) (int, error) {
 // the output as ToolDispatch/ToolProgress/ToolResult events. It uses the same
 // bash-tool infrastructure (shell resolution, timeout) and shares the runGuarded
 // lock with model turns — only one can run at a time. User-invoked "!" commands
-// run without the OS sandbox (the user typed the command explicitly).
+// run without the OS (the user typed the command explicitly).
 func (c *Controller) RunShell(command string) {
 	command = strings.TrimSpace(command)
 	if command == "" {
@@ -545,8 +545,8 @@ func (c *Controller) RunShell(command string) {
 		return
 	}
 	c.runGuarded(func(ctx context.Context) error {
-		sh := sandbox.ResolveShell()
-		argv, _ := sandbox.Command(sandbox.Spec{}, sh, command) // false = unsandboxed (user invoked)
+		sh := shell.ResolveShell()
+		argv := sh.Argv(command) // false = unsandboxed (user invoked)
 
 		preview := []rune(command)
 		if len(preview) > 32 {

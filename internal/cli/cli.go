@@ -173,7 +173,7 @@ func setupQuiet(ctx context.Context, modelName string, maxStepsOverride int, req
 }
 
 // chdirTo honours --dir: it switches the working directory before anything reads
-// it, so config discovery, the sandbox root, and file tools all resolve from the
+// it, so config discovery, the tool root, and file tools all resolve from the
 // chosen project root. Returns 2 (already reported) on failure, 0 otherwise.
 func chdirTo(dir string) int {
 	if dir == "" {

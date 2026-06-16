@@ -24,7 +24,6 @@ func init() { tool.RegisterBuiltin(notebookEdit{}) }
 // ConfineWriters. workDir, when non-empty, is the directory a relative path
 // resolves against (see resolveIn).
 type notebookEdit struct {
-	roots   []string
 	workDir string
 }
 
@@ -79,9 +78,6 @@ func (n notebookEdit) Execute(ctx context.Context, raw json.RawMessage) (string,
 		return "", err
 	}
 	a.Path = resolveIn(n.workDir, a.Path)
-	if err := confine(n.roots, a.Path); err != nil {
-		return "", err
-	}
 	data, err := os.ReadFile(a.Path)
 	if err != nil {
 		return "", fmt.Errorf("read %s: %w", a.Path, err)

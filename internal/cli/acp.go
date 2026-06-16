@@ -7,7 +7,6 @@ import (
 	"os"
 	"os/signal"
 	"strings"
-	"time"
 
 	"reasonix/internal/acp"
 	"reasonix/internal/agent"
@@ -23,7 +22,6 @@ import (
 	"reasonix/internal/permission"
 	"reasonix/internal/plugin"
 	"reasonix/internal/provider"
-	"reasonix/internal/sandbox"
 	"reasonix/internal/tool"
 	"reasonix/internal/tool/builtin"
 )
@@ -58,9 +56,7 @@ func acpCommand(args []string, version string) int {
 		fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
 		return 1
 	}
-	if cfg.BashMode() == "enforce" && !sandbox.Available() {
-		fmt.Fprintln(os.Stderr, "warning: bash sandbox requested but unavailable on this platform; running bash unconfined")
-	}
+
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
@@ -210,13 +206,9 @@ func (f *acpFactory) NewSession(ctx context.Context, p acp.SessionParams) (*cont
 }
 
 func acpBuiltinTools(cfg *config.Config, cwd string, writeRoots []string) []tool.Tool {
-	bashSpec := sandbox.Spec{Mode: cfg.BashMode(), WriteRoots: writeRoots, Network: cfg.Sandbox.Network}
 	ws := builtin.Workspace{
-		Dir:         cwd,
-		WriteRoots:  writeRoots,
-		Bash:        bashSpec,
-		BashTimeout: time.Duration(cfg.BashTimeoutSeconds()) * time.Second,
-		Search:      builtin.ResolveSearch(cfg.Tools.Search.Engine, cfg.Tools.Search.RgPath, nil),
+		Dir:    cwd,
+		Search: builtin.ResolveSearch(cfg.Tools.Search.Engine, cfg.Tools.Search.RgPath, nil),
 	}
 	return ws.Tools(cfg.Tools.Enabled...)
 }

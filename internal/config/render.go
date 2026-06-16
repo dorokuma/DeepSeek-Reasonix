@@ -304,24 +304,7 @@ func RenderTOMLForScope(c *Config, scope RenderScope) string {
 	b.WriteString(renderRuleList("ask", c.Permissions.Ask, `["write_file"]   # force a prompt even if otherwise allowed`))
 	b.WriteString("\n")
 
-	b.WriteString("[sandbox]\n")
-	b.WriteString("# Confine tool blast radius. File-writers (write_file/edit_file/multi_edit)\n")
-	b.WriteString("# may only write under workspace_root (empty = current dir) + allow_write.\n")
-	b.WriteString("# bash = \"enforce\" (default) jails each command in an OS sandbox (macOS now;\n")
-	b.WriteString("# graceful fallback elsewhere); \"off\" disables it. network allows egress.\n")
-	if c.Sandbox.WorkspaceRoot != "" {
-		fmt.Fprintf(&b, "workspace_root = %q\n", c.Sandbox.WorkspaceRoot)
-	} else {
-		b.WriteString("# workspace_root = \"\"            # default: current working directory\n")
-	}
-	if len(c.Sandbox.AllowWrite) > 0 {
-		fmt.Fprintf(&b, "allow_write = %s\n", renderStringArray(c.Sandbox.AllowWrite))
-	} else {
-		b.WriteString("# allow_write = [\"/tmp\"]          # extra dirs writers may also modify\n")
-	}
-	fmt.Fprintf(&b, "bash    = %q\n", c.BashMode())
-	fmt.Fprintf(&b, "network = %v\n", c.Sandbox.Network)
-	b.WriteString("\n")
+
 
 	b.WriteString("[statusline]\n")
 	b.WriteString("# A custom status line: a command whose first stdout line replaces the built-in\n")

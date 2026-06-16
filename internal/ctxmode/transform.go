@@ -16,7 +16,7 @@ func Transform(store *Store, toolName string, args json.RawMessage, body string)
 
 // TransformCooperative stores the full tool output for ctx_read/ctx_search and
 // returns a model-facing summary. When RTK pipe produced a smaller view
-// (compactBody), that text is shown inline; the sandbox always keeps fullBody.
+// (compactBody), that text is shown inline; the tool always keeps fullBody.
 func TransformCooperative(store *Store, toolName string, args json.RawMessage, fullBody, compactBody, pipeNotice string, pipedOK bool, maxModelBytes int) (summary, notice string, ok bool) {
 	if store == nil || !Active() || len(fullBody) < ThresholdBytes() {
 		return "", "", false

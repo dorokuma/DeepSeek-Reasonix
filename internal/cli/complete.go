@@ -75,7 +75,6 @@ func (m *chatTUI) slashItems() []compItem {
 		{label: "/paste-image", insert: "/paste-image", hint: i18n.M.CmdPasteImage},
 		{label: "/output-style", insert: "/output-style", hint: i18n.M.CmdOutputStyle},
 		{label: "/verbose", insert: "/verbose", hint: i18n.M.CmdVerbose},
-		{label: "/sandbox", insert: "/sandbox", hint: i18n.M.CmdSandbox},
 		{label: "/effort", insert: "/effort ", hint: i18n.M.CmdEffort, descend: true},
 		{label: "/theme", insert: "/theme ", hint: i18n.M.CmdTheme, descend: true},
 		{label: "/language", insert: "/language ", hint: i18n.M.CmdLanguage, descend: true},

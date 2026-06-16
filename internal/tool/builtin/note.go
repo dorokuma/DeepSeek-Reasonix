@@ -43,7 +43,6 @@ func init() { tool.RegisterBuiltin(note{}) }
 // roots as the other writer tools, so the file always lives inside the
 // workspace.
 type note struct {
-	roots   []string
 	workDir string
 }
 
@@ -133,7 +132,7 @@ func (n note) Execute(ctx context.Context, args json.RawMessage) (string, error)
 // the returned path is ready for confine() and I/O. Used by Execute (which
 // returns error) and PostCallGuidance (which returns empty string on failure).
 func (n note) resolveNotePath(raw string) (string, error) {
-	return resolveWorkspacePath(n.workDir, noteDefaultBasename, raw, n.roots)
+	return resolveWorkspacePath(n.workDir, noteDefaultBasename, raw)
 }
 
 // PostCallGuidance teaches the model what to do after writing a note: re-load

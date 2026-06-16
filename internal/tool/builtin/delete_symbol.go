@@ -18,7 +18,6 @@ import (
 func init() { tool.RegisterBuiltin(deleteSymbol{}) }
 
 type deleteSymbol struct {
-	roots   []string
 	workDir string
 }
 
@@ -71,9 +70,6 @@ func (d deleteSymbol) Execute(ctx context.Context, args json.RawMessage) (string
 		return "", fmt.Errorf("name is required")
 	}
 	p.Path = resolveIn(d.workDir, p.Path)
-	if err := confine(d.roots, p.Path); err != nil {
-		return "", err
-	}
 
 	ext := strings.ToLower(filepath.Ext(p.Path))
 	if ext != ".go" {
@@ -117,9 +113,6 @@ func (d deleteSymbol) Preview(args json.RawMessage) (diff.Change, error) {
 		return diff.Change{}, fmt.Errorf("name is required")
 	}
 	p.Path = resolveIn(d.workDir, p.Path)
-	if err := confine(d.roots, p.Path); err != nil {
-		return diff.Change{}, err
-	}
 
 	ext := strings.ToLower(filepath.Ext(p.Path))
 	if ext != ".go" {

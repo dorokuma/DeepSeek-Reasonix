@@ -2,9 +2,7 @@ package builtin
 
 import (
 	"path/filepath"
-	"time"
 
-	"reasonix/internal/sandbox"
 	"reasonix/internal/tool"
 )
 
@@ -15,15 +13,9 @@ import (
 // resolves relative paths against this directory and bash runs in it.
 //
 // Dir is that directory (empty yields process-cwd tools, byte-identical to the
-// compile-time built-ins). WriteRoots confines the file-writers (as
-// ConfineWriters); when empty and Dir is set, Dir itself becomes the sole write
-// root, so writes stay inside the project by default. Bash is the OS-sandbox
-// spec for the bash tool (as ConfineBash).
+// compile-time built-ins). WriteRoots is ignored (sandbox disabled).
 type Workspace struct {
 	Dir         string
-	WriteRoots  []string
-	Bash        sandbox.Spec
-	BashTimeout time.Duration
 	Search      SearchSpec
 }
 
@@ -33,26 +25,21 @@ type Workspace struct {
 // per-workspace analogue of the cli's process-cwd assembly — a desktop driver
 // calls it once per agent instead of relying on the global working directory.
 func (w Workspace) Tools(enabled ...string) []tool.Tool {
-	writeRoots := w.WriteRoots
-	if len(writeRoots) == 0 && w.Dir != "" {
-		writeRoots = []string{w.Dir}
-	}
-	roots := realRoots(writeRoots)
 
 	overrides := map[string]tool.Tool{
 		"read_file":     readFile{workDir: w.Dir},
-		"write_file":    writeFile{workDir: w.Dir, roots: roots},
-		"edit_file":     editFile{workDir: w.Dir, roots: roots},
-		"multi_edit":    multiEdit{workDir: w.Dir, roots: roots},
-		"notebook_edit": notebookEdit{workDir: w.Dir, roots: roots},
-		"delete_range":  deleteRange{workDir: w.Dir, roots: roots},
-		"delete_symbol": deleteSymbol{workDir: w.Dir, roots: roots},
-		"bash":          bash{workDir: w.Dir, sb: w.Bash, timeout: w.BashTimeout},
+		"write_file":    writeFile{workDir: w.Dir},
+		"edit_file":     editFile{workDir: w.Dir},
+		"multi_edit":    multiEdit{workDir: w.Dir},
+		"notebook_edit": notebookEdit{workDir: w.Dir},
+		"delete_range":  deleteRange{workDir: w.Dir},
+		"delete_symbol": deleteSymbol{workDir: w.Dir},
+		"bash":          bash{workDir: w.Dir},
 		"ls":            listDir{workDir: w.Dir},
 		"glob":          globTool{workDir: w.Dir},
 		"grep":          grepTool{workDir: w.Dir, search: w.Search},
 		"web_fetch":     webFetch{},
-		"ctx_run":       ctxRun{workDir: w.Dir, sb: w.Bash},
+		"ctx_run":       ctxRun{workDir: w.Dir},
 	}
 	all := tool.Builtins()
 	if len(enabled) == 0 {
@@ -119,3 +106,5 @@ func skipWalkDir(root, path, name string) bool {
 	}
 	return vendorDirs[name] || isProtectedDir(absClean(path))
 }
+
+

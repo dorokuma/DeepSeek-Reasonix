@@ -49,7 +49,6 @@ type Config struct {
 	Providers     []ProviderEntry     `toml:"providers"`
 	Tools         ToolsConfig         `toml:"tools"`
 	Permissions   PermissionsConfig   `toml:"permissions"`
-	Sandbox       SandboxConfig       `toml:"sandbox"`
 	Network       NetworkConfig       `toml:"network"`
 	Plugins       []PluginEntry       `toml:"plugins"`
 	Skills        SkillsConfig        `toml:"skills"`
@@ -409,17 +408,7 @@ func (c *Config) IsSkillDisabled(name string) bool {
 // lists extra directories writers may also touch (e.g. a sibling repo or a temp
 // dir). Both support ${VAR} / ${VAR:-default} expansion. Reads are unrestricted;
 // confining `bash` is Phase 1 (OS-level sandbox).
-type SandboxConfig struct {
-	WorkspaceRoot string   `toml:"workspace_root"`
-	AllowWrite    []string `toml:"allow_write"`
-	// Bash is the OS-sandbox mode for the bash tool: "enforce" (default) jails
-	// each command, "off" runs it unconfined. Phase 1; macOS only for now, with
-	// a graceful fallback elsewhere (see internal/sandbox).
-	Bash string `toml:"bash"`
-	// Network allows network egress from inside the bash sandbox. Defaults true
-	// so module/package downloads keep working; the boundary is then writes.
-	Network bool `toml:"network"`
-}
+
 
 // WriteRoots returns the directories file-writer tools may modify: the
 // workspace root (defaulting to the current working directory when unset) plus
@@ -430,38 +419,22 @@ func (c *Config) WriteRoots() []string {
 	return c.WriteRootsForRoot(".")
 }
 
-// WriteRootsForRoot is like WriteRoots but falls back to fallbackRoot when the
-// config doesn't explicitly set a workspace_root. Desktop tabs pass their
-// project root here so tool confinement is correct without changing cwd.
+// WriteRootsForRoot returns the workspace root for file-writer confinement.
 func (c *Config) WriteRootsForRoot(fallbackRoot string) []string {
-	root := ExpandVars(c.Sandbox.WorkspaceRoot)
-	if root == "" {
-		root = fallbackRoot
-		if root == "" || root == "." {
-			if wd, err := os.Getwd(); err == nil {
-				root = wd
-			} else {
-				root = "."
-			}
+	root := fallbackRoot
+	if root == "" || root == "." {
+		if wd, err := os.Getwd(); err == nil {
+			root = wd
+		} else {
+			root = "."
 		}
 	}
-	roots := []string{root}
-	for _, d := range c.Sandbox.AllowWrite {
-		if d = ExpandVars(d); d != "" {
-			roots = append(roots, d)
-		}
-	}
-	return roots
+	return []string{root}
 }
 
-// BashMode normalises the bash-sandbox mode: only an explicit "off" disables
-// it; empty or any other value resolves to "enforce", so the sandbox is on by
-// default and fails safe.
+// BashMode returns the bash mode (sandbox disabled, always empty).
 func (c *Config) BashMode() string {
-	if c.Sandbox.Bash == "off" {
-		return "off"
-	}
-	return "enforce"
+	return ""
 }
 
 // AgentConfig configures the harness loop. PlannerModel is optional: when set
@@ -744,7 +717,6 @@ func Default() *Config {
 		// builds/downloads work. Set bash = "off" to disable. Network=true here
 		// so an absent [sandbox] in a user's file keeps egress (zero value would
 		// wrongly deny it).
-		Sandbox: SandboxConfig{Bash: "enforce", Network: true},
 		// CodeGraph code-intelligence defaults on so existing configs (which never
 		// wrote a [codegraph] section) keep it after an upgrade. First-run scaffolds
 		// write enabled = false instead, so only brand-new users start without it.
