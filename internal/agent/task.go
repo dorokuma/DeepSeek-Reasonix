@@ -39,6 +39,8 @@ var subagentJobTools = []string{
 	"kill_shell",
 }
 
+const subagentToolBoundarySummary = "Recursive agent/skill tools and unsupported background job tools (wait, bash_output, kill_shell) are excluded; bash is exposed as foreground-only inside subagents."
+
 // SubagentMetaTools returns the tool names that spawned agents should not inherit
 // from the parent registry unless a future call site deliberately opts into a
 // different boundary. They can spawn or author more agent work, so excluding them
@@ -178,7 +180,7 @@ func (t *TaskTool) WithTranscriptIdentityResolver(resolve func(modelRef, effort 
 func (t *TaskTool) Name() string { return "task" }
 
 func (t *TaskTool) Description() string {
-	return "Spawn a sub-agent for a focused sub-task. The sub-agent runs in its own session with the same provider and a filtered tool list (defaults to every parent tool except subagent/skill meta-tools, so delegation stays one layer deep). Only its final answer is returned. Use this to (a) keep long exploration sequences out of the parent's context budget, or (b) delegate self-contained work like 'find every place that calls X and summarise the patterns'."
+	return "Spawn a sub-agent for a focused sub-task. The sub-agent runs in its own session with the same provider and a filtered tool list (defaults to every parent tool, then applies the subagent boundary: " + subagentToolBoundarySummary + "). Only its final answer is returned. Use this to (a) keep long exploration sequences out of the parent's context budget, or (b) delegate self-contained work like 'find every place that calls X and summarise the patterns'."
 }
 
 func (t *TaskTool) Schema() json.RawMessage {
@@ -187,7 +189,7 @@ func (t *TaskTool) Schema() json.RawMessage {
 "properties":{
   "prompt":{"type":"string","description":"What the sub-agent should accomplish. Be specific about the deliverable — the sub-agent does not see this conversation."},
   "description":{"type":"string","description":"Short label for the sub-task (3-7 words). Surfaced in the dispatch line so the user sees what's running."},
-  "tools":{"type":"array","items":{"type":"string"},"description":"Optional tool whitelist. Subagent/skill meta-tools are still excluded so delegation stays one layer deep."},
+  "tools":{"type":"array","items":{"type":"string"},"description":"Optional tool whitelist. ` + subagentToolBoundarySummary + `"},
   "max_steps":{"type":"integer","description":"Optional cap on tool-call rounds. Defaults to half the parent's cap (min 5).","minimum":1},
   "run_in_background":{"type":"boolean","description":"Run the sub-agent asynchronously: returns a job id immediately and keeps working across turns. Collect its final answer with wait, and you'll be notified when it finishes. Use for long, independent sub-tasks you don't need to block on right now."},
   "model":{"type":"string","description":"Optional model override for the sub-agent (a configured provider/model name)."},

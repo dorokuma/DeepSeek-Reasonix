@@ -121,3 +121,17 @@ func TestTaskToolBuildSubRegUsesSubagentToolRegistry(t *testing.T) {
 		t.Fatalf("task subagent bash schema should be foreground-only: %s", bash.Schema())
 	}
 }
+
+func TestTaskToolDescribesSubagentToolBoundary(t *testing.T) {
+	task := &TaskTool{}
+	for label, text := range map[string]string{
+		"description": task.Description(),
+		"schema":      string(task.Schema()),
+	} {
+		for _, want := range []string{"wait", "bash_output", "kill_shell", "foreground-only"} {
+			if !strings.Contains(text, want) {
+				t.Fatalf("task %s should mention %q in subagent tool boundary: %s", label, want, text)
+			}
+		}
+	}
+}
