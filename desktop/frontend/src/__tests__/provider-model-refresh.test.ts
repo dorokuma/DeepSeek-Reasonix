@@ -1,6 +1,13 @@
 // Run: tsx src/__tests__/provider-model-refresh.test.ts
 
-import { isLikelyChatModel, mergedFetchedProviderModels, providerDefaultModel, providerModelCandidates } from "../lib/providerModels";
+import {
+  inferredVisionModels,
+  isLikelyChatModel,
+  isLikelyVisionModel,
+  mergedFetchedProviderModels,
+  providerDefaultModel,
+  providerModelCandidates,
+} from "../lib/providerModels";
 
 let passed = 0;
 let failed = 0;
@@ -62,6 +69,23 @@ eq(
   ],
   [true, false, false, false],
   "matches backend non-chat model heuristic",
+);
+
+eq(
+  [
+    isLikelyVisionModel("mimo-v2.5"),
+    isLikelyVisionModel("mimo-v2-omni"),
+    isLikelyVisionModel("qwen2.5-vl-72b-instruct"),
+    isLikelyVisionModel("mimo-v2.5-asr"),
+  ],
+  [true, true, true, false],
+  "detects likely image-capable chat model IDs",
+);
+
+eq(
+  inferredVisionModels(["mimo-v2.5-pro", "mimo-v2.5", "mimo-v2-omni", "qwen-vl-plus", "mimo-v2.5-asr", "audio-omni-tts"]),
+  ["mimo-v2.5", "mimo-v2-omni", "qwen-vl-plus"],
+  "infers image-capable models without importing audio models",
 );
 
 eq(

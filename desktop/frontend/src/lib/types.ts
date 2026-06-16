@@ -657,6 +657,7 @@ export interface ProviderView {
   kind: string;
   baseUrl: string;
   models: string[];
+  visionModels: string[]; // subset of models that accepts image input
   modelsUrl: string; // optional override for model discovery; empty derives from baseUrl
   default: string;
   apiKeyEnv: string;

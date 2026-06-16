@@ -57,11 +57,15 @@ func TestProviderViewFromEntry_FiltersNonChatModels(t *testing.T) {
 			"mimo-v2-asr", "mimo-v2-tts",
 			"mimo-v2-tts-voiceclone", "mimo-v2-tts-voicedesign",
 		},
+		VisionModels: []string{"mimo-v2", "mimo-v2-asr", "mimo-v2-omni"},
 	}
 	view := providerViewFromEntry(p, true, false)
 	want := []string{"mimo-v2", "mimo-v2-pro"}
 	if !reflect.DeepEqual(view.Models, want) {
 		t.Errorf("ProviderView.Models = %v, want %v", view.Models, want)
+	}
+	if got, want := view.VisionModels, []string{"mimo-v2"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("ProviderView.VisionModels = %v, want %v", got, want)
 	}
 }
 
@@ -106,10 +110,15 @@ func TestSaveProviderFiltersNonChatModels(t *testing.T) {
 
 	app := NewApp()
 	if err := app.SaveProvider(ProviderView{
-		Name:      "mimo-api",
-		Kind:      "openai",
-		BaseURL:   "https://api.xiaomimimo.com/v1",
-		Models:    []string{"mimo-v2.5-asr", "mimo-v2.5-pro", "mimo-v2.5-tts"},
+		Name:    "mimo-api",
+		Kind:    "openai",
+		BaseURL: "https://api.xiaomimimo.com/v1",
+		Models:  []string{"mimo-v2.5-asr", "mimo-v2.5-pro", "mimo-v2.5-tts"},
+		VisionModels: []string{
+			"mimo-v2.5-asr",
+			"mimo-v2.5-pro",
+			"mimo-v2.5-tts",
+		},
 		Default:   "mimo-v2.5-asr",
 		APIKeyEnv: "MIMO_API_KEY",
 	}); err != nil {
@@ -127,6 +136,9 @@ func TestSaveProviderFiltersNonChatModels(t *testing.T) {
 	}
 	if got.DefaultModel() != "mimo-v2.5-pro" {
 		t.Errorf("saved provider default = %q, want mimo-v2.5-pro", got.DefaultModel())
+	}
+	if got, want := got.VisionModels, []string{"mimo-v2.5-pro"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("saved provider vision_models = %v, want %v", got, want)
 	}
 	raw, err := os.ReadFile(config.UserConfigPath())
 	if err != nil {
@@ -146,6 +158,9 @@ func TestSaveProviderFiltersNonChatModels(t *testing.T) {
 	}
 	if strings.Contains(block, `model       = "mimo-v2.5-pro"`) {
 		t.Fatalf("saved provider block should not persist explicit single selection as legacy model:\n%s", block)
+	}
+	if !strings.Contains(block, `vision_models = ["mimo-v2.5-pro"]`) {
+		t.Fatalf("saved provider block did not persist filtered vision_models:\n%s", block)
 	}
 }
 
@@ -174,6 +189,9 @@ func TestOfficialMimoAPITemplateIncludesVisionModels(t *testing.T) {
 	}
 	if got.Prices["mimo-v2-omni"] == nil || got.Prices["mimo-v2-omni"].Currency != "¥" || got.Prices["mimo-v2-omni"].Output != 2 {
 		t.Fatalf("mimo-v2-omni price = %+v, want RMB domestic pricing", got.Prices["mimo-v2-omni"])
+	}
+	if want := []string{"mimo-v2.5", "mimo-v2-omni"}; !reflect.DeepEqual(got.VisionModels, want) {
+		t.Fatalf("mimo-api vision_models = %v, want %v", got.VisionModels, want)
 	}
 }
 
