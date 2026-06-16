@@ -399,7 +399,7 @@ func shadowedCredentialSources(root, key, activeValue string, active CredentialS
 		if sameCredentialSource(candidate, active) {
 			continue
 		}
-		if v, ok := envFileValue(candidate.Path, key); ok && v != "" && v != activeValue {
+		if v, ok := envFileValue(candidate.Path, key); ok && v != activeValue {
 			candidate.Label = credentialSourceLabel(candidate)
 			out = append(out, candidate)
 		}

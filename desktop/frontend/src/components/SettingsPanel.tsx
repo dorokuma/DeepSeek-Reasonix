@@ -80,6 +80,7 @@ export function SettingsPanel({
   const [s, setS] = useState<SettingsView | null>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [warning, setWarning] = useState<string | null>(null);
   const [theme, setThemeState] = useState<Theme>(getTheme());
   const [themeStyle, setThemeStyleState] = useState<ThemeStyle>(() => getThemeStyle(getTheme()));
   const [textSize, setTextSizeState] = useState<TextSize>(getTextSize());
@@ -105,13 +106,17 @@ export function SettingsPanel({
   }, [s?.desktopTheme, s?.desktopThemeStyle]);
 
   // apply runs a mutation, re-reads settings, and refreshes the topbar/model.
-  const apply = async (fn: () => Promise<void>) => {
+  const apply = async (fn: () => Promise<unknown>) => {
     setBusy(true);
     setErr(null);
+    setWarning(null);
     try {
-      await fn();
+      const result = await fn();
       await reload();
       onChanged();
+      if (typeof result === "string" && result.trim()) {
+        setWarning(result.trim());
+      }
     } catch (e) {
       setErr(String((e as Error)?.message ?? e));
     } finally {
@@ -120,6 +125,7 @@ export function SettingsPanel({
   };
   const backgroundApply = async (fn: () => Promise<void>) => {
     setErr(null);
+    setWarning(null);
     try {
       await fn();
       await reload();
@@ -166,6 +172,7 @@ export function SettingsPanel({
           </nav>
           <main className="settings-center__content">
             {needsSettings && err && <div className="banner banner--error">{err}</div>}
+            {needsSettings && warning && <div className="banner banner--warning">{warning}</div>}
             {needsSettings && !s ? (
               <div className="empty">{t("settings.loading")}</div>
             ) : (
@@ -247,7 +254,7 @@ export function SettingsPanel({
   );
 }
 
-function SettingsPageShell({ s: _s, tab, children }: { s: SettingsView | null; tab: SettingsTab; busy: boolean; apply: (fn: () => Promise<void>) => Promise<void>; children: ReactNode }) {
+function SettingsPageShell({ s: _s, tab, children }: { s: SettingsView | null; tab: SettingsTab; busy: boolean; apply: (fn: () => Promise<unknown>) => Promise<void>; children: ReactNode }) {
   const t = useT();
   const descKey = `settings.pageDesc.${tab}` as keyof typeof import("../locales/en").en;
   const desc = t(descKey as any);
@@ -359,7 +366,7 @@ function settingsTabPageTitle(id: SettingsTab, t: ReturnType<typeof useT>): stri
 type SectionProps = {
   s: SettingsView;
   busy: boolean;
-  apply: (fn: () => Promise<void>) => Promise<void>;
+  apply: (fn: () => Promise<unknown>) => Promise<void>;
 };
 
 type ModelsSectionProps = SectionProps & {

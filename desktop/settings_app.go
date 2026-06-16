@@ -679,14 +679,18 @@ func (a *App) saveProviderCredential(apiKeyEnv, value string) (string, error) {
 	value = strings.TrimSpace(value)
 	root := a.activeWorkspaceRoot()
 	before := config.ResolveCredentialForRoot(root, apiKeyEnv)
+	beforeEnvValue, beforeEnvSet := os.LookupEnv(apiKeyEnv)
 	if err := upsertDotEnv(apiKeyEnv, value); err != nil {
 		return "", err
 	}
-	return providerCredentialShadowWarning(apiKeyEnv, value, root, before), nil
+	return providerCredentialShadowWarning(apiKeyEnv, value, root, before, beforeEnvSet, beforeEnvValue), nil
 }
 
-func providerCredentialShadowWarning(apiKeyEnv, value, root string, before config.CredentialResolution) string {
-	if before.Set && before.Source.Kind == config.CredentialSourceEnvironment && before.Value != "" && before.Value != value {
+func providerCredentialShadowWarning(apiKeyEnv, value, root string, before config.CredentialResolution, beforeEnvSet bool, beforeEnvValue string) string {
+	if beforeEnvSet && beforeEnvValue != value {
+		return fmt.Sprintf("saved %s to Reasonix credentials, but an existing environment variable with the same name can override it after restart; update or remove that environment variable", apiKeyEnv)
+	}
+	if before.Set && before.Source.Kind == config.CredentialSourceEnvironment && before.Value != value {
 		return fmt.Sprintf("saved %s to Reasonix credentials, but an existing environment variable with the same name can override it after restart; update or remove that environment variable", apiKeyEnv)
 	}
 	current := config.ResolveCredentialForRoot(root, apiKeyEnv)
@@ -1073,21 +1077,21 @@ func (a *App) SaveProvider(p ProviderView) error {
 // AddOfficialProviderAccess adds one curated desktop provider template to the
 // Settings > Model > Access list. The runtime default providers still exist
 // independently; this only records the user's explicit access setup.
-func (a *App) AddOfficialProviderAccess(kind, key string) error {
+func (a *App) AddOfficialProviderAccess(kind, key string) (string, error) {
 	cfg, _, err := a.loadDesktopUserConfigForEdit()
 	if err != nil {
-		return err
+		return "", err
 	}
 	entries, keyEnv, err := officialProviderTemplate(kind, cfg.DeepSeekOfficialPricingLanguage())
 	if err != nil {
-		return err
+		return "", err
 	}
 	keyWarning := ""
 	if strings.TrimSpace(key) != "" && keyEnv != "" {
 		var err error
 		keyWarning, err = a.saveProviderCredential(keyEnv, key)
 		if err != nil {
-			return err
+			return "", err
 		}
 	}
 	if err := a.applyConfigChange(func(c *config.Config) error {
@@ -1101,12 +1105,9 @@ func (a *App) AddOfficialProviderAccess(kind, key string) error {
 		addProviderAccess(c, names...)
 		return nil
 	}); err != nil {
-		return err
+		return "", err
 	}
-	if keyWarning != "" {
-		return fmt.Errorf("%s", keyWarning)
-	}
-	return nil
+	return keyWarning, nil
 }
 
 // FetchProviderModels probes the provider's OpenAI-compatible model-list
@@ -1352,24 +1353,21 @@ func (a *App) deleteProviderAndRetargetTabs(name string) error {
 // SetProviderKey writes a secret to the global credential store under the given
 // env-var name (the one a provider's api_key_env points at) and rebuilds so it
 // resolves immediately.
-func (a *App) SetProviderKey(apiKeyEnv, value string) error {
+func (a *App) SetProviderKey(apiKeyEnv, value string) (string, error) {
 	if strings.TrimSpace(apiKeyEnv) == "" {
-		return fmt.Errorf("this provider has no api_key_env set")
+		return "", fmt.Errorf("this provider has no api_key_env set")
 	}
 	if err := a.ensureActiveTabRebuildAllowed("provider key"); err != nil {
-		return err
+		return "", err
 	}
 	warning, err := a.saveProviderCredential(apiKeyEnv, value)
 	if err != nil {
-		return err
+		return "", err
 	}
 	if err := a.rebuild(); err != nil {
-		return err
+		return "", err
 	}
-	if warning != "" {
-		return fmt.Errorf("%s", warning)
-	}
-	return nil
+	return warning, nil
 }
 
 // ClearProviderKey removes a provider secret from the global credential store

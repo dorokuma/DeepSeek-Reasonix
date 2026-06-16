@@ -135,6 +135,50 @@ func TestResolveCredentialSourceShowsProjectEnvShadowingCredentials(t *testing.T
 	}
 }
 
+func TestResolveCredentialSourceShowsEmptyProjectEnvShadowingCredentials(t *testing.T) {
+	cwd := t.TempDir()
+	cfgHome := t.TempDir()
+
+	t.Chdir(cwd)
+	t.Setenv("HOME", cfgHome)
+	t.Setenv("REASONIX_CREDENTIALS_STORE", "file")
+	t.Setenv("USERPROFILE", cfgHome)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(cfgHome, ".config"))
+	t.Setenv("AppData", filepath.Join(cfgHome, "AppData"))
+
+	key := "KEY_SOURCE_EMPTY_PROJECT"
+	cred := UserCredentialsPath()
+	if cred == "" {
+		t.Skip("user config dir unresolved on this platform")
+	}
+	if err := os.MkdirAll(filepath.Dir(cred), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(cred, []byte(key+"=from_credentials\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(cwd, ".env"), []byte(key+"=\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(key, "")
+	os.Unsetenv(key)
+
+	if _, err := StoreCredentialLines([]string{key + "=from_credentials"}); err != nil {
+		t.Fatalf("StoreCredentialLines: %v", err)
+	}
+
+	got := ResolveCredentialForRoot(cwd, key)
+	foundProjectShadow := false
+	for _, source := range got.Shadowed {
+		if source.Kind == CredentialSourceProjectEnv {
+			foundProjectShadow = true
+		}
+	}
+	if !foundProjectShadow {
+		t.Fatalf("shadowed = %+v, want empty project .env shadowing credentials", got.Shadowed)
+	}
+}
+
 func TestResolveCredentialSourceShowsCredentialsBeforeHomeEnv(t *testing.T) {
 	cwd := t.TempDir()
 	cfgHome := t.TempDir()
