@@ -429,7 +429,10 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	if opts.MaxSteps > 0 {
 		maxSteps = opts.MaxSteps
 	}
-	subagentStore := newSubagentStore(sessionDir)
+	subagentStore, err := newSubagentStore(sessionDir)
+	if err != nil {
+		return nil, err
+	}
 	if subagentStore != nil {
 		subagentStore.WithDestroyedChecker(jm.IsDestroying)
 	}
@@ -1114,12 +1117,16 @@ func isGitMarker(path string) bool {
 	return err == nil && (fi.IsDir() || fi.Mode().IsRegular())
 }
 
-func newSubagentStore(sessionDir string) *agent.SubagentStore {
+func newSubagentStore(sessionDir string) (*agent.SubagentStore, error) {
 	sessionDir = strings.TrimSpace(sessionDir)
 	if sessionDir == "" {
-		return nil
+		return nil, nil
 	}
-	return agent.NewSubagentStore(filepath.Join(sessionDir, "subagents"))
+	store := agent.NewSubagentStore(filepath.Join(sessionDir, "subagents"))
+	if _, err := store.CleanupStaleRunning(); err != nil {
+		return nil, fmt.Errorf("cleanup stale subagents: %w", err)
+	}
+	return store, nil
 }
 
 func subagentEffectiveIdentity(cfg *config.Config, baseModelRef string, base *config.ProviderEntry, modelRef, effort string) (string, string) {

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"runtime/debug"
 	"strings"
 
 	"reasonix/internal/event"
@@ -248,8 +249,15 @@ func (t *TaskTool) Execute(ctx context.Context, args json.RawMessage) (string, e
 				return "", err
 			}
 		}
-		job := jm.StartForSession(jobs.SessionFromContext(ctx), "task", label, func(jobCtx context.Context, _ io.Writer) (string, error) {
+		job := jm.StartForSession(jobs.SessionFromContext(ctx), "task", label, func(jobCtx context.Context, _ io.Writer) (result string, err error) {
 			defer run.Release()
+			defer func() {
+				if r := recover(); r != nil {
+					panicErr := fmt.Errorf("internal error: panic: %v\n%s", r, debug.Stack())
+					result = FormatSubagentResult("", run.Ref, true)
+					err = errors.Join(panicErr, t.transcripts.SaveFailed(run))
+				}
+			}()
 			answer, err := t.runSubSession(jobCtx, p.Prompt, subReg, nested, maxSteps, prov, pricing, ctxWin, run.Session)
 			if err != nil {
 				return FormatSubagentResult("", run.Ref, true), errors.Join(err, t.transcripts.SaveFailed(run))
