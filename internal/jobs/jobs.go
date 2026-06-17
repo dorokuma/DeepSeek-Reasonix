@@ -884,7 +884,23 @@ func (m *Manager) FinishDestroySession(parentSession string) {
 	}
 	m.mu.Lock()
 	delete(m.destroying, parentSession)
+	delete(m.artifactDirs, parentSession)
+	delete(m.loaded, parentSession)
+	m.purgeSessionLocked(parentSession)
 	m.mu.Unlock()
+}
+
+func (m *Manager) purgeSessionLocked(parentSession string) {
+	kept := m.order[:0]
+	for _, id := range m.order {
+		j := m.jobs[id]
+		if j == nil || sessionMatches(parentSession, j.SessionID) {
+			delete(m.jobs, id)
+			continue
+		}
+		kept = append(kept, id)
+	}
+	m.order = kept
 }
 
 // Close cancels the session context and waits for every background job goroutine

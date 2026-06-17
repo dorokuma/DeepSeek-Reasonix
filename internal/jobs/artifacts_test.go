@@ -74,3 +74,23 @@ func TestRestoreSessionArtifactsAndAdvanceSequence(t *testing.T) {
 		t.Fatalf("new job reused restored id %q", next.ID)
 	}
 }
+
+func TestFinishDestroySessionPurgesOwnedJobs(t *testing.T) {
+	m := NewManager(event.Discard)
+	defer m.Close()
+
+	j := m.StartForSession("session", "task", "done", func(context.Context, io.Writer) (string, error) {
+		return "answer", nil
+	})
+	<-j.done
+
+	done := m.DestroySession("session")
+	if len(done) != 0 {
+		t.Fatalf("finished job should not need destroy wait, got %d handles", len(done))
+	}
+	m.FinishDestroySession("session")
+
+	if _, _, ok := m.OutputForSession("session", j.ID); ok {
+		t.Fatalf("destroyed session job %s should be purged", j.ID)
+	}
+}
