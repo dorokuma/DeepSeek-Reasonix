@@ -1438,23 +1438,25 @@ func groupByFamily(providers []config.ProviderEntry) ([]string, map[string][]int
 // withBuiltinFamilies guarantees the wizard always offers the built-in provider
 // families (DeepSeek, MiMo) even when the loaded config replaced them — a
 // reasonix.toml that defines only [[providers]] for deepseek otherwise hides
-// MiMo from setup, since [[providers]] replaces the presets wholesale. Families
-// already present are left untouched (the user's customizations win); only the
-// missing built-in families get their default entries appended.
+// MiMo from setup, since [[providers]] replaces the presets wholesale.
+// Built-in entries whose exact name already exists in the user's config are
+// kept as-is (preserving customizations); missing built-in entries within an
+// existing family are appended so the model picker always shows the full
+// catalogue rather than only the previously selected subset.
 func withBuiltinFamilies(providers []config.ProviderEntry) []config.ProviderEntry {
 	return withBuiltinFamiliesForLanguage(providers, "")
 }
 
 func withBuiltinFamiliesForLanguage(providers []config.ProviderEntry, pricingLanguage string) []config.ProviderEntry {
-	have := map[string]bool{}
+	haveName := map[string]bool{}
 	for _, p := range providers {
-		have[familyOf(p.Name).key] = true
+		haveName[p.Name] = true
 	}
 	defaults := config.Default()
 	defaults.Language = pricingLanguage
 	defaults.ApplyDeepSeekOfficialDefaultPricing()
 	for _, bp := range defaults.Providers {
-		if k := familyOf(bp.Name).key; !have[k] {
+		if !haveName[bp.Name] {
 			providers = append(providers, bp)
 		}
 	}

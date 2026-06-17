@@ -1132,6 +1132,50 @@ func TestWithBuiltinFamiliesForLanguageUsesDeepSeekPricing(t *testing.T) {
 	}
 }
 
+// TestWithBuiltinFamiliesRestoresSiblingEntries covers the re-run scenario:
+// a user previously selected only deepseek-v4-flash (saved as deepseek-flash
+// with a single model). Re-running `reasonix setup` must still surface the
+// sibling deepseek-pro entry so the user can pick deepseek-v4-pro too,
+// rather than only showing the previously selected model.
+func TestWithBuiltinFamiliesRestoresSiblingEntries(t *testing.T) {
+	cfg := []config.ProviderEntry{
+		{Name: "deepseek-flash", Kind: "openai", BaseURL: "https://api.deepseek.com", Model: "deepseek-v4-flash", Models: []string{"deepseek-v4-flash"}, APIKeyEnv: "DEEPSEEK_API_KEY"},
+	}
+	got := withBuiltinFamilies(cfg)
+
+	// deepseek-pro must be restored even though deepseek family already exists.
+	var found bool
+	for _, p := range got {
+		if p.Name == "deepseek-pro" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("withBuiltinFamilies(%+v) = %v, want deepseek-pro sibling restored", cfg, namesOf(got))
+	}
+
+	// The static model list for the deepseek family must include both SKUs.
+	_, members, _ := groupByFamily(got)
+	deepseekIdxs := members["deepseek"]
+	models := familyStaticModels(got, deepseekIdxs)
+	wantModels := map[string]bool{"deepseek-v4-flash": true, "deepseek-v4-pro": true}
+	for _, m := range models {
+		delete(wantModels, m)
+	}
+	if len(wantModels) > 0 {
+		t.Errorf("familyStaticModels = %v, missing %v", models, wantModels)
+	}
+}
+
+func namesOf(ps []config.ProviderEntry) []string {
+	out := make([]string, len(ps))
+	for i, p := range ps {
+		out[i] = p.Name
+	}
+	return out
+}
+
 func groupByFamilyKeys(ps []config.ProviderEntry, key string) []int {
 	_, members, _ := groupByFamily(ps)
 	return members[key]
