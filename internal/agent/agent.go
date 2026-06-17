@@ -1028,22 +1028,19 @@ type toolOutcome struct {
 func (a *Agent) executeOne(ctx context.Context, call provider.ToolCall) toolOutcome {
 	t, ok := a.tools.Get(call.Name)
 	if !ok {
-		// Tool not found — use fuzzy matching to suggest the closest tool.
-		// The error is returned to the model as a tool result, not shown to the
-		// user; the model auto-corrects and retries with the right name.
-		errMsg := fmt.Sprintf("error: unknown tool %q", call.Name)
+		// Tool not found — auto-correct via fuzzy matching instead of just
+		// reporting an error. Prevents the model from looping on hallucinated
+		// tool names (e.g. codegraph_context vs mcp__codegraph__context).
 		if suggestion, found := a.tools.Suggest(call.Name); found {
-			errMsg = fmt.Sprintf(
-				"error: unknown tool %q — the closest available tool is %q. "+
-					"Use the correct tool name and retry.",
-				call.Name, suggestion)
-		} else {
-			names := a.tools.Names()
-			errMsg = fmt.Sprintf(
-				"error: unknown tool %q. Available tools: %v. "+
-					"Pick the correct tool and retry.",
-				call.Name, names)
+			slog.Info("tool auto-correct", "from", call.Name, "to", suggestion)
+			t, ok = a.tools.Get(suggestion)
 		}
+	}
+	if !ok {
+		errMsg := fmt.Sprintf(
+			"error: unknown tool %q. Available tools: %v. "+
+				"Pick the correct tool and retry.",
+			call.Name, a.tools.Names())
 		return toolOutcome{
 			output: errMsg,
 			errMsg: fmt.Sprintf("unknown tool %q", call.Name),
