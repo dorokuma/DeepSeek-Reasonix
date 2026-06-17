@@ -7,13 +7,6 @@
 // When running inside the Wails shell, applyTheme also syncs the native window
 // theme (title bar, traffic lights, etc.) so the OS chrome matches the webview.
 
-import {
-  WindowSetDarkTheme,
-  WindowSetLightTheme,
-  WindowSetSystemDefaultTheme,
-  WindowSetBackgroundColour,
-} from "../../wailsjs/runtime/runtime";
-
 export type Theme = "auto" | "light" | "dark";
 export type ResolvedTheme = Exclude<Theme, "auto">;
 
@@ -120,14 +113,15 @@ export function applyTheme(theme: Theme, style: ThemeStyle = getThemeStyle(theme
   root.setAttribute("data-theme-style", nextStyle);
 
   // Sync the native window theme (title bar, traffic lights) to match.
-  if (typeof window !== "undefined" && window.runtime) {
+  const runtime = typeof window !== "undefined" ? window.runtime : undefined;
+  if (runtime) {
     syncAutoThemeBackgroundListener(theme);
     if (theme === "auto") {
-      WindowSetSystemDefaultTheme();
+      runtime.WindowSetSystemDefaultTheme?.();
     } else if (theme === "light") {
-      WindowSetLightTheme();
+      runtime.WindowSetLightTheme?.();
     } else if (theme === "dark") {
-      WindowSetDarkTheme();
+      runtime.WindowSetDarkTheme?.();
     }
     syncNativeWindowBackground(theme);
   }
@@ -206,12 +200,14 @@ export function initTheme(): void {
 }
 
 function syncNativeWindowBackground(theme: Theme): void {
+  const runtime = typeof window !== "undefined" ? window.runtime : undefined;
+  if (!runtime?.WindowSetBackgroundColour) return;
   const resolved = getResolvedTheme(theme);
   if (resolved === "light") {
     // Light shell: matches graphite --bg (#f4f3ef).
-    WindowSetBackgroundColour(244, 243, 239, 255);
+    runtime.WindowSetBackgroundColour(244, 243, 239, 255);
   } else {
     // Dark shell: matches :root --bg (#090a0c).
-    WindowSetBackgroundColour(9, 10, 12, 255);
+    runtime.WindowSetBackgroundColour(9, 10, 12, 255);
   }
 }
