@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"mime"
 	"net/http"
 	"net/url"
@@ -37,6 +38,7 @@ import (
 	"reasonix/internal/fileref"
 	fileenc "reasonix/internal/fileutil/encoding"
 	"reasonix/internal/i18n"
+	"reasonix/internal/jobs"
 	"reasonix/internal/mcpdiag"
 	"reasonix/internal/memory"
 	"reasonix/internal/plugin"
@@ -1001,7 +1003,13 @@ func (a *App) clearActiveSessionRuntime(tab *WorkspaceTab, oldCtrl *control.Cont
 		}
 	}
 	destroy := oldCtrl.BeginDestroySession(oldPath)
-	waitDestroyHandles([]control.SessionDestroyHandle{destroy})
+	destroys := []control.SessionDestroyHandle{destroy}
+	teardownTimedOut := waitDestroyHandles(destroys)
+	if teardownTimedOut {
+		if err := agent.MarkCleanupPending(oldPath, "clear"); err != nil {
+			return err
+		}
+	}
 
 	newSink := &tabEventSink{tabID: tab.ID, app: a, ctx: a.ctx}
 	newCtrl, err := boot.Build(a.bootContext(), boot.Options{
@@ -1014,19 +1022,27 @@ func (a *App) clearActiveSessionRuntime(tab *WorkspaceTab, oldCtrl *control.Cont
 		TokenMode:      currentTabTokenMode(tab),
 	})
 	if err != nil {
-		finishDestroyHandles([]control.SessionDestroyHandle{destroy})
+		if teardownTimedOut {
+			go delayedDesktopSessionCleanup(oldPath, destroys)
+		} else {
+			finishDestroyHandles(destroys)
+		}
 		if oldSink != nil {
 			oldSink.tabID = tab.ID
 			oldSink.ctx = a.ctx
 		}
 		return err
 	}
-	if err := removeDesktopSessionArtifacts(oldPath); err != nil {
-		finishDestroyHandles([]control.SessionDestroyHandle{destroy})
-		newCtrl.Close()
-		return err
+	if teardownTimedOut {
+		go delayedDesktopSessionCleanup(oldPath, destroys)
+	} else {
+		if err := removeDesktopSessionArtifacts(oldPath); err != nil {
+			finishDestroyHandles(destroys)
+			newCtrl.Close()
+			return err
+		}
+		finishDestroyHandles(destroys)
 	}
-	finishDestroyHandles([]control.SessionDestroyHandle{destroy})
 	a.bindControllerDisplayRecorder(newCtrl)
 	newCtrl.EnableInteractiveApproval()
 	applyTabModeToController(newCtrl, tab.mode)
@@ -1055,6 +1071,9 @@ func removeDesktopSessionArtifacts(path string) error {
 	if strings.TrimSpace(path) == "" {
 		return nil
 	}
+	if err := jobs.RemoveArtifacts(path); err != nil {
+		return err
+	}
 	paths := []string{path, agent.BranchMetaPath(path)}
 	if strings.HasSuffix(path, ".jsonl") {
 		paths = append(paths, strings.TrimSuffix(path, ".jsonl")+".ckpt")
@@ -1067,7 +1086,10 @@ func removeDesktopSessionArtifacts(path string) error {
 			return err
 		}
 	}
-	return agent.DeleteSubagentsByParent(filepath.Dir(path), agent.BranchID(path))
+	if err := agent.DeleteSubagentsByParent(filepath.Dir(path), agent.BranchID(path)); err != nil {
+		return err
+	}
+	return agent.ClearCleanupPending(path)
 }
 
 // CheckpointMeta summarises one rewind point (a user turn) for the desktop.
@@ -1745,10 +1767,22 @@ func (a *App) destroyHandlesForSession(dir, sessionPath string, removed []remove
 	return destroys
 }
 
-func waitDestroyHandles(destroys []control.SessionDestroyHandle) {
+func waitDestroyHandles(destroys []control.SessionDestroyHandle) bool {
+	timedOut := false
 	for _, destroy := range destroys {
 		if destroy.Wait != nil {
-			destroy.Wait()
+			if destroy.Wait().HasTimedOut() {
+				timedOut = true
+			}
+		}
+	}
+	return timedOut
+}
+
+func waitAllDestroyHandles(destroys []control.SessionDestroyHandle) {
+	for _, destroy := range destroys {
+		if destroy.WaitAll != nil {
+			destroy.WaitAll()
 		}
 	}
 }
@@ -1759,6 +1793,14 @@ func finishDestroyHandles(destroys []control.SessionDestroyHandle) {
 			destroy.Finish()
 		}
 	}
+}
+
+func delayedDesktopSessionCleanup(path string, destroys []control.SessionDestroyHandle) {
+	waitAllDestroyHandles(destroys)
+	if err := removeDesktopSessionArtifacts(path); err != nil {
+		slog.Warn("desktop: delayed session cleanup failed", "path", path, "err", err)
+	}
+	finishDestroyHandles(destroys)
 }
 
 func (a *App) closeRemovedSessionRuntimes(removed []removedSessionRuntime) {

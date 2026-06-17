@@ -964,31 +964,60 @@ func (s *Server) deleteSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	destroy := s.ctl().BeginDestroySession(abs)
-	if err := os.Remove(abs); err != nil {
-		go finishSessionDestroy(destroy)
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+	if result := finishSessionDestroy(destroy); result.HasTimedOut() {
+		if err := agent.MarkCleanupPending(abs, "delete"); err != nil {
+			go delayedSessionDelete(absDir, abs, destroy)
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		go delayedSessionDelete(absDir, abs, destroy)
+		w.WriteHeader(http.StatusNoContent)
 		return
 	}
-	if err := agent.DeleteSubagentsByParent(dir, agent.BranchID(abs)); err != nil {
-		go finishSessionDestroy(destroy)
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	finishSessionDestroy(destroy)
-	if err := jobs.RemoveArtifacts(abs); err != nil {
+	if err := removeSessionFiles(absDir, abs); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func finishSessionDestroy(destroy control.SessionDestroyHandle) {
+func finishSessionDestroy(destroy control.SessionDestroyHandle) jobs.TeardownResult {
 	if destroy.Wait != nil {
-		destroy.Wait()
+		result := destroy.Wait()
+		if destroy.Finish != nil && !result.HasTimedOut() {
+			destroy.Finish()
+		}
+		return result
 	}
 	if destroy.Finish != nil {
 		destroy.Finish()
 	}
+	return jobs.TeardownResult{}
+}
+
+func delayedSessionDelete(absDir, abs string, destroy control.SessionDestroyHandle) {
+	if destroy.WaitAll != nil {
+		destroy.WaitAll()
+	}
+	if err := removeSessionFiles(absDir, abs); err != nil {
+		slog.Warn("serve: delayed session delete failed", "path", abs, "err", err)
+	}
+	if destroy.Finish != nil {
+		destroy.Finish()
+	}
+}
+
+func removeSessionFiles(absDir, abs string) error {
+	if err := os.Remove(abs); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	if err := agent.DeleteSubagentsByParent(absDir, agent.BranchID(abs)); err != nil {
+		return err
+	}
+	if err := jobs.RemoveArtifacts(abs); err != nil {
+		return err
+	}
+	return agent.ClearCleanupPending(abs)
 }
 
 // sessionTitle returns a title for a session: the cached flash-generated title

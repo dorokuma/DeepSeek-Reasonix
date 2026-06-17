@@ -1575,6 +1575,9 @@ func (c *Controller) ClearSession() error {
 		go func() {
 			result := destroy.Wait()
 			if result.HasTimedOut() && destroy.WaitAll != nil {
+				if err := agent.MarkCleanupPending(oldPath, "clear"); err != nil {
+					c.sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelWarn, Text: "mark cleanup pending failed: " + err.Error()})
+				}
 				destroy.WaitAll()
 			}
 			if err := removeSessionArtifacts(oldPath); err != nil {
@@ -1607,6 +1610,9 @@ func removeSessionArtifacts(path string) error {
 		}
 	}
 	if err := agent.DeleteSubagentsByParent(filepath.Dir(path), agent.BranchID(path)); err != nil {
+		return err
+	}
+	if err := agent.ClearCleanupPending(path); err != nil {
 		return err
 	}
 	return nil
