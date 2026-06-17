@@ -165,7 +165,7 @@ func TestCoordinatorPlannerUsesReadOnlyResearchTools(t *testing.T) {
 	if !contains(tools, "read_file") {
 		t.Fatalf("planner tools = %v, want read_file", tools)
 	}
-	for _, forbidden := range []string{"write_file", "note"} {
+	for _, forbidden := range []string{"write_file", "edit_file", "multi_edit", "delete_range", "delete_symbol", "notebook_edit", "bash"} {
 		if contains(tools, forbidden) {
 			t.Fatalf("planner tools = %v, must not include %s", tools, forbidden)
 		}

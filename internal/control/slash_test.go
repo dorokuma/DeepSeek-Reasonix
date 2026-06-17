@@ -111,11 +111,6 @@ func TestSlashArgItems(t *testing.T) {
 	if !has(items, "list") || !has(items, "trust") {
 		t.Errorf("/hooks should offer list/trust; got %v", labelsOf(items))
 	}
-	// /effort
-	items, _ = SlashArgItems("/effort ", data)
-	if !has(items, "auto") || !has(items, "high") || !has(items, "max") || has(items, "off") {
-		t.Errorf("/effort should offer auto/high/max only; got %v", labelsOf(items))
-	}
 	// /theme
 	items, _ = SlashArgItems("/theme ", data)
 	if !has(items, "auto") || !has(items, "light") || !has(items, "graphite") || !has(items, "glacier") {

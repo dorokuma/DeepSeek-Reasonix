@@ -43,7 +43,7 @@ func TestRunShellIfRewritten_grepNoMatches(t *testing.T) {
 	if !Available() {
 		t.Skip("rtk not on PATH")
 	}
-	cmd := RipgrepShell("ZZZ_REASONIX_NOMATCH_XYZ", "/tmp")
+	cmd := RipgrepShell("ZZZ_REASONIX_NOMATCH_XYZ", t.TempDir())
 	if Rewrite(cmd) == "" {
 		t.Skip("rg rewrite not available")
 	}

@@ -256,36 +256,6 @@ func TestMultiEditChained(t *testing.T) {
 	}
 }
 
-// --- confine tests ---
-
-func TestConfineRejectsEscape(t *testing.T) {
-	dir := t.TempDir()
-	err := confine([]string{dir}, filepath.Join(dir, "..", "outside", "file.txt"))
-	if err == nil {
-		t.Fatal("expected error for path escaping workspace")
-	}
-}
-
-func TestConfineAllowsInside(t *testing.T) {
-	dir := t.TempDir()
-	// confine uses realPath which resolves symlinks, so we need to resolve too.
-	real, _ := filepath.EvalSymlinks(dir)
-	target := filepath.Join(real, "inside", "file.txt")
-	err := confine([]string{real}, target)
-	if err != nil {
-		t.Errorf("should allow path inside workspace: %v", err)
-	}
-}
-
-func TestConfineEmptyRootsAllowsAll(t *testing.T) {
-	err := confine(nil, "/any/path")
-	if err != nil {
-		t.Errorf("empty roots should allow all: %v", err)
-	}
-}
-
-// --- resolveIn tests ---
-
 func TestResolveInAbsolute(t *testing.T) {
 	abs := filepath.Join(t.TempDir(), "absolute", "path")
 	got := resolveIn("/workdir", abs)

@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"reasonix/internal/sandbox"
+	"reasonix/internal/shell"
 )
 
 func powershellPath(t *testing.T) string {
@@ -24,7 +24,7 @@ func powershellPath(t *testing.T) string {
 
 func runPS(t *testing.T, command string) (string, error) {
 	t.Helper()
-	b := bash{shell: sandbox.Shell{Kind: sandbox.ShellPowerShell, Path: powershellPath(t)}}
+	b := bash{shell: shell.Shell{Kind: shell.ShellPowerShell, Path: powershellPath(t)}}
 	args, _ := json.Marshal(map[string]string{"command": command})
 	return b.Execute(context.Background(), args)
 }
@@ -52,7 +52,7 @@ func TestBashPowerShellSurfacesNonZeroExit(t *testing.T) {
 }
 
 func TestBashPowerShellRejectsChaining(t *testing.T) {
-	b := bash{shell: sandbox.Shell{Kind: sandbox.ShellPowerShell, Path: "powershell"}}
+	b := bash{shell: shell.Shell{Kind: shell.ShellPowerShell, Path: "powershell"}}
 	for _, cmd := range []string{"echo a && echo b", "echo a || echo b"} {
 		args, _ := json.Marshal(map[string]string{"command": cmd})
 		out, err := b.Execute(context.Background(), args)
@@ -80,7 +80,7 @@ func TestBashPowerShellAllowsQuotedOperator(t *testing.T) {
 
 func TestBashPwshAllowsChaining(t *testing.T) {
 	// pwsh (PowerShell 7+) parses && — the guard must not block it.
-	b := bash{shell: sandbox.Shell{Kind: sandbox.ShellPowerShell, Path: "pwsh"}}
+	b := bash{shell: shell.Shell{Kind: shell.ShellPowerShell, Path: "pwsh"}}
 	args, _ := json.Marshal(map[string]string{"command": "echo a && echo b"})
 	_, err := b.Execute(context.Background(), args)
 	if err != nil && strings.Contains(err.Error(), "does not parse") {
@@ -102,11 +102,11 @@ func TestBashPowerShellOutputIsUTF8(t *testing.T) {
 }
 
 func TestBashDescriptionReflectsShell(t *testing.T) {
-	ps := bash{shell: sandbox.Shell{Kind: sandbox.ShellPowerShell, Path: "powershell"}}
+	ps := bash{shell: shell.Shell{Kind: shell.ShellPowerShell, Path: "powershell"}}
 	if !strings.Contains(ps.Description(), "PowerShell") {
 		t.Errorf("powershell description should warn about PowerShell: %q", ps.Description())
 	}
-	sh := bash{shell: sandbox.Shell{Kind: sandbox.ShellBash, Path: "bash"}}
+	sh := bash{shell: shell.Shell{Kind: shell.ShellBash, Path: "bash"}}
 	if strings.Contains(sh.Description(), "PowerShell") {
 		t.Errorf("bash description should not mention PowerShell: %q", sh.Description())
 	}

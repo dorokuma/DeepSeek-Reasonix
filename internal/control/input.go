@@ -10,6 +10,11 @@ import (
 // Compose applies pending memory notes to the turn text, returning the message
 // to actually send to the model. Background job completions are also injected.
 func (c *Controller) Compose(text string) string {
+	// Plan mode: prepend marker so the model knows not to write files or run commands.
+	if c.planMode.Load() {
+		text = "[Plan mode — writes and commands are suspended]\n\n" + text
+	}
+
 	c.mu.Lock()
 	notes := c.pendingMemory
 	c.pendingMemory = nil

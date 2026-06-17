@@ -20,7 +20,6 @@ import (
 	"reasonix/internal/event"
 	"reasonix/internal/plugin"
 	"reasonix/internal/provider"
-	"reasonix/internal/sandbox"
 	"reasonix/internal/tool"
 	"reasonix/internal/tool/builtin"
 
@@ -178,7 +177,7 @@ api_key_env = "REASONIX_TEST_KEY_UNSET"
 func TestAddBuiltinsWithWorkspaceRootKeepsSessionTools(t *testing.T) {
 	reg := tool.NewRegistry()
 	var stderr bytes.Buffer
-	addBuiltins(reg, nil, []string{t.TempDir()}, sandbox.Spec{}, 120*time.Second, builtin.SearchSpec{}, &stderr, t.TempDir())
+	addBuiltins(reg, nil, []string{t.TempDir()}, builtin.SearchSpec{}, &stderr, t.TempDir())
 	for _, name := range []string{
 		"bash_output",
 		"kill_shell",

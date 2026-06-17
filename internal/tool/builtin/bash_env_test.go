@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"reasonix/internal/sandbox"
+	"reasonix/internal/shell"
 )
 
 func TestBashMergesLoginShellPath(t *testing.T) {
@@ -34,7 +34,7 @@ func TestBashMergesLoginShellPath(t *testing.T) {
 	t.Setenv("SHELL", loginShell)
 	t.Setenv("PATH", "/usr/bin:/bin:/usr/sbin:/sbin")
 
-	b := bash{shell: sandbox.Shell{Kind: sandbox.ShellBash, Path: "/bin/sh"}}
+	b := bash{shell: shell.Shell{Kind: shell.ShellBash, Path: "/bin/sh"}}
 	args, _ := json.Marshal(map[string]string{"command": "reasonix-path-probe"})
 
 	out, err := b.Execute(context.Background(), args)

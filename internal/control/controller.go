@@ -24,6 +24,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"reasonix/internal/agent"
@@ -90,7 +91,9 @@ type Controller struct {
 	reg       *tool.Registry
 	pluginCtx context.Context
 
-	// closeCtx is cancelled by Close() so background goroutines (/compact, /new)
+	// planMode gates read-only planning: when true, Compose() prepends a
+	// "Plan mode" marker so the model knows not to write files or run commands.
+	planMode atomic.Bool
 	// know to stop when the controller shuts down.
 	closeCtx    context.Context
 	closeCancel context.CancelFunc
@@ -1951,4 +1954,9 @@ func (c *Controller) requestApproval(ctx context.Context, tool, subject string) 
 		c.mu.Unlock()
 		return false, false, ctx.Err()
 	}
+}
+
+// SetPlanMode enables or disables read-only planning mode.
+func (c *Controller) SetPlanMode(on bool) {
+	c.planMode.Store(on)
 }

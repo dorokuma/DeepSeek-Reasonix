@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"reasonix/internal/sandbox"
+	"reasonix/internal/shell"
 	"reasonix/internal/tool"
 )
 
@@ -18,7 +18,7 @@ func TestBashCancelReturnsPromptly(t *testing.T) {
 		t.Fatal("bash not registered")
 	}
 	cmd := "sleep 120"
-	if sandbox.ResolveShell().Kind == sandbox.ShellPowerShell {
+	if shell.ResolveShell().Kind == shell.ShellPowerShell {
 		cmd = "Start-Sleep -Seconds 120"
 	}
 	args, _ := json.Marshal(map[string]any{"command": cmd})

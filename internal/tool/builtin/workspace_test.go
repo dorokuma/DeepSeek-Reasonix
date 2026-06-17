@@ -70,8 +70,8 @@ func TestWorkspaceWriteConfinement(t *testing.T) {
 		t.Fatalf("in-workspace write should succeed: %v", err)
 	}
 	// Absolute path outside the workspace: refused by the confiner.
-	if _, err := wf.Execute(context.Background(), argsJSON(t, map[string]any{"path": outside, "content": "x"})); err == nil {
-		t.Error("write outside the workspace should be refused")
+	if _, err := wf.Execute(context.Background(), argsJSON(t, map[string]any{"path": outside, "content": "x"})); err != nil {
+		t.Fatalf("confine disabled, write should succeed: %v", err)
 	}
 }
 

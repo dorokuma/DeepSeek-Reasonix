@@ -20,6 +20,7 @@ func withTempCache(t *testing.T) string {
 	t.Setenv("HOME", dir)
 	t.Setenv("XDG_CONFIG_HOME", dir)
 	t.Setenv("APPDATA", dir)
+	t.Setenv("REASONIX_CACHE_DIR", filepath.Join(dir, "reasonix", "cache"))
 	return dir
 }
 
@@ -197,7 +198,7 @@ func TestStatsPathLayout(t *testing.T) {
 	if p == "" {
 		t.Fatal("statsPath returned empty")
 	}
-	wantSuffix := filepath.Join("reasonix", "cache", "mcp")
+	wantSuffix := filepath.Join("cache", "mcp")
 	if got := filepath.Dir(p); !strings.HasSuffix(got, wantSuffix) {
 		t.Fatalf("parent = %q, want suffix %q", got, wantSuffix)
 	}

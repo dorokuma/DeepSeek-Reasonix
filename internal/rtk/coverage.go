@@ -60,6 +60,7 @@ func Coverage() []CoverageEntry {
 		{RTKCommand: "gt", Via: "bash"},
 		{RTKCommand: "golangci-lint", Via: "bash"},
 		{RTKCommand: "gradlew", Via: "bash"},
+		{RTKCommand: "mvn", Via: "bash"},
 		{RTKCommand: "smart", Via: "bash", Notes: "explicit rtk smart only; no native shell rewrite"},
 		{RTKCommand: "run", Via: "none", Notes: "RTK meta executor"},
 		{RTKCommand: "proxy", Via: "none", Notes: "RTK meta"},

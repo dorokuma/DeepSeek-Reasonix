@@ -210,6 +210,7 @@ func (s *Server) handler() http.Handler {
 	mux.HandleFunc("GET /sessions", s.sessions)
 	mux.HandleFunc("GET /skills", s.skills)
 	mux.HandleFunc("POST /delete-session", s.deleteSession)
+	mux.HandleFunc("POST /plan", s.plan)
 	return logMiddleware(securityHeadersMiddleware(csrfGuard(mux)))
 }
 
@@ -422,6 +423,18 @@ func (s *Server) approve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.ctl().Approve(body.ID, body.Allow, body.Session, body.Persist)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) plan(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		On bool `json:"on"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, "invalid JSON", http.StatusBadRequest)
+		return
+	}
+	s.ctl().SetPlanMode(body.On)
 	w.WriteHeader(http.StatusNoContent)
 }
 

@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"reasonix/internal/event"
-	"reasonix/internal/sandbox"
+	"reasonix/internal/shell"
 )
 
 // collectSink returns a Sink that collects events and a channel that receives
@@ -146,7 +146,7 @@ func TestRunShell_CancelStopsCommand(t *testing.T) {
 	ctrl := &Controller{sink: sink}
 
 	command := "sleep 30"
-	if sandbox.ResolveShell().Kind == sandbox.ShellPowerShell {
+	if shell.ResolveShell().Kind == shell.ShellPowerShell {
 		command = "Start-Sleep -Seconds 30"
 	}
 	ctrl.RunShell(command)

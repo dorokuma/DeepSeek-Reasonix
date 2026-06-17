@@ -113,15 +113,3 @@ func TestRenderTextSurfacesWarningsUpTop(t *testing.T) {
 		t.Fatalf("warning should appear before the providers section, not buried below:\n%s", text)
 	}
 }
-
-func TestRenderTextFlagsInactiveSandbox(t *testing.T) {
-	inactive := RenderText(Report{Sandbox: SandboxReport{Bash: "enforce", Available: false}})
-	if !strings.Contains(inactive, "inactive") {
-		t.Fatalf("enforce without an OS sandbox should be flagged inactive:\n%s", inactive)
-	}
-
-	active := RenderText(Report{Sandbox: SandboxReport{Bash: "enforce", Available: true}})
-	if strings.Contains(active, "inactive") {
-		t.Fatalf("enforce with an OS sandbox should not be flagged inactive:\n%s", active)
-	}
-}

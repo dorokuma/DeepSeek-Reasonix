@@ -1028,8 +1028,24 @@ type toolOutcome struct {
 func (a *Agent) executeOne(ctx context.Context, call provider.ToolCall) toolOutcome {
 	t, ok := a.tools.Get(call.Name)
 	if !ok {
+		// Tool not found — use fuzzy matching to suggest the closest tool.
+		// The error is returned to the model as a tool result, not shown to the
+		// user; the model auto-corrects and retries with the right name.
+		errMsg := fmt.Sprintf("error: unknown tool %q", call.Name)
+		if suggestion, found := a.tools.Suggest(call.Name); found {
+			errMsg = fmt.Sprintf(
+				"error: unknown tool %q — the closest available tool is %q. "+
+					"Use the correct tool name and retry.",
+				call.Name, suggestion)
+		} else {
+			names := a.tools.Names()
+			errMsg = fmt.Sprintf(
+				"error: unknown tool %q. Available tools: %v. "+
+					"Pick the correct tool and retry.",
+				call.Name, names)
+		}
 		return toolOutcome{
-			output: fmt.Sprintf("error: unknown tool %q", call.Name),
+			output: errMsg,
 			errMsg: fmt.Sprintf("unknown tool %q", call.Name),
 		}
 	}

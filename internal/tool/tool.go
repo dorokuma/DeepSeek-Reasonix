@@ -211,6 +211,161 @@ func (r *Registry) Names() []string {
 	return out
 }
 
+// Suggest finds the closest registered tool name when an exact match fails.
+// It normalises the input (lowercase, underscores) and falls back to edit-distance
+// matching. Returns ("", false) when no tool is close enough.
+func (r *Registry) Suggest(name string) (string, bool) {
+	// Common English verb-to-tool mappings for natural language expressions.
+	verbMap := map[string]string{
+		"read": "read_file", "view": "read_file", "look": "read_file", "show": "read_file",
+		"write": "write_file", "create": "write_file", "save": "write_file",
+		"edit": "edit_file", "change": "edit_file", "modify": "edit_file", "update": "edit_file",
+		"find": "grep", "search": "grep", "locate": "grep",
+		"run": "bash", "execute": "bash", "shell": "bash",
+		"list": "ls", "dir": "ls",
+		"fetch": "web_fetch", "download": "web_fetch", "curl": "web_fetch",
+		"explore": "explore", "research": "research",
+		"install": "install_skill", "delete": "delete_range", "remove": "delete_range",
+		"remember": "remember", "forget": "forget",
+	}
+
+	// Normalise: lowercase, collapse whitespace, replace non-alnum with underscores
+	norm := strings.ToLower(strings.TrimSpace(name))
+	var b strings.Builder
+	var lastUnderscore bool
+	for _, r := range norm {
+		if r == ' ' || r == '-' || r == '_' {
+			if !lastUnderscore && b.Len() > 0 {
+				b.WriteByte('_')
+				lastUnderscore = true
+			}
+		} else if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '_' {
+			b.WriteRune(r)
+			lastUnderscore = false
+		}
+	}
+	normalized := strings.TrimSuffix(b.String(), "_")
+
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	// Try exact match on normalized name first
+	if _, ok := r.tools[normalized]; ok {
+		return normalized, true
+	}
+
+	// Verb-map check: if the first word maps to a registered tool, return it.
+	inputWords := strings.FieldsFunc(strings.ToLower(name), func(r rune) bool {
+		return !((r >= 'a' && r <= 'z') || (r >= '0' && r <= '9'))
+	})
+	if len(inputWords) > 0 {
+		if mapped, ok := verbMap[inputWords[0]]; ok {
+			if _, exists := r.tools[mapped]; exists {
+				return mapped, true
+			}
+		}
+	}
+
+	// Build a bag of significant words from the input (skip very short words)
+	var sigInput []string
+	for _, w := range inputWords {
+		if len(w) > 2 {
+			sigInput = append(sigInput, w)
+		}
+	}
+
+	// Score each registered tool: count overlapping significant words + edit distance
+	type scored struct {
+		name  string
+		score int
+	}
+	var best scored
+	bestSet := false
+
+	for candidate := range r.tools {
+		candWords := strings.FieldsFunc(candidate, func(r rune) bool {
+			return r == '_' || !((r >= 'a' && r <= 'z') || (r >= '0' && r <= '9'))
+		})
+
+		// Word overlap bonus
+		overlap := 0
+		for _, iw := range sigInput {
+			for _, cw := range candWords {
+				if iw == cw {
+					overlap += 4
+				} else if (len(iw) >= 3 && len(cw) >= 3) && (strings.Contains(cw, iw) || strings.Contains(iw, cw)) {
+					overlap += 2
+				} else if (len(iw) >= 4 || len(cw) >= 4) && (strings.HasPrefix(cw, iw[:min(3, len(iw))]) || strings.HasPrefix(iw, cw[:min(3, len(cw))])) {
+					overlap += 1
+				}
+			}
+		}
+
+		// Penalty: edit distance, and modest bonus for shorter tool names
+		dist := levenshtein(normalized, candidate)
+		shortBonus := 0
+		if len(candidate) <= 4 {
+			shortBonus = 2 // small bonus for very short names like ls, grep
+		}
+		score := overlap*8 - dist + shortBonus
+
+		if !bestSet || score > best.score {
+			best = scored{candidate, score}
+			bestSet = true
+		}
+	}
+
+	// Threshold for accepting a suggestion: must share at least one meaningful
+	// character with the input and pass the score threshold.
+	if bestSet && best.score > -10 {
+		// Sanity: the suggestion must share at least one word-level substring
+		// with the input (avoid suggesting "ls" or "note" for complete gibberish).
+		for _, iw := range sigInput {
+			for _, cw := range strings.FieldsFunc(best.name, func(r rune) bool {
+				return r == '_' || !((r >= 'a' && r <= 'z') || (r >= '0' && r <= '9'))
+			}) {
+				if strings.Contains(iw, cw) || strings.Contains(cw, iw) {
+					return best.name, true
+				}
+			}
+		}
+	}
+	return "", false
+}
+
+// levenshtein computes the edit distance between two strings.
+func levenshtein(a, b string) int {
+	la, lb := len(a), len(b)
+	if la == 0 {
+		return lb
+	}
+	if lb == 0 {
+		return la
+	}
+	// Use single-row DP for O(min(la,lb)) memory
+	if la > lb {
+		a, b = b, a
+		la, lb = lb, la
+	}
+	prev := make([]int, la+1)
+	for i := range prev {
+		prev[i] = i
+	}
+	for j := 1; j <= lb; j++ {
+		curr := make([]int, la+1)
+		curr[0] = j
+		for i := 1; i <= la; i++ {
+			cost := 0
+			if a[i-1] != b[j-1] {
+				cost = 1
+			}
+			curr[i] = min(curr[i-1]+1, min(prev[i]+1, prev[i-1]+cost))
+		}
+		prev = curr
+	}
+	return prev[la]
+}
+
 // Schemas exports tool definitions in stable name order for the provider.
 func (r *Registry) Schemas() []provider.ToolSchema {
 	r.mu.RLock()

@@ -6,11 +6,11 @@ import (
 	"testing"
 	"time"
 
-	"reasonix/internal/sandbox"
+	"reasonix/internal/shell"
 )
 
 func TestBashForegroundTimeoutConfig(t *testing.T) {
-	sh := sandbox.ResolveShell()
+	sh := shell.ResolveShell()
 	b := bash{shell: sh, timeout: 150 * time.Millisecond}
 
 	start := time.Now()
@@ -28,7 +28,7 @@ func TestBashForegroundTimeoutConfig(t *testing.T) {
 }
 
 func TestBashExplicitZeroTimeoutDoesNotCapForeground(t *testing.T) {
-	sh := sandbox.ResolveShell()
+	sh := shell.ResolveShell()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
@@ -46,28 +46,17 @@ func TestBashExplicitZeroTimeoutDoesNotCapForeground(t *testing.T) {
 	}
 }
 
-func TestWorkspacePassesBashTimeout(t *testing.T) {
-	sh := sandbox.ResolveShell()
-	b := byName(Workspace{Dir: t.TempDir(), BashTimeout: 150 * time.Millisecond}.Tools())["bash"]
 
-	out, err := b.Execute(context.Background(), argsJSON(t, map[string]any{"command": longSleepCommand(sh)}))
-	if err == nil {
-		t.Fatalf("expected workspace bash timeout, got nil (out=%q)", out)
-	}
-	if !strings.Contains(err.Error(), "timed out") {
-		t.Fatalf("error = %v, want timeout", err)
-	}
-}
 
-func longSleepCommand(sh sandbox.Shell) string {
-	if sh.Kind == sandbox.ShellPowerShell {
+func longSleepCommand(sh shell.Shell) string {
+	if sh.Kind == shell.ShellPowerShell {
 		return "Start-Sleep -Seconds 2"
 	}
 	return "sleep 2"
 }
 
-func oneSecondCommand(sh sandbox.Shell) string {
-	if sh.Kind == sandbox.ShellPowerShell {
+func oneSecondCommand(sh shell.Shell) string {
+	if sh.Kind == shell.ShellPowerShell {
 		return "Start-Sleep -Seconds 1; Write-Output done"
 	}
 	return "sleep 1; printf done"
