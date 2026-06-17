@@ -143,13 +143,19 @@
     });
   });
 
-  /* refresh the Go-preview version from the published manifest between rebuilds */
+  /* refresh the published version and immutable desktop download links between rebuilds */
   fetch("https://dl.reasonix.io/latest/latest.json", { cache: "no-cache" })
     .then((r) => (r.ok ? r.json() : null))
     .then((d) => {
-      const v = String((d && d.version) || "").replace(/^v/, "");
+      const rawVersion = String((d && d.version) || "");
+      const v = rawVersion.replace(/^v/, "");
       if (!v) return;
+      const desktopBase = "https://dl.reasonix.io/desktop-v" + v;
       document.querySelectorAll(".rxv").forEach((e) => { e.textContent = v; });
+      document.querySelectorAll("[data-desktop-asset]").forEach((a) => {
+        const asset = a.getAttribute("data-desktop-asset");
+        if (asset) a.href = desktopBase + "/" + asset;
+      });
       document.querySelectorAll("a.rxnotes").forEach((a) => {
         a.href = a.href.replace(/releases\/tag\/v[^/]*$/, "releases/tag/v" + v);
       });
