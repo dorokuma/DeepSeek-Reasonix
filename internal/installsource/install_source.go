@@ -216,6 +216,17 @@ func (t *installSourceTool) Execute(ctx context.Context, raw json.RawMessage) (s
 	if req.PlanID != "" && req.PlanID != planID {
 		return "", newErr(ErrApprovalDenied, "planId mismatch (got %s, expected %s); re-plan and re-approve", req.PlanID, planID)
 	}
+	// RiskHigh actions (e.g. npx -y package installs) without a prior plan
+	// phase get a prominent warning so the calling agent surfaces it to the
+	// user. The approval callback (if wired) still gates execution.
+	if t.approval == nil && req.PlanID == "" {
+		for _, a := range actions {
+			if a.RiskLevel == RiskHigh {
+				warnings = append(warnings, "SECURITY: risk-high action applied without prior plan review — run install_source without apply first to inspect the plan")
+				break
+			}
+		}
+	}
 	if t.approval != nil {
 		if err := t.approval(publicActions(actions)); err != nil {
 			return marshalJSON(response{
