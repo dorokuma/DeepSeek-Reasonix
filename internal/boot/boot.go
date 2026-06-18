@@ -699,6 +699,7 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 		Registry:      reg,
 		PluginCtx:     ctx,
 		WorkspaceRoot: root,
+		Config:        cfg,
 		OnRemember: func(rule string) {
 			rememberPermissionRule(opts.WorkspaceRoot, rule)
 		},

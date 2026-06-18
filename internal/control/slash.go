@@ -348,9 +348,13 @@ func (c *Controller) managementNotice(trimmed string) bool {
 }
 
 func (c *Controller) modelListText() string {
-	cfg, err := config.Load()
-	if err != nil {
-		return "model: " + err.Error()
+	cfg := c.cfg
+	if cfg == nil {
+		var err error
+		cfg, err = config.Load()
+		if err != nil {
+			return "model: " + err.Error()
+		}
 	}
 	var b strings.Builder
 	fmt.Fprintf(&b, i18n.M.ListModelsHeaderFmt+"\n", c.label)

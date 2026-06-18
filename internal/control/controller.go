@@ -79,6 +79,11 @@ type Controller struct {
 	balanceKey    string
 	balanceClient *http.Client
 
+	// cfg holds the boot-time config with live-fetched model lists, so
+	// modelListText (and other config readers) use the API-provided model list
+	// rather than reloading from disk and losing fetchedModels.
+	cfg *config.Config
+
 	// jobs is the session-scoped background-job manager. The agent's background
 	// tools spawn into it; Compose drains its completion notes into the next turn;
 	// Close cancels its still-running jobs.
@@ -191,6 +196,9 @@ type Options struct {
 	// persist to disk (e.g. "bash(go build*)"). The callback is wired into the
 	// permission Gate on EnableInteractiveApproval.
 	OnRemember func(rule string)
+	// Config is the boot-time configuration with live-fetched model lists.
+	// When set, modelListText uses this instead of reloading from disk.
+	Config *config.Config
 }
 
 // New builds a Controller. A nil Sink is replaced with event.Discard.
@@ -237,6 +245,7 @@ func New(opts Options) *Controller {
 		closeCtx:      context.Background(),
 		closeCancel:   func() {}, // replaced by Close if ever needed; safe no-op default
 		cpRoot:        opts.WorkspaceRoot,
+		cfg:           opts.Config,
 		approvals:     map[string]chan approvalReply{},
 		asks:          map[string]chan []event.AskAnswer{},
 		granted:       map[string]bool{},
