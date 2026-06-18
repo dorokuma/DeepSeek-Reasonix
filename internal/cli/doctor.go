@@ -23,9 +23,9 @@ func doctorCommand(args []string, version string) int {
 
 	// Refresh live model lists so the report shows what the provider actually
 	// serves, not just the static config fallback.
-	refreshModelLists()
+	cfg := refreshModelLists()
 
-	report := doctor.Collect(doctor.Options{Version: version})
+	report := doctor.Collect(doctor.Options{Version: version, Config: cfg})
 	if *jsonOut {
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetIndent("", "  ")
@@ -41,13 +41,13 @@ func doctorCommand(args []string, version string) int {
 
 // refreshModelLists loads the config and refreshes every provider's model list
 // from its live API endpoint. Errors are non-fatal — the static config fallback
-// remains in place. This is called before doctor reports and the bridge's
-// doctor --json polling so the output reflects what the provider actually serves.
-func refreshModelLists() {
+// remains in place. Returns the config (with live models when the fetch succeeds)
+// or nil if config can't be loaded.
+func refreshModelLists() *config.Config {
 	cfg, err := config.Load()
 	if err != nil {
 		slog.Debug("refreshModelLists: load config", "error", err)
-		return
+		return nil
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
@@ -60,4 +60,5 @@ func refreshModelLists() {
 			slog.Debug("refreshModelLists: provider refresh failed", "provider", p.Name, "error", err)
 		}
 	}
+	return cfg
 }

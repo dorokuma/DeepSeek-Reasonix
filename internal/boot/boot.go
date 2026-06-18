@@ -17,6 +17,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"reasonix/internal/agent"
 	"reasonix/internal/codegraph"
@@ -107,6 +108,21 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	cfg, err := config.LoadForRoot(cfgRoot)
 	if err != nil {
 		return nil, err
+	}
+
+	// Refresh live model lists from provider APIs. Providers with both a
+	// base_url and an API key get their model list fetched with a 3s timeout.
+	// On failure the static Models/Model config fields serve as fallback.
+	for i := range cfg.Providers {
+		p := &cfg.Providers[i]
+		if p.BaseURL == "" || p.APIKey() == "" {
+			continue
+		}
+		ictx, cancel := context.WithTimeout(ctx, 3*time.Second)
+		if err := p.RefreshModels(ictx); err != nil {
+			slog.Debug("live model refresh failed", "provider", p.Name, "error", err)
+		}
+		cancel()
 	}
 
 	modelName := opts.Model
