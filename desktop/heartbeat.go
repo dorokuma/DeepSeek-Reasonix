@@ -95,6 +95,10 @@ func (e *HeartbeatEngine) saveTasks(tasks []HeartbeatTask) error {
 		return err
 	}
 	path := e.configPath()
+	// Ensure the parent directory exists before writing.
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
 	tmp := path + ".tmp"
 	if err := os.WriteFile(tmp, b, 0o644); err != nil {
 		return err
@@ -141,6 +145,8 @@ func (e *HeartbeatEngine) loop() {
 }
 
 // tick checks every enabled task and runs those whose interval has elapsed.
+// It merges results (topicId, lastRunAt) rather than replacing the full list,
+// so concurrent HeartbeatSaveTasks edits are not lost.
 func (e *HeartbeatEngine) tick() {
 	e.mu.Lock()
 	tasks := append([]HeartbeatTask(nil), e.tasks...)
@@ -164,12 +170,35 @@ func (e *HeartbeatEngine) tick() {
 	}
 
 	e.mu.Lock()
+	// Merge back: only update topicId and LastRunAt for tasks that ran,
+	// preserving any concurrent edits from HeartbeatSaveTasks.
+	oldMap := make(map[string]HeartbeatTask, len(e.tasks))
+	for _, t := range e.tasks {
+		oldMap[t.ID] = t
+	}
+	for i, t := range tasks {
+		if old, ok := oldMap[t.ID]; ok {
+			if t.TopicID != old.TopicID {
+				oldMap[t.ID] = t
+			} else if t.LastRunAt != old.LastRunAt {
+				// Only forward-merge the run timestamp
+				old.LastRunAt = t.LastRunAt
+				oldMap[t.ID] = old
+			}
+		} else {
+			oldMap[t.ID] = t
+		}
+		tasks[i] = oldMap[t.ID]
+	}
 	e.tasks = tasks
 	_ = e.saveTasks(tasks)
 	e.mu.Unlock()
 }
 
 // executeTask runs one heartbeat: creates/opens topic, submits prompt.
+// Returns the updated task (topicId and LastRunAt may change).
+// On controller failure the task is returned WITHOUT updating LastRunAt,
+// so it will be retried on the next tick.
 func (e *HeartbeatEngine) executeTask(t HeartbeatTask) HeartbeatTask {
 	title := "Heartbeat: " + t.Title
 	scope := t.Scope
@@ -191,7 +220,8 @@ func (e *HeartbeatEngine) executeTask(t HeartbeatTask) HeartbeatTask {
 		t.TopicID = topicID
 	}
 
-	// Open the tab for the topic (creates one if needed)
+	// Open the tab for the topic (creates one if needed).
+	// Use OpenProjectTab / OpenGlobalTab but do NOT switch active tab.
 	var tabMeta TabMeta
 	var err error
 	if scope == "project" && workspaceRoot != "" {
@@ -205,18 +235,23 @@ func (e *HeartbeatEngine) executeTask(t HeartbeatTask) HeartbeatTask {
 		return t
 	}
 
-	// Submit the prompt — the model responds asynchronously.
-	// We use SubmitToTab so the output goes to the right tab
-	// and the transcript shows the full prompt text.
-	//
 	// Wait for the tab's controller to be built (it's started
 	// asynchronously in a goroutine by openTopicTab).
+	controllerReady := false
 	for i := 0; i < 40; i++ {
 		if ctrl := e.app.ctrlByTabID(tabMeta.ID); ctrl != nil {
+			controllerReady = true
 			break
 		}
 		time.Sleep(250 * time.Millisecond)
 	}
+	if !controllerReady {
+		log.Printf("[heartbeat] controller not ready for %q, skipping", t.Title)
+		return t // don't update LastRunAt — retry next tick
+	}
+
+	// Always wrap the prompt as a user message so it isn't treated as a
+	// desktop command (e.g. "!ls" or "/clear").
 	e.app.SubmitToTab(tabMeta.ID, t.Prompt)
 
 	t.LastRunAt = time.Now().UnixMilli()
@@ -284,6 +319,7 @@ func (e *HeartbeatEngine) TriggerNow(id string) {
 
 // parseInterval converts a string like "5m", "1h", "30s" to time.Duration.
 // Suffix after '|' is stripped (e.g. "24h|daily@09:00" → "24h").
+// Empty or invalid strings return 0, nil (task will be skipped).
 func parseInterval(s string) (time.Duration, error) {
 	if idx := strings.Index(s, "|"); idx >= 0 {
 		s = s[:idx]

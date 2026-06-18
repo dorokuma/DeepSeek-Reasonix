@@ -569,6 +569,7 @@ function CycleEditor({
     } else if (ct === "monthly") {
       suffix += `:${days[0] || "1"}`;
     } else if (ct === "yearly") {
+      // days[0] = month, days[1] = day — each is a plain number, no dash
       suffix += `:${days[0] || "1"}-${days[1] || "1"}`;
     }
     suffix += `@${tm}`;
@@ -600,12 +601,12 @@ function CycleEditor({
 
   const onYearMonthChange = useCallback((m: string) => {
     setYearMonth(m);
-    setDraft("interval", buildInterval(cycleType, [`${m}-${yearDay}`], timeVal));
+    setDraft("interval", buildInterval(cycleType, [m, yearDay], timeVal));
   }, [buildInterval, cycleType, setDraft, timeVal, yearDay]);
 
   const onYearDayChange = useCallback((d: string) => {
     setYearDay(d);
-    setDraft("interval", buildInterval(cycleType, [`${yearMonth}-${d}`], timeVal));
+    setDraft("interval", buildInterval(cycleType, [yearMonth, d], timeVal));
   }, [buildInterval, cycleType, setDraft, timeVal, yearMonth]);
 
   const onTimeChange = useCallback((tm: string) => {
@@ -829,7 +830,13 @@ function TaskEditor({
         <div className="set-seg" style={{ alignSelf: "flex-start" }}>
           <button
             className={`set-seg__btn${freqType === "cycle" ? " set-seg__btn--on" : ""}`}
-            onClick={() => setFreqType("cycle")}
+            onClick={() => {
+              setFreqType("cycle");
+              // Initialize interval to daily schedule when switching to cycle mode
+              if (!draft.interval.includes("|")) {
+                setDraft((prev) => ({ ...prev, interval: "24h|daily@09:00" }));
+              }
+            }}
           >
             {t("heartbeat.freqCycle")}
           </button>
@@ -854,7 +861,8 @@ function TaskEditor({
                 const num = e.target.value.replace(/\D/g, "");
                 const mUnit = draft.interval.match(/^(\d+)([smh])/);
                 const unit = mUnit ? mUnit[2] : "h";
-                setDraft((prev) => ({ ...prev, interval: num ? num + unit : unit }));
+                // Guard: never save a bare unit string like "h" or "m"
+                setDraft((prev) => ({ ...prev, interval: num ? num + unit : "1" + unit }));
               }}
               placeholder="1"
             />
