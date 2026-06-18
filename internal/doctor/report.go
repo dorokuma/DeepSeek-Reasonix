@@ -190,7 +190,7 @@ func Collect(opts Options) Report {
 			Models:        models,
 			APIKeyEnv:     p.APIKeyEnv,
 			KeyPresent:    p.Configured(),
-			IsDefault:     p.Name == cfg.DefaultModel,
+			IsDefault:     p.Name == cfg.DefaultModel || strings.HasPrefix(cfg.DefaultModel, p.Name+"/"),
 			ContextWindow: p.ContextWindow,
 		})
 	}

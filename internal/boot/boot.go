@@ -108,6 +108,7 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	if err != nil {
 		return nil, err
 	}
+
 	modelName := opts.Model
 	if modelName == "" {
 		modelName = cfg.DefaultModel

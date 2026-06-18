@@ -482,8 +482,14 @@ type ProviderEntry struct {
 	Kind          string            `toml:"kind"`
 	BaseURL       string            `toml:"base_url"`
 	Model         string            `toml:"model"`      // a single model (back-compat)
-	Models        []string          `toml:"models"`     // a vendor's model list (one base_url/key, many models)
+	Models        []string          `toml:"models"`     // a vendor's model list (one base_url/key, many models); fallback when live fetch is unavailable
 	ModelsURL     string            `toml:"models_url"` // auto-fetch models from this URL on startup
+
+	// fetchedModels holds the live model list retrieved from the provider API at
+	// startup/refresh. When non-nil, ModelList returns this instead of the
+	// static Models/Model field, so the system automatically follows provider
+	// additions and removals without manual config edits.
+	fetchedModels []string `toml:"-" json:"-"` // live-fetched model list; non-nil = use instead of Models
 	Default       string            `toml:"default"`    // default model when Models is set (else Models[0])
 	APIKeyEnv     string            `toml:"api_key_env"`
 	BalanceURL    string            `toml:"balance_url"` // optional; a provider-specific wallet-balance endpoint (DeepSeek: https://api.deepseek.com/user/balance). Empty = no balance readout.
@@ -511,9 +517,13 @@ type ProviderEntry struct {
 	NoProxy bool `toml:"no_proxy"`
 }
 
-// ModelList returns the models this provider exposes: the explicit `models` list,
-// or the single `model` as a one-element list (back-compat). Empty if neither set.
+// ModelList returns the models this provider exposes: the live-fetched list
+// (when available), the explicit `models` list, or the single `model` as a
+// one-element list (back-compat). Empty if none set.
 func (e *ProviderEntry) ModelList() []string {
+	if e.fetchedModels != nil {
+		return e.fetchedModels
+	}
 	if len(e.Models) > 0 {
 		return e.Models
 	}
@@ -724,8 +734,8 @@ func Default() *Config {
 		Codegraph: CodegraphConfig{Enabled: true, AutoInstall: true},
 		// LSP tools on by default, but dormant until a language server is on PATH;
 		// a missing server yields an install hint rather than an error.
-		LSP:     LSPConfig{Enabled: true},
-		Network: NetworkConfig{ProxyMode: netclient.ModeAuto},
+		LSP:              LSPConfig{Enabled: true},
+		Network:           NetworkConfig{ProxyMode: netclient.ModeAuto},
 		Providers: []ProviderEntry{
 			{Name: "deepseek-flash", Kind: "openai", BaseURL: "https://api.deepseek.com", Model: "deepseek-v4-flash", APIKeyEnv: "DEEPSEEK_API_KEY", BalanceURL: "https://api.deepseek.com/user/balance", ContextWindow: 1_000_000, Price: &provider.Pricing{CacheHit: 0.02, Input: 1, Output: 2, Currency: "¥"}},
 			{Name: "deepseek-pro", Kind: "openai", BaseURL: "https://api.deepseek.com", Model: "deepseek-v4-pro", APIKeyEnv: "DEEPSEEK_API_KEY", BalanceURL: "https://api.deepseek.com/user/balance", ContextWindow: 1_000_000, Price: &provider.Pricing{CacheHit: 0.025, Input: 3, Output: 6, Currency: "¥"}},
