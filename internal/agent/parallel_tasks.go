@@ -33,7 +33,7 @@ func NewParallelTasksTool(taskTool *TaskTool, reg *tool.Registry) *ParallelTasks
 func (p *ParallelTasksTool) Name() string { return "parallel_tasks" }
 
 func (p *ParallelTasksTool) Description() string {
-	return "Dispatch multiple sub-agent tasks concurrently and collect their results. Each task runs in its own sub-agent in parallel. Blocks until all tasks complete."
+	return "Dispatch multiple sub-agent tasks concurrently and collect their results. Each task runs in its own sub-agent in parallel. Blocks until all complete."
 }
 
 func (p *ParallelTasksTool) Schema() json.RawMessage {
@@ -47,12 +47,11 @@ func (p *ParallelTasksTool) Schema() json.RawMessage {
       "type":"object",
       "properties":{
         "prompt":{"type":"string","description":"The task prompt for the sub-agent."},
-        "description":{"type":"string","description":"Optional short label."},
-        "tools":{"type":"array","items":{"type":"string"},"description":"Optional tool whitelist."},
+        "description":{"type":"string","description":"Optional short label shown in the job list."},
+        "tools":{"type":"array","items":{"type":"string"},"description":"Optional tool whitelist for the sub-agent."},
         "max_steps":{"type":"integer","description":"Optional max tool-call rounds.","minimum":1},
         "model":{"type":"string","description":"Optional model override."},
-        "effort":{"type":"string","description":"Optional reasoning effort override."},
-        "depends_on":{"type":"array","items":{"type":"integer"},"description":"Optional 0-based indices of tasks this task depends on. Dependent tasks start only after all their dependencies finish."}
+        "effort":{"type":"string","description":"Optional reasoning effort override."}
       },
       "required":["prompt"]
     }

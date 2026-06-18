@@ -18,6 +18,13 @@ func TestParallelTasksToolIsWriteCapable(t *testing.T) {
 	}
 }
 
+func TestParallelTasksSchemaKeepsDependencyOrderingHidden(t *testing.T) {
+	schema := string((&ParallelTasksTool{}).Schema())
+	if strings.Contains(schema, "depends_on") {
+		t.Fatal("parallel_tasks schema should not expose depends_on by default; changing tool schema hurts prompt-cache stability")
+	}
+}
+
 func TestParallelTasksValidatesAllTasksBeforeRuntimeLookup(t *testing.T) {
 	tool := &ParallelTasksTool{}
 	_, err := tool.Execute(context.Background(), json.RawMessage(`{
