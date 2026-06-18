@@ -96,12 +96,11 @@ type Host struct {
 	deferredWG      sync.WaitGroup
 
 	// spawningMu + spawning prevent concurrent spawns of the same server from
-	// multiple callers (e.g. several controller tabs sharing one Host). Without
-	// this guard two goroutines can both pass the early h.has check in Add,
-	// both call start() in addConnected, and the loser kills a just-spawned
-	// process after the fact.
+	// multiple callers (e.g. several controller tabs sharing one Host). The
+	// channel is closed by the owner when the spawn finishes so waiters can
+	// reuse the connected client without forking their own subprocess.
 	spawningMu sync.Mutex
-	spawning   map[string]struct{}
+	spawning   map[string]chan struct{}
 
 	// Detached stats/schema-cache writers from Start; off the boot path but
 	// drained by Close so cleanup can't race a still-open cache file.
@@ -631,26 +630,31 @@ func (h *Host) endDeferredSpawn() {
 // spawning the same server on this host. The caller should retry later.
 var ErrSpawningInFlight = errors.New("server spawn already in progress")
 
-// tryBeginSpawn atomically claims the sole right to spawn the named server.
-// Returns true if the caller should proceed; false if another caller is already
-// spawning it.
-func (h *Host) tryBeginSpawn(name string) bool {
+// beginSpawn atomically claims the sole right to spawn the named server.
+// Returns owner=true if the caller should proceed. When another caller is
+// already spawning the same server, owner=false and done is closed when that
+// spawn finishes.
+func (h *Host) beginSpawn(name string) (done <-chan struct{}, owner bool) {
 	h.spawningMu.Lock()
 	defer h.spawningMu.Unlock()
 	if h.spawning == nil {
-		h.spawning = make(map[string]struct{})
+		h.spawning = make(map[string]chan struct{})
 	}
-	if _, ok := h.spawning[name]; ok {
-		return false
+	if done, ok := h.spawning[name]; ok {
+		return done, false
 	}
-	h.spawning[name] = struct{}{}
-	return true
+	ch := make(chan struct{})
+	h.spawning[name] = ch
+	return ch, true
 }
 
 // endSpawn releases the spawn claim for the named server.
 func (h *Host) endSpawn(name string) {
 	h.spawningMu.Lock()
-	delete(h.spawning, name)
+	if done, ok := h.spawning[name]; ok {
+		delete(h.spawning, name)
+		close(done)
+	}
 	h.spawningMu.Unlock()
 }
 
@@ -713,12 +717,21 @@ func (h *Host) Add(ctx context.Context, s Spec) ([]tool.Tool, error) {
 	if h.has(s.Name) {
 		return nil, serverAlreadyConnectedError(s.Name)
 	}
-	if !h.tryBeginSpawn(s.Name) {
-		return nil, fmt.Errorf("%w: %s", ErrSpawningInFlight, s.Name)
+	done, owner := h.beginSpawn(s.Name)
+	if !owner {
+		select {
+		case <-done:
+			if tools, err := h.ToolsFor(ctx, s.Name); err == nil {
+				return tools, nil
+			}
+			return nil, fmt.Errorf("%w: %s", ErrSpawningInFlight, s.Name)
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
 	}
 	defer h.endSpawn(s.Name)
 	// Double-check after acquiring the spawn token: another caller may have
-	// connected the server between our h.has check and tryBeginSpawn.
+	// connected the server between our h.has check and beginSpawn.
 	if h.has(s.Name) {
 		return nil, serverAlreadyConnectedError(s.Name)
 	}

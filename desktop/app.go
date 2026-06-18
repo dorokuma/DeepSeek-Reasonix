@@ -1777,7 +1777,12 @@ func finishDestroyHandles(destroys []control.SessionDestroyHandle) {
 
 func (a *App) closeRemovedSessionRuntimes(removed []removedSessionRuntime) {
 	seen := map[*control.Controller]bool{}
+	releasedTabs := map[*WorkspaceTab]bool{}
 	for _, item := range removed {
+		if item.tab != nil && !releasedTabs[item.tab] {
+			releasedTabs[item.tab] = true
+			a.releaseTabSharedHost(item.tab)
+		}
 		if item.ctrl == nil || seen[item.ctrl] {
 			continue
 		}

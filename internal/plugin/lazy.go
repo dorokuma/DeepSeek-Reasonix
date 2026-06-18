@@ -231,7 +231,11 @@ func (lt *lazyTool) Execute(ctx context.Context, args json.RawMessage) (string, 
 		if err != nil {
 			if errors.Is(err, ErrSpawningInFlight) {
 				// Another tab is already spawning this server on the shared
-				// host. Stay in spawnInFlight so the next call retries.
+				// host, but this lazySpawn has no goroutine that can publish
+				// that result. Reset to idle so the next call can reuse the
+				// connected client once the other spawn finishes.
+				sp.state = spawnIdle
+				sp.spawnErr = nil
 				return "", fmt.Errorf("MCP server %q is being started by another tab — retry on next turn", sp.spec.Name)
 			}
 			if IsServerAlreadyConnected(err) {

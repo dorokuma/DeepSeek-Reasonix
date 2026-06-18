@@ -247,6 +247,7 @@ func cloneDetachedRuntimeTab(tab *WorkspaceTab, key string) *WorkspaceTab {
 		ID:               detachedRuntimeTabID(key),
 		Scope:            tab.Scope,
 		WorkspaceRoot:    tab.WorkspaceRoot,
+		SharedHostKey:    tab.SharedHostKey,
 		TopicID:          tab.TopicID,
 		TopicTitle:       tab.TopicTitle,
 		SessionPath:      key,
@@ -311,6 +312,7 @@ func applyRuntimeTab(target, source *WorkspaceTab, key string, wailsCtx context.
 	target.Ctrl = source.Ctrl
 	target.sink = source.sink
 	target.SessionPath = key
+	target.SharedHostKey = source.SharedHostKey
 	target.Label = source.Label
 	target.Ready = true
 	target.StartupErr = ""
@@ -1400,9 +1402,7 @@ func (a *App) CloseTab(tabID string) error {
 		// Release the shared plugin host reference. The host stays alive as
 		// long as any other tab for the same workspace root holds a reference;
 		// on the last release the host is closed and its subprocesses exit.
-		if tab.SharedHostKey != "" {
-			a.releaseSharedHost(tab.SharedHostKey)
-		}
+		a.releaseTabSharedHost(tab)
 	}
 	if tab.sink != nil {
 		tab.sink.clearContext() // stop further emissions (nil ctx -> Emit becomes no-op)
@@ -1546,8 +1546,7 @@ func (a *App) buildTabControllerWithLoadedSession(tab *WorkspaceTab, loadedSessi
 		a.mu.Lock()
 		tab.StartupErr = err.Error()
 		tab.Ready = true
-		a.releaseSharedHost(rootKey)
-		tab.SharedHostKey = ""
+		a.releaseTabSharedHost(tab)
 		a.mu.Unlock()
 		a.emitReady(wailsCtx)
 		return
@@ -1617,7 +1616,6 @@ func (a *App) buildTabControllerWithLoadedSession(tab *WorkspaceTab, loadedSessi
 			if a.attachExistingSessionRuntime(tab, path, wailsCtx) {
 				ctrl.Close()
 				a.releaseSharedHost(rootKey)
-				tab.SharedHostKey = ""
 				a.emitReady(wailsCtx)
 				return
 			}

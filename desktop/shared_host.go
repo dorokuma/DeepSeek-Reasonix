@@ -134,6 +134,15 @@ func (a *App) releaseSharedHost(root string) {
 	slog.Debug("shared host closed", "root", root)
 }
 
+func (a *App) releaseTabSharedHost(tab *WorkspaceTab) {
+	if tab == nil || tab.SharedHostKey == "" {
+		return
+	}
+	key := tab.SharedHostKey
+	tab.SharedHostKey = ""
+	a.releaseSharedHost(key)
+}
+
 // closeAllSharedHosts closes every shared host. Called during app shutdown.
 func (a *App) closeAllSharedHosts() {
 	a.sharedHostsMu.Lock()
