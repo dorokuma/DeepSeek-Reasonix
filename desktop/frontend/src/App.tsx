@@ -2336,6 +2336,7 @@ export default function App() {
     : defaultRightDockTreeWidth();
   const workspacePanelResizeMinWidth = workspacePanelAriaMinWidth(workspacePanelMinWidth, workspacePanelRenderWidth);
   const workspacePanelMaxWidth = rightDockDetailActive ? RIGHT_DOCK_MAX_WIDTH : RIGHT_DOCK_TREE_MAX_WIDTH;
+  const sidebarCreation = desktopLayoutStyle === "creation";
   const topicbarTitle = sidebarImDetailConnection ? t("botDetail.title", { name: sidebarImDetailConnection.title }) : topicDisplayTitle(activeTab);
   const topicbarWorkspaceLabel = sidebarImDetailConnection ? t("botDetail.subtitle") : activeTab ? tabWorkspaceTitle(activeTab) : "";
   const topicbarWorkspacePath = activeTab?.scope === "project" ? activeTab.workspaceRoot || state.meta?.cwd : "";
@@ -2344,15 +2345,14 @@ export default function App() {
     ? sidebarImDetailConnection.platformLabel
     : topicbarImSource ? t("msg.fromIm", { source: topicbarImSource.label }) : "";
   const topicbarImSourcePlatform = sidebarImDetailConnection?.platform ?? topicbarImSource?.platform;
-  const topicbarSubtitleVisible = Boolean(topicbarWorkspaceLabel || topicbarImSourceLabel);
+  const topicbarSubtitleVisible = !sidebarCreation && Boolean(topicbarWorkspaceLabel || topicbarImSourceLabel);
   const topicbarSubtitleTitle = sidebarImDetailConnection
     ? [topicbarWorkspaceLabel, topicbarImSourceLabel, sidebarImScopeLabel(sidebarImDetailConnection, t)].filter(Boolean).join(" · ")
     : [topicbarWorkspacePath || topicbarWorkspaceLabel, topicbarImSourceLabel].filter(Boolean).join(" · ");
   const sidebarWorkbench = desktopLayoutStyle === "workbench";
-  // Creation reuses the classic JSX structure for now; it is isolated purely via
-  // the .app--creation CSS scope so the look can be redesigned without touching
-  // classic/workbench. It deliberately does NOT set sidebarWorkbench.
-  const sidebarCreation = desktopLayoutStyle === "creation";
+  // Creation keeps the classic sidebar/chat structure while gating chrome tweaks
+  // behind its own style flag so classic/workbench remain unchanged.
+  const appChromeHidden = sidebarWorkbench || sidebarCreation;
   const workbenchChromeHidden = sidebarWorkbench;
   const sidebarClassName = [
     "sidebar",
@@ -2379,6 +2379,7 @@ export default function App() {
           "layout",
           sidebarWorkbench ? "layout--workbench" : "",
           workbenchChromeHidden ? "layout--workbench-chrome-hidden" : "",
+          sidebarCreation ? "layout--creation-chrome-hidden" : "",
           sidebarCollapsed ? "layout--sidebar-collapsed" : "",
           sidebarResizing ? "layout--resizing layout--sidebar-resizing" : "",
           workspacePanelGridOpen ? "layout--workspace-open" : "",
@@ -2389,7 +2390,7 @@ export default function App() {
           .join(" ")}
         style={layoutStyle}
       >
-        {!workbenchChromeHidden && (
+        {!appChromeHidden && (
           <AppChrome
             platform={desktopPlatform}
             browserPreviewChrome={browserPreviewChrome}
@@ -2762,6 +2763,24 @@ export default function App() {
                   <span>{t("topicBar.command")}</span>
                 </button>
               </Tooltip>
+              {sidebarCreation && (
+                <Tooltip label={workspacePanelRenderable ? t("rightDock.collapse") : t("rightDock.expand")}>
+                  <button
+                    className={[
+                      "topicbar__chrome-btn",
+                      "topicbar__chrome-btn--workspace",
+                      workspacePanelRenderable ? "topicbar__chrome-btn--active" : "",
+                      workspaceTogglePressed ? "topicbar__chrome-btn--pressed" : "",
+                    ].filter(Boolean).join(" ")}
+                    type="button"
+                    onClick={toggleWorkspacePanel}
+                    aria-label={workspacePanelRenderable ? t("rightDock.collapse") : t("rightDock.expand")}
+                    aria-pressed={workspacePanelRenderable}
+                  >
+                    <PanelRight size={15} />
+                  </button>
+                </Tooltip>
+              )}
             </div>
           </header>
 

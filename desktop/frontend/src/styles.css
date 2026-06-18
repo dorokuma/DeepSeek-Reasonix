@@ -22233,6 +22233,119 @@ a[href] {
    - Do NOT touch global base tokens (--bg / --border / --text-base /
      --scrollbar-size) — override them scoped to .app--creation if needed.
    ========================================================================== */
-.app--creation {
-  /* Creation-scoped overrides go here. */
+.app--creation .layout--creation-chrome-hidden {
+  --app-chrome-height: 0px;
+  grid-template-rows: minmax(0, 1fr);
+}
+
+.app--creation .layout--creation-chrome-hidden .sidebar,
+.app--creation .layout--creation-chrome-hidden .chat-pane,
+.app--creation .layout--creation-chrome-hidden .workspace-panel-resizer,
+.app--creation .layout--creation-chrome-hidden .context-inspector,
+.app--creation .layout--creation-chrome-hidden .workbench-dock {
+  grid-row: 1;
+}
+
+.app--creation .topicbar {
+  border-bottom: 0;
+}
+
+:root[data-theme-style] .app--creation .topicbar {
+  border-bottom: 0;
+}
+
+.app--creation .topicbar__title-row h1,
+.app--creation .topicbar__title-input {
+  font-size: 10px;
+  font-weight: 500;
+}
+
+.app--creation .topicbar__actions .topicbar__action-btn,
+.app--creation .topicbar__actions .topicbar__chrome-btn {
+  border-color: transparent;
+  background: transparent;
+  box-shadow: none;
+}
+
+.app--creation .topicbar__actions .topicbar__action-btn:hover:not(:disabled),
+.app--creation .topicbar__actions .topicbar__action-btn:focus-visible:not(:disabled),
+.app--creation .topicbar__actions .topicbar__chrome-btn:hover:not(.topicbar__chrome-btn--blocked),
+.app--creation .topicbar__actions .topicbar__chrome-btn:focus-visible:not(.topicbar__chrome-btn--blocked),
+.app--creation .topicbar__export--open .topicbar__action-btn {
+  border-color: transparent;
+  background: transparent;
+}
+
+.app--creation .footer,
+:root[data-theme-style] .app--creation .footer {
+  border-top: 0;
+}
+
+.app--creation .sidebar {
+  border-right: 0;
+}
+
+.app--creation .sidebar-resizer::after,
+.app--creation .sidebar-resizer:hover::after,
+.app--creation .sidebar-resizer:focus-visible::after,
+.app--creation .layout--sidebar-resizing .sidebar-resizer::after {
+  background: transparent;
+  box-shadow: none;
+}
+
+.app--creation .transcript,
+:root[data-theme-style] .app--creation .transcript {
+  scrollbar-width: auto;
+  scrollbar-color: auto;
+}
+
+.app--creation .transcript::-webkit-scrollbar,
+:root[data-theme-style] .app--creation .transcript::-webkit-scrollbar {
+  width: 2px !important;
+  height: 2px !important;
+  background: transparent !important;
+}
+
+.app--creation .transcript::-webkit-scrollbar-track,
+.app--creation .transcript::-webkit-scrollbar-track-piece,
+.app--creation .transcript::-webkit-scrollbar-corner,
+:root[data-theme-style] .app--creation .transcript::-webkit-scrollbar-track,
+:root[data-theme-style] .app--creation .transcript::-webkit-scrollbar-track-piece,
+:root[data-theme-style] .app--creation .transcript::-webkit-scrollbar-corner {
+  background: transparent !important;
+  border: 0 !important;
+  box-shadow: none !important;
+}
+
+.app--creation .transcript::-webkit-scrollbar-button,
+:root[data-theme-style] .app--creation .transcript::-webkit-scrollbar-button {
+  display: none !important;
+  width: 0 !important;
+  height: 0 !important;
+  background: transparent !important;
+}
+
+.app--creation .transcript::-webkit-scrollbar-thumb,
+:root[data-theme-style] .app--creation .transcript::-webkit-scrollbar-thumb {
+  min-height: 24px;
+  border: 0 !important;
+  border-radius: 999px;
+  background: var(--scrollbar-thumb) !important;
+  background-clip: border-box !important;
+}
+
+.app--creation .context-panel__body {
+  scrollbar-width: none;
+  scrollbar-gutter: auto;
+}
+
+.app--creation .workbench-dock,
+.app--creation .workbench-dock * {
+  scrollbar-width: none;
+}
+
+.app--creation .workbench-dock *::-webkit-scrollbar {
+  display: none !important;
+  width: 0 !important;
+  height: 0 !important;
 }
