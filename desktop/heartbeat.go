@@ -1,9 +1,9 @@
 // Heartbeat task engine — scheduled AI prompts that create or update topics.
 //
 // Each task is a prompt submitted to a dedicated topic on a schedule.
-// The config file (~/.reasonix/heartbeat-tasks.json) is human- and AI-editable;
-// the engine runs the schedule in a background goroutine and exposes Wails
-// bindings on App for the frontend panel.
+// The config file under the Reasonix user state directory is human- and
+// AI-editable; the engine runs the schedule in a background goroutine and
+// exposes Wails bindings on App for the frontend panel.
 //
 // Design goal: minimal upstream intrusion — one file, zero changes to existing
 // Go code (App field + startup line + bindings are the only touch points).
@@ -19,6 +19,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"reasonix/internal/config"
 )
 
 // ── Data model ──────────────────────────────────────────────────────────────
@@ -63,11 +65,11 @@ func newHeartbeatEngine(app *App) *HeartbeatEngine {
 
 // configPath returns the JSON file path.
 func (e *HeartbeatEngine) configPath() string {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		home = "."
+	dir := config.MemoryUserDir()
+	if dir == "" {
+		dir = "."
 	}
-	return filepath.Join(home, ".reasonix", "heartbeat-tasks.json")
+	return filepath.Join(dir, "heartbeat-tasks.json")
 }
 
 // loadTasks reads tasks from disk.

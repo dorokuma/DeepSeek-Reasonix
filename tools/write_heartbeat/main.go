@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"reasonix/internal/config"
 )
 
 type Task struct {
@@ -20,8 +22,11 @@ type Task struct {
 }
 
 func main() {
-	home, _ := os.UserHomeDir()
-	path := filepath.Join(home, ".reasonix", "heartbeat-tasks.json")
+	base := config.MemoryUserDir()
+	if base == "" {
+		base = "."
+	}
+	path := filepath.Join(base, "heartbeat-tasks.json")
 
 	// Read existing
 	b, _ := os.ReadFile(path)
@@ -53,6 +58,10 @@ func main() {
 	})
 
 	out, _ := json.MarshalIndent(data, "", "  ")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		fmt.Println("Mkdir error:", err)
+		os.Exit(1)
+	}
 	if err := os.WriteFile(path, out, 0644); err != nil {
 		fmt.Println("Write error:", err)
 		os.Exit(1)

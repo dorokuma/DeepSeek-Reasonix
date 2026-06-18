@@ -1,9 +1,22 @@
 package main
 
 import (
+	"path/filepath"
 	"testing"
 	"time"
+
+	"reasonix/internal/config"
 )
+
+func TestHeartbeatConfigPathUsesReasonixUserStateDir(t *testing.T) {
+	isolateDesktopUserDirs(t)
+	engine := &HeartbeatEngine{}
+	want := filepath.Join(config.MemoryUserDir(), "heartbeat-tasks.json")
+
+	if got := engine.configPath(); got != want {
+		t.Fatalf("configPath = %q, want %q", got, want)
+	}
+}
 
 func TestHeartbeatTaskDueAtWaitsForDailySchedule(t *testing.T) {
 	loc := time.FixedZone("test", 8*60*60)
