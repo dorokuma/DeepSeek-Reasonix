@@ -128,6 +128,21 @@ const CHAT_MIN_WIDTH = 400;
 const CHAT_COMFORT_MIN_WIDTH = 560;
 const WORKSPACE_RESIZER_WIDTH = 8;
 
+function stripGoalResearchFlags(arg: string): string {
+  const parts = arg.trim().split(/\s+/).filter(Boolean);
+  while (parts.length > 0) {
+    const flag = parts[0].toLowerCase();
+    if (flag !== "--research" && flag !== "--auto-research" && flag !== "--deep" && flag !== "--simple" && flag !== "--no-research") break;
+    parts.shift();
+  }
+  return parts.join(" ");
+}
+
+function hasGoalResearchFlag(arg: string): boolean {
+  const first = arg.trim().split(/\s+/, 1)[0]?.toLowerCase();
+  return first === "--research" || first === "--auto-research" || first === "--deep" || first === "--simple" || first === "--no-research";
+}
+
 function isThemeMode(value: string): value is Theme {
   return value === "auto" || value === "light" || value === "dark";
 }
@@ -1493,9 +1508,18 @@ export default function App() {
       const goalCommand = /^\/goal(?:\s+(.*))?$/.exec(trimmed);
       if (goalCommand) {
         const arg = (goalCommand[1] ?? "").trim();
-        if (arg && !["status", "clear", "off", "stop", "done"].includes(arg.toLowerCase())) {
-          applyGoal(arg);
-        } else if (["clear", "off", "stop", "done"].includes(arg.toLowerCase())) {
+        const displayGoal = stripGoalResearchFlags(arg);
+        if (displayGoal && !["status", "clear", "off", "stop", "done"].includes(displayGoal.toLowerCase())) {
+          if (hasGoalResearchFlag(arg)) {
+            patchActiveComposerProfile({
+              collaborationMode: "goal",
+              goalDraftMode: false,
+              goal: displayGoal,
+            }, ["collaborationMode", "goal"]);
+          } else {
+            applyGoal(displayGoal);
+          }
+        } else if (["clear", "off", "stop", "done"].includes(displayGoal.toLowerCase())) {
           applyGoal("");
         }
         commitThenSend(trimmed, submitText.trim());
