@@ -238,7 +238,12 @@ func newACPSubagentProviderResolver(cfg *config.Config, parent *config.ProviderE
 			var ok bool
 			entry, ok = cfg.ResolveModel(modelRef)
 			if !ok {
-				return nil, nil, 0, fmt.Errorf("subagent_model %q is not a configured provider", modelRef)
+				// Unknown model — fall back to the parent's default instead of
+				// erroring.  LLMs sometimes hallucinate model names; failing
+				// hard forces a retry round-trip while the correct model is
+				// already known from the parent config.
+				cp := *parent
+				entry = &cp
 			}
 		} else {
 			cp := *parent

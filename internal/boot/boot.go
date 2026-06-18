@@ -71,6 +71,11 @@ type Options struct {
 	// so each tab loads its own config/skills/hooks without changing the process
 	// cwd — enabling concurrent multi-project sessions.
 	WorkspaceRoot string
+	// ConfigRoot is the directory from which reasonix.toml is loaded. When empty,
+	// WorkspaceRoot (or its fallback) is used. This decouples config injection
+	// (e.g. a bridge-controlled reasonix.toml) from the tool workspace — the
+	// agent operates in WorkspaceRoot but reads config from ConfigRoot.
+	ConfigRoot string
 }
 
 // Build loads config, resolves the model(s), and returns a Controller wrapping a
@@ -88,11 +93,18 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 			root = wd
 		}
 	}
+	// Config root: when ConfigRoot is set, load reasonix.toml from there
+	// instead of from WorkspaceRoot, so config injection (tool lockdown, etc.)
+	// is decoupled from the tool workspace.
+	cfgRoot := opts.ConfigRoot
+	if cfgRoot == "" {
+		cfgRoot = root
+	}
 	// One-time import of v1/v0.5 legacy config — runs before Load so the freshly
 	// written config + ~/.env are picked up this same boot. CLI Run also calls this
 	// before config-only commands; this call stays as the shared frontend fallback.
 	migrated, migErr := config.MigrateLegacyIfNeeded()
-	cfg, err := config.LoadForRoot(root)
+	cfg, err := config.LoadForRoot(cfgRoot)
 	if err != nil {
 		return nil, err
 	}
@@ -435,9 +447,12 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 		if strings.TrimSpace(modelRef) != "" {
 			resolved, ok := cfg.ResolveModel(modelRef)
 			if !ok {
-				return nil, nil, 0, fmt.Errorf("unknown model %q", modelRef)
+				// Unknown model — fall back to parent default.
+				// LLMs sometimes hallucinate model names; failing hard
+				// wastes a round-trip when the correct model is known.
+			} else {
+				me = *resolved
 			}
-			me = *resolved
 		}
 		if strings.TrimSpace(effort) != "" {
 			normalized, err := config.NormalizeEffort(&me, effort)

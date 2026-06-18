@@ -150,12 +150,13 @@ func configureCLIThemeFromConfigNoProbe() {
 // passes false so the session UI is reachable before a key is set. sink receives
 // the agent's typed event stream — runAgent passes a TextSink that renders to
 // stdout, the TUI passes an event-channel sink so events become tea.Msgs.
-func setup(ctx context.Context, modelName string, maxStepsOverride int, requireKey bool, sink event.Sink) (*control.Controller, error) {
+func setup(ctx context.Context, modelName string, maxStepsOverride int, requireKey bool, sink event.Sink, configRoot string) (*control.Controller, error) {
 	return boot.Build(ctx, boot.Options{
-		Model:      modelName,
-		MaxSteps:   maxStepsOverride,
-		RequireKey: requireKey,
-		Sink:       sink,
+		Model:       modelName,
+		MaxSteps:    maxStepsOverride,
+		RequireKey:  requireKey,
+		Sink:        sink,
+		ConfigRoot:  configRoot,
 	})
 }
 
@@ -247,7 +248,7 @@ func runAgent(args []string) int {
 		sink = metrics
 	}
 	sink = withNotifications(sink, cfg)
-	ctrl, err := setup(ctx, *model, *maxSteps, true, sink)
+	ctrl, err := setup(ctx, *model, *maxSteps, true, sink, "")
 	if err != nil {
 		fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
 		return 1
@@ -330,13 +331,14 @@ func runServe(args []string) int {
 	maxSteps := fs.Int("max-steps", 0, "max tool-call rounds (0 = use config/default)")
 	addr := fs.String("addr", "127.0.0.1:8787", "listen address")
 	resume := fs.String("resume", "", "resume a saved session file")
+	configDir := fs.String("config-dir", "", "project config directory (reasonix.toml); default: working directory")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
 
 	ctx := context.Background()
 	bc := serve.NewBroadcaster()
-	ctrl, err := setup(ctx, *model, *maxSteps, true, bc)
+	ctrl, err := setup(ctx, *model, *maxSteps, true, bc, *configDir)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
 		return 1
@@ -421,7 +423,7 @@ func chatREPL(args []string) int {
 
 	var sink event.Sink = &eventSink{ch: eventCh}
 	sink = withNotifications(sink, cfg)
-	ctrl, err := setup(ctx, *model, *maxSteps, false, sink)
+	ctrl, err := setup(ctx, *model, *maxSteps, false, sink, "")
 	if err != nil && errors.Is(err, boot.ErrUnknownModel) && isInteractive() && config.SourcePath() == "" {
 		// True first run whose default model can't resolve: guide setup, then retry.
 		// With a config present, fall through to the descriptive error — re-running
@@ -430,7 +432,7 @@ func chatREPL(args []string) int {
 		if rc := interactiveSetup(defaultConfigTarget(), defaultEnvTarget()); rc != 0 {
 			return rc
 		}
-		ctrl, err = setup(ctx, *model, *maxSteps, false, sink)
+		ctrl, err = setup(ctx, *model, *maxSteps, false, sink, "")
 	}
 	if err != nil {
 		fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
