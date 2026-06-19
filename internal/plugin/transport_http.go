@@ -92,6 +92,9 @@ func ssrfGuardDial(ctx context.Context, network, addr string) (net.Conn, error) 
 			return nil, fmt.Errorf("refusing to connect to internal address %s (resolves to %s)", host, ip.IP)
 		}
 	}
+	if len(ips) == 0 {
+		return nil, fmt.Errorf("no addresses resolved for %s", host)
+	}
 	// Dial the vetted IP, not the hostname, so the connection can't re-resolve
 	// to a different (internal) address (DNS rebinding).
 	var d net.Dialer

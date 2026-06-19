@@ -60,15 +60,23 @@ func mcpActionRisk(e config.PluginEntry, reasons []string) (RiskLevel, []string)
 			reasons = append(reasons, "sends auth headers to "+e.URL)
 		}
 	}
-	// npx -y auto-accepts all npm prompts including postinstall scripts,
-	// so package installs are high-risk (potential typosquatting/supply-chain).
+	// npx with --yes/-y but without --ignore-scripts auto-accepts all npm prompts
+	// including postinstall scripts, so such package installs are high-risk.
+	// When --ignore-scripts is present, postinstall scripts are suppressed.
 	if e.Command == "npx" {
+		hasYes := false
+		hasIgnoreScripts := false
 		for _, arg := range e.Args {
-			if arg == "-y" {
-				level = RiskHigh
-				reasons = append(reasons, "npx -y auto-executes package scripts without review")
-				break
+			if arg == "--yes" || arg == "-y" {
+				hasYes = true
 			}
+			if arg == "--ignore-scripts" {
+				hasIgnoreScripts = true
+			}
+		}
+		if hasYes && !hasIgnoreScripts {
+			level = RiskHigh
+			reasons = append(reasons, "npx --yes/-y without --ignore-scripts auto-executes package scripts without review")
 		}
 	}
 	if e.Tier == "eager" {
@@ -77,6 +85,12 @@ func mcpActionRisk(e config.PluginEntry, reasons []string) (RiskLevel, []string)
 	}
 	if hasAuth && level == RiskMedium {
 		level = RiskHigh
+	}
+	// URL-based installs outside of npm or local files have no integrity
+	// verification — the binary is fetched directly from the remote.
+	if e.URL != "" && !strings.HasPrefix(e.URL, "file://") {
+		level = RiskHigh
+		reasons = append(reasons, "URL 安装无完整性校验，建议通过 npm 安装或手动验证")
 	}
 	return level, reasons
 }
@@ -128,8 +142,8 @@ func (t *installSourceTool) localExecutableMCPAction(req request, path string) a
 }
 
 // packageMCPAction treats the source as an npm package name and constructs
-// the canonical `npx -y <pkg>` invocation. The caller can override the
-// command and args for non-npm package sources.
+// the canonical `npx --yes --ignore-scripts <pkg>` invocation. The caller
+// can override the command and args for non-npm package sources.
 func (t *installSourceTool) packageMCPAction(req request) action {
 	name := strings.TrimSpace(req.Name)
 	if name == "" {
@@ -142,7 +156,7 @@ func (t *installSourceTool) packageMCPAction(req request) action {
 	args := append([]string(nil), req.Args...)
 	if command == "" {
 		command = "npx"
-		args = []string{"-y", req.Source}
+		args = []string{"--yes", "--ignore-scripts", req.Source}
 	}
 	e := config.PluginEntry{
 		Name:    name,

@@ -469,8 +469,9 @@ func (t *stdioTransport) close() {
 	select {
 	case <-done:
 	case <-time.After(closeWaitBudget):
-		// Force-kill the process group if available (Linux/macOS) to
-		// ensure grandchildren holding pipe FDs are terminated.
+		// The goroutine above will eventually exit when the forced-killed
+		// process's cmd.Wait() unblocks. Give it a scheduling chance.
+		runtime.Gosched()
 		if t.cmd.Process != nil {
 			_ = t.cmd.Process.Kill()
 		}

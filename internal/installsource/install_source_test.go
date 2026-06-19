@@ -736,8 +736,8 @@ func TestPackageActionUsesNpx(t *testing.T) {
 	if resp.Actions[0].Command != "npx" {
 		t.Errorf("command = %q, want npx", resp.Actions[0].Command)
 	}
-	if len(resp.Actions[0].Args) != 2 || resp.Actions[0].Args[0] != "-y" || resp.Actions[0].Args[1] != "@example/mcp-pkg" {
-		t.Errorf("args = %v, want [-y @example/mcp-pkg]", resp.Actions[0].Args)
+	if len(resp.Actions[0].Args) != 3 || resp.Actions[0].Args[0] != "--yes" || resp.Actions[0].Args[1] != "--ignore-scripts" || resp.Actions[0].Args[2] != "@example/mcp-pkg" {
+		t.Errorf("args = %v, want [--yes --ignore-scripts @example/mcp-pkg]", resp.Actions[0].Args)
 	}
 }
 

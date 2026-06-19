@@ -11,6 +11,7 @@ import (
 	_ "embed"
 	"encoding/json"
 	"fmt"
+	"log"
 	"log/slog"
 	"net/http"
 	"os"
@@ -295,6 +296,7 @@ func (s *Server) RunGraceful(ctx context.Context, addr string) error {
 		WriteTimeout:      60 * time.Second,
 		IdleTimeout:       120 * time.Second,
 	}
+	log.Printf("⚠️  agent API listening on %s (no auth — localhost only)", addr)
 	errCh := make(chan error, 1)
 	go func() {
 		errCh <- srv.ListenAndServe()
