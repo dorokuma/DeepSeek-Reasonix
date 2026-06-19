@@ -12,6 +12,7 @@
 package config
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"net/http"
@@ -38,9 +39,14 @@ const opencodeScrapeTimeout = 15 * time.Second
 //
 // The second table maps display names (e.g. "DeepSeek V4 Pro") to API model
 // IDs (e.g. "deepseek-v4-pro"). Returns a map from model ID → Pricing (USD).
-func ScrapeOpenCodePricing() (map[string]provider.Pricing, error) {
+// The ctx is used for the HTTP request only; parsing uses the body deadline.
+func ScrapeOpenCodePricing(ctx context.Context) (map[string]provider.Pricing, error) {
 	cli := &http.Client{Timeout: opencodeScrapeTimeout}
-	resp, err := cli.Get(opencodeDocsURL)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, opencodeDocsURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("scrape opencode: build request: %w", err)
+	}
+	resp, err := cli.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("scrape opencode: fetch: %w", err)
 	}
@@ -84,9 +90,6 @@ func ScrapeOpenCodePricing() (map[string]provider.Pricing, error) {
 			case "th":
 				inCell = true
 				cell.Reset()
-				if !hasAttrs {
-					// noop
-				}
 				for hasAttrs {
 					_, _, hasAttrs = z.TagAttr()
 				}
@@ -166,7 +169,7 @@ func ScrapeOpenCodePricing() (map[string]provider.Pricing, error) {
 		if len(row) < 2 {
 			continue
 		}
-		display := normalizeDisplayName(row[0])
+		display := normDisplay(row[0])
 		modelID := strings.TrimSpace(row[1])
 		if display != "" && modelID != "" {
 			displayToID[display] = modelID
@@ -180,14 +183,26 @@ func ScrapeOpenCodePricing() (map[string]provider.Pricing, error) {
 		if len(row) < 4 {
 			continue
 		}
-		display := normalizeDisplayName(row[0])
+		display := normDisplay(row[0])
 		if display == "" {
 			continue
 		}
 		modelID, ok := displayToID[display]
 		if !ok {
+			// Try without common suffixes like "code", "free".
+			if trimmed := strings.TrimSuffix(display, "code"); trimmed != display {
+				modelID, ok = displayToID[strings.TrimSpace(trimmed)]
+			}
+		}
+		if !ok {
 			// Fallback: try the display name itself as a model ID.
 			modelID = display
+		}
+		// If this model already has a price (e.g. one tier of a multi-tier
+		// model like Qwen3.7 Plus), keep the first entry — it's the common
+		// ≤256K tier.
+		if _, exists := out[modelID]; exists {
+			continue
 		}
 		input := parseDollar(row[1])
 		output := parseDollar(row[2])
@@ -202,14 +217,18 @@ func ScrapeOpenCodePricing() (map[string]provider.Pricing, error) {
 	return out, nil
 }
 
-// normalizeDisplayName lowercases and trims the display name from the table.
-func normalizeDisplayName(s string) string {
+// normDisplay normalises a display name from an HTML table for comparison.
+// It lowercases, trims, removes parenthesised context notes, and replaces
+// spaces with hyphens so that "MiMo V2.5" matches "MiMo-V2.5".
+func normDisplay(s string) string {
 	s = strings.TrimSpace(s)
 	// Remove context notes like "(≤ 256K tokens)", "(> 256K tokens)"
 	if idx := strings.Index(s, "("); idx >= 0 {
 		s = strings.TrimSpace(s[:idx])
 	}
-	return strings.ToLower(s)
+	s = strings.ToLower(s)
+	s = strings.ReplaceAll(s, " ", "-")
+	return s
 }
 
 // parseDollar extracts a float from a "$1.40" or "-" string.
@@ -242,7 +261,7 @@ func isOpenCodeGoProvider(baseURL string) bool {
 // rate. Existing ModelPrices entries are not overwritten so the user can
 // override individual models in reasonix.toml.
 //
-// When pricing is nil (scrape failed, no URL, no OpenCode provider), the
+// When pricing is nil (scrape failed or no OpenCode provider detected), the
 // function is a no-op.
 func ApplyOpenCodePricing(cfg *Config, pricing map[string]provider.Pricing) {
 	if cfg == nil || pricing == nil {
