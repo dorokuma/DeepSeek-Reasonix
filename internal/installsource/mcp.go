@@ -60,6 +60,17 @@ func mcpActionRisk(e config.PluginEntry, reasons []string) (RiskLevel, []string)
 			reasons = append(reasons, "sends auth headers to "+e.URL)
 		}
 	}
+	// npx -y auto-accepts all npm prompts including postinstall scripts,
+	// so package installs are high-risk (potential typosquatting/supply-chain).
+	if e.Command == "npx" {
+		for _, arg := range e.Args {
+			if arg == "-y" {
+				level = RiskHigh
+				reasons = append(reasons, "npx -y auto-executes package scripts without review")
+				break
+			}
+		}
+	}
 	if e.Tier == "eager" {
 		level = RiskHigh
 		reasons = append(reasons, "tier=eager blocks startup until the handshake completes")

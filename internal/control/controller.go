@@ -419,37 +419,40 @@ func (c *Controller) Submit(input string) {
 			return
 		}
 		focus := strings.TrimSpace(strings.TrimPrefix(trimmed, "/compact"))
-		go func() {
-			if err := c.Compact(c.closeCtx, focus); err != nil {
-				if errors.Is(err, context.Canceled) {
-					return
-				}
-				c.notice("compaction failed: " + err.Error())
-			} else {
-				c.notice("compacted")
-				if err := c.Snapshot(); err != nil {
-					slog.Warn("controller: snapshot after compact", "err", err)
-				}
-			}
-		}()
-	case trimmed == "/new":
-		c.mu.Lock()
-		running := c.running
-		c.mu.Unlock()
-		if running {
-			c.notice("cannot start new session while a turn is running")
-			return
+		// Cancel any running turn before compacting to avoid session data
+		// corruption from concurrent read/write.
+		if c.Running() {
+			c.Cancel()
 		}
-		go func() {
+		c.runGuarded(func(ctx context.Context) error {
+			if err := c.Compact(ctx, focus); err != nil {
+				if errors.Is(err, context.Canceled) {
+					return nil
+				}
+				return fmt.Errorf("compaction failed: %w", err)
+			}
+			c.notice("compacted")
+			if err := c.Snapshot(); err != nil {
+				slog.Warn("controller: snapshot after compact", "err", err)
+			}
+			return nil
+		})
+	case trimmed == "/new":
+		// Cancel any running turn before creating a new session to avoid
+		// the turn operating on a session that's about to be replaced.
+		if c.Running() {
+			c.Cancel()
+		}
+		c.runGuarded(func(ctx context.Context) error {
 			if err := c.NewSession(); err != nil {
 				if errors.Is(err, context.Canceled) {
-					return
+					return nil
 				}
-				c.notice("new session failed: " + err.Error())
-			} else {
-				c.notice("new session")
+				return fmt.Errorf("new session failed: %w", err)
 			}
-		}()
+			c.notice("new session")
+			return nil
+		})
 	case strings.HasPrefix(trimmed, "/mcp__"):
 		c.runGuarded(func(ctx context.Context) error {
 			sent, found, err := c.MCPPrompt(ctx, trimmed)

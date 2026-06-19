@@ -469,6 +469,11 @@ func (t *stdioTransport) close() {
 	select {
 	case <-done:
 	case <-time.After(closeWaitBudget):
+		// Force-kill the process group if available (Linux/macOS) to
+		// ensure grandchildren holding pipe FDs are terminated.
+		if t.cmd.Process != nil {
+			_ = t.cmd.Process.Kill()
+		}
 	}
 }
 

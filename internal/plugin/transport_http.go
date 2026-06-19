@@ -12,8 +12,10 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"time"
 
 	"reasonix/internal/netclient"
+	"reasonix/internal/netutil"
 )
 
 // maxHTTPBody caps how much of a JSON / SSE response body we read, so a
@@ -64,7 +66,7 @@ func newHTTPTransport(s Spec) (*httpTransport, error) {
 		name:    s.Name,
 		url:     s.URL,
 		headers: s.Headers,
-		client:  &http.Client{Transport: transport},
+		client:  &http.Client{Transport: transport, Timeout: 60 * time.Second},
 		done:    make(chan struct{}),
 	}, nil
 }
@@ -96,18 +98,6 @@ func ssrfGuardDial(ctx context.Context, network, addr string) (net.Conn, error) 
 	return d.DialContext(ctx, network, net.JoinHostPort(ips[0].IP.String(), port))
 }
 
-// mcpCGNAT is RFC 6598 shared address space (100.64.0.0/10). Go's IsPrivate
-// doesn't cover it, yet it's an SSRF target.
-var mcpCGNAT = mustMCPCIDR("100.64.0.0/10")
-
-func mustMCPCIDR(s string) *net.IPNet {
-	_, n, err := net.ParseCIDR(s)
-	if err != nil {
-		panic(err)
-	}
-	return n
-}
-
 // blockedMCPIP reports whether ip is an address the MCP HTTP transport must
 // not connect to. Loopback is allowed (user-configured MCP servers often run
 // locally).
@@ -115,11 +105,7 @@ func blockedMCPIP(ip net.IP) bool {
 	if ip.IsLoopback() {
 		return false
 	}
-	return ip.IsPrivate() ||
-		ip.IsLinkLocalUnicast() ||
-		ip.IsLinkLocalMulticast() ||
-		ip.IsUnspecified() ||
-		mcpCGNAT.Contains(ip)
+	return netutil.BlockedIP(ip)
 }
 
 func (t *httpTransport) call(ctx context.Context, method string, params any) (json.RawMessage, error) {

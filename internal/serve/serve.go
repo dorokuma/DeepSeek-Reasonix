@@ -82,14 +82,15 @@ func (s *Server) initTitleProvider() {
 }
 
 // switchModel rebuilds the controller with a new model, carrying over the
-// conversation history. This replicates the TUI/desktop model-switch path. The
-// write lock is held across the whole rebuild so concurrent requests never read
-// a half-swapped controller and two switches can't run at once.
+// conversation history. This replicates the TUI/desktop model-switch path.
+// The write lock is held only for state reads and the final swap; the
+// expensive boot.Build runs outside the lock so HTTP handlers are not blocked.
 func (s *Server) switchModel(ctx context.Context, ref string) error {
+	// Phase 1: under lock, snapshot current state and mark as switching.
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	cur := s.ctrl
 	if cur.Running() {
+		s.mu.Unlock()
 		return fmt.Errorf("cannot switch model while a turn is running")
 	}
 	prevPath := cur.SessionPath()
@@ -97,7 +98,9 @@ func (s *Server) switchModel(ctx context.Context, ref string) error {
 		slog.Warn("serve: snapshot before model switch", "err", err)
 	}
 	carried := cur.History()
+	s.mu.Unlock()
 
+	// Phase 2: expensive I/O outside the lock (network, plugin handshake).
 	newCtrl, err := boot.Build(ctx, boot.Options{
 		Model:            ref,
 		Sink:             s.bc,
@@ -106,6 +109,15 @@ func (s *Server) switchModel(ctx context.Context, ref string) error {
 	})
 	if err != nil {
 		return fmt.Errorf("switch model: %w", err)
+	}
+
+	// Phase 3: under lock, swap the controller atomically.
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	// Re-check: a turn may have started while we were building.
+	if s.ctrl.Running() {
+		newCtrl.Close()
+		return fmt.Errorf("cannot switch model: a turn started during rebuild")
 	}
 	// Keep the carried conversation in its existing file so the switch doesn't
 	// orphan a duplicate (#2807).
@@ -221,7 +233,7 @@ func securityHeadersMiddleware(next http.Handler) http.Handler {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("X-Frame-Options", "DENY")
 		w.Header().Set("Referrer-Policy", "same-origin")
-		w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'self' ws:; form-action 'self'; base-uri 'none'")
+		w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'self'; form-action 'self'; base-uri 'none'")
 		next.ServeHTTP(w, r)
 	})
 }
@@ -280,6 +292,7 @@ func (s *Server) RunGraceful(ctx context.Context, addr string) error {
 		Handler:           s.Handler(),
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      60 * time.Second,
 		IdleTimeout:       120 * time.Second,
 	}
 	errCh := make(chan error, 1)

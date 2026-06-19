@@ -60,7 +60,7 @@ func loadDotEnvFile(path string) {
 		}
 		key = strings.TrimSpace(key)
 		val = strings.Trim(strings.TrimSpace(val), `"'`)
-		if key == "" {
+		if key == "" || !dotenvKeyRe.MatchString(key) {
 			continue
 		}
 		if _, exists := os.LookupEnv(key); !exists {

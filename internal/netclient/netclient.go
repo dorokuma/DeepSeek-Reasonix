@@ -22,6 +22,7 @@ import (
 
 	"golang.org/x/net/http/httpproxy"
 
+	"reasonix/internal/netutil"
 	"reasonix/internal/sysproxy"
 )
 
@@ -164,22 +165,31 @@ func safeRedirect() func(req *http.Request, via []*http.Request) error {
 		if len(via) >= 5 {
 			return errors.New("too many redirects (max 5)")
 		}
-		// Reject redirects to private IP ranges.
+		// Reject redirects to private IP ranges. DNS resolution failure
+		// is treated as unsafe (fail-closed) to prevent DNS rebinding.
 		host := req.URL.Hostname()
-		if ips, err := net.DefaultResolver.LookupNetIP(context.Background(), "ip", host); err == nil {
-			for _, ip := range ips {
-				if isPrivateIP(ip) {
-					return fmt.Errorf("redirect to private IP %s rejected (SSRF protection)", ip)
-				}
+		ips, err := net.DefaultResolver.LookupNetIP(context.Background(), "ip", host)
+		if err != nil {
+			return fmt.Errorf("redirect to %s: DNS resolution failed (SSRF protection): %w", host, err)
+		}
+		for _, ip := range ips {
+			if isPrivateIP(ip) {
+				return fmt.Errorf("redirect to private IP %s rejected (SSRF protection)", ip)
 			}
 		}
 		return nil
 	}
 }
 
-// isPrivateIP reports whether ip is in a private or link-local range.
+// isPrivateIP reports whether ip is in a private, link-local, CGNAT, or
+// unspecified range — all addresses an SSRF redirect must not reach.
 func isPrivateIP(ip netip.Addr) bool {
-	return ip.IsPrivate() || ip.IsLoopback() || ip.IsLinkLocalUnicast()
+	return ip.IsPrivate() ||
+		ip.IsLoopback() ||
+		ip.IsLinkLocalUnicast() ||
+		ip.IsLinkLocalMulticast() ||
+		ip.IsUnspecified() ||
+		func() bool { a := ip.As4(); return netutil.CGNATRange.Contains(a[:]) }()
 }
 
 // Summary returns a redacted, user-facing description for diagnostics.
