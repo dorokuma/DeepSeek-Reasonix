@@ -60,11 +60,6 @@ type Config struct {
 	// (7.0). Only meaningful when a provider with usd-denominated pricing (e.g.
 	// OpenCode Go) is configured.
 	UsdCnyRate float64 `toml:"usd_cny_rate"`
-	// PricingURL points to a JSON file (local or remote) that maps provider
-	// names to model pricing. At startup the system fetches this and populates
-	// ModelPrices on matching providers, so pricing can be updated without a
-	// code release. Format: see config/opencode.go. Empty = no auto-pricing.
-	PricingURL string `toml:"pricing_url"`
 }
 
 // UIConfig controls CLI presentation-only settings. Desktop appearance is kept in

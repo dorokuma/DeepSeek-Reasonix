@@ -142,17 +142,22 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 		wg.Wait()
 	}
 
-	// Auto-populate per-model pricing from external pricing URL.
-	// Runs after the live refresh so live-fetched model IDs are also covered.
-	var extPricing map[string]map[string]provider.Pricing
-	if cfg.PricingURL != "" {
-		var err error
-		extPricing, err = config.FetchPricingFromURL(cfg.PricingURL)
-		if err != nil {
-			slog.Debug("pricing URL fetch failed", "url", cfg.PricingURL, "error", err)
+	// Auto-populate per-model pricing for OpenCode Go providers by scraping
+	// the official docs page. Falls back gracefully — user can still supply
+	// model_prices manually in reasonix.toml.
+	var modelPricing map[string]provider.Pricing
+	for i := range cfg.Providers {
+		if strings.Contains(cfg.Providers[i].BaseURL, "opencode.ai/zen/go") {
+			scraped, scrapeErr := config.ScrapeOpenCodePricing()
+			if scrapeErr != nil {
+				slog.Debug("opencode pricing scrape failed", "error", scrapeErr)
+			} else {
+				modelPricing = scraped
+			}
+			break
 		}
 	}
-	config.ApplyOpenCodePricing(cfg, extPricing)
+	config.ApplyOpenCodePricing(cfg, modelPricing)
 
 	modelName := opts.Model
 	if modelName == "" {
