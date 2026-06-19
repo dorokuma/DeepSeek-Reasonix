@@ -21,7 +21,6 @@ import (
 	"time"
 
 	"reasonix/internal/agent"
-	"reasonix/internal/codegraph"
 	"reasonix/internal/command"
 	"reasonix/internal/config"
 	"reasonix/internal/control"
@@ -302,84 +301,6 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	lazySpecs := PluginSpecs(lazyEntries)
 	bgSpecs := PluginSpecs(bgEntries)
 
-	// CodeGraph is a built-in MCP server fetched on first use. When it resolves,
-	// inject it as one more stdio plugin pinned to the project root (it is
-	// cwd-aware); EnsureInit only creates .codegraph/ (fast, size-independent),
-	// serve's daemon then indexes in the background, so startup never blocks even
-	// on a large repo. When it is not yet installed, fetch it in the background
-	// (one-time, ~45MB) if auto_install is on — startup still never blocks, the
-	// tools come online next session — otherwise point the user at the explicit
-	// install command. A failed init or fetch is a notice, not fatal.
-	//
-	// CodeGraph follows the same user-selectable tier model as ordinary MCP
-	// servers when a tier is set. EnsureInit only creates .codegraph/ (fast,
-	// size-independent). With no explicit tier — an upgraded config that predates
-	// the setting — it keeps the historical startup: warm projects eager so
-	// symbol tools are ready on the first turn, cold projects in the background.
-	if cfg.Codegraph.Enabled {
-		bin, ok := codegraph.Resolve(cfg.Codegraph.Path)
-		switch {
-		case ok:
-			spec := plugin.Spec{
-				Name:              "codegraph",
-				StripRawPrefix:    "codegraph_",
-				Command:           bin,
-				Args:              []string{"serve", "--mcp"},
-				Dir:               root,
-				ReadOnlyToolNames: codegraph.ReadOnlyToolNames(),
-			}
-			warm := codegraph.Initialized(root)
-			if err := codegraph.EnsureInit(ctx, bin, root); err != nil {
-				sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelWarn,
-					Text: "codegraph: init failed (" + err.Error() + ") — symbol-graph tools disabled this session"})
-				break
-			}
-			bgNotice := func() {
-				if !warm {
-					sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelInfo,
-						Text: "codegraph: preparing code-intelligence tools in the background — tools will appear when ready"})
-				}
-			}
-			if strings.TrimSpace(cfg.Codegraph.Tier) == "" {
-				if warm {
-					eagerSpecs = append(eagerSpecs, spec)
-				} else {
-					bgSpecs = append(bgSpecs, spec)
-					bgNotice()
-				}
-				break
-			}
-			switch cfg.Codegraph.ResolvedTier() {
-			case "eager":
-				eagerSpecs = append(eagerSpecs, spec)
-			case "background":
-				bgSpecs = append(bgSpecs, spec)
-				bgNotice()
-			default:
-				lazySpecs = append(lazySpecs, spec)
-			}
-		case cfg.Codegraph.AutoInstall:
-			notify := func(msg string) { sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelInfo, Text: msg}) }
-			notify("codegraph: fetching code-intelligence runtime in the background (one-time) — symbol-graph tools available next session")
-			codegraphClient, err := netclient.NewHTTPClient(proxySpec, trOpts)
-			if err != nil {
-				notify("codegraph: install skipped (" + err.Error() + ")")
-			} else {
-				go func() {
-					if _, err := codegraph.InstallWithClient(context.WithoutCancel(ctx), codegraphClient, nil); err != nil {
-						notify("codegraph: install failed (" + err.Error() + ") — using grep/glob; retries next session")
-					} else {
-						notify("codegraph: installed — symbol-graph tools available next session")
-					}
-				}()
-			}
-		default:
-			sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelInfo,
-				Text: "codegraph: not installed — run `reasonix codegraph install` to enable symbol-graph tools"})
-		}
-	}
-
-	// Apply caller-supplied stderr override to every spec across tiers.
 	if opts.Stderr != nil {
 		for i := range eagerSpecs {
 			eagerSpecs[i].Stderr = opts.Stderr
@@ -422,28 +343,6 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	}
 	registerDeferred(lazySpecs, false)
 	registerDeferred(bgSpecs, true)
-
-	// Inject codegraph steering into the system prompt when symbol-graph tools
-	// are available, so the model knows to prefer them for architecture / call-graph
-	// questions over grep/read_file. Also register codegraph tool names in the
-	// subagent allowed-tools list so explore/research/review can use them.
-	if cfg.Codegraph.Enabled {
-		prefix := plugin.ToolPrefix("codegraph")
-		var cgTools []string
-		for _, name := range reg.Names() {
-			if strings.HasPrefix(name, prefix) {
-				cgTools = append(cgTools, name)
-			}
-		}
-		if len(cgTools) > 0 {
-			sysPrompt += "\n\n" + codegraph.SteerText
-			skill.SetExtraReadTools(cgTools)
-		}
-	}
-
-	for _, msg := range demoteMessages {
-		sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelInfo, Text: msg})
-	}
 
 	cleanup := pluginHost.Close
 

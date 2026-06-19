@@ -46,9 +46,6 @@ node_modules/
 !/.reasonix/commands/
 !/.reasonix/commands/review.md
 
-# CodeGraph per-project index (rebuilt locally; never committed)
-.codegraph/
-
 # Editor / OS
 .DS_Store
 Thumbs.db

@@ -9,9 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -39,8 +37,6 @@ func TestBuildFoldsProjectMemoryIntoSystemPrompt(t *testing.T) {
 	writeFile(t, dir, "reasonix.toml", `
 default_model = "test-model"
 
-[codegraph]
-enabled = false
 
 [agent]
 system_prompt = "BASE SYSTEM PROMPT"
@@ -130,8 +126,6 @@ func TestBuildDiscoversSkills(t *testing.T) {
 	writeFile(t, dir, "reasonix.toml", `
 default_model = "test-model"
 
-[codegraph]
-enabled = false
 
 [agent]
 system_prompt = "BASE"
@@ -199,8 +193,6 @@ func TestBuildOmitsDisabledSkillsFromPromptAndRuntimeList(t *testing.T) {
 	writeFile(t, dir, "reasonix.toml", `
 default_model = "test-model"
 
-[codegraph]
-enabled = false
 
 [agent]
 system_prompt = "BASE"
@@ -255,8 +247,6 @@ func TestBuildOmitsExcludedSkillRootsFromPromptAndRuntimeList(t *testing.T) {
 	writeFile(t, dir, "reasonix.toml", fmt.Sprintf(`
 default_model = "test-model"
 
-[codegraph]
-enabled = false
 
 [agent]
 system_prompt = "BASE"
@@ -303,8 +293,6 @@ func TestBuildWithoutMemoryLeavesPromptUnchanged(t *testing.T) {
 	writeFile(t, dir, "reasonix.toml", `
 default_model = "test-model"
 
-[codegraph]
-enabled = false
 
 [agent]
 system_prompt = "JUST THE BASE"
@@ -351,8 +339,6 @@ func TestBuildVisibilityPolicyIsAppended(t *testing.T) {
 	writeFile(t, dir, "reasonix.toml", `
 default_model = "test-model"
 
-[codegraph]
-enabled = false
 
 [agent]
 system_prompt = "BASE"
@@ -384,8 +370,6 @@ func TestBuildLanguagePolicyIsAppended(t *testing.T) {
 	writeFile(t, dir, "reasonix.toml", `
 default_model = "test-model"
 
-[codegraph]
-enabled = false
 
 [agent]
 system_prompt = "BASE"
@@ -515,13 +499,9 @@ func TestBuildMigratesLegacyConfigEndToEnd(t *testing.T) {
 	t.Setenv("USERPROFILE", home)                               // os.UserHomeDir on Windows
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config")) // os.UserConfigDir on Linux
 	t.Setenv("AppData", filepath.Join(home, "AppData"))         // os.UserConfigDir on Windows
-	t.Setenv("DEEPSEEK_API_KEY", "")                            // track for cleanup; migration os.Setenv's it live
 
 	proj := t.TempDir()
 	t.Chdir(proj)
-	// codegraph off keeps Build offline; it merges over the migrated user config
-	// without dropping the migrated plugins.
-	writeFile(t, proj, "reasonix.toml", "[codegraph]\nenabled = false\n")
 	writeFile(t, filepath.Join(home, ".reasonix"), "config.json",
 		`{"apiKey":"sk-e2e","lang":"zh","mcpServers":{"fs":{"command":"npx","args":["-y","server-fs"]}}}`)
 	writeFile(t, filepath.Join(home, ".reasonix", "sessions"), "chat-1.events.jsonl",
@@ -588,15 +568,12 @@ func TestBuildMigratesLegacyConfigEndToEnd(t *testing.T) {
 
 func TestBuildMigratesLegacySessionsFromConfigSessionDir(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, "xdg-config"))
 	t.Setenv("AppData", filepath.Join(home, "AppData"))
 
 	proj := t.TempDir()
 	t.Chdir(proj)
-	writeFile(t, proj, "reasonix.toml", "[codegraph]\nenabled = false\n")
-
 	legacyDir := config.SessionDir()
 	writeFile(t, legacyDir, "custom-root.events.jsonl",
 		`{"type":"user.message","id":1,"ts":"t","turn":0,"text":"hello from redirected config root"}`+"\n"+
@@ -665,13 +642,10 @@ func TestPartitionByTier(t *testing.T) {
 		{Name: "default", Tier: ""}, // empty defaults to background
 	}
 
-	eager, lazy, bg := partitionByTier(entries)
+	eager, lazy, _ := partitionByTier(entries)
 
 	if len(eager) != 1 || eager[0].Name != "e1" {
 		t.Fatalf("eager bucket = %+v, want [e1]", eager)
-	}
-	if len(bg) != 2 || bg[0].Name != "b1" || bg[1].Name != "default" {
-		t.Fatalf("background bucket = %+v, want [b1, default] preserving input order", bg)
 	}
 	if len(lazy) != 1 || lazy[0].Name != "l1" {
 		t.Fatalf("lazy bucket = %+v, want [l1]", lazy)
@@ -685,9 +659,6 @@ func TestBuildMigratesLegacyEagerTierToBackground(t *testing.T) {
 
 	writeFile(t, dir, "reasonix.toml", `
 default_model = "test-model"
-
-[codegraph]
-enabled = false
 
 [agent]
 system_prompt = "BASE"
@@ -735,9 +706,6 @@ func TestBuildMigratesLegacyLazyTierToBackground(t *testing.T) {
 	writeFile(t, dir, "reasonix.toml", `
 default_model = "test-model"
 
-[codegraph]
-enabled = false
-
 [agent]
 system_prompt = "BASE"
 system_prompt_file = ""
@@ -776,78 +744,8 @@ tier = "lazy"
 	}
 }
 
-func TestBuildColdCodegraphStartsInBackground(t *testing.T) {
-	isolateConfigHome(t)
-	dir := t.TempDir()
-	t.Chdir(dir)
-	launcher := writeCodegraphHelper(t, dir)
-	t.Setenv("GO_WANT_HELPER_PROCESS", "1")
-
-	writeFile(t, dir, "reasonix.toml", fmt.Sprintf(`
-default_model = "test-model"
-
-[codegraph]
-enabled = true
-path = %q
-tier = "background"
-
-[agent]
-system_prompt = "BASE"
-system_prompt_file = ""
-
-[[providers]]
-name = "test-model"
-kind = "openai"
-base_url = "https://example.invalid"
-model = "x"
-api_key_env = "REASONIX_TEST_KEY_UNSET"
-`, launcher))
-
-	var notices []event.Event
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
-	ctrl, err := Build(ctx, Options{
-		Sink: event.FuncSink(func(e event.Event) {
-			if e.Kind == event.Notice {
-				notices = append(notices, e)
-			}
-		}),
-	})
-	if err != nil {
-		t.Fatalf("Build: %v", err)
-	}
-	defer ctrl.Close()
-
-	if got := ctrl.Host().Failures(); len(got) != 0 {
-		t.Fatalf("Host.Failures() = %+v, want empty for cold built-in codegraph background startup", got)
-	}
-	codegraphDir := filepath.Join(dir, ".codegraph")
-	deadline := time.Now().Add(5 * time.Second)
-	for {
-		if _, err := os.Stat(codegraphDir); err == nil {
-			break
-		} else if time.Now().After(deadline) {
-			t.Fatalf("cold codegraph init did not create .codegraph/: %v", err)
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	foundNotice := false
-	for _, n := range notices {
-		if strings.Contains(n.Text, "preparing code-intelligence tools in the background") {
-			foundNotice = true
-			break
-		}
-	}
-	if !foundNotice {
-		t.Fatalf("missing background warmup notice; got %+v", notices)
-	}
-}
 
 func TestBuildMigratesLegacyEagerBeforeStatsDemotion(t *testing.T) {
-	isolateConfigHome(t)
-	dir := t.TempDir()
-	t.Chdir(dir)
-
 	// Three samples above 2*budget — the rule in stats.go's Recommend triggers
 	// when the trailing window is entirely over the threshold. Use 30s so even
 	// future budget bumps stay below the threshold.
@@ -857,11 +755,10 @@ func TestBuildMigratesLegacyEagerBeforeStatsDemotion(t *testing.T) {
 		}
 	}
 
+	dir := t.TempDir()
+	t.Chdir(dir)
 	writeFile(t, dir, "reasonix.toml", `
 default_model = "test-model"
-
-[codegraph]
-enabled = false
 
 [agent]
 system_prompt = "BASE"
@@ -991,77 +888,3 @@ func TestHelperProcess(t *testing.T) {
 	}
 }
 
-func writeCodegraphHelper(t *testing.T, dir string) string {
-	t.Helper()
-	path := filepath.Join(dir, "codegraph-helper")
-	if runtime.GOOS == "windows" {
-		path += ".exe"
-	}
-	src := filepath.Join(dir, "codegraph-helper.go")
-	if err := os.WriteFile(src, []byte(`package main
-
-import (
-	"bufio"
-	"bytes"
-	"encoding/json"
-	"os"
-	"path/filepath"
-)
-
-func main() {
-	if len(os.Args) >= 3 && os.Args[1] == "init" {
-		_ = os.MkdirAll(filepath.Join(os.Args[2], ".codegraph"), 0o755)
-		return
-	}
-
-	in := bufio.NewReader(os.Stdin)
-	for {
-		line, err := in.ReadBytes('\n')
-		if err != nil {
-			return
-		}
-		line = bytes.TrimSpace(line)
-		if len(line) == 0 {
-			continue
-		}
-
-		var req struct {
-			ID     *int            `+"`json:\"id\"`"+`
-			Method string          `+"`json:\"method\"`"+`
-			Params json.RawMessage `+"`json:\"params\"`"+`
-		}
-		if err := json.Unmarshal(line, &req); err != nil || req.ID == nil {
-			continue
-		}
-
-		var result any
-		switch req.Method {
-		case "initialize":
-			result = map[string]any{
-				"protocolVersion": "2024-11-05",
-				"serverInfo":      map[string]any{"name": "codegraph", "version": "0"},
-				"capabilities":    map[string]any{},
-			}
-		case "tools/list":
-			result = map[string]any{"tools": []map[string]any{{
-				"name":        "search",
-				"description": "Search symbols.",
-				"inputSchema": map[string]any{"type": "object"},
-			}}}
-		}
-
-		resp := map[string]any{"jsonrpc": "2.0", "id": *req.ID, "result": result}
-		b, _ := json.Marshal(resp)
-		_, _ = os.Stdout.Write(append(b, '\n'))
-	}
-}
-`), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	cmd := exec.Command("go", "build", "-o", path, src)
-	cmd.Env = append(os.Environ(), "GOTOOLCHAIN=local")
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("build codegraph helper: %v\n%s", err, out)
-	}
-	return path
-}

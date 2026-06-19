@@ -52,7 +52,6 @@ type Config struct {
 	Network       NetworkConfig       `toml:"network"`
 	Plugins       []PluginEntry       `toml:"plugins"`
 	Skills        SkillsConfig        `toml:"skills"`
-	Codegraph     CodegraphConfig     `toml:"codegraph"`
 	Statusline    StatuslineConfig    `toml:"statusline"`
 	LSP           LSPConfig           `toml:"lsp"`
 	// UsdCnyRate is the exchange rate used to convert OpenCode Go USD pricing
@@ -205,35 +204,8 @@ type StatuslineConfig struct {
 	Command string `toml:"command"`
 }
 
-// CodegraphConfig governs the built-in CodeGraph MCP server — symbol/call-graph
-// code intelligence (tree-sitter + SQLite) that gives the agent codegraph_*
-// search / context / explore / trace / node tools. Enabled defaults to true so
-// upgrades keep it for existing configs; first-run scaffolds write enabled =
-// false so only brand-new users start without it. AutoInstall (default true)
-// lets reasonix fetch the CodeGraph runtime into its cache when CodeGraph is
-// enabled but missing; set false to require an explicit `reasonix codegraph
-// install` (e.g. for air-gapped or headless runs). Path overrides binary
-// resolution; empty resolves the cache, then a `codegraph` on PATH, then a
-// bundle beside the executable. Tier matches ordinary MCP servers (lazy,
-// background, eager); when unset it preserves the historical warm→eager /
-// cold→background startup.
-type CodegraphConfig struct {
-	Enabled     bool   `toml:"enabled"`
-	AutoInstall bool   `toml:"auto_install"`
-	Path        string `toml:"path"`
-	Tier        string `toml:"tier"`
-}
-
-func (c CodegraphConfig) ShouldAutoStart() bool {
-	return c.Enabled
-}
-
-func (c CodegraphConfig) ResolvedTier() string {
-	return resolvedMCPTier(c.Tier)
-}
-
 // NetworkConfig controls ordinary outbound HTTP traffic such as model providers,
-// wallet-balance lookups, updater checks, and CodeGraph downloads. It intentionally
+// wallet-balance lookups, and updater checks. It intentionally
 // does not apply to web_fetch, which keeps its own SSRF-guarded dialer.
 type NetworkConfig struct {
 	// ProxyMode is "auto" (default; environment proxy for now), "env", "custom",
@@ -741,11 +713,6 @@ func Default() *Config {
 		// builds/downloads work. Set bash = "off" to disable. Network=true here
 		// so an absent [sandbox] in a user's file keeps egress (zero value would
 		// wrongly deny it).
-		// CodeGraph code-intelligence defaults on so existing configs (which never
-		// wrote a [codegraph] section) keep it after an upgrade. First-run scaffolds
-		// write enabled = false instead, so only brand-new users start without it.
-		// AutoInstall fetches the runtime into the cache when enabled and missing.
-		Codegraph: CodegraphConfig{Enabled: true, AutoInstall: true},
 		// LSP tools on by default, but dormant until a language server is on PATH;
 		// a missing server yields an install hint rather than an error.
 		LSP:              LSPConfig{Enabled: true},
@@ -788,10 +755,8 @@ func LoadForRoot(root string) (*Config, error) {
 		tomlSources = append(tomlSources, uc)
 	}
 	tomlSources = append(tomlSources, projectTOML)
-	sawConfigFile := false
 	for _, path := range tomlSources {
 		if _, err := os.Stat(path); err == nil {
-			sawConfigFile = true
 			if err := migrateLegacyMCPTiersFile(path); err != nil {
 				slog.Warn("config: legacy mcp tier migration failed", "path", path, "err", err)
 			}
@@ -831,12 +796,6 @@ func LoadForRoot(root string) (*Config, error) {
 	normalizeLegacyMCPTiers(cfg)
 	normalizeEffortConfig(cfg)
 	backfillDeepSeekPro(cfg)
-	// First run (no config file anywhere): keep CodeGraph off until the user opts
-	// in. An existing config — even one without a [codegraph] section — keeps the
-	// built-in default (on), so an upgrade never silently drops code intelligence.
-	if !sawConfigFile {
-		cfg.Codegraph.Enabled = false
-	}
 	return cfg, nil
 }
 
@@ -965,7 +924,6 @@ func normalizeLegacyMCPTiers(c *Config) {
 	if c == nil {
 		return
 	}
-	c.Codegraph.Tier = ""
 	for i := range c.Plugins {
 		c.Plugins[i].Tier = ""
 	}
@@ -996,7 +954,7 @@ func stripLegacyMCPTierLines(raw string) (string, bool) {
 		if header := tomlSectionHeader(line); header != "" {
 			section = header
 		}
-		if (section == "codegraph" || section == "plugins") && isTOMLKeyAssignment(line, "tier") {
+		if section == "plugins" && isTOMLKeyAssignment(line, "tier") {
 			changed = true
 			continue
 		}
@@ -1014,8 +972,6 @@ func tomlSectionHeader(line string) string {
 		trimmed = strings.TrimSpace(trimmed[:i])
 	}
 	switch trimmed {
-	case "[codegraph]":
-		return "codegraph"
 	case "[[plugins]]":
 		return "plugins"
 	default:

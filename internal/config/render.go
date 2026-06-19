@@ -258,17 +258,7 @@ func RenderTOMLForScope(c *Config, scope RenderScope) string {
 	}
 	fmt.Fprintf(&b, "bash_timeout_seconds = %d   # foreground safety cap; set 0 for no tool-local cap\n\n", c.BashTimeoutSeconds())
 
-	b.WriteString("[codegraph]\n")
-	fmt.Fprintf(&b, "enabled      = %v   # built-in MCP server; off by default for first-run sessions\n", c.Codegraph.Enabled)
-	fmt.Fprintf(&b, "auto_install = %v   # fetch the runtime when CodeGraph is enabled but missing\n", c.Codegraph.AutoInstall)
-	if c.Codegraph.Path != "" {
-		fmt.Fprintf(&b, "path         = %q   # optional launcher override\n", c.Codegraph.Path)
-	} else {
-		b.WriteString("# path       = \"\"   # empty = cache, then PATH, then a bundle beside reasonix\n")
-	}
-	b.WriteString("\n")
-
-	b.WriteString("[skills]\n")
+	b.WriteString("\n\n[skills]\n")
 	if len(c.Skills.Paths) > 0 {
 		fmt.Fprintf(&b, "paths = %s   # extra custom skill roots\n", renderStringArray(c.Skills.Paths))
 	} else {

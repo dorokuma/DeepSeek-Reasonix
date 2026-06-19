@@ -160,7 +160,7 @@ type chatTUI struct {
 	shellTranscriptIdx map[string]int
 	// toolStreamStart / toolStreamFrame drive the "⎿ working · Ns" line shown
 	// under a dispatched tool that hasn't produced output yet, so a slow tool
-	// (e.g. codegraph_context) reads as making progress rather than frozen.
+	// (e.g. context) reads as making progress rather than frozen.
 	toolStreamStart time.Time
 	toolStreamFrame int
 	transcriptDirty bool

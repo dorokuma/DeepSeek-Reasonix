@@ -12,7 +12,7 @@ changed and how to move over.
 | Branch | [`v1`](https://github.com/esengine/DeepSeek-Reasonix/tree/v1) (maintenance only) | `main-v2` (default, active) |
 | Versions | `0.x` (up to v0.54.x) | `1.0.0`+ |
 | Install | `npm i -g reasonix` (the `latest` tag, stays on `0.x`) | `npm i -g reasonix@next` — `latest` deliberately stays on `0.x`; or a release archive / `go build` |
-| Code intelligence | embedding semantic search | bundled [CodeGraph](https://github.com/colbymchenry/codegraph) (symbol/call graph) |
+| Code intelligence | tree-sitter symbol/call graph |
 
 "v1" and "v2" are **codebase generations**, not semver: the v1 line never reached
 1.0, so the Go rewrite takes the `1.x` major.
@@ -74,11 +74,8 @@ and DeepSeek prefix-cache–oriented design.
 
 ## What's different
 
-- **Code intelligence**: embedding semantic search is replaced by **CodeGraph**
-  (`codegraph_*` tools) — a tree-sitter symbol/call graph, no embedding service or
-  API cost. New (first-run) configs start with it off; existing configs keep it
-  on across upgrades. Toggle `[codegraph]` in the MCP manager or config, and set
-  `[codegraph].tier` to choose lazy, background, or eager startup.
+- **Code intelligence**: tree-sitter symbol/call graph tools replace embedding
+  semantic search — no embedding service or API cost.
 - **No web dashboard** — the v2 line is terminal + desktop (Wails), by design.
 - Some granular v1 tools are intentionally consolidated (e.g. file-management ops
   go through `bash`); a few v1 tools are not yet ported (tracked on Discussions).

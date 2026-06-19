@@ -23,10 +23,6 @@ TypeScript line; a new codebase that becomes the default (`main-v2`).
   (`internal/hook`), symlink-aware and slash-integrated.
 - **MCP client**: connect external servers over stdio / Streamable HTTP; reads
   `[[plugins]]` and a Claude-Code `.mcp.json`.
-- **Code intelligence via CodeGraph**: a tree-sitter symbol/call graph
-  (`codegraph_*` tools) replaces embedding semantic search — no embedding service
-  or API cost. Fetched into a local cache on first use (or `reasonix codegraph
-  install`) and indexed in the background, so installs and startup stay fast.
 - **Memory**: `REASONIX.md` hierarchy + auto-memory, folded into the cache-stable
   prefix.
 - **ACP** (`reasonix acp`) and an HTTP/SSE server frontend; desktop app (Wails).
@@ -43,8 +39,5 @@ TypeScript line; a new codebase that becomes the default (`main-v2`).
 
 - Versions: the legacy TypeScript line stays in `0.x`; the Go line starts at
   `1.0.0`. See [docs/MIGRATING.md](docs/MIGRATING.md).
-- Release archives ship a bare binary; CodeGraph is fetched on first use. Windows
-  support for the fetched runtime is unverified — install `codegraph` on PATH if
-  the auto-fetch doesn't resolve there.
-
+- Release archives ship a bare binary.
 [1.0.0]: https://github.com/esengine/DeepSeek-Reasonix/releases/tag/v1.0.0

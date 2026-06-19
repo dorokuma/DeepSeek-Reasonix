@@ -39,7 +39,7 @@ type Spec struct {
 	Headers map[string]string
 	// Dir, when set, is the working directory of a stdio subprocess. Empty means
 	// inherit reasonix's cwd (the default for user-configured plugins). It exists
-	// for cwd-aware servers like CodeGraph, which detect the project from the
+	// for cwd-aware servers, which detect the project from the
 	// directory they are launched in — they must be pinned to the project root.
 	Dir string
 	// Stderr optionally mirrors plugin subprocess stderr output. Stderr is always
@@ -51,9 +51,9 @@ type Spec struct {
 	// with known semantics; user-configured plugins should rely on MCP metadata.
 	ReadOnlyToolNames map[string]bool
 	// StripRawPrefix, when non-empty, removes this prefix from each MCP tool's
-	// raw name before namespacing. For example, StripRawPrefix="codegraph_" turns
-	// "codegraph_context" into "context", yielding "mcp__codegraph__context"
-	// instead of the redundant "mcp__codegraph__codegraph_context". The original
+	// raw name before namespacing. For example, StripRawPrefix="myplugin_" turns
+	// "myplugin_search" into "search", yielding "mcp__myplugin__search"
+	// instead of the redundant "mcp__myplugin__myplugin_search". The original
 	// raw name is preserved for MCP protocol calls.
 	StripRawPrefix string
 }
@@ -657,7 +657,7 @@ func (h *Host) addConnected(ctx context.Context, s Spec) ([]tool.Tool, error) {
 		}()
 	}
 	// Auto-restart monitoring: when the subprocess exits unexpectedly
-	// (e.g. CodeGraph daemon idle timeout), restart it transparently so the
+	// (e.g. daemon idle timeout), restart it transparently so the
 	// user never sees a "failed" status that needs manual reconnect.
 	// Uses exponential backoff (2s, 4s, 8s, 16s, 32s, capped at 32s) and
 	// stops after maxRetries consecutive failures to avoid infinite loops.

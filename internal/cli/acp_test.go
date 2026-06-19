@@ -75,9 +75,6 @@ func TestACPFactoryLoadsSessionCwdProjectConfig(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(project, "reasonix.toml"), []byte(`
 default_model = "local"
 
-[codegraph]
-enabled = false
-
 [[providers]]
 name = "local"
 kind = "acp-test-provider"

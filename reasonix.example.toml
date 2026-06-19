@@ -108,17 +108,6 @@ effort         = "high"
 enabled = []   # empty = all built-in tools
 bash_timeout_seconds = 120   # foreground safety cap; set 0 for no tool-local cap
 
-# CodeGraph code intelligence (symbol/call-graph search via tree-sitter + SQLite),
-# a built-in MCP server giving the agent codegraph_* search / context / explore /
-# trace / node tools. Off by default for first-run sessions. Once enabled, the
-# runtime is fetched into a per-version cache when missing (auto_install);
-# .codegraph/ is then initialised (fast) and CodeGraph's daemon indexes in the
-# background once enabled.
-# [codegraph]
-# enabled      = false
-# auto_install = true
-# path         = ""   # empty = cache, then PATH, then a bundle beside reasonix
-
 # Skills are invokable playbooks (SKILL.md / <name>.md with frontmatter), found
 # under .reasonix/skills, .agents/skills, .agent/skills, .claude/skills (project)
 # and the same dirs under ~ (global). Built-ins (explore/research/review/security-review/test)

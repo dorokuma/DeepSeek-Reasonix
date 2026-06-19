@@ -87,9 +87,6 @@ func Run(args []string, version string) int {
 	case "mcp":
 		configureCLIThemeFromConfigNoProbe()
 		return mcpCommand(rest)
-	case "codegraph":
-		configureCLIThemeFromConfigNoProbe()
-		return codegraphCommand(rest)
 	case "doctor":
 		configureCLIThemeFromConfigNoProbe()
 		return doctorCommand(rest, version)
@@ -111,7 +108,7 @@ func Run(args []string, version string) int {
 
 func shouldMigrateLegacyConfigForCLI(cmd string) bool {
 	switch cmd {
-	case "", "run", "chat", "code", "serve", "setup", "config", "init", "acp", "mcp", "codegraph", "doctor":
+	case "", "run", "chat", "code", "serve", "setup", "config", "init", "acp", "mcp", "doctor":
 		return true
 	default:
 		return false
@@ -694,9 +691,6 @@ func confirmReconfigureExistingConfig(path string, in *bufio.Scanner, w io.Write
 
 func writeDefaultConfig(path string) int {
 	c := config.Default()
-	// A freshly scaffolded config starts without the codegraph daemon; existing
-	// configs (which never wrote [codegraph]) keep it on via the built-in default.
-	c.Codegraph.Enabled = false
 	if err := c.SaveTo(path); err != nil {
 		fmt.Fprintln(os.Stderr, i18n.M.WriteConfigErr, err)
 		return 1
@@ -731,9 +725,6 @@ func interactiveSetup(configPath, envPath string) int {
 	cfg := config.LoadForEdit(configPath)
 	prevDefault := cfg.DefaultModel
 	if isNewConfig {
-		// Brand-new user: start without the codegraph daemon. A reconfigure of an
-		// existing config keeps whatever the user already had.
-		cfg.Codegraph.Enabled = false
 	}
 
 	lang, err := selectLanguage()

@@ -39,7 +39,7 @@ func TestKillTreeUnblocksWaitOnSurvivingGrandchild(t *testing.T) {
 
 // TrackTree must create a Job Object for a started process, and KillTracked
 // must take the whole tracked tree down (the job reaps even descendants a plain
-// taskkill /T would miss — see the codegraph daemon leak this guards against).
+// taskkill /T would miss — see the daemon leak this guards against).
 func TestKillTrackedReapsTrackedTree(t *testing.T) {
 	cmd := exec.Command("cmd", "/c", "ping", "-n", "30", "127.0.0.1")
 	HideWindow(cmd)

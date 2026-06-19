@@ -116,9 +116,6 @@ jobs:
 
           [permissions]
           mode = "allow"
-
-          [codegraph]
-          enabled = false
           EOF
           cp /tmp/reasonix-e2e.toml ~/.config/reasonix/config.toml
           cp /tmp/reasonix-e2e.toml ./reasonix.toml

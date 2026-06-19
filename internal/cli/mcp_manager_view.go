@@ -263,7 +263,7 @@ func mcpActionsFor(v mcpServerView, configPath string) []mcpActionItem {
 	}
 	if v.Status != "disabled" {
 		label := "Disable for this session"
-		if v.BuiltIn && v.Name == "codegraph" {
+		if v.BuiltIn {
 			label = "Disable"
 		}
 		out = append(out, mcpActionItem{mcpActionDisable, label})
@@ -281,7 +281,7 @@ func appendMCPFailureSecondaryActions(out []mcpActionItem, v mcpServerView, conf
 	out = appendMCPConfigActions(out, v, configPath)
 	if v.Status != "disabled" {
 		label := "Disable for this session"
-		if v.BuiltIn && v.Name == "codegraph" {
+		if v.BuiltIn {
 			label = "Disable"
 		}
 		out = append(out, mcpActionItem{mcpActionDisable, label})

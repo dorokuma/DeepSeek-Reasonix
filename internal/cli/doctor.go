@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"log/slog"
@@ -58,6 +59,19 @@ func refreshModelLists() *config.Config {
 		}
 		if err := p.RefreshModels(ctx); err != nil {
 			slog.Debug("refreshModelLists: provider refresh failed", "provider", p.Name, "error", err)
+		}
+	}
+	// Apply OpenCode Go whitelist filtering: keep only models documented on the
+	// official docs page. Same as boot.go does for the runtime config.
+	for i := range cfg.Providers {
+		if strings.Contains(cfg.Providers[i].BaseURL, "opencode.ai/zen/go") {
+			scraped, scrapeErr := config.ScrapeOpenCodePricing(ctx)
+			if scrapeErr != nil {
+				slog.Debug("doctor: opencode pricing scrape failed", "error", scrapeErr)
+			} else {
+				config.ApplyOpenCodePricing(cfg, scraped)
+			}
+			break
 		}
 	}
 	return cfg

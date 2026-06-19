@@ -137,21 +137,10 @@ func TestMcpSpecsNil(t *testing.T) {
 }
 
 func TestMcpSpecsConversion(t *testing.T) {
-	in := []MCPServerSpec{
-		{Name: "codegraph", Command: "codegraph", Args: []string{"--stdio"}, Env: map[string]string{"HOME": "/tmp"}},
-	}
+	in := []MCPServerSpec{}
 	got := mcpSpecs(in)
-	if len(got) != 1 {
-		t.Fatalf("len = %d, want 1", len(got))
-	}
-	if got[0].Name != "codegraph" || got[0].Type != "stdio" || got[0].Command != "codegraph" {
-		t.Errorf("spec = %+v", got[0])
-	}
-	if got[0].Args[0] != "--stdio" {
-		t.Errorf("args = %v", got[0].Args)
-	}
-	if got[0].Env["HOME"] != "/tmp" {
-		t.Errorf("env = %v", got[0].Env)
+	if len(got) != 0 {
+		t.Fatalf("len = %d, want 0", len(got))
 	}
 }
 

@@ -30,7 +30,6 @@ import (
 	"reasonix/internal/agent"
 	"reasonix/internal/billing"
 	"reasonix/internal/checkpoint"
-	"reasonix/internal/codegraph"
 	"reasonix/internal/command"
 	"reasonix/internal/config"
 	"reasonix/internal/ctxmode"
@@ -1632,41 +1631,7 @@ func (c *Controller) ConnectConfiguredMCPServer(name string) (int, error) {
 			return c.connectMCPServer(p)
 		}
 	}
-	if name == "codegraph" {
-		return c.connectCodegraphMCPServer(cfg)
-	}
 	return 0, fmt.Errorf("no configured MCP server named %q", name)
-}
-
-// ConnectCodegraphMCPServer connects the built-in CodeGraph server using an
-// already-resolved config. Desktop uses this after saving user-level settings so
-// a stale project config cannot override the just-applied choice.
-func (c *Controller) ConnectCodegraphMCPServer(cfg *config.Config) (int, error) {
-	return c.connectCodegraphMCPServer(cfg)
-}
-
-func (c *Controller) connectCodegraphMCPServer(cfg *config.Config) (int, error) {
-	if !cfg.Codegraph.Enabled {
-		return 0, fmt.Errorf("codegraph is disabled in config")
-	}
-	bin, ok := codegraph.Resolve(cfg.Codegraph.Path)
-	if !ok {
-		return 0, fmt.Errorf("codegraph is not installed")
-	}
-	cwd, err := os.Getwd()
-	if err != nil {
-		return 0, err
-	}
-	if err := codegraph.EnsureInit(c.pluginCtx, bin, cwd); err != nil {
-		return 0, fmt.Errorf("codegraph init: %w", err)
-	}
-	return c.connectMCPSpec(plugin.Spec{
-		Name:              "codegraph",
-		Command:           bin,
-		Args:              []string{"serve", "--mcp"},
-		Dir:               cwd,
-		ReadOnlyToolNames: codegraph.ReadOnlyToolNames(),
-	})
 }
 
 // RemoveMCPServer disconnects a live MCP server — its tools vanish from the next
