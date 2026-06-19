@@ -1403,6 +1403,11 @@ func (c *Controller) AllSkills() []skill.Skill {
 	return c.skills
 }
 
+// Config returns the boot-time configuration, or nil.
+func (c *Controller) Config() *config.Config {
+	return c.cfg
+}
+
 // DisabledSkills returns all discoverable skills that are disabled in config.
 func (c *Controller) DisabledSkills() []skill.Skill {
 	cfg, err := config.Load()

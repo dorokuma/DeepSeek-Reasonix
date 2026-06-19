@@ -152,26 +152,35 @@ func configureCLIThemeFromConfigNoProbe() {
 // the agent's typed event stream — runAgent passes a TextSink that renders to
 // stdout, the TUI passes an event-channel sink so events become tea.Msgs.
 func setup(ctx context.Context, modelName string, maxStepsOverride int, requireKey bool, sink event.Sink, configRoot string) (*control.Controller, error) {
-	return boot.Build(ctx, boot.Options{
+	ctrl, err := boot.Build(ctx, boot.Options{
 		Model:       modelName,
 		MaxSteps:    maxStepsOverride,
 		RequireKey:  requireKey,
 		Sink:        sink,
 		ConfigRoot:  configRoot,
 	})
+	if err == nil {
+		// Capture the boot-time config for model listing and completion.
+		liveCfg = ctrl.Config()
+	}
+	return ctrl, err
 }
 
 // setupQuiet is like setup but suppresses plugin subprocess stderr output.
 // Used during model switch inside a bubbletea session to prevent plugin logs
 // from corrupting the TUI's terminal raw mode.
 func setupQuiet(ctx context.Context, modelName string, maxStepsOverride int, requireKey bool, sink event.Sink) (*control.Controller, error) {
-	return boot.Build(ctx, boot.Options{
+	ctrl, err := boot.Build(ctx, boot.Options{
 		Model:      modelName,
 		MaxSteps:   maxStepsOverride,
 		RequireKey: requireKey,
 		Sink:       sink,
 		Stderr:     io.Discard,
 	})
+	if err == nil {
+		liveCfg = ctrl.Config()
+	}
+	return ctrl, err
 }
 
 // chdirTo honours --dir: it switches the working directory before anything reads
@@ -189,6 +198,11 @@ func chdirTo(dir string) int {
 }
 
 var newNotificationSender = func() notify.Sender { return notify.NewPlatformSender() }
+
+// liveCfg is the boot-time configuration with live-fetched model lists, shared
+// across model list rendering, slash completion, and the /model command so they
+// all see the provider's current model list instead of reloading from disk.
+var liveCfg *config.Config
 
 // withNotifications adds system notifications to CLI event streams when configured.
 func withNotifications(sink event.Sink, cfg *config.Config) event.Sink {

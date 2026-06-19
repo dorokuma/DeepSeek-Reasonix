@@ -125,9 +125,13 @@ func (m *chatTUI) persistModel(ref string) {
 
 // modelRefs returns the configured provider/model refs for slash completion.
 func modelRefs() []string {
-	cfg, err := config.Load()
-	if err != nil {
-		return nil
+	cfg := liveCfg
+	if cfg == nil {
+		var err error
+		cfg, err = config.Load()
+		if err != nil {
+			return nil
+		}
 	}
 	var out []string
 	for i := range cfg.Providers {
