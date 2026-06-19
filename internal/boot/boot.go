@@ -142,6 +142,18 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 		wg.Wait()
 	}
 
+	// Auto-populate per-model pricing from external pricing URL.
+	// Runs after the live refresh so live-fetched model IDs are also covered.
+	var extPricing map[string]map[string]provider.Pricing
+	if cfg.PricingURL != "" {
+		var err error
+		extPricing, err = config.FetchPricingFromURL(cfg.PricingURL)
+		if err != nil {
+			slog.Debug("pricing URL fetch failed", "url", cfg.PricingURL, "error", err)
+		}
+	}
+	config.ApplyOpenCodePricing(cfg, extPricing)
+
 	modelName := opts.Model
 	if modelName == "" {
 		modelName = cfg.DefaultModel

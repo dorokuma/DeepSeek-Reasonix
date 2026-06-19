@@ -55,6 +55,16 @@ type Config struct {
 	Codegraph     CodegraphConfig     `toml:"codegraph"`
 	Statusline    StatuslineConfig    `toml:"statusline"`
 	LSP           LSPConfig           `toml:"lsp"`
+	// UsdCnyRate is the exchange rate used to convert OpenCode Go USD pricing
+	// to CNY for display and cost calculation. 0 means use the built-in default
+	// (7.0). Only meaningful when a provider with usd-denominated pricing (e.g.
+	// OpenCode Go) is configured.
+	UsdCnyRate float64 `toml:"usd_cny_rate"`
+	// PricingURL points to a JSON file (local or remote) that maps provider
+	// names to model pricing. At startup the system fetches this and populates
+	// ModelPrices on matching providers, so pricing can be updated without a
+	// code release. Format: see config/opencode.go. Empty = no auto-pricing.
+	PricingURL string `toml:"pricing_url"`
 }
 
 // UIConfig controls CLI presentation-only settings. Desktop appearance is kept in
@@ -496,6 +506,12 @@ type ProviderEntry struct {
 	BalanceURL    string            `toml:"balance_url"` // optional; a provider-specific wallet-balance endpoint (DeepSeek: https://api.deepseek.com/user/balance). Empty = no balance readout.
 	ContextWindow int               `toml:"context_window"`
 	Price         *provider.Pricing `toml:"price"`
+	// ModelPrices holds per-model pricing overrides. When non-nil and the
+	// resolved model has an entry here, ResolveModel copies it into Price so
+	// the executor uses model-specific rates rather than the shared Price.
+	// Built-in defaults have no ModelPrices; OpenCode Go providers get theirs
+	// auto-populated from the upstream pricing table.
+	ModelPrices map[string]provider.Pricing `toml:"model_prices,omitempty"`
 	// Thinking / Effort are provider-kind-specific knobs forwarded to the provider
 	// via Config.Extra. The anthropic provider reads Thinking="adaptive" to enable
 	// extended thinking and Effort ("low".."max") to tune depth. The
@@ -737,6 +753,7 @@ func Default() *Config {
 		// a missing server yields an install hint rather than an error.
 		LSP:              LSPConfig{Enabled: true},
 		Network:           NetworkConfig{ProxyMode: netclient.ModeAuto},
+		UsdCnyRate:        7.0,
 		Providers: []ProviderEntry{
 			{Name: "deepseek-flash", Kind: "openai", BaseURL: "https://api.deepseek.com", Model: "deepseek-v4-flash", APIKeyEnv: "DEEPSEEK_API_KEY", BalanceURL: "https://api.deepseek.com/user/balance", ContextWindow: 1_000_000, Price: &provider.Pricing{CacheHit: 0.02, Input: 1, Output: 2, Currency: "¥"}},
 			{Name: "deepseek-pro", Kind: "openai", BaseURL: "https://api.deepseek.com", Model: "deepseek-v4-pro", APIKeyEnv: "DEEPSEEK_API_KEY", BalanceURL: "https://api.deepseek.com/user/balance", ContextWindow: 1_000_000, Price: &provider.Pricing{CacheHit: 0.025, Input: 3, Output: 6, Currency: "¥"}},
@@ -1197,26 +1214,33 @@ func (c *Config) ResolveModel(ref string) (*ProviderEntry, bool) {
 	// "provider/model"
 	if prov, model, ok := strings.Cut(ref, "/"); ok {
 		if e, found := c.Provider(prov); found && e.HasModel(model) {
-			cp := *e
-			cp.Model = model
-			return &cp, true
+			return e.resolveWithPrice(model), true
 		}
 	}
 	// a provider name → its default model
 	if e, found := c.Provider(ref); found {
-		cp := *e
-		cp.Model = e.DefaultModel()
-		return &cp, true
+		return e.resolveWithPrice(e.DefaultModel()), true
 	}
 	// a bare model name → the provider that lists it
 	for i := range c.Providers {
 		if c.Providers[i].HasModel(ref) {
-			cp := c.Providers[i]
-			cp.Model = ref
-			return &cp, true
+			return c.Providers[i].resolveWithPrice(ref), true
 		}
 	}
 	return nil, false
+}
+
+// resolveWithPrice returns a copy of the entry with Model set and Price
+// overridden from ModelPrices when a per-model price exists for that model.
+func (e ProviderEntry) resolveWithPrice(model string) *ProviderEntry {
+	cp := e
+	cp.Model = model
+	if cp.ModelPrices != nil {
+		if mp, ok := cp.ModelPrices[model]; ok {
+			cp.Price = &mp
+		}
+	}
+	return &cp
 }
 
 // APIKey resolves the entry's API key from its api_key_env.
