@@ -22462,6 +22462,441 @@ a[href] {
   grid-template-rows: minmax(0, 1fr);
 }
 
+.app--creation .settings-modal-backdrop,
+:root[data-theme-style] .app--creation .settings-modal-backdrop {
+  padding: clamp(24px, 5vh, 48px) clamp(32px, 6vw, 72px);
+  background: rgba(18, 20, 26, 0.16);
+  backdrop-filter: blur(3px);
+  -webkit-backdrop-filter: blur(3px);
+}
+
+.app--creation .settings-modal,
+:root[data-theme-style] .app--creation .settings-modal {
+  width: min(1120px, calc(100vw - 128px));
+  height: min(760px, calc(100vh - 96px));
+  border-color: color-mix(in srgb, var(--fg-faint) 18%, transparent);
+  border-radius: 18px;
+  background: color-mix(in srgb, var(--bg-elev) 78%, transparent);
+  backdrop-filter: blur(18px) saturate(1.08);
+  -webkit-backdrop-filter: blur(18px) saturate(1.08);
+  box-shadow: 0 24px 72px rgba(0, 0, 0, 0.18), 0 2px 8px rgba(0, 0, 0, 0.06);
+}
+
+.app--creation .settings-modal__head,
+:root[data-theme-style] .app--creation .settings-modal__head {
+  min-height: 68px;
+  padding: 18px 24px 14px;
+  border-bottom-color: color-mix(in srgb, var(--border-soft) 70%, transparent);
+  background: transparent;
+}
+
+.app--creation .settings-modal__title,
+:root[data-theme-style] .app--creation .settings-modal__title {
+  font-size: 15px;
+  font-weight: 640;
+}
+
+.app--creation .settings-modal .modal-close-button,
+:root[data-theme-style] .app--creation .settings-modal .modal-close-button {
+  width: 34px;
+  height: 34px;
+  border-radius: 999px;
+  color: color-mix(in srgb, var(--fg-faint) 82%, transparent);
+}
+
+.app--creation .settings-center,
+:root[data-theme-style] .app--creation .settings-center {
+  grid-template-columns: 210px minmax(0, 1fr);
+}
+
+.app--creation .settings-center__nav,
+:root[data-theme-style] .app--creation .settings-center__nav {
+  padding: 14px 12px 18px;
+  border-right-color: color-mix(in srgb, var(--border-soft) 64%, transparent);
+  background: color-mix(in srgb, var(--bg-elev) 48%, transparent);
+  scrollbar-color: color-mix(in srgb, var(--fg-faint) 24%, transparent) transparent;
+}
+
+.app--creation .settings-center__nav::-webkit-scrollbar,
+.app--creation .settings-center__content::-webkit-scrollbar,
+:root[data-theme-style] .app--creation .settings-center__nav::-webkit-scrollbar,
+:root[data-theme-style] .app--creation .settings-center__content::-webkit-scrollbar {
+  width: 7px;
+  height: 7px;
+}
+
+.app--creation .settings-center__nav::-webkit-scrollbar-track,
+.app--creation .settings-center__content::-webkit-scrollbar-track,
+:root[data-theme-style] .app--creation .settings-center__nav::-webkit-scrollbar-track,
+:root[data-theme-style] .app--creation .settings-center__content::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.app--creation .settings-center__nav::-webkit-scrollbar-thumb,
+.app--creation .settings-center__content::-webkit-scrollbar-thumb,
+:root[data-theme-style] .app--creation .settings-center__nav::-webkit-scrollbar-thumb,
+:root[data-theme-style] .app--creation .settings-center__content::-webkit-scrollbar-thumb {
+  border: 2px solid transparent;
+  background: color-mix(in srgb, var(--fg-faint) 26%, transparent);
+  background-clip: padding-box;
+}
+
+.app--creation .settings-center__navitem,
+:root[data-theme-style] .app--creation .settings-center__navitem {
+  min-height: 50px;
+  padding: 8px 12px 8px 14px;
+  border-radius: 12px;
+  color: color-mix(in srgb, var(--fg-dim) 88%, transparent);
+}
+
+.app--creation .settings-center__navitem:hover,
+:root[data-theme-style] .app--creation .settings-center__navitem:hover {
+  background: color-mix(in srgb, var(--fg-faint) 7%, transparent);
+  transform: none;
+}
+
+.app--creation .settings-center__navitem--active,
+:root[data-theme-style] .app--creation .settings-center__navitem--active {
+  background: transparent;
+  color: var(--fg);
+  box-shadow: none;
+}
+
+.app--creation .settings-center__navitem--active:hover,
+:root[data-theme-style] .app--creation .settings-center__navitem--active:hover {
+  background: transparent;
+}
+
+.app--creation .settings-center__navitem--active::before,
+:root[data-theme-style] .app--creation .settings-center__navitem--active::before {
+  top: 12px;
+  bottom: 12px;
+  left: 0;
+  width: 3px;
+  background: color-mix(in srgb, var(--accent) 86%, var(--fg));
+}
+
+.app--creation .settings-center__navitem span,
+:root[data-theme-style] .app--creation .settings-center__navitem span {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.app--creation .settings-center__navitem small,
+:root[data-theme-style] .app--creation .settings-center__navitem small {
+  color: color-mix(in srgb, var(--fg-dim) 76%, transparent);
+  font-size: 10px;
+  line-height: 1.25;
+}
+
+.app--creation .settings-center__content,
+:root[data-theme-style] .app--creation .settings-center__content {
+  padding: 34px 44px 40px;
+  background: color-mix(in srgb, var(--chat-bg) 42%, transparent);
+  scrollbar-color: color-mix(in srgb, var(--fg-faint) 24%, transparent) transparent;
+}
+
+.app--creation .settings-page--form,
+:root[data-theme-style] .app--creation .settings-page--form {
+  max-width: 760px;
+}
+
+.app--creation .settings-page--manager,
+:root[data-theme-style] .app--creation .settings-page--manager {
+  max-width: 940px;
+}
+
+.app--creation .settings-page__header,
+:root[data-theme-style] .app--creation .settings-page__header {
+  display: none;
+}
+
+.app--creation .settings-page__title,
+:root[data-theme-style] .app--creation .settings-page__title {
+  font-size: 24px;
+  font-weight: 760;
+  letter-spacing: -0.02em;
+}
+
+.app--creation .settings-page__desc,
+:root[data-theme-style] .app--creation .settings-page__desc {
+  color: color-mix(in srgb, var(--fg-dim) 84%, transparent);
+  font-size: 11px;
+}
+
+.app--creation .settings-section,
+.app--creation .settings-page--manager .mem-section,
+:root[data-theme-style] .app--creation .settings-section,
+:root[data-theme-style] .app--creation .settings-page--manager .mem-section {
+  margin-bottom: 18px;
+  padding: 8px 22px;
+  border-color: color-mix(in srgb, var(--border-soft) 88%, transparent);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--bg-elev) 64%, transparent);
+  backdrop-filter: blur(12px) saturate(1.04);
+  -webkit-backdrop-filter: blur(12px) saturate(1.04);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+}
+
+.app--creation .settings-section__head,
+.app--creation .settings-page--manager .mem-section__head,
+:root[data-theme-style] .app--creation .settings-section__head,
+:root[data-theme-style] .app--creation .settings-page--manager .mem-section__head {
+  padding: 8px 0 4px;
+  margin-bottom: 6px;
+}
+
+.app--creation .settings-section__title,
+.app--creation .settings-page--manager .mem-section__title,
+:root[data-theme-style] .app--creation .settings-section__title,
+:root[data-theme-style] .app--creation .settings-page--manager .mem-section__title {
+  font-size: 12px;
+  font-weight: 620;
+}
+
+.app--creation .settings-section__desc,
+:root[data-theme-style] .app--creation .settings-section__desc {
+  font-size: 10px;
+  line-height: 1.35;
+}
+
+.app--creation .settings-page--appearance .settings-section__head,
+:root[data-theme-style] .app--creation .settings-page--appearance .settings-section__head {
+  display: none;
+}
+
+.app--creation .settings-field,
+:root[data-theme-style] .app--creation .settings-field {
+  grid-template-columns: minmax(170px, 230px) minmax(300px, 1fr);
+  gap: 22px;
+  padding: 12px 0;
+  border-top-color: color-mix(in srgb, var(--border-soft) 72%, transparent);
+}
+
+.app--creation .settings-field__label,
+:root[data-theme-style] .app--creation .settings-field__label {
+  font-size: 11.5px;
+  font-weight: 600;
+}
+
+.app--creation .settings-field__hint,
+:root[data-theme-style] .app--creation .settings-field__hint {
+  color: color-mix(in srgb, var(--fg-dim) 78%, transparent);
+  font-size: 10px;
+  line-height: 1.35;
+}
+
+.app--creation .set-seg,
+:root[data-theme-style] .app--creation .set-seg {
+  border-color: color-mix(in srgb, var(--border-soft) 86%, transparent);
+  border-radius: 11px;
+  background: color-mix(in srgb, var(--fg-faint) 7%, transparent);
+}
+
+.app--creation .set-seg__btn,
+:root[data-theme-style] .app--creation .set-seg__btn {
+  min-height: 30px;
+  padding: 5px 13px;
+  border-radius: 9px;
+  color: color-mix(in srgb, var(--fg-dim) 86%, transparent);
+  font-size: 11.5px;
+}
+
+.app--creation .set-seg__btn--on,
+:root[data-theme-style] .app--creation .set-seg__btn--on {
+  background: color-mix(in srgb, var(--bg-elev) 72%, transparent);
+  color: var(--accent);
+  font-weight: 620;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
+}
+
+.app--creation .theme-card-grid,
+:root[data-theme-style] .app--creation .theme-card-grid {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr));
+  gap: 8px;
+}
+
+.app--creation .theme-card,
+:root[data-theme-style] .app--creation .theme-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+  padding: 8px 11px 8px 13px;
+  border-width: 1px;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--bg-elev) 42%, transparent);
+  backdrop-filter: blur(10px) saturate(1.04);
+  -webkit-backdrop-filter: blur(10px) saturate(1.04);
+}
+
+.app--creation .theme-card:hover,
+:root[data-theme-style] .app--creation .theme-card:hover {
+  transform: none;
+}
+
+.app--creation .theme-card--on,
+:root[data-theme-style] .app--creation .theme-card--on {
+  border-color: color-mix(in srgb, var(--accent) 54%, var(--border-soft));
+  background: color-mix(in srgb, var(--accent) 5%, transparent);
+  box-shadow: none;
+}
+
+.app--creation .theme-card--on::before,
+:root[data-theme-style] .app--creation .theme-card--on::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 10px;
+  bottom: 10px;
+  width: 2px;
+  border-radius: 0 2px 2px 0;
+  background: var(--accent);
+}
+
+.app--creation .theme-card__head,
+:root[data-theme-style] .app--creation .theme-card__head,
+.app--creation .theme-card--on .theme-card__head,
+:root[data-theme-style] .app--creation .theme-card--on .theme-card__head {
+  align-items: center;
+  justify-content: flex-start;
+  flex-wrap: nowrap;
+  gap: 5px;
+  padding-right: 0;
+}
+
+.app--creation .theme-card__name,
+:root[data-theme-style] .app--creation .theme-card__name {
+  flex: 0 1 auto;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.app--creation .theme-card__zh,
+:root[data-theme-style] .app--creation .theme-card__zh {
+  font-size: 10px;
+  font-weight: 480;
+}
+
+.app--creation .theme-card__tag,
+:root[data-theme-style] .app--creation .theme-card__tag {
+  display: none;
+}
+
+.app--creation .theme-card__swatches,
+:root[data-theme-style] .app--creation .theme-card__swatches {
+  width: 42px;
+  height: 8px;
+  gap: 0;
+  overflow: hidden;
+  border-radius: 999px;
+}
+
+.app--creation .theme-card__swatch,
+:root[data-theme-style] .app--creation .theme-card__swatch {
+  min-width: 0;
+  height: 8px;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.app--creation .theme-card__desc,
+:root[data-theme-style] .app--creation .theme-card__desc {
+  display: none;
+}
+
+.app--creation .theme-card__check,
+:root[data-theme-style] .app--creation .theme-card__check {
+  display: none;
+}
+
+:root[data-theme-style] .app--creation .theme-card__swatches[data-theme-style-card="graphite"] .theme-card__swatch--bg {
+  background: #0c0d10;
+}
+
+:root[data-theme-style] .app--creation .theme-card__swatches[data-theme-style-card="graphite"] .theme-card__swatch--surface {
+  background: #15161a;
+}
+
+:root[data-theme-style] .app--creation .theme-card__swatches[data-theme-style-card="graphite"] .theme-card__swatch--accent {
+  background: linear-gradient(120deg, #ff6a3d, #ff9a52);
+}
+
+.app--creation .workspace-tree__icon--dir,
+:root[data-theme-style] .app--creation .workspace-tree__icon--dir,
+.app--creation .workspace-tree__row--active .workspace-tree__icon--dir,
+:root[data-theme-style] .app--creation .workspace-tree__row--active .workspace-tree__icon--dir {
+  color: var(--accent);
+}
+
+@media (max-width: 900px) {
+  .app--creation .settings-modal-backdrop,
+  :root[data-theme-style] .app--creation .settings-modal-backdrop {
+    padding: 16px;
+  }
+
+  .app--creation .settings-modal,
+  :root[data-theme-style] .app--creation .settings-modal {
+    width: 100%;
+    height: min(900px, calc(100vh - 32px));
+  }
+
+  .app--creation .settings-center,
+  :root[data-theme-style] .app--creation .settings-center {
+    grid-template-columns: 1fr;
+  }
+
+  .app--creation .settings-center__nav,
+  :root[data-theme-style] .app--creation .settings-center__nav {
+    padding: 8px 10px;
+  }
+
+  .app--creation .settings-center__navitem,
+  :root[data-theme-style] .app--creation .settings-center__navitem {
+    min-height: 40px;
+    padding: 8px 12px;
+  }
+
+  .app--creation .settings-center__content,
+  :root[data-theme-style] .app--creation .settings-center__content {
+    padding: 24px 22px;
+  }
+
+  .app--creation .settings-field,
+  :root[data-theme-style] .app--creation .settings-field {
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+}
+
+@media (max-width: 760px) {
+  .app--creation .settings-modal-backdrop,
+  :root[data-theme-style] .app--creation .settings-modal-backdrop {
+    padding: 0;
+  }
+
+  .app--creation .settings-modal,
+  :root[data-theme-style] .app--creation .settings-modal {
+    width: 100vw;
+    height: 100vh;
+    border-radius: 0;
+  }
+
+  .app--creation .settings-center__content,
+  :root[data-theme-style] .app--creation .settings-center__content {
+    padding: 18px 14px;
+  }
+
+  .app--creation .settings-section,
+  .app--creation .settings-page--manager .mem-section,
+  :root[data-theme-style] .app--creation .settings-section,
+  :root[data-theme-style] .app--creation .settings-page--manager .mem-section {
+    padding: 6px 14px;
+    border-radius: 12px;
+  }
+}
+
 :root[data-theme="light"][data-theme-style] .app--creation,
 :root[data-theme="light"][data-theme-style] .app--creation .layout,
 :root[data-theme="light"][data-theme-style] .app--creation .chat-pane,
