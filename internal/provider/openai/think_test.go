@@ -14,6 +14,19 @@ func runSplitter(deltas []string) (reasoning, text string) {
 }
 
 func TestThinkSplitter(t *testing.T) {
+	// Helper that enables text thinking detection.
+	runSplitterWithText := func(deltas []string) (reasoning, text string) {
+		var t thinkSplitter
+		t.textOpeners = thinkingOpeners
+		for _, d := range deltas {
+			r, txt := t.push(d)
+			reasoning += r
+			text += txt
+		}
+		r, txt := t.flush()
+		return reasoning + r, text + txt
+	}
+
 	cases := []struct {
 		name      string
 		deltas    []string
@@ -70,9 +83,61 @@ func TestThinkSplitter(t *testing.T) {
 		},
 	}
 
+	// Tag-based thinking tests (textOpeners = nil) — existing behavior unchanged.
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			r, txt := runSplitter(tc.deltas)
+			if r != tc.reasoning {
+				t.Errorf("reasoning = %q, want %q", r, tc.reasoning)
+			}
+			if txt != tc.text {
+				t.Errorf("text = %q, want %q", txt, tc.text)
+			}
+		})
+	}
+
+	// Text-based thinking tests (textOpeners enabled).
+	textCases := []struct {
+		name      string
+		deltas    []string
+		reasoning string
+		text      string
+	}{
+		{
+			name:      "english thinking opener detected",
+			deltas:    []string{"Let me check the git log"},
+			reasoning: "Let me check the git log",
+			text:      "",
+		},
+		{
+			name:      "english opener split across chunks",
+			deltas:    []string{"Let ", "me check", " the file"},
+			reasoning: "Let me check the file",
+			text:      "",
+		},
+		{
+			name:      "chinese thinking opener detected",
+			deltas:    []string{"让我先看看代码"},
+			reasoning: "让我先看看代码",
+			text:      "",
+		},
+		{
+			name:      "normal english no opener",
+			deltas:    []string{"hello world"},
+			reasoning: "",
+			text:      "hello world",
+		},
+		{
+			name:      "normal chinese no opener",
+			deltas:    []string{"编译通过，测试通过"},
+			reasoning: "",
+			text:      "编译通过，测试通过",
+		},
+	}
+
+	for _, tc := range textCases {
+		t.Run("text/"+tc.name, func(t *testing.T) {
+			r, txt := runSplitterWithText(tc.deltas)
 			if r != tc.reasoning {
 				t.Errorf("reasoning = %q, want %q", r, tc.reasoning)
 			}

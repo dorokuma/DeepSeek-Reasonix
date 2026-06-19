@@ -316,6 +316,7 @@ func (c *client) readStream(ctx context.Context, resp *http.Response, out chan<-
 	var order []int
 	var lastFinishReason string
 	var think thinkSplitter
+	var sawReasoningContent bool
 
 	scanner := bufio.NewScanner(resp.Body)
 	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
@@ -356,10 +357,19 @@ func (c *client) readStream(ctx context.Context, resp *http.Response, out chan<-
 
 		delta := sr.Choices[0].Delta
 		if delta.ReasoningContent != "" {
+			sawReasoningContent = true
 			emitted = true
 			out <- provider.Chunk{Type: provider.ChunkReasoning, Text: delta.ReasoningContent}
 		}
 		if delta.Content != "" {
+			// When the model correctly uses reasoning_content, content is always
+			// normal text. When it doesn't (no reasoning_content seen), enable
+			// text-based thinking detection in the splitter.
+			if !sawReasoningContent && think.textOpeners == nil {
+				think.textOpeners = thinkingOpeners
+			} else if sawReasoningContent && think.textOpeners != nil {
+				think.textOpeners = nil
+			}
 			r, txt := think.push(delta.Content)
 			if r != "" {
 				emitted = true
