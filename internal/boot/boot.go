@@ -40,6 +40,7 @@ import (
 	"reasonix/internal/shell"
 	"reasonix/internal/tool"
 	"reasonix/internal/tool/builtin"
+	"reasonix/internal/tool/sessiontool"
 )
 
 // ErrUnknownModel is returned by Build when the configured model can't be
@@ -428,6 +429,12 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 		entry.ContextWindow, cfg.Agent.SoftCompactRatio, cfg.Agent.CompactRatio, cfg.Agent.CompactForceRatio,
 		cfg.Agent.Temperature, config.ArchiveDir(), "", headlessGate,
 		taskModel, taskEffort, resolveSubagentProvider))
+
+	// Session history tools let the AI discover and read past conversations.
+	// `list_sessions` returns all saved session files; `read_session` loads one
+	// and renders the full conversation as readable text.
+	reg.Add(sessiontool.NewListSessionsTool(sessionDir))
+	reg.Add(sessiontool.NewReadSessionTool(sessionDir))
 
 	// The `remember` tool lets the model persist durable facts to the project's
 	// auto-memory store; `forget` prunes ones that turn out wrong. The saved index
