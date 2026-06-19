@@ -276,6 +276,18 @@ func ApplyOpenCodePricing(cfg *Config, pricing map[string]provider.Pricing) {
 		if !isOpenCodeGoProvider(p.BaseURL) {
 			continue
 		}
+		// Filter live-fetched models to only those documented on the OpenCode
+		// Go docs page. The /v1/models API may return stale or undocumented
+		// model IDs (e.g. glm-5, hy3-preview); the docs page is authoritative.
+		if p.fetchedModels != nil && len(pricing) > 0 {
+			filtered := make([]string, 0, len(pricing))
+			for _, m := range p.fetchedModels {
+				if _, ok := pricing[m]; ok {
+					filtered = append(filtered, m)
+				}
+			}
+			p.fetchedModels = filtered
+		}
 		if p.ModelPrices == nil {
 			p.ModelPrices = make(map[string]provider.Pricing, len(pricing))
 		}
