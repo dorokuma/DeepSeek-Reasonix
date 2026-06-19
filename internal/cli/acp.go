@@ -179,7 +179,7 @@ func (f *acpFactory) NewSession(ctx context.Context, p acp.SessionParams) (*cont
 			plannerSess := agent.NewSession(agent.PlannerPromptWithContext(mem.Block()))
 			plannerTools := agent.PlannerToolRegistry(reg)
 			runner = agent.NewCoordinator(plannerProv, plannerSess, pe.Price, plannerTools, agent.Options{
-				MaxSteps:          agent.PlannerMaxSteps(maxSteps),
+				MaxSteps:          maxSteps,
 				Gate:              headlessGate,
 				ContextWindow:     pe.ContextWindow,
 				SoftCompactRatio:  cfg.Agent.SoftCompactRatio,

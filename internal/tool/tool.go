@@ -81,11 +81,16 @@ func PreviewChange(t Tool, args json.RawMessage) (diff.Change, bool) {
 
 // --- process-global built-in set (populated by builtin subpackage init) ---
 
-var builtins = map[string]Tool{}
+var (
+	builtinsMu sync.RWMutex
+	builtins   = map[string]Tool{}
+)
 
 // RegisterBuiltin registers a compile-time built-in tool. Intended for init().
 // It panics on a duplicate name, which is a compile-time wiring mistake.
 func RegisterBuiltin(t Tool) {
+	builtinsMu.Lock()
+	defer builtinsMu.Unlock()
 	name := t.Name()
 	if _, dup := builtins[name]; dup {
 		panic("tool: duplicate built-in " + name)
@@ -95,6 +100,8 @@ func RegisterBuiltin(t Tool) {
 
 // Builtins returns all registered built-in tools, sorted by name.
 func Builtins() []Tool {
+	builtinsMu.RLock()
+	defer builtinsMu.RUnlock()
 	names := make([]string, 0, len(builtins))
 	for n := range builtins {
 		names = append(names, n)
@@ -109,6 +116,8 @@ func Builtins() []Tool {
 
 // LookupBuiltin returns a registered built-in by name.
 func LookupBuiltin(name string) (Tool, bool) {
+	builtinsMu.RLock()
+	defer builtinsMu.RUnlock()
 	t, ok := builtins[name]
 	return t, ok
 }

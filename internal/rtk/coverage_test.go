@@ -7,6 +7,7 @@ import (
 // integrationOnly are RTK subcommands Reasonix never invokes directly.
 var integrationOnly = map[string]bool{
 	"help": true,
+	"mvn":  true,
 }
 
 func TestCoverageListsAllRTKFilters(t *testing.T) {

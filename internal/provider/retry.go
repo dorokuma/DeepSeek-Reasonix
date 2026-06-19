@@ -90,6 +90,10 @@ func transientErr(err error) bool {
 	if errors.As(err, &netErr) {
 		return netErr.Timeout()
 	}
+	msg := strings.ToLower(err.Error())
+	if strings.Contains(msg, "connection reset") || strings.Contains(msg, "connection refused") || strings.Contains(msg, "broken pipe") {
+		return true
+	}
 	return false
 }
 

@@ -4,7 +4,6 @@
 package netclient
 
 import (
-	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"errors"
@@ -168,7 +167,7 @@ func safeRedirect() func(req *http.Request, via []*http.Request) error {
 		// Reject redirects to private IP ranges. DNS resolution failure
 		// is treated as unsafe (fail-closed) to prevent DNS rebinding.
 		host := req.URL.Hostname()
-		ips, err := net.DefaultResolver.LookupNetIP(context.Background(), "ip", host)
+		ips, err := net.DefaultResolver.LookupNetIP(req.Context(), "ip", host)
 		if err != nil {
 			return fmt.Errorf("redirect to %s: DNS resolution failed (SSRF protection): %w", host, err)
 		}

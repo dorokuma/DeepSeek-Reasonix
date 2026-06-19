@@ -49,16 +49,11 @@ func newHTTPTransport(s Spec) (*httpTransport, error) {
 	if s.URL == "" {
 		return nil, fmt.Errorf("http plugin %q: url is required", s.Name)
 	}
-	var transport http.RoundTripper
 	base := &http.Transport{
-		TLSClientConfig: &tls.Config{},
-		DialContext:     ssrfGuardDial,
+		DialContext: ssrfGuardDial,
 	}
-	if caPool := netclient.GlobalCACerts(); caPool != nil {
-		base.TLSClientConfig.RootCAs = caPool
-	}
-	base.TLSClientConfig = nil // nil means use the default
-	transport = base
+	// Apply global CA pool when configured; nil leaves base.TLSClientConfig
+	// unset so the standard library uses the system root pool.
 	if caPool := netclient.GlobalCACerts(); caPool != nil {
 		base.TLSClientConfig = &tls.Config{RootCAs: caPool}
 	}
@@ -66,7 +61,7 @@ func newHTTPTransport(s Spec) (*httpTransport, error) {
 		name:    s.Name,
 		url:     s.URL,
 		headers: s.Headers,
-		client:  &http.Client{Transport: transport, Timeout: 60 * time.Second},
+		client:  &http.Client{Transport: base, Timeout: 60 * time.Second},
 		done:    make(chan struct{}),
 	}, nil
 }

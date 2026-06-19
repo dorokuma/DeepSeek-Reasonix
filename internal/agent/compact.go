@@ -80,6 +80,11 @@ func (a *Agent) maybeCompact(ctx context.Context, u *provider.Usage) {
 	// rewriting the prefix — a compaction here would needlessly crater the cache.
 	if u.PromptTokens >= soft && u.PromptTokens < high && !a.softCompactNoticed {
 		a.softCompactNoticed = true
+		a.sink.Emit(event.Event{
+			Kind:  event.Notice,
+			Level: event.LevelInfo,
+			Text:  fmt.Sprintf("context is growing (%d/%d tokens) and will be compacted soon", u.PromptTokens, a.contextWindow),
+		})
 		return
 	}
 	if u.PromptTokens < high {

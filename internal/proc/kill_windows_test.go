@@ -14,7 +14,7 @@ import (
 // the pipe, so cmd.Wait blocks until the grandchild exits. KillTree must take
 // the whole tree down so Wait returns promptly.
 func TestKillTreeUnblocksWaitOnSurvivingGrandchild(t *testing.T) {
-	cmd := exec.Command("cmd", "/c", "ping", "-n", "30", "127.0.0.1")
+	cmd := exec.Command("cmd", "/c", "ping", "-n", "10", "127.0.0.1")
 	HideWindow(cmd)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
@@ -41,7 +41,7 @@ func TestKillTreeUnblocksWaitOnSurvivingGrandchild(t *testing.T) {
 // must take the whole tracked tree down (the job reaps even descendants a plain
 // taskkill /T would miss — see the daemon leak this guards against).
 func TestKillTrackedReapsTrackedTree(t *testing.T) {
-	cmd := exec.Command("cmd", "/c", "ping", "-n", "30", "127.0.0.1")
+	cmd := exec.Command("cmd", "/c", "ping", "-n", "10", "127.0.0.1")
 	HideWindow(cmd)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {

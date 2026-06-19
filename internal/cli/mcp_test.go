@@ -161,7 +161,8 @@ func TestRenderMCPManagerListGroupsRuntimeAndConfiguredServers(t *testing.T) {
 	p := &mcpManager{snapshot: mcpSnapshot{
 		configPath: "reasonix.toml",
 		servers: []mcpServerView{
-			{Name: "github", Transport: "stdio", Status: "deferred", Configured: true, Tier: "lazy", Tools: 12},
+			{Name: "github", Transport: "stdio", Status: "connected", Configured: true, Tier: "lazy", Tools: 12},
+			{Name: "gitlab", Transport: "stdio", Status: "deferred", Configured: true, Tier: "lazy", Tools: 5},
 			{Name: "figma", Transport: "http", Status: "failed", Configured: true, Tier: "lazy", URL: "https://mcp.figma.com", Error: "connect: 401 unauthorized"},
 		},
 	}}
@@ -169,7 +170,7 @@ func TestRenderMCPManagerListGroupsRuntimeAndConfiguredServers(t *testing.T) {
 	for _, want := range []string{
 		"Manage MCP servers",
 		"connected",
-		"2 servers",
+		"3 servers",
 		"github",
 		"connect on use",
 		"figma",

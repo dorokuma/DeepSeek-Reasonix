@@ -42,7 +42,7 @@ func TestExamplePluginEndToEnd(t *testing.T) {
 	}
 	bin := buildExamplePlugin(t)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
 	host, tools, err := StartAll(ctx, []Spec{{Name: "example", Command: bin}})
@@ -107,7 +107,7 @@ func TestExamplePluginEndToEnd(t *testing.T) {
 	go func() { wg.Wait(); close(done) }()
 	select {
 	case <-done:
-	case <-time.After(5 * time.Second):
+	case <-time.After(3 * time.Second):
 		t.Fatal("phase B did not finish in time")
 	}
 

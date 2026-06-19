@@ -575,7 +575,10 @@ func (h *Host) clearFailure(name string) {
 // NewHost returns an empty Host. Boot always constructs one — even with no
 // plugins configured — so servers can be hot-added later via Add (the `/mcp add`
 // command), which keeps the controller's host pointer stable for the session.
-func NewHost() *Host { return &Host{} }
+func NewHost() *Host {
+	ctx, cancel := context.WithCancel(context.Background())
+	return &Host{ctx: ctx, cancel: cancel}
+}
 
 // has reports whether a server with this name is already connected.
 func (h *Host) has(name string) bool {

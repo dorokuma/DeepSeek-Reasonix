@@ -606,17 +606,12 @@ func (c finalReadinessCheck) audit(result evidence.ReadinessAuditResult, recover
 func (a *Agent) finalReadinessCheck() finalReadinessCheck {
 	var missing []string
 	out := finalReadinessCheck{}
-	hasWriter := false
-	if !hasWriter {
+	hasProjectChecks := len(a.projectChecks) > 0
+	if !hasProjectChecks {
 		if len(missing) > 0 {
 			out.reason = strings.Join(missing, "; ")
 		}
 		return out
-	}
-	hasProjectChecks := len(a.projectChecks) > 0
-	hasTodoReceipt := false
-	if !hasProjectChecks && !hasTodoReceipt && len(missing) == 0 {
-		return finalReadinessCheck{}
 	}
 	out.applies = true
 	for _, check := range a.projectChecks {
@@ -624,10 +619,8 @@ func (a *Agent) finalReadinessCheck() finalReadinessCheck {
 		if command == "" {
 			continue
 		}
-		if true { /* no ledger to check against */
-			out.missingProjectChecks++
-			missing = append(missing, fmt.Sprintf("run %q from %s after the latest write", command, finalReadinessCheckSource(check)))
-		}
+		out.missingProjectChecks++
+		missing = append(missing, fmt.Sprintf("run %q from %s after the latest write", command, finalReadinessCheckSource(check)))
 	}
 
 	if len(missing) == 0 {
@@ -920,6 +913,9 @@ func runParallel(ctx context.Context, start, end int, run func(int)) {
 		select {
 		case sem <- struct{}{}:
 		case <-ctx.Done():
+			// Wait for already-launched goroutines to finish before returning
+			// so we don't leak them or leave the semaphore in an inconsistent state.
+			wg.Wait()
 			return
 		}
 		wg.Add(1)
@@ -1251,9 +1247,6 @@ func isShellFileWriteCommand(command string) bool {
 }
 
 
-// the current plan to the session, so the model sees it on every subsequent turn.
-
-// clearPlanMessage removes the last plan reminder injected by injectPlanMessage.
 
 func shellPythonOpenWrites(lower string) bool {
 	if !strings.Contains(lower, "open(") {
@@ -1372,6 +1365,3 @@ func finishReasonMessage(u *provider.Usage) (string, bool) {
 		return "", false
 	}
 }
-func PlannerMaxSteps(maxSteps int) int { return maxSteps }
-
-

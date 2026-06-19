@@ -17,9 +17,9 @@ func TestBashCancelReturnsPromptly(t *testing.T) {
 	if !ok {
 		t.Fatal("bash not registered")
 	}
-	cmd := "sleep 120"
+	cmd := "sleep 10"
 	if shell.ResolveShell().Kind == shell.ShellPowerShell {
-		cmd = "Start-Sleep -Seconds 120"
+		cmd = "Start-Sleep -Seconds 10"
 	}
 	args, _ := json.Marshal(map[string]any{"command": cmd})
 
@@ -39,8 +39,8 @@ func TestBashCancelReturnsPromptly(t *testing.T) {
 	var err error
 	select {
 	case err = <-done:
-	case <-time.After(40 * time.Second):
-		t.Fatalf("cancel did not interrupt bash within 40s (natural duration 120s)")
+	case <-time.After(15 * time.Second):
+		t.Fatalf("cancel did not interrupt bash within 15s (natural duration 10s)")
 	}
 	elapsed := time.Since(start)
 

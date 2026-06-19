@@ -128,6 +128,7 @@ func (g grepTool) Execute(ctx context.Context, args json.RawMessage) (string, er
 			dec := fileenc.Decoder(enc)
 			if dec != nil {
 				pr, pw := io.Pipe()
+				defer pr.Close()
 				go func() {
 					_, _ = pw.Write(peek)
 					io.Copy(pw, f) //nolint:errcheck

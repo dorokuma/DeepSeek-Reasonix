@@ -9,7 +9,7 @@ import (
 )
 
 func TestKillTreeTerminatesChild(t *testing.T) {
-	cmd := exec.Command("sleep", "30")
+	cmd := exec.Command("sleep", "10")
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
@@ -29,7 +29,7 @@ func TestKillTrackedTerminatesChild(t *testing.T) {
 	if TrackTree(nil) != 0 {
 		t.Fatal("TrackTree is a no-op off Windows; want 0")
 	}
-	cmd := exec.Command("sleep", "30")
+	cmd := exec.Command("sleep", "10")
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("Start: %v", err)
 	}

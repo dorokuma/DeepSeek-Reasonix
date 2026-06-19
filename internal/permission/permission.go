@@ -8,6 +8,7 @@ package permission
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
 	"strings"
 )
 
@@ -267,6 +268,7 @@ func (g *Gate) Check(ctx context.Context, toolName string, args json.RawMessage,
 		return false, "denied by permission policy — this tool/command is on the deny list. Do not retry it; choose another approach or stop and explain.", nil
 	case Ask:
 		if g.Approver == nil {
+			slog.Warn("Ask decision silently allowed (no Approver)", "tool", toolName)
 			return true, "", nil // non-interactive: preserve autonomy
 		}
 		subject := Subject(args)

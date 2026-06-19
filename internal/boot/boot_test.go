@@ -18,6 +18,7 @@ import (
 	"reasonix/internal/event"
 	"reasonix/internal/plugin"
 	"reasonix/internal/provider"
+	"reasonix/internal/sessioncrypt"
 	"reasonix/internal/tool"
 	"reasonix/internal/tool/builtin"
 
@@ -596,6 +597,13 @@ func TestBuildMigratesLegacySessionsFromConfigSessionDir(t *testing.T) {
 	data, err := os.ReadFile(sessionPath)
 	if err != nil {
 		t.Fatalf("legacy config-root session not imported to %s: %v", sessionPath, err)
+	}
+	if sessioncrypt.IsEncrypted(data) {
+		plain, err := sessioncrypt.Decrypt(data)
+		if err != nil {
+			t.Fatalf("decrypt: %v", err)
+		}
+		data = plain
 	}
 	if !strings.Contains(string(data), "hello from redirected config root") {
 		t.Fatalf("migrated session missing legacy content:\n%s", data)

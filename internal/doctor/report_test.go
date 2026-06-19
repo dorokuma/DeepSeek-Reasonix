@@ -74,7 +74,7 @@ func TestCollectReportRedactsSecrets(t *testing.T) {
 			t.Fatalf("doctor report leaked %q:\n%s", secret, combined)
 		}
 	}
-	if !strings.Contains(combined, "api.example.com") || !strings.Contains(combined, "mcp.example.com") {
+	if !strings.Contains(combined, "api.***") || !strings.Contains(combined, "mcp.***") {
 		t.Fatalf("doctor report should keep useful host diagnostics:\n%s", combined)
 	}
 }
