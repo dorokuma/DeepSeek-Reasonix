@@ -411,6 +411,13 @@ func (c *Controller) Submit(input string) {
 	}
 	switch {
 	case trimmed == "/compact" || strings.HasPrefix(trimmed, "/compact "):
+		c.mu.Lock()
+		running := c.running
+		c.mu.Unlock()
+		if running {
+			c.notice("cannot compact while a turn is running")
+			return
+		}
 		focus := strings.TrimSpace(strings.TrimPrefix(trimmed, "/compact"))
 		go func() {
 			if err := c.Compact(c.closeCtx, focus); err != nil {
@@ -426,6 +433,13 @@ func (c *Controller) Submit(input string) {
 			}
 		}()
 	case trimmed == "/new":
+		c.mu.Lock()
+		running := c.running
+		c.mu.Unlock()
+		if running {
+			c.notice("cannot start new session while a turn is running")
+			return
+		}
 		go func() {
 			if err := c.NewSession(); err != nil {
 				if errors.Is(err, context.Canceled) {
@@ -779,6 +793,12 @@ func (c *Controller) maybeSessionStart(ctx context.Context) {
 func (c *Controller) NewSession() error {
 	if c.executor == nil {
 		return nil
+	}
+	c.mu.Lock()
+	running := c.running
+	c.mu.Unlock()
+	if running {
+		return fmt.Errorf("cannot start new session while a turn is running")
 	}
 	if err := c.Snapshot(); err != nil {
 		return err

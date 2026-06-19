@@ -180,7 +180,7 @@ func (s *Store) persist(c *Checkpoint) {
 		return
 	}
 	if err := os.WriteFile(filepath.Join(s.dir, fmt.Sprintf("turn-%d.json", c.Turn)), b, 0o600); err != nil {
-		slog.Warn("checkpoint: persist failed", "turn", c.Turn, "err", err)
+		slog.Error("checkpoint: persist failed", "turn", c.Turn, "err", err)
 	}
 }
 

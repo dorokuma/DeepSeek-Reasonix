@@ -3,8 +3,9 @@ package openai
 import "strings"
 
 const (
-	thinkOpen  = "<think>"
-	thinkClose = "</think>"
+	thinkOpen       = "<think>"
+	thinkClose      = "</think>"
+	maxProbeBufSize = 1 << 12 // 4 KiB: cap probe state buffer to prevent unbounded growth
 )
 
 type thinkState int
@@ -33,6 +34,9 @@ func (t *thinkSplitter) push(s string) (reasoning, text string) {
 	}
 
 	t.buf += s
+	if len(t.buf) > maxProbeBufSize {
+		return "", t.drainPassthrough()
+	}
 	trimmed := strings.TrimLeft(t.buf, " \t\r\n")
 	if len(trimmed) < len(thinkOpen) {
 		if strings.HasPrefix(thinkOpen, trimmed) {

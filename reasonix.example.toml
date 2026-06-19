@@ -30,6 +30,7 @@ auto_plan         = "off"   # off|on; off keeps plan mode manual
 soft_compact_ratio  = 0.5   # notice only; keeps the cache-first prefix intact
 compact_ratio       = 0.8   # try compacting when prompt reaches this fraction
 compact_force_ratio = 0.9   # force compacting at this high-water mark
+encrypt_sessions    = true  # encrypt session files at rest (AES-256-GCM); key auto-generated
 # planner_model = "mimo-pro"   # optional: enable two-model collaboration
 # subagent_model = "deepseek-pro"   # optional default for runAs=subagent skills
 # subagent_models = { review = "deepseek-pro", security_review = "deepseek-pro" }   # per-skill overrides

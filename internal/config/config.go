@@ -475,7 +475,8 @@ type AgentConfig struct {
 	CompactForceRatio float64 `toml:"compact_force_ratio"`
 	// EncryptSessions controls whether session files are encrypted at rest with
 	// AES-256-GCM. The key is auto-generated and stored in the user config
-	// directory. Default false for backward compatibility.
+	// directory. Default true — the decryption is transparent on load, so old
+	// plaintext sessions remain readable.
 	EncryptSessions bool `toml:"encrypt_sessions"`
 }
 
@@ -730,6 +731,7 @@ func Default() *Config {
 			SoftCompactRatio:  0.5,
 			CompactRatio:      0.8,
 			CompactForceRatio: 0.9,
+			EncryptSessions:   true,
 		},
 		// Mode "ask" with no rules keeps `reasonix run` autonomous (no TTY → ask
 		// resolves to allow) while `reasonix chat` prompts before writers. Users add

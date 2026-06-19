@@ -166,7 +166,7 @@ func estimateTextTokens(s string) int {
 // summarize so the UI can show a "compacting…" placeholder, and a Done event
 // (carrying the summary) replaces it.
 func (a *Agent) compact(ctx context.Context, trigger, instructions string, force bool) error {
-	msgs := a.session.Messages
+	msgs := a.session.Snapshot()
 	head, start, ok := a.planCompaction(msgs, minCompactMessages)
 	if !ok {
 		// A single huge message can still be worth folding. Keep the normal
@@ -389,7 +389,7 @@ func tailStart(msgs []provider.Message, head, budgetTokens int, tokPerChar float
 // any usage is known, and ignores absurd ratios.
 func (a *Agent) tokPerChar() float64 {
 	if u := a.lastUsage.Load(); u != nil && u.PromptTokens > 0 {
-		if c := charsOfMessages(a.session.Messages); c > 0 {
+		if c := charsOfMessages(a.session.Snapshot()); c > 0 {
 			if r := float64(u.PromptTokens) / float64(c); r > 0.05 && r < 2 {
 				return r
 			}

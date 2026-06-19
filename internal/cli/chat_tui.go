@@ -639,7 +639,10 @@ func (m chatTUI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	prevHeight := m.viewport.Height()
 
 	next, cmd := m.update(msg)
-	cm := next.(chatTUI)
+	cm, ok := next.(chatTUI)
+	if !ok {
+		return next, cmd
+	}
 
 	contentW := cm.width - 1 // last column is the scrollbar
 	if contentW < 1 {

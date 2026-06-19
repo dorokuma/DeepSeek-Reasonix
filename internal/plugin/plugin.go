@@ -589,13 +589,27 @@ func (h *Host) has(name string) bool {
 	return false
 }
 
+// hasLocked is like has but assumes h.mu is already held (read or write).
+func (h *Host) hasLocked(name string) bool {
+	for _, c := range h.clients {
+		if c.name == name {
+			return true
+		}
+	}
+	return false
+}
+
 // Add connects one server live: it performs the MCP handshake, discovers the
 // server's tools (and prompts/resources when advertised), appends it to the
 // host, and returns its namespaced tools for the caller to register. ctx bounds a
 // stdio child's lifetime, so pass the session-scoped context — not a per-turn one
 // — or the subprocess dies when that turn ends. Errors if the name is taken.
 func (h *Host) Add(ctx context.Context, s Spec) ([]tool.Tool, error) {
-	if h.has(s.Name) {
+	// Fast check under read lock for the common case (name already exists).
+	h.mu.RLock()
+	exists := h.hasLocked(s.Name)
+	h.mu.RUnlock()
+	if exists {
 		return nil, fmt.Errorf("server %q is already connected", s.Name)
 	}
 	return h.addConnected(ctx, s)
@@ -611,8 +625,16 @@ func (h *Host) addConnected(ctx context.Context, s Spec) ([]tool.Tool, error) {
 		c.close()
 		return nil, fmt.Errorf("list tools: %w", err)
 	}
-	c.toolCount = len(ts)
+	// Double-check under write lock: another Add may have raced past the
+	// initial has() check. If the name is now taken, close this subprocess
+	// and return the existing one's tools instead.
 	h.mu.Lock()
+	if h.hasLocked(s.Name) {
+		h.mu.Unlock()
+		c.close()
+		return nil, fmt.Errorf("server %q is already connected", s.Name)
+	}
+	c.toolCount = len(ts)
 	h.clients = append(h.clients, c)
 	h.clearFailure(s.Name)
 	h.mu.Unlock()
@@ -833,7 +855,7 @@ func (c *Client) initialize(ctx context.Context) error {
 		Capabilities map[string]json.RawMessage `json:"capabilities"`
 	}
 	if err := json.Unmarshal(res, &ir); err != nil {
-		slog.Warn("plugin: parse initialize capabilities", "server", c.name, "err", err)
+		slog.Error("plugin: parse initialize capabilities, prompts/resources disabled", "server", c.name, "err", err)
 	}
 	_, c.hasPrompts = ir.Capabilities["prompts"]
 	_, c.hasResources = ir.Capabilities["resources"]

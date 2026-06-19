@@ -3,7 +3,6 @@ package doctor
 
 import (
 	"fmt"
-	"net"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -411,39 +410,27 @@ func hostOnly(raw string) string {
 		return ""
 	}
 	host := u.Hostname()
-	if isInternalHost(host) {
-		host = redactHost(host)
-	}
+	host = maskHost(host)
 	if port := u.Port(); port != "" {
 		return host + ":" + port
 	}
 	return host
 }
 
-// isInternalHost reports whether a hostname or IP is private/internal.
-func isInternalHost(host string) bool {
-	ip := net.ParseIP(host)
-	if ip != nil {
-		return ip.IsPrivate() || ip.IsLoopback() || ip.IsLinkLocalUnicast()
+// maskHost shortens a hostname for display, keeping the first label.
+// "api.openai.com" → "api.***", "custom.internal.company.com" → "custom.***".
+// This preserves provider identity while hiding internal topology.
+func maskHost(host string) string {
+	if host == "" {
+		return ""
 	}
-	lower := strings.ToLower(host)
-	if lower == "localhost" {
-		return true
+	if idx := strings.IndexByte(host, '.'); idx > 0 {
+		return host[:idx] + ".***"
 	}
-	for _, suffix := range []string{".internal", ".local", ".corp", ".lan", ".home", ".intranet"} {
-		if strings.HasSuffix(lower, suffix) {
-			return true
-		}
+	if len(host) > 4 {
+		return host[:4] + "…"
 	}
-	return false
-}
-
-// redactHost shortens a hostname for display, keeping the first 4 chars.
-func redactHost(host string) string {
-	if len(host) <= 4 {
-		return host[:1] + "…"
-	}
-	return host[:4] + "…"
+	return host
 }
 
 func valueOr(s, fallback string) string {

@@ -52,6 +52,9 @@ func ssrfDial(inner func(context.Context, string, string) (net.Conn, error)) fun
 				return nil, fmt.Errorf("refusing to fetch internal address %s (resolves to %s)", host, ip.IP)
 			}
 		}
+		if len(ips) == 0 {
+			return nil, fmt.Errorf("no addresses resolved for %s", host)
+		}
 		// Dial the vetted IP, not the hostname, so the connection can't re-resolve
 		// to a different (internal) address (DNS rebinding).
 		return inner(ctx, network, net.JoinHostPort(ips[0].IP.String(), port))

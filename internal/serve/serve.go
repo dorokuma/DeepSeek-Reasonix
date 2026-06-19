@@ -403,7 +403,9 @@ func (s *Server) submit(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	s.ctl().Submit(body.Input)
+	s.mu.RLock()
+	s.ctrl.Submit(body.Input)
+	s.mu.RUnlock()
 	w.WriteHeader(http.StatusAccepted)
 }
 

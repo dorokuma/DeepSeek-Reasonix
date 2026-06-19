@@ -77,7 +77,20 @@ func transientErr(err error) bool {
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return false
 	}
-	return true
+	// Connection-level drops are transient (peer reset, proxy close,
+	// truncated body).
+	if errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, io.EOF) ||
+		errors.Is(err, net.ErrClosed) ||
+		errors.Is(err, syscall.ECONNRESET) || errors.Is(err, syscall.ECONNABORTED) {
+		return true
+	}
+	// Only temporary (timeout) network errors are transient; permanent ones
+	// (invalid cert, non-existent host, connection refused) should fail fast.
+	var netErr net.Error
+	if errors.As(err, &netErr) {
+		return netErr.Timeout()
+	}
+	return false
 }
 
 // IsConnReset reports whether err is a connection-level drop (peer reset,

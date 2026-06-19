@@ -117,7 +117,7 @@ func (s *Store) Put(tool, subject, body string) (string, error) {
 		st.body = ""
 		meta, _ := json.Marshal(st.meta)
 		if err := os.WriteFile(filepath.Join(s.dir, id+".json"), meta, 0o600); err != nil {
-			slog.Warn("ctxmode: write meta file", "id", id, "err", err)
+			slog.Error("ctxmode: write meta file, entry not reloadable after restart", "id", id, "err", err)
 		}
 	}
 	s.data[id] = st

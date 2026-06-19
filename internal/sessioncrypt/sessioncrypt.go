@@ -97,7 +97,7 @@ func loadOrCreateKey() ([]byte, error) {
 	// Re-enforce permissions after write (defense-in-depth: umask or pre-existing
 	// file with wrong mode could leave the key readable).
 	if err := os.Chmod(path, 0o600); err != nil {
-		slog.Warn("sessioncrypt: chmod key file", "path", path, "err", err)
+		return nil, fmt.Errorf("sessioncrypt: chmod key file %s: %w", path, err)
 	}
 	return key, nil
 }
