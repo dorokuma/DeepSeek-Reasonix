@@ -723,7 +723,7 @@ function previousWindowSince(days: 7 | 30): string {
 }
 
 function previousWindowUntil(days: 7 | 30): string {
-  return `-${days} day`;
+  return currentWindowSince(days);
 }
 
 async function metricRows(env: Env, days: 7 | 30, previous = false): Promise<{ signal: string; bucket: string; total: number }[]> {
@@ -739,7 +739,7 @@ async function metricRows(env: Env, days: 7 | 30, previous = false): Promise<{ s
 async function metricUserRows(env: Env, days: 7 | 30): Promise<{ signal: string; bucket: string; total: number }[]> {
   try {
     const rows = await env.DB.prepare(
-      `SELECT signal, bucket, COUNT(*) AS total FROM metric_users WHERE date >= date('now', '${currentWindowSince(days)}') GROUP BY signal, bucket ORDER BY signal, total DESC`,
+      `SELECT signal, bucket, COUNT(DISTINCT install_id) AS total FROM metric_users WHERE date >= date('now', '${currentWindowSince(days)}') GROUP BY signal, bucket ORDER BY signal, total DESC`,
     ).all<{ signal: string; bucket: string; total: number }>();
     return rows.results;
   } catch (err) {
