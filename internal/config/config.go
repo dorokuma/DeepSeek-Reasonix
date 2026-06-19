@@ -486,9 +486,10 @@ type ProviderEntry struct {
 	ModelsURL     string            `toml:"models_url"` // auto-fetch models from this URL on startup
 
 	// fetchedModels holds the live model list retrieved from the provider API at
-	// startup/refresh. When non-nil, ModelList returns this instead of the
-	// static Models/Model field, so the system automatically follows provider
-	// additions and removals without manual config edits.
+	// startup/refresh. When non-nil and non-empty, ModelList returns this instead
+	// of the static Models/Model field, so the system uses the provider's current
+	// SKUs for the lifetime of the process. Refresh only happens at boot or on
+	// explicit doctor --json; provider additions require a restart.
 	fetchedModels []string `toml:"-" json:"-"` // live-fetched model list; non-nil = use instead of Models
 	Default       string            `toml:"default"`    // default model when Models is set (else Models[0])
 	APIKeyEnv     string            `toml:"api_key_env"`

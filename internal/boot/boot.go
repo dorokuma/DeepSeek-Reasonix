@@ -17,6 +17,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"reasonix/internal/agent"
@@ -77,6 +78,12 @@ type Options struct {
 	// (e.g. a bridge-controlled reasonix.toml) from the tool workspace — the
 	// agent operates in WorkspaceRoot but reads config from ConfigRoot.
 	ConfigRoot string
+
+	// SkipModelRefresh skips the live GET /models probe per provider.
+	// Used by serve.switchModel to avoid network I/O while holding its
+	// write lock; the initial boot (TUI, desktop, serve creation) does
+	// refresh so the model list is current once.
+	SkipModelRefresh bool
 }
 
 // Build loads config, resolves the model(s), and returns a Controller wrapping a
@@ -113,16 +120,26 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	// Refresh live model lists from provider APIs. Providers with both a
 	// base_url and an API key get their model list fetched with a 3s timeout.
 	// On failure the static Models/Model config fields serve as fallback.
-	for i := range cfg.Providers {
-		p := &cfg.Providers[i]
-		if p.BaseURL == "" || p.APIKey() == "" {
-			continue
+	// Each provider is refreshed in parallel to bound the total delay at 3s
+	// regardless of how many providers are configured.
+	if !opts.SkipModelRefresh {
+		var wg sync.WaitGroup
+		for i := range cfg.Providers {
+			p := &cfg.Providers[i]
+			if p.BaseURL == "" || p.APIKey() == "" {
+				continue
+			}
+			wg.Add(1)
+			go func(p *config.ProviderEntry) {
+				defer wg.Done()
+				ictx, cancel := context.WithTimeout(ctx, 3*time.Second)
+				defer cancel()
+				if err := p.RefreshModels(ictx); err != nil {
+					slog.Debug("live model refresh failed", "provider", p.Name, "error", err)
+				}
+			}(p)
 		}
-		ictx, cancel := context.WithTimeout(ctx, 3*time.Second)
-		if err := p.RefreshModels(ictx); err != nil {
-			slog.Debug("live model refresh failed", "provider", p.Name, "error", err)
-		}
-		cancel()
+		wg.Wait()
 	}
 
 	modelName := opts.Model

@@ -18,6 +18,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"syscall"
 
 	"reasonix/internal/agent"
@@ -161,7 +162,7 @@ func setup(ctx context.Context, modelName string, maxStepsOverride int, requireK
 	})
 	if err == nil {
 		// Capture the boot-time config for model listing and completion.
-		liveCfg = ctrl.Config()
+		liveCfg.Store(ctrl.Config())
 	}
 	return ctrl, err
 }
@@ -178,7 +179,7 @@ func setupQuiet(ctx context.Context, modelName string, maxStepsOverride int, req
 		Stderr:     io.Discard,
 	})
 	if err == nil {
-		liveCfg = ctrl.Config()
+		liveCfg.Store(ctrl.Config())
 	}
 	return ctrl, err
 }
@@ -202,7 +203,9 @@ var newNotificationSender = func() notify.Sender { return notify.NewPlatformSend
 // liveCfg is the boot-time configuration with live-fetched model lists, shared
 // across model list rendering, slash completion, and the /model command so they
 // all see the provider's current model list instead of reloading from disk.
-var liveCfg *config.Config
+// Uses atomic.Pointer for safe concurrent access — setupQuiet writes during
+// model switch while modelRefs reads during tab completion.
+var liveCfg atomic.Pointer[config.Config]
 
 // withNotifications adds system notifications to CLI event streams when configured.
 func withNotifications(sink event.Sink, cfg *config.Config) event.Sink {

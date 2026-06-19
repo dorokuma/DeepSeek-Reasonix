@@ -49,6 +49,8 @@ func (e *ProviderEntry) RefreshModels(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	e.fetchedModels = models
+	if len(models) > 0 {
+		e.fetchedModels = models
+	}
 	return nil
 }
