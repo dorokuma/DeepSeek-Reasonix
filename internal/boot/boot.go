@@ -870,13 +870,14 @@ func PluginSpecs(entries []config.PluginEntry) []plugin.Spec {
 	for i, e := range entries {
 		e = e.ExpandedPlugin() // resolve ${VAR} / ${VAR:-default} from the environment
 		specs[i] = plugin.Spec{
-			Name:    e.Name,
-			Type:    e.Type,
-			Command: e.Command,
-			Args:    e.Args,
-			Env:     e.Env,
-			URL:     e.URL,
-			Headers: e.Headers,
+			Name:           e.Name,
+			Type:           e.Type,
+			Command:        e.Command,
+			Args:           e.Args,
+			Env:            e.Env,
+			URL:            e.URL,
+			Headers:        e.Headers,
+			StripRawPrefix: e.Name + "_",
 		}
 	}
 	return specs
