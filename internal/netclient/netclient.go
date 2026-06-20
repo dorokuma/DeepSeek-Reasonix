@@ -188,7 +188,13 @@ func isPrivateIP(ip netip.Addr) bool {
 		ip.IsLinkLocalUnicast() ||
 		ip.IsLinkLocalMulticast() ||
 		ip.IsUnspecified() ||
-		func() bool { a := ip.As4(); return netutil.CGNATRange.Contains(a[:]) }()
+		func() bool {
+			if !ip.Is4() {
+				return false
+			}
+			a := ip.As4()
+			return netutil.CGNATRange.Contains(a[:])
+		}()
 }
 
 // Summary returns a redacted, user-facing description for diagnostics.

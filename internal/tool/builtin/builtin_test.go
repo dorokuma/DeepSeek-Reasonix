@@ -16,6 +16,7 @@ import (
 
 	"golang.org/x/text/encoding/simplifiedchinese"
 
+	"reasonix/internal/ctxmode"
 	"reasonix/internal/tool"
 )
 
@@ -471,5 +472,32 @@ func TestGrepGB18030(t *testing.T) {
 	out := runTool(t, grepTool{}, map[string]any{"pattern": "函数", "path": dir})
 	if !strings.Contains(out, "函数") {
 		t.Errorf("expected match in decoded GB18030 text, got:\n%s", out)
+	}
+}
+
+func TestCtxIndexAndSearch(t *testing.T) {
+	dir := t.TempDir()
+	f1 := filepath.Join(dir, "alpha.txt")
+	os.WriteFile(f1, []byte("package main\n\nfunc alpha() {}\n"), 0o644)
+	f2 := filepath.Join(dir, "beta.txt")
+	os.WriteFile(f2, []byte("package main\n\nfunc beta() {}\n"), 0o644)
+
+	store := ctxmode.NewStore()
+	ctx := ctxmode.WithStore(context.Background(), store)
+
+	idx := ctxIndex{workDir: dir}
+	_, err := idx.Execute(ctx, argsJSON(t, map[string]any{"path": "."}))
+	if err != nil {
+		t.Fatalf("ctx_index execute: %v", err)
+	}
+
+	search := ctxSearch{}
+	out, err := search.Execute(ctx, argsJSON(t, map[string]any{"pattern": "beta"}))
+	if err != nil {
+		t.Fatalf("ctx_search execute: %v", err)
+	}
+
+	if !strings.Contains(out, "beta.txt") || !strings.Contains(out, "func beta()") {
+		t.Errorf("expected match in beta.txt, got:\n%s", out)
 	}
 }

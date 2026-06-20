@@ -2,6 +2,7 @@ package ctxmode
 
 import (
 	"encoding/json"
+	"os"
 	"strings"
 	"testing"
 )
@@ -64,5 +65,32 @@ func TestTransform_skipsSmall(t *testing.T) {
 	_, _, ok := Transform(store, "read_file", nil, "tiny")
 	if ok {
 		t.Fatal("small body should not transform")
+	}
+}
+
+func TestStore_Index_SearchGlobal(t *testing.T) {
+	store := NewStore()
+	f, err := os.CreateTemp("", "reasonix_index_test_*.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Remove(f.Name())
+
+	content := "line1: hello world\nline2: match me\nline3: bye world\n"
+	if _, err := f.WriteString(content); err != nil {
+		t.Fatal(err)
+	}
+	f.Close()
+
+	if err := store.IndexFile("test_file.txt", f.Name()); err != nil {
+		t.Fatal(err)
+	}
+
+	search, err := store.SearchGlobal("match", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(search, "test_file.txt") || !strings.Contains(search, "match me") {
+		t.Fatalf("expected search to contain file and matched content, got: %q", search)
 	}
 }

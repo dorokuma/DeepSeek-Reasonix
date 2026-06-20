@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 
@@ -35,12 +36,16 @@ type Store struct {
 	dir     string
 	next    int
 	data    map[string]stored
+	indexed map[string]string // Key: relative path, Value: file content
 	journal *Journal
 }
 
 // NewStore creates a session-local store under the reasonix cache dir.
 func NewStore() *Store {
-	s := &Store{data: map[string]stored{}}
+	s := &Store{
+		data:    map[string]stored{},
+		indexed: map[string]string{},
+	}
 	base := config.CacheDir()
 	if base != "" {
 		var slug [8]byte
@@ -227,4 +232,70 @@ func (s *Store) Remove() {
 	if s.dir != "" {
 		_ = os.RemoveAll(s.dir)
 	}
+}
+
+// IndexFile reads a single file and stores it in the session-local store.
+func (s *Store) IndexFile(relPath, absPath string) error {
+	if s == nil {
+		return fmt.Errorf("context store unavailable")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	data, err := os.ReadFile(absPath)
+	if err != nil {
+		return err
+	}
+	s.indexed[relPath] = string(data)
+	return nil
+}
+
+// SearchGlobal searches for pattern in all indexed files, returning matching snippets.
+func (s *Store) SearchGlobal(pattern string, limit int) (string, error) {
+	if s == nil {
+		return "", fmt.Errorf("context store unavailable")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	var results []string
+	patternLower := strings.ToLower(pattern)
+
+	var paths []string
+	for p := range s.indexed {
+		paths = append(paths, p)
+	}
+	sort.Strings(paths)
+
+	totalMatches := 0
+	for _, rel := range paths {
+		content := s.indexed[rel]
+		if !strings.Contains(strings.ToLower(content), patternLower) {
+			continue
+		}
+		lines := strings.Split(content, "\n")
+		var snippet []string
+		matchedInFile := 0
+		for idx, line := range lines {
+			if strings.Contains(strings.ToLower(line), patternLower) {
+				snippet = append(snippet, fmt.Sprintf("%5d→%s", idx+1, line))
+				matchedInFile++
+				totalMatches++
+				if matchedInFile >= 5 {
+					snippet = append(snippet, "     …")
+					break
+				}
+			}
+		}
+		results = append(results, fmt.Sprintf("Matches in file %s:\n%s", rel, strings.Join(snippet, "\n")))
+	}
+
+	if len(results) == 0 {
+		return fmt.Sprintf("No matches found for %q", pattern), nil
+	}
+
+	resText := strings.Join(results, "\n\n")
+	if len(resText) > 40000 {
+		resText = resText[:40000] + "\n\n... (truncated search results)"
+	}
+	return resText, nil
 }

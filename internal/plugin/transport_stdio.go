@@ -29,12 +29,13 @@ const closeWaitBudget = 5 * time.Second
 // the turn, so a hung server would otherwise hang a cancelled turn forever).
 // callMu serialises a request/response round-trip over the shared pipe.
 type stdioTransport struct {
-	name   string
-	cmd    *exec.Cmd
-	job    uintptr // Windows Job Object handle (0 elsewhere); reaps detached grandchildren on close
-	stdin  io.WriteCloser
-	stdout *bufio.Reader
-	stderr *tailBuffer
+	name       string
+	cmd        *exec.Cmd
+	job        uintptr // Windows Job Object handle (0 elsewhere); reaps detached grandchildren on close
+	stdin      io.WriteCloser
+	stdoutConn io.ReadCloser
+	stdout     *bufio.Reader
+	stderr     *tailBuffer
 
 	callMu sync.Mutex // one in-flight request/response at a time over the shared pipe
 
@@ -82,14 +83,15 @@ func newStdioTransport(ctx context.Context, s Spec) (*stdioTransport, error) {
 		return nil, err
 	}
 	t := &stdioTransport{
-		name:    s.Name,
-		cmd:     cmd,
-		job:     proc.TrackTree(cmd),
-		stdin:   stdin,
-		stdout:  bufio.NewReader(stdout),
-		stderr:  stderr,
-		pending: map[int]chan rpcResponse{},
-		done:    make(chan struct{}),
+		name:       s.Name,
+		cmd:        cmd,
+		job:        proc.TrackTree(cmd),
+		stdin:      stdin,
+		stdoutConn: stdout,
+		stdout:     bufio.NewReader(stdout),
+		stderr:     stderr,
+		pending:    map[int]chan rpcResponse{},
+		done:       make(chan struct{}),
 	}
 	go t.readLoop()
 	return t, nil
@@ -459,6 +461,9 @@ func (t *stdioTransport) wait() {
 func (t *stdioTransport) close() {
 	if t.stdin != nil {
 		_ = t.stdin.Close()
+	}
+	if t.stdoutConn != nil {
+		_ = t.stdoutConn.Close()
 	}
 	if t.cmd == nil || t.cmd.Process == nil {
 		return
