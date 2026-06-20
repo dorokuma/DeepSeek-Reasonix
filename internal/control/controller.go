@@ -396,14 +396,6 @@ func lastAssistantText(msgs []provider.Message) string {
 // turn with its @-references resolved first.
 func (c *Controller) Submit(input string) {
 	trimmed := strings.TrimSpace(input)
-	if note, ok := MemoryQuickAddNote(trimmed); ok {
-		c.rememberProjectNote(note)
-		return
-	}
-	if note, ok := RememberCommandNote(trimmed); ok {
-		c.rememberProjectNote(note)
-		return
-	}
 	if strings.HasPrefix(trimmed, "!") {
 		c.RunShell(trimmed[1:])
 		return
@@ -529,18 +521,6 @@ func (c *Controller) Submit(input string) {
 		c.notice("unknown command: " + trimmed)
 	default:
 		c.runRefTurn(input)
-	}
-}
-
-func (c *Controller) rememberProjectNote(note string) {
-	if note == "" {
-		c.notice("nothing to remember")
-		return
-	}
-	if path, err := c.QuickAdd(memory.ScopeProject, note); err != nil {
-		c.notice("memory: " + err.Error())
-	} else {
-		c.notice("remembered → " + path)
 	}
 }
 

@@ -1067,20 +1067,6 @@ func (m chatTUI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.rememberSubmittedInput(line)
 
-			// "# <note>" quick-adds a memory line locally, no model turn. The
-			// space keeps "#7" / "#issue" prompts from being swallowed.
-			if note, ok := control.MemoryQuickAddNote(line); ok {
-				m.input.Reset()
-				m.pastedBlocks = nil
-				if note == "" {
-					m.notice(i18n.M.QuickRememberEmpty)
-				} else if path, err := m.ctrl.QuickAdd(memory.ScopeProject, note); err != nil {
-					m.notice("memory: " + err.Error())
-				} else {
-					m.notice(fmt.Sprintf(i18n.M.QuickRememberDoneFmt, path))
-				}
-				return m, finalize(m, cmds)
-			}
 
 			// "!<cmd>" runs a shell command directly, bypassing the model.
 			if strings.HasPrefix(line, "!") {

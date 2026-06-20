@@ -10,7 +10,6 @@ import (
 
 	"reasonix/internal/command"
 	"reasonix/internal/event"
-	"reasonix/internal/memory"
 	"reasonix/internal/skill"
 )
 
@@ -87,45 +86,6 @@ func TestComposeDrainsQueuedMemory(t *testing.T) {
 	}
 }
 
-func TestMemoryQuickAddNoteRequiresWhitespace(t *testing.T) {
-	tests := []struct {
-		in   string
-		note string
-		ok   bool
-	}{
-		{in: "# remember this", note: "remember this", ok: true},
-		{in: "  #\tremember this  ", note: "remember this", ok: true},
-		{in: "#7 needs work", ok: false},
-		{in: "#issue needs work", ok: false},
-		{in: "# Heading", note: "Heading", ok: true},
-		{in: "#", ok: false},
-	}
-	for _, tt := range tests {
-		got, ok := MemoryQuickAddNote(tt.in)
-		if ok != tt.ok || got != tt.note {
-			t.Errorf("MemoryQuickAddNote(%q) = (%q,%v), want (%q,%v)", tt.in, got, ok, tt.note, tt.ok)
-		}
-	}
-}
-
-func TestRememberCommandNote(t *testing.T) {
-	tests := []struct {
-		in   string
-		note string
-		ok   bool
-	}{
-		{in: "/remember use tabs", note: "use tabs", ok: true},
-		{in: " /remember\tuse tabs ", note: "use tabs", ok: true},
-		{in: "/remember", ok: true},
-		{in: "/remembering use tabs", ok: false},
-	}
-	for _, tt := range tests {
-		got, ok := RememberCommandNote(tt.in)
-		if ok != tt.ok || got != tt.note {
-			t.Errorf("RememberCommandNote(%q) = (%q,%v), want (%q,%v)", tt.in, got, ok, tt.note, tt.ok)
-		}
-	}
-}
 
 func TestSubmitHashNumberStartsTurn(t *testing.T) {
 	runner := &fakeTurnRunner{}
@@ -146,27 +106,6 @@ func TestSubmitHashNumberStartsTurn(t *testing.T) {
 	}
 }
 
-func TestSubmitRememberCommandQuickAddsMemory(t *testing.T) {
-	dir := t.TempDir()
-	runner := &fakeTurnRunner{}
-	c := New(Options{
-		Runner: runner,
-		Memory: memory.Load(memory.Options{CWD: dir}),
-	})
-
-	c.Submit("/remember use tabs")
-
-	if len(runner.inputs) != 0 {
-		t.Fatalf("/remember should not start a model turn, inputs=%q", runner.inputs)
-	}
-	body, err := os.ReadFile(filepath.Join(dir, "AGENTS.md"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(body), "- use tabs") {
-		t.Fatalf("memory file missing note:\n%s", body)
-	}
-}
 
 func waitForTurnDone(t *testing.T, events <-chan event.Event) {
 	t.Helper()
