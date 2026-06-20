@@ -19,10 +19,11 @@ func init() {
 }
 
 type CronTask struct {
-	ID     int64  `json:"id"`
-	ChatID int64  `json:"chat_id"`
-	Spec   string `json:"spec"`
-	Prompt string `json:"prompt"`
+	ID      int64  `json:"id"`
+	ChatID  int64  `json:"chat_id"`
+	Spec    string `json:"spec"`
+	Prompt  string `json:"prompt"`
+	RunOnce bool   `json:"run_once,omitempty"`
 }
 
 func getCronTasksPath() (string, error) {
@@ -146,6 +147,10 @@ func (scheduleTask) Schema() json.RawMessage {
 			"prompt": {
 				"type": "string",
 				"description": "The instruction/prompt to be executed"
+			},
+			"run_once": {
+				"type": "boolean",
+				"description": "When true, the task is automatically deleted after its first execution."
 			}
 		},
 		"required": ["cron_expression", "prompt"]
@@ -157,6 +162,7 @@ func (scheduleTask) Execute(ctx context.Context, args json.RawMessage) (string, 
 	var params struct {
 		CronExpression string `json:"cron_expression"`
 		Prompt         string `json:"prompt"`
+		RunOnce        bool   `json:"run_once"`
 	}
 	if err := json.Unmarshal(args, &params); err != nil {
 		return "", fmt.Errorf("invalid args: %w", err)
@@ -188,10 +194,11 @@ func (scheduleTask) Execute(ctx context.Context, args json.RawMessage) (string, 
 	newID := maxID + 1
 
 	newTask := &CronTask{
-		ID:     newID,
-		ChatID: chatID,
-		Spec:   params.CronExpression,
-		Prompt: params.Prompt,
+		ID:      newID,
+		ChatID:  chatID,
+		Spec:    params.CronExpression,
+		Prompt:  params.Prompt,
+		RunOnce: params.RunOnce,
 	}
 	tasks = append(tasks, newTask)
 
