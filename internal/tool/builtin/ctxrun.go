@@ -88,6 +88,8 @@ func (c ctxRun) Execute(ctx context.Context, args json.RawMessage) (string, erro
 		cmd.Dir = c.workDir
 	}
 	cmd.Env = envutil.StripCredentialEnv(os.Environ())
+	setKillTree(cmd)
+	cmd.WaitDelay = 5 * time.Second
 	if scriptPath != "" {
 		// Script already on disk; argv runs the shell command referencing it.
 		_ = scriptPath
