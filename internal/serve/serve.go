@@ -201,6 +201,18 @@ func (s *Server) Handler() http.Handler {
 	return s.handler()
 }
 
+func writeTimeoutMiddleware(next http.Handler, timeout time.Duration) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/events" {
+			next.ServeHTTP(w, r)
+			return
+		}
+		rc := http.NewResponseController(w)
+		_ = rc.SetWriteDeadline(time.Now().Add(timeout))
+		next.ServeHTTP(w, r)
+	})
+}
+
 func (s *Server) handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /", s.index)
@@ -225,7 +237,7 @@ func (s *Server) handler() http.Handler {
 	mux.HandleFunc("GET /skills", s.skills)
 	mux.HandleFunc("POST /delete-session", s.deleteSession)
 	mux.HandleFunc("POST /plan", s.plan)
-	return logMiddleware(securityHeadersMiddleware(csrfGuard(mux)))
+	return logMiddleware(securityHeadersMiddleware(csrfGuard(writeTimeoutMiddleware(mux, 60*time.Second))))
 }
 
 // securityHeadersMiddleware sets standard security headers on every response.
@@ -293,7 +305,6 @@ func (s *Server) RunGraceful(ctx context.Context, addr string) error {
 		Handler:           s.Handler(),
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
-		WriteTimeout:      60 * time.Second,
 		IdleTimeout:       120 * time.Second,
 	}
 	log.Printf("⚠️  agent API listening on %s (no auth — localhost only)", addr)
