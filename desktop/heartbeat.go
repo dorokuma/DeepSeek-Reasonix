@@ -180,9 +180,10 @@ func (e *HeartbeatEngine) tick() {
 // Empty or unknown values default to "yolo" so that scheduled tasks run
 // without interrupting the user for permission prompts.
 func normalizeHeartbeatApprovalMode(mode string) string {
-	switch mode {
+	normalized := strings.ToLower(strings.TrimSpace(mode))
+	switch normalized {
 	case "ask", "auto", "yolo":
-		return mode
+		return normalized
 	default:
 		return "yolo"
 	}
@@ -228,6 +229,16 @@ func (e *HeartbeatEngine) executeTask(t HeartbeatTask) HeartbeatTask {
 		return t
 	}
 
+	// Set the task's approval mode on the tab before the controller is built.
+	// This sets tab.toolApprovalMode which is picked up by the controller
+	// during build (see buildWorkspaceTab). For reused topics where the
+	// controller already exists, SetToolApprovalModeForTab applies it
+	// immediately.  Normalize and store the normalized value so the
+	// persisted JSON gets a real value (e.g. "yolo") rather than "" or null.
+	mode := normalizeHeartbeatApprovalMode(t.ApprovalMode)
+	t.ApprovalMode = mode
+	e.app.SetToolApprovalModeForTab(tabMeta.ID, mode)
+
 	// Wait for the tab's controller to be built (it's started
 	// asynchronously in a goroutine by openTopicTab).
 	controllerReady := false
@@ -241,16 +252,6 @@ func (e *HeartbeatEngine) executeTask(t HeartbeatTask) HeartbeatTask {
 	if !controllerReady {
 		log.Printf("[heartbeat] controller not ready for %q, skipping", t.Title)
 		return t // don't update LastRunAt — retry next tick
-	}
-
-	// Apply the task's approval mode to the controller so that permission
-	// prompts are handled as configured (default "yolo" = no blocking).
-	// Normalize and store back so the persisted JSON gets a real value
-	// (e.g. "yolo") rather than "" or null.
-	mode := normalizeHeartbeatApprovalMode(t.ApprovalMode)
-	t.ApprovalMode = mode
-	if ctrl := e.app.ctrlByTabID(tabMeta.ID); ctrl != nil {
-		ctrl.SetToolApprovalMode(mode)
 	}
 
 	// Submit as a plain user turn so scheduled prompts cannot invoke desktop
