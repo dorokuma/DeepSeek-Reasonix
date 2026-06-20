@@ -1,14 +1,17 @@
 package builtin
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"reasonix/internal/tool"
@@ -27,12 +30,29 @@ const (
 	// caller doesn't pass `path`. Sits at the workspace root so a user can
 	// `cat .notes.md` next to the project files.
 	noteDefaultBasename = ".notes.md"
+
+	// maxNotesRetained is the maximum number of note blocks kept by
+	// cleanupNotes (sorted by descending ID). When the file overflows, only
+	// the N most recent notes survive, unless they are still within the
+	// retention window.
+	maxNotesRetained = 30
+	// noteRetentionDays is the age window for unconditional retention: any
+	// note written within this many days before now is kept regardless of
+	// the total count.
+	noteRetentionDays = 7
 )
 
 // noteHeaderRe matches the heading `note` writes for each entry; nextNoteID
 // scans the existing file for the highest number to make the id sequence
 // restart-safe (the file is the source of truth, not an in-process counter).
 var noteHeaderRe = regexp.MustCompile(`(?m)^## note #(\d+) ·`)
+
+// noteBlockRe matches a note header and captures ID and timestamp for
+// cleanup decisions. The timestamp sits between two interpunct (·) separators.
+var noteBlockRe = regexp.MustCompile(`(?m)^## note #(\d+) · ([^·]+) · kind=\w+$`)
+
+// noteMu protects each notes file path from concurrent writes.
+var noteMu sync.Map
 
 func init() { tool.RegisterBuiltin(note{}) }
 
@@ -99,32 +119,86 @@ func (n note) Execute(ctx context.Context, args json.RawMessage) (string, error)
 		return "", err
 	}
 
-	// Check total file size before appending.
-	if info, serr := os.Stat(path); serr == nil && info.Size()+int64(len(p.Content)) > maxNoteFileBytes {
-		return "", fmt.Errorf("notes file is %d bytes, total would exceed %d MB limit — archive or clear old notes", info.Size(), maxNoteFileBytes>>20)
-	}
-
-	// nextID is derived from the file's existing entries — restart-safe and
-	// works correctly even if the tool instance is replaced mid-session.
-	nextID, err := nextNoteID(path)
-	if err != nil {
-		return "", err
-	}
-
 	if dir := filepath.Dir(path); dir != "" && dir != "." {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			return "", fmt.Errorf("mkdir %s: %w", dir, err)
 		}
 	}
-	block := formatNoteBlock(nextID, kind, p.Content)
-	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+
+	// Per-path lock ensures multiple goroutines don't corrupt the file.
+	mu := getMutex(path)
+	mu.Lock()
+	defer mu.Unlock()
+
+	// Read existing content once (TOCTOU-safe) for both ID derivation and
+	// cleanup. Check file size before reading to avoid loading huge files.
+	var oldData []byte
+	if fi, err := os.Stat(path); err == nil {
+		if fi.Size() > maxNoteFileBytes {
+			return "", fmt.Errorf("notes file is %d bytes, exceeds max %d bytes (%d MB) — archive or clear old notes", fi.Size(), maxNoteFileBytes, maxNoteFileBytes>>20)
+		}
+		oldData, err = os.ReadFile(path)
+		if err != nil {
+			return "", fmt.Errorf("read %s: %w", path, err)
+		}
+	} else if !os.IsNotExist(err) {
+		return "", fmt.Errorf("stat %s: %w", path, err)
+	}
+
+	nextID, err := nextNoteID(oldData)
 	if err != nil {
-		return "", fmt.Errorf("open %s: %w", path, err)
+		return "", err
 	}
-	defer f.Close()
-	if _, err := f.WriteString(block); err != nil {
-		return "", fmt.Errorf("write %s: %w", path, err)
+
+	block := formatNoteBlock(nextID, kind, p.Content)
+	keptOld := cleanupNotes(oldData, time.Now())
+
+	// Check total file size before writing.
+	totalBytes := int64(len(block)) + int64(len(keptOld))
+	if totalBytes > maxNoteFileBytes {
+		return "", fmt.Errorf("notes file would be %d bytes, exceeds max %d bytes (%d MB) — archive or clear old notes", totalBytes, maxNoteFileBytes, maxNoteFileBytes>>20)
 	}
+
+	// Build new content: new block first (prepend), then cleaned old notes.
+	newContent := []byte(block)
+	if len(keptOld) > 0 {
+		newContent = append(newContent, keptOld...)
+	}
+
+	// Atomic write via temp file + rename.
+	tmpPath := path + ".tmp." + strconv.Itoa(os.Getpid())
+	// Clean up any stale temp file from a previous crash.
+	if _, err := os.Stat(tmpPath); err == nil {
+		os.Remove(tmpPath)
+	}
+
+	f, err := os.OpenFile(tmpPath, os.O_CREATE|os.O_WRONLY, 0o600)
+	if err != nil {
+		return "", fmt.Errorf("create temp file %s: %w", tmpPath, err)
+	}
+
+	if _, err := f.Write(newContent); err != nil {
+		f.Close() // best-effort cleanup
+		os.Remove(tmpPath)
+		return "", fmt.Errorf("write %s: %w", tmpPath, err)
+	}
+
+	if err := f.Sync(); err != nil {
+		f.Close()
+		os.Remove(tmpPath)
+		return "", fmt.Errorf("sync %s: %w", tmpPath, err)
+	}
+
+	if err := f.Close(); err != nil {
+		os.Remove(tmpPath)
+		return "", fmt.Errorf("close %s: %w", tmpPath, err)
+	}
+
+	if err := os.Rename(tmpPath, path); err != nil {
+		os.Remove(tmpPath)
+		return "", fmt.Errorf("rename %s -> %s: %w", tmpPath, path, err)
+	}
+
 	return fmt.Sprintf("note_id=%d path=%s kind=%s bytes=%d", nextID, path, kind, len(p.Content)), nil
 }
 
@@ -173,16 +247,119 @@ func formatNoteBlock(id int, kind, content string) string {
 	return fmt.Sprintf("\n## note #%d · %s · kind=%s\n\n%s\n", id, ts, kind, c)
 }
 
-// nextNoteID reads the existing file (if any) and returns one more than the
-// highest `## note #N` heading it finds. A fresh file starts at 1.
-func nextNoteID(path string) (int, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return 1, nil
-		}
-		return 0, err
+// cleanupNotes removes old notes from data, keeping only the most recent 30
+// entries (by note ID) OR any notes written within the last 7 days. If every
+// existing note is already retained, the original slice is returned unchanged.
+// Bytes before the first `## note #` heading (the file prefix, e.g. a document
+// title) are preserved verbatim in the output.
+func cleanupNotes(data []byte, now time.Time) []byte {
+	type blockInfo struct {
+		start, end int // byte range of this block (includes leading \n if present)
+		id         int
+		ts         time.Time
 	}
+
+	locs := noteBlockRe.FindAllSubmatchIndex(data, -1)
+	if len(locs) == 0 {
+		return data
+	}
+
+	// Everything before the first `## note #` is the file prefix, preserved
+	// verbatim. If the first match is preceded by '\n', that '\n' belongs to
+	// the first block (as its leading separator), not to the prefix.
+	prefixEnd := locs[0][0]
+	if prefixEnd > 0 && data[prefixEnd-1] == '\n' {
+		prefixEnd--
+	}
+	prefix := data[:prefixEnd]
+
+	var blocks []blockInfo
+	for _, loc := range locs {
+		// loc[0] = start of `## note #...`, loc[1] = end of match
+		// loc[2] = start of id,   loc[3] = end of id
+		// loc[4] = start of ts,   loc[5] = end of ts
+		id, _ := strconv.Atoi(string(data[loc[2]:loc[3]]))
+		tsStr := strings.TrimSpace(string(data[loc[4]:loc[5]]))
+		ts, err := time.Parse(time.RFC3339Nano, tsStr)
+		if err != nil {
+			ts = time.Time{} // zero — don't apply age-based retention
+		}
+
+		start := loc[0] // default: block starts at the `##`
+		if loc[0] > 0 && data[loc[0]-1] == '\n' {
+			start = loc[0] - 1 // include the leading \n
+		}
+		blocks = append(blocks, blockInfo{
+			start: start,
+			end:   -1, // filled in next loop
+			id:    id,
+			ts:    ts,
+		})
+	}
+
+	// Set end positions: each block spans from its start to the start of the
+	// next block (or EOF for the last block).
+	for i := 0; i < len(blocks); i++ {
+		if i+1 < len(blocks) {
+			blocks[i].end = blocks[i+1].start
+		} else {
+			blocks[i].end = len(data)
+		}
+	}
+
+	// Fast path: if there are ≤ maxNotesRetained notes and every parseable
+	// timestamp is within noteRetentionDays, nothing needs to be cleaned up.
+	cutoff := now.Add(-noteRetentionDays * 24 * time.Hour)
+	allRecent := true
+	for _, b := range blocks {
+		if !b.ts.IsZero() && b.ts.Before(cutoff) {
+			allRecent = false
+			break
+		}
+	}
+	if len(blocks) <= maxNotesRetained && allRecent {
+		return data
+	}
+
+	// Build keep set: top maxNotesRetained by ID (descending) OR within
+	// noteRetentionDays.
+	sorted := append([]blockInfo(nil), blocks...)
+	sort.Slice(sorted, func(i, j int) bool {
+		return sorted[i].id > sorted[j].id
+	})
+
+	keep := make(map[int]bool, len(blocks))
+	n := maxNotesRetained
+	if len(sorted) < n {
+		n = len(sorted)
+	}
+	for i := 0; i < n; i++ {
+		keep[sorted[i].id] = true
+	}
+	for _, b := range blocks {
+		if b.ts.IsZero() || b.ts.After(cutoff) {
+			keep[b.id] = true
+		}
+	}
+
+	if len(keep) == len(blocks) {
+		return data
+	}
+
+	// Rebuild with prefix + kept blocks in file order.
+	var buf bytes.Buffer
+	buf.Write(prefix)
+	for _, b := range blocks {
+		if keep[b.id] {
+			buf.Write(data[b.start:b.end])
+		}
+	}
+	return buf.Bytes()
+}
+
+// nextNoteID scans data for the highest `## note #N` heading and returns N+1.
+// A nil or empty slice (empty file) yields 1.
+func nextNoteID(data []byte) (int, error) {
 	max := 0
 	for _, m := range noteHeaderRe.FindAllSubmatch(data, -1) {
 		n, _ := strconv.Atoi(string(m[1]))
@@ -191,4 +368,11 @@ func nextNoteID(path string) (int, error) {
 		}
 	}
 	return max + 1, nil
+}
+
+// getMutex returns or creates a per-path mutex for coordinating writes to the
+// same notes file from concurrent goroutines.
+func getMutex(path string) *sync.Mutex {
+	v, _ := noteMu.LoadOrStore(path, &sync.Mutex{})
+	return v.(*sync.Mutex)
 }

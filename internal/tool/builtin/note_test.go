@@ -3,11 +3,14 @@ package builtin
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestNote_WritesAndAppends(t *testing.T) {
@@ -243,3 +246,147 @@ func TestNote_PostCallGuidance_EmptyForInvalidArgs(t *testing.T) {
 		t.Fatalf("invalid json should return empty guidance, got: %q", g)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// cleanupNotes unit tests
+// ---------------------------------------------------------------------------
+
+func TestCleanupNotes(t *testing.T) {
+	// Fixed "now" anchor for deterministic tests.
+	now := time.Date(2025, 6, 18, 12, 0, 0, 0, time.UTC)
+	old := now.Add(-10 * 24 * time.Hour) // 10 days ago – beyond retention window
+	recent := now.Add(-1 * time.Hour)     // 1 hour ago – well within window
+
+	// noteBlock builds a single note block with the given id, timestamp and kind.
+	noteBlock := func(id int, ts time.Time, kind string) string {
+		return fmt.Sprintf("\n## note #%d · %s · kind=%s\n\ncontent-%d\n", id, ts.Format(time.RFC3339Nano), kind, id)
+	}
+
+	tests := []struct {
+		name     string
+		input    string
+		wantIDs  []int // expected note IDs in output (in file order)
+	}{
+		{
+			name:    "empty input",
+			input:   "",
+			wantIDs: nil,
+		},
+		{
+			name:    "no note blocks (prefix only)",
+			input:   "# My Notes File\n\nSome preamble.\n",
+			wantIDs: nil,
+		},
+		{
+			name:    "≤30 notes all recent",
+			input:   noteBlock(1, recent, "scratch") + noteBlock(2, recent, "evidence"),
+			wantIDs: []int{1, 2},
+		},
+		{
+			name: ">30 notes, oldest 5 beyond window, rest recent – oldest removed",
+			input: func() string {
+				var s strings.Builder
+				for i := 1; i <= 35; i++ {
+					ts := recent
+					if i <= 5 {
+						ts = old // IDs 1-5 are old
+					}
+					s.WriteString(noteBlock(i, ts, "scratch"))
+				}
+				return s.String()
+			}(),
+			wantIDs: func() []int {
+				// Top 30 by ID (6-35) are kept; IDs 1-5 removed.
+				var ids []int
+				for i := 6; i <= 35; i++ {
+					ids = append(ids, i)
+				}
+				return ids
+			}(),
+		},
+		{
+			name: "all old but ≤30 notes – all kept",
+			input: func() string {
+				var s strings.Builder
+				for i := 1; i <= 25; i++ {
+					s.WriteString(noteBlock(i, old, "scratch"))
+				}
+				return s.String()
+			}(),
+			wantIDs: func() []int {
+				var ids []int
+				for i := 1; i <= 25; i++ {
+					ids = append(ids, i)
+				}
+				return ids
+			}(),
+		},
+		{
+			name: "unparseable timestamp – kept",
+			input: "\n## note #1 · bad-timestamp · kind=scratch\n\nbody\n",
+			wantIDs: []int{1},
+		},
+		{
+			name: "prefix preserved before first note",
+			input: "# My Header\n\nSome text before notes.\n" + noteBlock(1, recent, "evidence"),
+			wantIDs: []int{1},
+		},
+		{
+			name: "mixed: old + recent + unparseable, >30 total",
+			input: func() string {
+				// 35 blocks: IDs 1-4 old, 5-8 recent, 9 unparseable, 10-35 recent.
+				// IDs 1-4 should be removed (old and outside top-30 by ID).
+				var s strings.Builder
+				for i := 1; i <= 4; i++ {
+					s.WriteString(noteBlock(i, old, "scratch"))
+				}
+				for i := 5; i <= 8; i++ {
+					s.WriteString(noteBlock(i, recent, "evidence"))
+				}
+				s.WriteString("\n## note #9 · bad-ts · kind=summary\n\nbody9\n")
+				for i := 10; i <= 35; i++ {
+					s.WriteString(noteBlock(i, recent, "scratch"))
+				}
+				return s.String()
+			}(),
+			wantIDs: func() []int {
+				// IDs 5-35 are kept (either within top-30 by ID or recent).
+				var ids []int
+				for i := 5; i <= 35; i++ {
+					ids = append(ids, i)
+				}
+				return ids
+			}(),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := cleanupNotes([]byte(tt.input), now)
+
+			var gotIDs []int
+			for _, m := range noteHeaderRe.FindAllSubmatch(result, -1) {
+				id, _ := strconv.Atoi(string(m[1]))
+				gotIDs = append(gotIDs, id)
+			}
+
+			if len(gotIDs) != len(tt.wantIDs) {
+				t.Fatalf("got %d notes, want %d\ngot IDs: %v\nwant IDs: %v\nresult:\n%s",
+					len(gotIDs), len(tt.wantIDs), gotIDs, tt.wantIDs, result)
+			}
+			for i, id := range gotIDs {
+				if id != tt.wantIDs[i] {
+					t.Fatalf("position %d: got id %d, want %d\ngot IDs: %v\nwant IDs: %v",
+						i, id, tt.wantIDs[i], gotIDs, tt.wantIDs)
+				}
+			}
+
+			// Verify prefix preservation: if input had content before the first
+			// `## note #`, that content must appear at the start of the output.
+			if strings.Contains(tt.input, "My Header") && !strings.HasPrefix(string(result), "# My Header") {
+				t.Fatalf("prefix not preserved in output:\n%s", result)
+			}
+		})
+	}
+}
+

@@ -86,7 +86,7 @@ func (t *readSessionTool) Schema() json.RawMessage {
   "properties": {
     "session": {
       "type": "string",
-      "description": "Session file name (e.g. "20260618-231556.000000000-gpt-4.jsonl") or full path. Use list_sessions to see available sessions."
+      "description": "Session file name (e.g. '20260618-231556.000000000-gpt-4.jsonl') or full path. Use list_sessions to see available sessions."
     },
     "max_turns": {
       "type": "integer",
