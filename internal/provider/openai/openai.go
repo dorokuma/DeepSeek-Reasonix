@@ -159,7 +159,7 @@ func (c *client) Stream(ctx context.Context, req provider.Request) (<-chan provi
 		httpReq.Header.Set("Accept", "text/event-stream")
 		return httpReq, nil
 	}
-	resp, err := provider.SendWithRetry(ctx, c.http, c.name, c.keyEnv, newReq)
+	resp, err := provider.SendWithRetry(ctx, c.http, c.name, c.keyEnv, c.apiKey, newReq)
 	if err != nil {
 		return nil, err
 	}
@@ -197,7 +197,7 @@ func (c *client) streamWithReconnect(ctx context.Context, resp *http.Response, n
 			out <- provider.Chunk{Type: provider.ChunkError, Err: err}
 			return
 		}
-		next, rerr := provider.SendWithRetry(ctx, c.http, c.name, c.keyEnv, newReq)
+		next, rerr := provider.SendWithRetry(ctx, c.http, c.name, c.keyEnv, c.apiKey, newReq)
 		if rerr != nil {
 			out <- provider.Chunk{Type: provider.ChunkError, Err: rerr}
 			return

@@ -15,9 +15,12 @@ import (
 // for task(run_in_background). wait sees the result; bash_output should too.
 func TestOutputSurfacesResultForBufferlessJob(t *testing.T) {
 	m := NewManager(event.Discard)
-	j := m.Start("task", "demo", func(ctx context.Context, _ io.Writer) (string, error) {
+	j, err := m.Start("task", "demo", func(ctx context.Context, _ io.Writer) (string, error) {
 		return "THE-ANSWER", nil
 	})
+	if err != nil {
+		t.Fatal(err)
+	}
 	<-j.done
 
 	text, status, ok := m.Output(j.ID)

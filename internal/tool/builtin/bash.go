@@ -168,7 +168,7 @@ func (b bash) Execute(ctx context.Context, args json.RawMessage) (string, error)
 		workDir := b.workDir
 		// The job runs under the manager's session context (no foreground timeout), so it
 		// survives this turn; its combined output streams to the job buffer.
-		job := jm.Start("bash", commandPreview(p.Command), func(jobCtx context.Context, out io.Writer) (string, error) {
+		job, err := jm.Start("bash", commandPreview(p.Command), func(jobCtx context.Context, out io.Writer) (string, error) {
 			// Cap background output at 16 MB to prevent OOM from runaway commands.
 			const bgMaxOutput = 16 << 20
 			limitedOut := io.MultiWriter(out, &limitedWriter{limit: bgMaxOutput})
@@ -181,6 +181,9 @@ func (b bash) Execute(ctx context.Context, args json.RawMessage) (string, error)
 			cmd.Stderr = limitedOut
 			return "", cmd.Run()
 		})
+		if err != nil {
+			return "", err
+		}
 		return fmt.Sprintf("Started background job %q. It keeps running across turns; read new output with bash_output(job_id=%q), wait for it with wait, or stop it with kill_shell(job_id=%q).", job.ID, job.ID, job.ID), nil
 	}
 

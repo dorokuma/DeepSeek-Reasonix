@@ -83,7 +83,7 @@ func TestRecordTool_extended(t *testing.T) {
 
 	RecordTool(j, "glob", json.RawMessage(`{"pattern":"**/*.go"}`), "a.go\n", nil)
 	RecordTool(j, "ls", json.RawMessage(`{"path":"internal"}`), "", nil)
-	RecordTool(j, "mcp__cf-docs__search", json.RawMessage(`{}`), "hit", nil)
+	RecordTool(j, "mcp__cf-docs__search", json.RawMessage(`{}`), "example.com", nil)
 
 	for _, want := range []string{"*.go", "internal", "example.com", "mcp__cf-docs"} {
 		lines := j.search(want, nil, 5)

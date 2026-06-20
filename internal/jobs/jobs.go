@@ -18,6 +18,7 @@ import (
 	"io"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"reasonix/internal/event"
@@ -52,6 +53,15 @@ type Result struct {
 	Output string // the terminal result text, or the streamed buffer when no result was set
 }
 
+type jobKey struct{}
+
+// UpdateJobActivity updates the last active timestamp of a job associated with the context.
+func UpdateJobActivity(ctx context.Context) {
+	if j, ok := ctx.Value(jobKey{}).(*Job); ok {
+		j.lastActive.Store(time.Now().Unix())
+	}
+}
+
 // Job is one background job. The mutex guards the streaming buffer and the
 // terminal fields; the run goroutine writes them, readers (Output/Wait/snapshots)
 // take the same lock.
@@ -69,6 +79,7 @@ type Job struct {
 	startedAt  int64
 	cancel     context.CancelFunc
 	done       chan struct{}
+	lastActive atomic.Int64
 }
 
 // Manager is the session's background-job table. It is safe for concurrent use.
@@ -77,11 +88,14 @@ type Manager struct {
 	root   context.Context
 	cancel context.CancelFunc
 
-	mu        sync.Mutex
-	seq       int
-	jobs      map[string]*Job
-	order     []string
-	completed []string // finished-job summaries awaiting drain into the next turn
+	mu             sync.Mutex
+	seq            int
+	jobs           map[string]*Job
+	order          []string
+	completed      []string // finished-job summaries awaiting drain into the next turn
+	sem            chan struct{}
+	monitorRunning bool
+	jobDone        chan struct{}
 }
 
 // NewManager returns a Manager whose jobs run under a fresh session-scoped
@@ -92,7 +106,71 @@ func NewManager(sink event.Sink) *Manager {
 		sink = event.Discard
 	}
 	root, cancel := context.WithCancel(context.Background())
-	return &Manager{sink: sink, root: root, cancel: cancel, jobs: map[string]*Job{}}
+	m := &Manager{
+		sink:    sink,
+		root:    root,
+		cancel:  cancel,
+		jobs:    map[string]*Job{},
+		sem:     make(chan struct{}, 3),
+		jobDone: make(chan struct{}, 10),
+	}
+	return m
+}
+
+func (m *Manager) startMonitorIfNeeded() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.monitorRunning {
+		return
+	}
+	m.monitorRunning = true
+	go m.staleMonitorLoop()
+}
+
+func (m *Manager) checkAndClean() bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	now := time.Now().Unix()
+	runningCount := 0
+	for _, j := range m.jobs {
+		j.mu.Lock()
+		if j.status == Running {
+			runningCount++
+			lastActive := j.lastActive.Load()
+			if lastActive > 0 && now-lastActive > 30 {
+				j.status = Killed
+				j.cancel()
+			}
+		}
+		j.mu.Unlock()
+	}
+	if runningCount == 0 {
+		m.monitorRunning = false
+		return true
+	}
+	return false
+}
+
+func (m *Manager) staleMonitorLoop() {
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-m.root.Done():
+			m.mu.Lock()
+			m.monitorRunning = false
+			m.mu.Unlock()
+			return
+		case <-m.jobDone:
+			if m.checkAndClean() {
+				return
+			}
+		case <-ticker.C:
+			if m.checkAndClean() {
+				return
+			}
+		}
+	}
 }
 
 // jobWriter appends a job's streamed output under its lock so a concurrent
@@ -102,6 +180,7 @@ type jobWriter struct{ j *Job }
 func (w jobWriter) Write(p []byte) (int, error) {
 	w.j.mu.Lock()
 	defer w.j.mu.Unlock()
+	w.j.lastActive.Store(time.Now().Unix())
 	return w.j.buf.Write(p)
 }
 
@@ -110,12 +189,30 @@ func (w jobWriter) Write(p []byte) (int, error) {
 // terminal result text (a task's final answer; a bash job streams everything to
 // the buffer and returns ""). The job is marked killed when its context was
 // cancelled, failed on any other error, else done.
-func (m *Manager) Start(kind, label string, run func(ctx context.Context, out io.Writer) (string, error)) *Job {
+func (m *Manager) Start(kind, label string, run func(ctx context.Context, out io.Writer) (string, error)) (*Job, error) {
+	m.startMonitorIfNeeded()
+	select {
+	case m.sem <- struct{}{}:
+	default:
+		return nil, fmt.Errorf("Reject: too many background jobs running (max 3)")
+	}
+
 	m.mu.Lock()
 	m.seq++
 	id := fmt.Sprintf("%s-%d", kind, m.seq)
 	ctx, cancel := context.WithCancel(m.root)
-	j := &Job{ID: id, Kind: kind, Label: label, status: Running, startedAt: nowMs(), cancel: cancel, done: make(chan struct{})}
+	j := &Job{
+		ID:        id,
+		Kind:      kind,
+		Label:     label,
+		status:    Running,
+		startedAt: nowMs(),
+		cancel:    cancel,
+		done:      make(chan struct{}),
+	}
+	j.lastActive.Store(time.Now().Unix())
+	ctx = context.WithValue(ctx, jobKey{}, j)
+
 	m.jobs[id] = j
 	m.order = append(m.order, id)
 	m.mu.Unlock()
@@ -123,6 +220,13 @@ func (m *Manager) Start(kind, label string, run func(ctx context.Context, out io
 	m.sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelInfo, Text: startedText(kind, id, label)})
 
 	go func() {
+		defer func() {
+			<-m.sem
+			select {
+			case m.jobDone <- struct{}{}:
+			default:
+			}
+		}()
 		result, err := run(ctx, jobWriter{j})
 
 		var st Status
@@ -153,7 +257,7 @@ func (m *Manager) Start(kind, label string, run func(ctx context.Context, out io
 		j.mu.Unlock()
 		close(j.done)
 	}()
-	return j
+	return j, nil
 }
 
 // recordCompletion queues the finished-job summary for DrainCompletedNote and

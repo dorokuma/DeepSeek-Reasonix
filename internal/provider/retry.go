@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 )
@@ -143,6 +144,83 @@ func parseRetryAfter(resp *http.Response) time.Duration {
 	return 0
 }
 
+type KeyLeaseManager struct {
+	mu       sync.Mutex
+	rawKey   string
+	keys     []string
+	cooldown map[string]time.Time
+}
+
+var (
+	leaseManagers = make(map[string]*KeyLeaseManager)
+	leaseMu       sync.Mutex
+)
+
+func GetLeaseManager(keyEnv string, rawKey string) *KeyLeaseManager {
+	leaseMu.Lock()
+	defer leaseMu.Unlock()
+	if lm, ok := leaseManagers[keyEnv]; ok && lm.rawKey == rawKey {
+		return lm
+	}
+	var keys []string
+	for _, k := range strings.Split(rawKey, ",") {
+		k = strings.TrimSpace(k)
+		if k != "" {
+			keys = append(keys, k)
+		}
+	}
+	lm := &KeyLeaseManager{
+		rawKey:   rawKey,
+		keys:     keys,
+		cooldown: make(map[string]time.Time),
+	}
+	leaseManagers[keyEnv] = lm
+	return lm
+}
+
+func (m *KeyLeaseManager) Lease() string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if len(m.keys) == 0 {
+		return ""
+	}
+	now := time.Now()
+	for _, k := range m.keys {
+		if t, ok := m.cooldown[k]; !ok || now.After(t) {
+			return k
+		}
+	}
+	var bestKey string
+	var earliest time.Time
+	for _, k := range m.keys {
+		t := m.cooldown[k]
+		if bestKey == "" || t.Before(earliest) {
+			bestKey = k
+			earliest = t
+		}
+	}
+	return bestKey
+}
+
+func (m *KeyLeaseManager) CoolDown(key string, d time.Duration) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.cooldown[key] = time.Now().Add(d)
+}
+
+func injectLeaseKey(req *http.Request, key string, rawKey string) {
+	if auth := req.Header.Get("Authorization"); auth != "" {
+		if strings.Contains(auth, rawKey) {
+			req.Header.Set("Authorization", strings.Replace(auth, rawKey, key, 1))
+		}
+	}
+	if xkey := req.Header.Get("x-api-key"); xkey != "" {
+		if strings.Contains(xkey, rawKey) {
+			req.Header.Set("x-api-key", strings.Replace(xkey, rawKey, key, 1))
+		}
+	}
+}
+
 // SendWithRetry POSTs a streaming request built by newReq and returns the OK
 // response. It retries the connection+header phase up to MaxRetries times on
 // transient network errors and retryable statuses with capped exponential
@@ -150,10 +228,12 @@ func parseRetryAfter(resp *http.Response) time.Duration {
 // non-OK statuses become *APIError. A RetryNotify in ctx fires before each
 // sleep. Retries cover only the header phase — once the body streams, mid-stream
 // failures are not retried (the model has already emitted tokens).
-func SendWithRetry(ctx context.Context, httpClient *http.Client, provName, keyEnv string, newReq func(context.Context) (*http.Request, error)) (*http.Response, error) {
+func SendWithRetry(ctx context.Context, httpClient *http.Client, provName, keyEnv string, rawKey string, newReq func(context.Context) (*http.Request, error)) (*http.Response, error) {
 	notify := retryNotifyFromContext(ctx)
 	var lastErr error
 	var retryAfter time.Duration
+
+	lm := GetLeaseManager(keyEnv, rawKey)
 
 	for attempt := 0; attempt <= MaxRetries; attempt++ {
 		if attempt > 0 {
@@ -173,6 +253,13 @@ func SendWithRetry(ctx context.Context, httpClient *http.Client, provName, keyEn
 		if err != nil {
 			return nil, fmt.Errorf("%s: build request: %w", provName, err)
 		}
+
+		var usedKey string
+		if lm != nil && len(lm.keys) > 0 {
+			usedKey = lm.Lease()
+			injectLeaseKey(req, usedKey, rawKey)
+		}
+
 		resp, err := httpClient.Do(req)
 		if err != nil {
 			if !transientErr(err) {
@@ -190,6 +277,12 @@ func SendWithRetry(ctx context.Context, httpClient *http.Client, provName, keyEn
 		_, _ = io.Copy(io.Discard, resp.Body)
 		resp.Body.Close()
 
+		if resp.StatusCode == http.StatusTooManyRequests {
+			if lm != nil && usedKey != "" {
+				lm.CoolDown(usedKey, 15*time.Second)
+			}
+		}
+
 		if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
 			return nil, &AuthError{Provider: provName, KeyEnv: keyEnv, Status: resp.StatusCode}
 		}
@@ -199,5 +292,5 @@ func SendWithRetry(ctx context.Context, httpClient *http.Client, provName, keyEn
 		}
 		lastErr = apiErr
 	}
-	return nil, lastErr
+	return nil, fmt.Errorf("%s: retry limit exceeded: %w", provName, lastErr)
 }

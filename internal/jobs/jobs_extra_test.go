@@ -18,7 +18,7 @@ func TestNewManagerTreatsTypedNilSinkAsDiscard(t *testing.T) {
 	m := NewManager(sink)
 	defer m.Close()
 
-	j := m.Start("bash", "typed nil sink", func(context.Context, io.Writer) (string, error) {
+	j, _ := m.Start("bash", "typed nil sink", func(context.Context, io.Writer) (string, error) {
 		return "done", nil
 	})
 	res := m.Wait(context.Background(), []string{j.ID}, 1000)
@@ -33,7 +33,7 @@ func TestWaitTimeout(t *testing.T) {
 	m := NewManager(event.Discard)
 	defer m.Close()
 
-	j := m.Start("bash", "", func(ctx context.Context, _ io.Writer) (string, error) {
+	j, _ := m.Start("bash", "", func(ctx context.Context, _ io.Writer) (string, error) {
 		<-ctx.Done()
 		return "", ctx.Err()
 	})
@@ -59,11 +59,11 @@ func TestWaitAllRunning(t *testing.T) {
 	// "all running" set — instant-returning jobs could finish first and be missed,
 	// which is exactly the resolution this test must observe deterministically. A
 	// short timeout returns the still-running snapshot.
-	j1 := m.Start("bash", "", func(ctx context.Context, _ io.Writer) (string, error) {
+	j1, _ := m.Start("bash", "", func(ctx context.Context, _ io.Writer) (string, error) {
 		<-ctx.Done()
 		return "", ctx.Err()
 	})
-	j2 := m.Start("bash", "", func(ctx context.Context, _ io.Writer) (string, error) {
+	j2, _ := m.Start("bash", "", func(ctx context.Context, _ io.Writer) (string, error) {
 		<-ctx.Done()
 		return "", ctx.Err()
 	})
@@ -124,10 +124,10 @@ func TestDrainMultiple(t *testing.T) {
 	m := NewManager(event.Discard)
 	defer m.Close()
 
-	m.Start("bash", "", func(_ context.Context, _ io.Writer) (string, error) {
+	_, _ = m.Start("bash", "", func(_ context.Context, _ io.Writer) (string, error) {
 		return "", nil
 	})
-	m.Start("task", "label", func(_ context.Context, _ io.Writer) (string, error) {
+	_, _ = m.Start("task", "label", func(_ context.Context, _ io.Writer) (string, error) {
 		return "answer", nil
 	})
 	m.Wait(context.Background(), nil, 5)
@@ -141,7 +141,7 @@ func TestDrainMultiple(t *testing.T) {
 
 func TestCloseIdempotent(t *testing.T) {
 	m := NewManager(event.Discard)
-	m.Start("bash", "", func(_ context.Context, _ io.Writer) (string, error) {
+	_, _ = m.Start("bash", "", func(_ context.Context, _ io.Writer) (string, error) {
 		return "", nil
 	})
 	m.Close()
@@ -164,7 +164,7 @@ func TestJobFailed(t *testing.T) {
 	m := NewManager(event.Discard)
 	defer m.Close()
 
-	j := m.Start("bash", "", func(_ context.Context, _ io.Writer) (string, error) {
+	j, _ := m.Start("bash", "", func(_ context.Context, _ io.Writer) (string, error) {
 		return "", io.ErrUnexpectedEOF
 	})
 	res := m.Wait(context.Background(), []string{j.ID}, 5)
@@ -179,7 +179,7 @@ func TestJobWithResult(t *testing.T) {
 	m := NewManager(event.Discard)
 	defer m.Close()
 
-	j := m.Start("task", "", func(_ context.Context, _ io.Writer) (string, error) {
+	j, _ := m.Start("task", "", func(_ context.Context, _ io.Writer) (string, error) {
 		return "final answer", nil
 	})
 	res := m.Wait(context.Background(), []string{j.ID}, 5)

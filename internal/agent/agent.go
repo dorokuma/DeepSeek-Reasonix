@@ -1097,6 +1097,7 @@ func (a *Agent) executeOne(ctx context.Context, call provider.ToolCall) toolOutc
 		}
 	}
 	cctx := withCallContext(ctx, call.ID, a.sink, a.asker)
+	cctx = WithSession(cctx, a.session)
 	if len(a.projectChecks) > 0 {
 		cctx = instruction.WithChecks(cctx, a.projectChecks)
 	}
@@ -1114,6 +1115,16 @@ func (a *Agent) executeOne(ctx context.Context, call provider.ToolCall) toolOutc
 		a.sink.Emit(event.Event{Kind: event.ToolProgress, Tool: event.Tool{ID: callID, Output: chunk}})
 	})
 	result, err := t.Execute(cctx, effectiveArgs)
+	if err == nil {
+		filePath := TryExtractPath(effectiveArgs)
+		if filePath != "" {
+			if t.ReadOnly() {
+				globalFileStateRegistry.RecordRead(a.session, filePath)
+			} else {
+				globalFileStateRegistry.RecordWrite(a.session, filePath)
+			}
+		}
+	}
 	if a.ctxStore != nil {
 		ctxmode.RecordTool(a.ctxStore.Journal(), call.Name, effectiveArgs, result, err)
 	}

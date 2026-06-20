@@ -28,7 +28,7 @@ func TestStartWaitDoneAndDrain(t *testing.T) {
 	m := NewManager(event.Discard)
 	defer m.Close()
 
-	j := m.Start("bash", "echo", func(_ context.Context, out io.Writer) (string, error) {
+	j, _ := m.Start("bash", "echo", func(_ context.Context, out io.Writer) (string, error) {
 		io.WriteString(out, "hello\n")
 		return "", nil
 	})
@@ -54,7 +54,7 @@ func TestOutputStreamsIncrementally(t *testing.T) {
 	defer m.Close()
 
 	release := make(chan struct{})
-	j := m.Start("bash", "", func(_ context.Context, out io.Writer) (string, error) {
+	j, _ := m.Start("bash", "", func(_ context.Context, out io.Writer) (string, error) {
 		io.WriteString(out, "first\n")
 		<-release
 		io.WriteString(out, "second\n")
@@ -82,7 +82,7 @@ func TestKill(t *testing.T) {
 	m := NewManager(event.Discard)
 	defer m.Close()
 
-	j := m.Start("bash", "", func(ctx context.Context, _ io.Writer) (string, error) {
+	j, _ := m.Start("bash", "", func(ctx context.Context, _ io.Writer) (string, error) {
 		<-ctx.Done()
 		return "", ctx.Err()
 	})
@@ -107,7 +107,7 @@ func TestKillStatusObservableBeforeGoroutineReturns(t *testing.T) {
 	defer m.Close()
 
 	release := make(chan struct{})
-	j := m.Start("bash", "", func(ctx context.Context, _ io.Writer) (string, error) {
+	j, _ := m.Start("bash", "", func(ctx context.Context, _ io.Writer) (string, error) {
 		<-ctx.Done()
 		<-release // simulate a teardown that hasn't returned yet
 		return "", ctx.Err()
@@ -135,7 +135,7 @@ func TestCloseCancels(t *testing.T) {
 	m := NewManager(event.Discard)
 
 	started := make(chan struct{})
-	j := m.Start("task", "", func(ctx context.Context, _ io.Writer) (string, error) {
+	j, _ := m.Start("task", "", func(ctx context.Context, _ io.Writer) (string, error) {
 		close(started)
 		<-ctx.Done()
 		return "", ctx.Err()
@@ -155,7 +155,7 @@ func TestRunning(t *testing.T) {
 	defer m.Close()
 
 	release := make(chan struct{})
-	j := m.Start("task", "label", func(ctx context.Context, _ io.Writer) (string, error) {
+	j, _ := m.Start("task", "label", func(ctx context.Context, _ io.Writer) (string, error) {
 		<-release
 		return "answer", nil
 	})

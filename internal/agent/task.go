@@ -122,10 +122,10 @@ func (t *TaskTool) Schema() json.RawMessage {
 }`)
 }
 
-// ReadOnly is false: a sub-agent can invoke any whitelisted tool, including
+// ReadOnly is true: a sub-agent can invoke any whitelisted tool, including
 // writers. Conservative classification keeps the parallel-dispatch path from
 // running two sub-agents at once and letting their writes race.
-func (t *TaskTool) ReadOnly() bool { return false }
+func (t *TaskTool) ReadOnly() bool { return true }
 
 // ResolveProfile extracts model/effort from task args and applies config defaults.
 func (t *TaskTool) ResolveProfile(args json.RawMessage) *event.Profile {
@@ -205,9 +205,12 @@ func (t *TaskTool) Execute(ctx context.Context, args json.RawMessage) (string, e
 		if label == "" {
 			label = "task"
 		}
-		job := jm.Start("task", label, func(jobCtx context.Context, _ io.Writer) (string, error) {
+		job, err := jm.Start("task", label, func(jobCtx context.Context, _ io.Writer) (string, error) {
 			return t.runSub(jobCtx, p.Prompt, subReg, nested, maxSteps, modelRef, effortRef)
 		})
+		if err != nil {
+			return "", err
+		}
 		return fmt.Sprintf("Started background task %q (%s). It runs across turns; collect its final answer with wait (or wait will return it once done), and you'll be notified when it finishes.", job.ID, label), nil
 	}
 
@@ -332,13 +335,37 @@ func RunSubAgent(ctx context.Context, prov provider.Provider, reg *tool.Registry
 	// Walk the session backwards for the last assistant message with content —
 	// that's the sub-agent's final answer. Intermediate assistant messages with
 	// tool_calls but no text don't count.
+	var ans string
 	for i := len(sess.Messages) - 1; i >= 0; i-- {
 		m := sess.Messages[i]
 		if m.Role == provider.RoleAssistant && strings.TrimSpace(m.Content) != "" {
-			return m.Content, nil
+			ans = m.Content
+			break
 		}
 	}
-	return "", fmt.Errorf("sub-agent finished without producing a final answer")
+	if ans == "" {
+		return "", fmt.Errorf("sub-agent finished without producing a final answer")
+	}
+
+	parentSess := SessionFromContext(ctx)
+	if parentSess != nil {
+		parentReads := globalFileStateRegistry.GetReads(parentSess)
+		subWrites := globalFileStateRegistry.GetWrites(sess)
+		var overlap []string
+		readMap := make(map[string]bool)
+		for _, r := range parentReads {
+			readMap[r] = true
+		}
+		for _, w := range subWrites {
+			if readMap[w] {
+				overlap = append(overlap, w)
+			}
+		}
+		if len(overlap) > 0 {
+			ans = fmt.Sprintf("%s\n\n[NOTE: sub-agent modified files %v ... please re-read before editing]", ans, overlap)
+		}
+	}
+	return ans, nil
 }
 
 // NestedSink returns a sink that forwards a sub-agent's tool activity to the

@@ -67,7 +67,7 @@ func TestCompactToolOutput_bashOutputUsesJobLabel(t *testing.T) {
 	}
 	t.Setenv("REASONIX_RTK", "rewrite")
 	jm := jobs.NewManager(event.Discard)
-	j := jm.Start("bash", "git log -400", func(_ context.Context, _ io.Writer) (string, error) {
+	j, _ := jm.Start("bash", "git log -400", func(_ context.Context, _ io.Writer) (string, error) {
 		return "", nil
 	})
 	var b strings.Builder

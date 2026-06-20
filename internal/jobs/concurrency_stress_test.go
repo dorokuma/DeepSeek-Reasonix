@@ -25,10 +25,13 @@ func TestManagerConcurrentAccess(t *testing.T) {
 			for i := 0; i < 200; i++ {
 				switch (w + i) % 6 {
 				case 0:
-					j := m.Start("bash", "x", func(ctx context.Context, out io.Writer) (string, error) {
+					j, err := m.Start("bash", "x", func(ctx context.Context, out io.Writer) (string, error) {
 						_, _ = out.Write([]byte("tick"))
 						return "done", nil
 					})
+					if err != nil {
+						break
+					}
 					_, _, _ = m.Output(j.ID)
 				case 1:
 					_ = m.Running()
