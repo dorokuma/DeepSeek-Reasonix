@@ -69,7 +69,7 @@ func desktopMCPHTTPServer(t *testing.T) *httptest.Server {
 
 // setTestCtrl creates a minimal workspace tab (if needed) and sets its
 // controller, so tests don't depend on the old App.ctrl field.
-func (a *App) setTestCtrl(ctrl *control.Controller, model string) {
+func (a *App) setTestCtrl(ctrl control.SessionAPI, model string) {
 	if len(a.tabs) == 0 {
 		tab := &WorkspaceTab{
 			ID:          "test",
@@ -3915,7 +3915,7 @@ func startNonCooperativeSessionJob(t *testing.T, jm *jobs.Manager, sessionPath s
 	}
 }
 
-func waitNotRunning(t *testing.T, ctrl *control.Controller) {
+func waitNotRunning(t *testing.T, ctrl control.SessionAPI) {
 	t.Helper()
 	deadline := time.Now().Add(time.Second)
 	for ctrl.Running() {

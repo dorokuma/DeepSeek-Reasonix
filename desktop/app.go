@@ -682,7 +682,7 @@ func (a *App) SubmitDisplayToTab(tabID, display, input string) {
 	ctrl.SubmitDisplay(display, input)
 }
 
-func (a *App) bindControllerDisplayRecorder(ctrl *control.Controller) {
+func (a *App) bindControllerDisplayRecorder(ctrl control.SessionAPI) {
 	if ctrl == nil {
 		return
 	}
@@ -824,7 +824,7 @@ func (a *App) SetModeForTab(tabID, mode string) {
 	a.mu.Unlock()
 }
 
-func applyTabModeToController(ctrl *control.Controller, mode string) {
+func applyTabModeToController(ctrl control.SessionAPI, mode string) {
 	if ctrl == nil {
 		return
 	}
@@ -840,7 +840,7 @@ func applyTabModeToController(ctrl *control.Controller, mode string) {
 	}
 }
 
-func applyTabToolApprovalModeToController(ctrl *control.Controller, mode string) {
+func applyTabToolApprovalModeToController(ctrl control.SessionAPI, mode string) {
 	if ctrl == nil {
 		return
 	}
@@ -1018,7 +1018,7 @@ func (a *App) ClearSession() error {
 	return nil
 }
 
-func (a *App) clearActiveSessionRuntime(tab *WorkspaceTab, oldCtrl *control.Controller) error {
+func (a *App) clearActiveSessionRuntime(tab *WorkspaceTab, oldCtrl control.SessionAPI) error {
 	if tab == nil || oldCtrl == nil {
 		return fmt.Errorf("workspace is still starting")
 	}
@@ -1146,7 +1146,7 @@ func (a *App) Checkpoints() []CheckpointMeta {
 
 func (a *App) CheckpointsForTab(tabID string) []CheckpointMeta {
 	a.mu.RLock()
-	var ctrl *control.Controller
+	var ctrl control.SessionAPI
 	if tab := a.tabByIDLocked(tabID); tab != nil {
 		ctrl = tab.Ctrl
 	}
@@ -1196,7 +1196,7 @@ func (a *App) CheckpointsForTab(tabID string) []CheckpointMeta {
 // collapsed tool card. Returns nil when the tool ID is not found.
 func (a *App) ToolResultForTab(tabID, toolID string) *control.ToolResultData {
 	a.mu.RLock()
-	var ctrl *control.Controller
+	var ctrl control.SessionAPI
 	if tab := a.tabByIDLocked(tabID); tab != nil {
 		ctrl = tab.Ctrl
 	}
@@ -1381,7 +1381,7 @@ type WorkspaceMeta struct {
 	Current bool   `json:"current"`
 }
 
-func controllerSessionDir(ctrl *control.Controller) string {
+func controllerSessionDir(ctrl control.SessionAPI) string {
 	if ctrl != nil {
 		if dir := ctrl.SessionDir(); dir != "" {
 			return dir
@@ -1643,7 +1643,7 @@ func (a *App) DeleteSession(path string) error {
 
 type removedSessionRuntime struct {
 	tab           *WorkspaceTab
-	ctrl          *control.Controller
+	ctrl          control.SessionAPI
 	sink          *tabEventSink
 	sessionDir    string
 	sessionPath   string
@@ -1788,7 +1788,7 @@ func prepareRemovedSessionRuntimes(removed []removedSessionRuntime) error {
 	return nil
 }
 
-func waitControllerStopped(ctrl *control.Controller) error {
+func waitControllerStopped(ctrl control.SessionAPI) error {
 	deadline := time.Now().Add(5 * time.Second)
 	for ctrl.Running() {
 		if time.Now().After(deadline) {
@@ -1855,7 +1855,7 @@ func delayedDesktopSessionTrash(dir, sessionPath, key string, destroys []control
 }
 
 func (a *App) closeRemovedSessionRuntimes(removed []removedSessionRuntime) {
-	seen := map[*control.Controller]bool{}
+	seen := map[control.SessionAPI]bool{}
 	releasedTabs := map[*WorkspaceTab]bool{}
 	for _, item := range removed {
 		if item.tab != nil && !releasedTabs[item.tab] {
@@ -1871,7 +1871,7 @@ func (a *App) closeRemovedSessionRuntimes(removed []removedSessionRuntime) {
 }
 
 func (a *App) closeRemovedSessionRuntimesAfterDestroy(removed []removedSessionRuntime) {
-	seen := map[*control.Controller]bool{}
+	seen := map[control.SessionAPI]bool{}
 	for _, item := range removed {
 		if item.ctrl == nil || seen[item.ctrl] {
 			continue
@@ -3421,7 +3421,7 @@ func (a *App) ContextUsage() ContextInfo {
 func (a *App) ContextUsageForTab(tabID string) ContextInfo {
 	a.mu.RLock()
 	tab := a.tabByIDLocked(tabID)
-	var ctrl *control.Controller
+	var ctrl control.SessionAPI
 	if tab != nil {
 		ctrl = tab.Ctrl
 	}
@@ -3495,7 +3495,7 @@ func (a *App) JobsForTab(tabID string) []JobView {
 	return a.jobsForCtrl(ctrl, out)
 }
 
-func (a *App) jobsForCtrl(ctrl *control.Controller, out []JobView) []JobView {
+func (a *App) jobsForCtrl(ctrl control.SessionAPI, out []JobView) []JobView {
 	if ctrl == nil {
 		return out
 	}
@@ -3858,7 +3858,7 @@ func (a *App) SkillsSettings() SkillsSettingsView {
 	out := SkillsSettingsView{Skills: []SkillView{}, SkillRoots: []SkillRootView{}}
 	a.mu.RLock()
 	tab := a.activeTabLocked()
-	var ctrl *control.Controller
+	var ctrl control.SessionAPI
 	if tab != nil {
 		ctrl = tab.Ctrl
 	}
@@ -4757,7 +4757,7 @@ func normalizeMCPTransport(transport string) string {
 	}
 }
 
-func mcpConnected(ctrl *control.Controller, name string) bool {
+func mcpConnected(ctrl control.SessionAPI, name string) bool {
 	if ctrl == nil || ctrl.Host() == nil {
 		return false
 	}
@@ -4769,7 +4769,7 @@ func mcpConnected(ctrl *control.Controller, name string) bool {
 	return false
 }
 
-func mcpFailed(ctrl *control.Controller, name string) bool {
+func mcpFailed(ctrl control.SessionAPI, name string) bool {
 	if ctrl == nil || ctrl.Host() == nil {
 		return false
 	}
@@ -4781,7 +4781,7 @@ func mcpFailed(ctrl *control.Controller, name string) bool {
 	return false
 }
 
-func recordMCPFailure(ctrl *control.Controller, e config.PluginEntry, err error) {
+func recordMCPFailure(ctrl control.SessionAPI, e config.PluginEntry, err error) {
 	if ctrl == nil || ctrl.Host() == nil || err == nil {
 		return
 	}
@@ -4797,7 +4797,7 @@ func recordMCPFailure(ctrl *control.Controller, e config.PluginEntry, err error)
 	}, err)
 }
 
-func findMCPServerView(ctrl *control.Controller, name string) (ServerView, bool) {
+func findMCPServerView(ctrl control.SessionAPI, name string) (ServerView, bool) {
 	if ctrl == nil || ctrl.Host() == nil {
 		return ServerView{}, false
 	}
@@ -4947,7 +4947,7 @@ func modelProviderAccessAllowed(access map[string]bool, name string) bool {
 	return access[strings.TrimSpace(name)]
 }
 
-func controllerHasActiveRuntimeWork(ctrl *control.Controller) bool {
+func controllerHasActiveRuntimeWork(ctrl control.SessionAPI) bool {
 	if ctrl == nil {
 		return false
 	}
@@ -6008,7 +6008,7 @@ func (a *App) MemoryForTab(tabID string) MemoryView {
 	return a.memoryForCtrl(a.ctrlByTabID(tabID), false)
 }
 
-func (a *App) memoryForCtrl(ctrl *control.Controller, fallback bool) MemoryView {
+func (a *App) memoryForCtrl(ctrl control.SessionAPI, fallback bool) MemoryView {
 	view := MemoryView{Docs: []MemoryDoc{}, Facts: []MemoryFact{}, Archives: []MemoryArchive{}, Scopes: []MemoryScope{}}
 	if ctrl == nil {
 		if !fallback {
@@ -6068,7 +6068,7 @@ func (a *App) RememberForTab(tabID, scope, note string) (string, error) {
 	return a.rememberForCtrl(a.ctrlByTabID(tabID), scope, note, false)
 }
 
-func (a *App) rememberForCtrl(ctrl *control.Controller, scope, note string, fallback bool) (string, error) {
+func (a *App) rememberForCtrl(ctrl control.SessionAPI, scope, note string, fallback bool) (string, error) {
 	if ctrl == nil {
 		if !fallback {
 			return "", nil
@@ -6096,7 +6096,7 @@ func (a *App) ForgetForTab(tabID, name string) error {
 	return a.forgetForCtrl(a.ctrlByTabID(tabID), name, false)
 }
 
-func (a *App) forgetForCtrl(ctrl *control.Controller, name string, fallback bool) error {
+func (a *App) forgetForCtrl(ctrl control.SessionAPI, name string, fallback bool) error {
 	if ctrl == nil {
 		if !fallback {
 			return nil
@@ -6124,7 +6124,7 @@ func (a *App) SaveDocForTab(tabID, path, body string) (string, error) {
 	return a.saveDocForCtrl(a.ctrlByTabID(tabID), path, body, false)
 }
 
-func (a *App) saveDocForCtrl(ctrl *control.Controller, path, body string, fallback bool) (string, error) {
+func (a *App) saveDocForCtrl(ctrl control.SessionAPI, path, body string, fallback bool) (string, error) {
 	if ctrl == nil {
 		if !fallback {
 			return "", nil
