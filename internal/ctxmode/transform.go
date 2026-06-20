@@ -65,7 +65,7 @@ func buildPipedSummary(id, toolName, subject string, fullBytes int, compactBody 
 
 func sandboxTool(name string) bool {
 	switch name {
-	case "read_file", "grep", "glob", "web_fetch", "ls", "ctx_run":
+	case "read_file", "grep", "glob", "ls", "ctx_run":
 		return true
 	default:
 		return strings.HasPrefix(name, tool.MCPNamePrefix)

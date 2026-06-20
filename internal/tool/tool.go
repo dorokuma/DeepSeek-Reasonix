@@ -232,7 +232,6 @@ func (r *Registry) Suggest(name string) (string, bool) {
 		"find": "grep", "search": "grep", "locate": "grep",
 		"run": "bash", "execute": "bash", "shell": "bash",
 		"list": "ls", "dir": "ls",
-		"fetch": "web_fetch", "download": "web_fetch", "curl": "web_fetch",
 		"explore": "explore", "research": "research",
 		"install": "install_skill", "delete": "delete_range", "remove": "delete_range",
 		"remember": "remember", "forget": "forget",

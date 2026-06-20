@@ -310,11 +310,6 @@ func RecordTool(j *Journal, toolName string, args json.RawMessage, result string
 			}
 			j.Record("ls", path, "")
 		}
-	case "web_fetch":
-		var p struct{ URL string `json:"url"` }
-		if json.Unmarshal(args, &p) == nil && strings.TrimSpace(p.URL) != "" {
-			j.Record("fetch", p.URL, truncateField(result, 120))
-		}
 	case "ctx_read", "ctx_search":
 		var p struct{ Ref string `json:"ref"` }
 		if json.Unmarshal(args, &p) == nil && p.Ref != "" {

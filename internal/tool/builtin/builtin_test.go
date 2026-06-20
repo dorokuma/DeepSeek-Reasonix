@@ -6,8 +6,6 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -43,7 +41,7 @@ func runTool(t *testing.T, tl tool.Tool, m map[string]any) string {
 }
 
 func TestBuiltinsRegistered(t *testing.T) {
-	want := []string{"bash", "edit_file", "glob", "grep", "ls", "multi_edit", "read_file", "web_fetch", "write_file"}
+	want := []string{"bash", "edit_file", "glob", "grep", "ls", "multi_edit", "read_file", "write_file"}
 	for _, name := range want {
 		if _, ok := tool.LookupBuiltin(name); !ok {
 			t.Errorf("built-in %q not registered", name)
@@ -58,7 +56,7 @@ func TestBuiltinsRegistered(t *testing.T) {
 // many invocations are pure reads — args aren't introspected.
 func TestBuiltinReadOnlyClassification(t *testing.T) {
 	readOnly := map[string]bool{
-		"read_file": true, "ls": true, "glob": true, "grep": true, "web_fetch": true,
+		"read_file": true, "ls": true, "glob": true, "grep": true,
 		"write_file": false, "edit_file": false, "multi_edit": false, "bash": false,
 	}
 	for name, want := range readOnly {
@@ -255,61 +253,6 @@ func TestGrep(t *testing.T) {
 	out := runTool(t, grepTool{}, map[string]any{"pattern": "func ", "path": dir})
 	if !strings.Contains(out, "Foo") || strings.Contains(out, "var x") {
 		t.Fatalf("grep result = %q", out)
-	}
-}
-
-// TestWebFetchHTML serves a tiny HTML page and checks the reducer keeps the
-// readable text while removing scripts, styles, and tags.
-func TestWebFetchHTML(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		_, _ = w.Write([]byte(`<!doctype html>
-<html><head><title>T</title><style>body{color:red}</style></head>
-<body>
-<h1>Hello &amp; world</h1>
-<script>alert("bad")</script>
-<p>Visible text.</p>
-</body></html>`))
-	}))
-	defer srv.Close()
-
-	out := runTool(t, webFetch{}, map[string]any{"url": srv.URL})
-	for _, want := range []string{"Hello & world", "Visible text", "text/html"} {
-		if !strings.Contains(out, want) {
-			t.Errorf("missing %q in:\n%s", want, out)
-		}
-	}
-	for _, leak := range []string{"<script", "alert(", "<style", "<h1>", "&amp;"} {
-		if strings.Contains(out, leak) {
-			t.Errorf("leaked raw HTML/script %q", leak)
-		}
-	}
-}
-
-// TestWebFetchPlain confirms non-HTML bodies pass through untouched (apart
-// from the prepended status header).
-func TestWebFetchPlain(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/plain")
-		_, _ = w.Write([]byte("line1\nline2\n"))
-	}))
-	defer srv.Close()
-
-	out := runTool(t, webFetch{}, map[string]any{"url": srv.URL})
-	if !strings.Contains(out, "line1") || !strings.Contains(out, "line2") {
-		t.Errorf("plain body content missing:\n%s", out)
-	}
-	if strings.Contains(out, "<") {
-		t.Errorf("html reducer ran on text/plain: %s", out)
-	}
-}
-
-// TestWebFetchSchemeRejected blocks anything that's not http(s) so the tool
-// can't be tricked into reading file:// or arbitrary URI schemes.
-func TestWebFetchSchemeRejected(t *testing.T) {
-	_, err := webFetch{}.Execute(context.Background(), argsJSON(t, map[string]any{"url": "file:///etc/passwd"}))
-	if err == nil || !strings.Contains(err.Error(), "http(s)") {
-		t.Errorf("expected scheme rejection, got %v", err)
 	}
 }
 
