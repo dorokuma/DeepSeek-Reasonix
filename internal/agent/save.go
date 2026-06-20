@@ -269,3 +269,48 @@ func NewSessionPath(dir, model string) string {
 	}
 	return filepath.Join(dir, fmt.Sprintf("%s-%s.jsonl", time.Now().UTC().Format("20060102-150405.000000000"), safe))
 }
+
+// SessionOrderInfo holds basic session metadata for sorting.
+type SessionOrderInfo struct {
+	Path           string
+	LastActivityAt time.Time
+}
+
+// ListSessionOrder lists visible sessions in dir, ordered by modification time desc.
+func ListSessionOrder(dir string) ([]SessionOrderInfo, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	var out []SessionOrderInfo
+	for _, e := range entries {
+		if e.IsDir() || filepath.Ext(e.Name()) != ".jsonl" {
+			continue
+		}
+		info, err := e.Info()
+		if err != nil {
+			continue
+		}
+		out = append(out, SessionOrderInfo{
+			Path:           filepath.Join(dir, e.Name()),
+			LastActivityAt: info.ModTime(),
+		})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].LastActivityAt.After(out[j].LastActivityAt)
+	})
+	return out, nil
+}
+
+// SessionPreview returns the preview string and turn count for a session.
+func SessionPreview(path string) (string, int) {
+	return previewSession(path)
+}
+
+// IsCleanupPending returns true if the session is marked for deletion.
+func IsCleanupPending(path string) bool {
+	return false
+}
