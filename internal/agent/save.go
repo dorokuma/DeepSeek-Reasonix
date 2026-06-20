@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"reasonix/internal/fileutil"
@@ -294,8 +295,12 @@ func ListSessionOrder(dir string) ([]SessionOrderInfo, error) {
 		if err != nil {
 			continue
 		}
+		full := filepath.Join(dir, e.Name())
+		if IsCleanupPending(full) {
+			continue
+		}
 		out = append(out, SessionOrderInfo{
-			Path:           filepath.Join(dir, e.Name()),
+			Path:           full,
 			LastActivityAt: info.ModTime(),
 		})
 	}
@@ -310,7 +315,21 @@ func SessionPreview(path string) (string, int) {
 	return previewSession(path)
 }
 
+var (
+	pendingCleanups = make(map[string]bool)
+	cleanupMu       sync.RWMutex
+)
+
 // IsCleanupPending returns true if the session is marked for deletion.
 func IsCleanupPending(path string) bool {
-	return false
+	cleanupMu.RLock()
+	defer cleanupMu.RUnlock()
+	return pendingCleanups[path]
+}
+
+// MarkCleanupPending marks a session as pending deletion.
+func MarkCleanupPending(path, action string) {
+	cleanupMu.Lock()
+	defer cleanupMu.Unlock()
+	pendingCleanups[path] = true
 }

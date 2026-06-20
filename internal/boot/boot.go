@@ -433,8 +433,8 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	// Session history tools let the AI discover and read past conversations.
 	// `list_sessions` returns all saved session files; `read_session` loads one
 	// and renders the full conversation as readable text.
-	reg.Add(sessiontool.NewListSessionsTool(sessionDir))
-	reg.Add(sessiontool.NewReadSessionTool(sessionDir))
+	reg.Add(sessiontool.NewListSessionsTool(config.SessionDir()))
+	reg.Add(sessiontool.NewReadSessionTool(config.SessionDir()))
 
 	// The `remember` tool lets the model persist durable facts to the project's
 	// auto-memory store; `forget` prunes ones that turn out wrong. The saved index
