@@ -222,7 +222,11 @@ func (c *client) buildRequest(req provider.Request) chatRequest {
 		// exactly as returned — even when it is an empty string. Omitting the field
 		// (Go's omitempty) triggers HTTP 400: "reasoning_content … must be passed
 		// back to the API." Pure chat turns between user messages may omit it.
-		if c.deepseek && needsReasoningRoundTrip(src, i) {
+		//
+		// 此外，如果不是工具链的 needsReasoningRoundTrip，但是消息角色为 assistant 且 Content 为空而
+		// ReasoningContent 不为空（例如普通对话中被截断、无 content 只有 reasoning 时），也必须回传其
+		// reasoning_content，以便 DeepSeek 在后续请求中能识别已有的推理，并在此推理基础上继续输出正文。
+		if c.deepseek && (needsReasoningRoundTrip(src, i) || (m.Role == provider.RoleAssistant && m.Content == "" && m.ReasoningContent != "")) {
 			rc := m.ReasoningContent
 			cm.ReasoningContent = &rc
 		}

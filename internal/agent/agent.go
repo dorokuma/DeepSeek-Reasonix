@@ -427,26 +427,26 @@ func New(prov provider.Provider, tools *tool.Registry, session *Session, opts Op
 		maxStepsKey = "agent.max_steps"
 	}
 	return &Agent{
-		prov:              prov,
-		tools:             tools,
-		session:           session,
-		maxSteps:          opts.MaxSteps,
-		maxStepsKey:       maxStepsKey,
-		temperature:       opts.Temperature,
-		pricing:           opts.Pricing,
-		sink:              sink,
-		gate:              gate,
-		hooks:             hooks,
-		jobs:              opts.Jobs,
-		ctxStore:          ctxStore,
+		prov:                 prov,
+		tools:                tools,
+		session:              session,
+		maxSteps:             opts.MaxSteps,
+		maxStepsKey:          maxStepsKey,
+		temperature:          opts.Temperature,
+		pricing:              opts.Pricing,
+		sink:                 sink,
+		gate:                 gate,
+		hooks:                hooks,
+		jobs:                 opts.Jobs,
+		ctxStore:             ctxStore,
 		projectChecks:        append([]instruction.VerifyCheck(nil), opts.ProjectChecks...),
 		writeFailureVerifier: true,
 		contextWindow:        opts.ContextWindow,
-		softCompactRatio:  opts.SoftCompactRatio,
-		compactRatio:      opts.CompactRatio,
-		compactForceRatio: opts.CompactForceRatio,
-		recentKeep:        opts.RecentKeep,
-		archiveDir:        opts.ArchiveDir,
+		softCompactRatio:     opts.SoftCompactRatio,
+		compactRatio:         opts.CompactRatio,
+		compactForceRatio:    opts.CompactForceRatio,
+		recentKeep:           opts.RecentKeep,
+		archiveDir:           opts.ArchiveDir,
 	}
 }
 
@@ -487,7 +487,11 @@ func (a *Agent) Run(ctx context.Context, input string) error {
 		if err != nil {
 			if interrupted && streamRecoveries < maxStreamRecoveries {
 				streamRecoveries++
-				if hasVisibleFinalAnswer(text) {
+				if hasVisibleFinalAnswer(text) || reasoning != "" {
+					// 如果已生成可见的最终回答，或者已生成了推理思考过程，则需要将当前的 assistant 消息添加进会话 session。
+					// 这样做是为了保留已经生成的推理思考过程（reasoning），避免在接下来的重试中丢失。
+					// 如果不保存该推理，模型在重试时需要从头重新进行长时间思考（长考），
+					// 这不仅耗费资源，还极易在后续生成中再次由于达到 max_tokens 限制而被异常截断。
 					a.session.Add(provider.Message{
 						Role:               provider.RoleAssistant,
 						Content:            text,
@@ -541,6 +545,10 @@ func (a *Agent) Run(ctx context.Context, input string) error {
 					return fmt.Errorf("model finished without a visible final answer %d times", emptyFinalBlocks)
 				}
 				a.sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelWarn, Text: "empty final answer blocked: model returned no visible answer text; retrying"})
+				// 在重试前，先将已生成的 assistant 消息（包含已生成的 reasoning 思考过程和 signature 等）添加进会话 session。
+				// 这样做是为了保留已有的推理思考过程，避免重试时模型需要从头重新进行长时间思考（长考），
+				// 如果不保存，模型重新思考不仅耗费资源，还极易在下一次输出时再次因为达到 max_tokens 而被截断。
+				a.session.Add(assistantMsg)
 				a.session.Add(provider.Message{Role: provider.RoleUser, Content: emptyFinalRetryMessage()})
 				a.maybeCompact(ctx, usage)
 				continue
@@ -564,7 +572,6 @@ func (a *Agent) Run(ctx context.Context, input string) error {
 		emptyFinalBlocks = 0
 		usedAnyTool = true
 
-
 		results := a.executeBatch(ctx, calls)
 		for i, call := range calls {
 			a.session.Add(provider.Message{
@@ -584,7 +591,6 @@ func (a *Agent) Run(ctx context.Context, input string) error {
 	// up where it left off.
 	return fmt.Errorf("paused after %d tool-call rounds (%s) — the work so far is saved; send another message to continue, or set %s higher or to 0 for no limit", a.maxSteps, a.maxStepsKey, a.maxStepsKey)
 }
-
 
 type finalReadinessCheck struct {
 	applies              bool
@@ -630,8 +636,6 @@ func (a *Agent) finalReadinessCheck() finalReadinessCheck {
 	return out
 }
 
-
-
 func finalReadinessCheckSource(check instruction.VerifyCheck) string {
 	source := strings.TrimSpace(check.SourcePath)
 	if source == "" {
@@ -661,7 +665,6 @@ func hasVisibleFinalAnswer(text string) bool {
 func emptyFinalRetryMessage() string {
 	return "The previous assistant response finished without any visible answer text. Continue the same task now and provide a concise visible answer to the user. Do not send reasoning only."
 }
-
 
 func streamRecoveryMessage(hasPartialText, hadPartialTool bool) string {
 	switch {
@@ -1256,8 +1259,6 @@ func isShellFileWriteCommand(command string) bool {
 		return false
 	}
 }
-
-
 
 func shellPythonOpenWrites(lower string) bool {
 	if !strings.Contains(lower, "open(") {
