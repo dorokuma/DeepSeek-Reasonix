@@ -23,9 +23,9 @@ export function mcpServerLifecycleActions(s: ServerView): {
   const intent = startIntent(s);
   const state = runtimeState(s);
   return {
-    enabled: intent !== "off",
+    enabled: state === "ready" || intent !== "off",
     showRetryInRow: state === "issue",
-    canConnectNow: intent === "off",
+    canConnectNow: intent === "off" && state !== "ready",
     canReconnect: state === "ready" || state === "issue",
   };
 }

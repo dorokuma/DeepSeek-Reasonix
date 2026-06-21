@@ -252,6 +252,8 @@ func mcpActionsFor(v mcpServerView, configPath string) []mcpActionItem {
 	switch v.Status {
 	case "connected":
 		out = append(out, mcpActionItem{mcpActionConnect, "Reconnect"})
+	case "deferred":
+		out = append(out, mcpActionItem{mcpActionConnect, "Reconnect"})
 	case "disabled":
 		out = append(out, mcpActionItem{mcpActionConnect, "Enable and connect"})
 	}

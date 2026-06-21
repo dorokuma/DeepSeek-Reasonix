@@ -276,6 +276,7 @@ func TestRenderMCPManagerRemoteDeferredAuthHint(t *testing.T) {
 		"preparing in background",
 		"Auth:",
 		"may need authorization",
+		"Reconnect",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("rendered deferred remote details missing %q:\n%s", want, got)

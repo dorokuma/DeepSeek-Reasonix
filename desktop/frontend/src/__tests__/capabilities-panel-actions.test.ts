@@ -29,6 +29,11 @@ const connected = mcpServerLifecycleActions(server("connected"));
 ok(!connected.showRetryInRow, "connected server row should keep the toggle UI");
 ok(connected.canReconnect, "connected server details should expose reconnect");
 
+const manuallyConnected = mcpServerLifecycleActions({ ...server("connected"), autoStart: false, startIntent: "off", runtimeState: "ready" });
+ok(manuallyConnected.enabled, "connected manual server should still render as enabled");
+ok(!manuallyConnected.canConnectNow, "connected manual server should not expose connect-now");
+ok(manuallyConnected.canReconnect, "connected manual server should expose reconnect");
+
 const automaticIdle = mcpServerLifecycleActions({ ...server("deferred"), startIntent: "automatic" });
 ok(!automaticIdle.canConnectNow, "automatic idle server should not look like a manual connector");
 ok(!automaticIdle.canReconnect, "automatic idle server should wait for background connection or failure");
