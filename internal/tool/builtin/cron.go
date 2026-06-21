@@ -5,10 +5,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"strconv"
 	"syscall"
 
+	"github.com/robfig/cron/v3"
 	"reasonix/internal/tool"
 )
 
@@ -68,6 +70,7 @@ func readTasks(path string, exLock bool) ([]*CronTask, *os.File, error) {
 
 	if err := syscall.Flock(int(f.Fd()), lockType); err != nil {
 		f.Close()
+		f = nil
 		return nil, nil, fmt.Errorf("flock failed: %w", err)
 	}
 
@@ -124,8 +127,12 @@ func writeTasksAndClose(f *os.File, tasks []*CronTask) error {
 
 func closeFile(f *os.File) {
 	if f != nil {
-		syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
-		f.Close()
+		if err := syscall.Flock(int(f.Fd()), syscall.LOCK_UN); err != nil {
+			log.Printf("cron: closeFile flock unlock failed: %v", err)
+		}
+		if err := f.Close(); err != nil {
+			log.Printf("cron: closeFile Close failed: %v", err)
+		}
 	}
 }
 
@@ -169,6 +176,11 @@ func (scheduleTask) Execute(ctx context.Context, args json.RawMessage) (string, 
 	}
 	if params.CronExpression == "" || params.Prompt == "" {
 		return "", fmt.Errorf("both cron_expression and prompt are required")
+	}
+
+	// Validate cron expression format (5 fields)
+	if _, err := cron.ParseStandard(params.CronExpression); err != nil {
+		return "", fmt.Errorf("invalid cron expression %q: %w", params.CronExpression, err)
 	}
 
 	path, err := getCronTasksPath()
