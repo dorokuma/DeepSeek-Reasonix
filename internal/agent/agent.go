@@ -1040,10 +1040,11 @@ func (a *Agent) rebuildTodoState(msgs []provider.Message) {
 			if tc.Name != "todo_write" || !successful[tc.ID] {
 				continue
 			}
-			if rec := evidence.ReceiptFromToolCall(tc.Name, json.RawMessage(tc.Arguments), true, true); len(rec.Todos) > 0 {
-				todos = append([]evidence.TodoItem(nil), rec.Todos...)
-				baseIdx = i
-			}
+			rec := evidence.ReceiptFromToolCall(tc.Name, json.RawMessage(tc.Arguments), true, true)
+			// A successful empty todo_write is an explicit clear. Preserve it as the
+			// latest base so history reloads do not resurrect an older non-empty list.
+			todos = append([]evidence.TodoItem(nil), rec.Todos...)
+			baseIdx = i
 		}
 	}
 	if baseIdx < 0 {

@@ -316,5 +316,23 @@ console.log("\ntool data archiving on tool_result");
   eq(failedTodo?.status, "error", "failed todo_write keeps error status");
 }
 
+// ── Test 10: A successful empty todo_write clears without losing older args ──
+{
+  const oldArgs = todoArgs("old");
+  const clearArgs = `{"todos":[]}`;
+  let s = initialState;
+  s = reducer(s, { type: "event", e: { kind: "turn_started" } });
+  s = reducer(s, { type: "event", e: { kind: "tool_dispatch", tool: { id: "todo-old", name: "todo_write", args: oldArgs, readOnly: true } } });
+  s = reducer(s, { type: "event", e: { kind: "tool_result", tool: { id: "todo-old", name: "todo_write", readOnly: true, output: "Todos updated" } } });
+  s = reducer(s, { type: "event", e: { kind: "tool_dispatch", tool: { id: "todo-clear", name: "todo_write", args: clearArgs, readOnly: true } } });
+  s = reducer(s, { type: "event", e: { kind: "tool_result", tool: { id: "todo-clear", name: "todo_write", readOnly: true, output: "Todos updated" } } });
+
+  const tools = toolItems(s);
+  const oldTodo = tools.find((tool) => tool.id === "todo-old");
+  const clearTodo = tools.find((tool) => tool.id === "todo-clear");
+  eq(oldTodo?.args, oldArgs, "older todo_write args survive when latest todo_write clears the list");
+  eq(clearTodo?.args, clearArgs, "empty todo_write clear keeps parseable args");
+}
+
 console.log(`\n${passed} passed, ${failed} failed, ${passed + failed} total`);
 if (failed > 0) process.exit(1);

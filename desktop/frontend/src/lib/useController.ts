@@ -225,6 +225,15 @@ function isCanonicalTodoTool(tool: ToolItem): boolean {
   return tool.name === "todo_write" && !tool.parentId && tool.status === "done" && !tool.error;
 }
 
+function canonicalTodoCount(tool: ToolItem): number {
+  try {
+    const parsed = JSON.parse(tool.args) as { todos?: unknown };
+    return Array.isArray(parsed.todos) ? parsed.todos.length : -1;
+  } catch {
+    return -1;
+  }
+}
+
 function latestCanonicalTodoToolIndex(items: Item[]): number {
   for (let i = items.length - 1; i >= 0; i -= 1) {
     const item = items[i];
@@ -235,9 +244,10 @@ function latestCanonicalTodoToolIndex(items: Item[]): number {
 
 function compactArchivedToolItems(items: Item[]): Item[] {
   const canonicalTodoIndex = latestCanonicalTodoToolIndex(items);
+  const canonicalTodoIsClear = canonicalTodoIndex >= 0 && canonicalTodoCount(items[canonicalTodoIndex] as ToolItem) === 0;
   return items.map((item, index) => {
     if (item.kind !== "tool" || item.status === "running") return item;
-    const preserveArgs = index === canonicalTodoIndex;
+    const preserveArgs = index === canonicalTodoIndex || (canonicalTodoIsClear && isCanonicalTodoTool(item));
     const nextArgs = preserveArgs ? item.args : archivedToolArgs(item.name, item.args);
     if (nextArgs === item.args && item.output === undefined && item.dataArchived === true) return item;
     return {
