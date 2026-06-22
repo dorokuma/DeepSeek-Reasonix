@@ -30,8 +30,8 @@ func openJournal(dir string) (*Journal, error) {
 			Opaque: filepath.Join(dir, "journal.db"),
 		}
 		q := u.Query()
-		q.Set("_pragma", "busy_timeout(5000)")
-		q.Set("_pragma", "journal_mode(WAL)")
+		q.Add("_pragma", "busy_timeout(5000)")
+		q.Add("_pragma", "journal_mode(WAL)")
 		u.RawQuery = q.Encode()
 		dsn = u.String()
 	}

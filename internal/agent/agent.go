@@ -340,7 +340,7 @@ func (a *Agent) SetSessionCost(cost float64, currency string) {
 func (a *Agent) AddSessionUsage(hit, miss int64, cost float64, currency string) {
 	a.sessCacheHit.Add(hit)
 	a.sessCacheMiss.Add(miss)
-	if cost > 0 {
+	if cost > 0 || currency != "" {
 		prev := a.sessCostInfo.Load()
 		var info sessionCostInfo
 		if prev != nil {

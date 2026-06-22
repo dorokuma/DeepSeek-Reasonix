@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 if ! command -v rtk &>/dev/null; then cat; exit 0; fi
-if ! command -v jq &>/dev/null; then cat; exit 0; fi
+if ! command -v jq &>/dev/null; then echo "# jq not installed, raw output passed through" >&2; cat; exit 0; fi
 payload=$(cat)
 cmd=$(echo "$payload" | jq -r '.toolArgs.command // empty')
 if [ -z "$cmd" ]; then echo "$payload"; exit 0; fi

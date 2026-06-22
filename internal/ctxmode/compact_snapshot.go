@@ -28,11 +28,8 @@ func (cs *CompactSnapshot) Build() string {
 	if cs == nil || len(cs.events) == 0 {
 		return ""
 	}
-	sort.Slice(cs.events, func(i, j int) bool {
-		if cs.events[i].Priority != cs.events[j].Priority {
-			return cs.events[i].Priority < cs.events[j].Priority
-		}
-		return i > j
+	sort.SliceStable(cs.events, func(i, j int) bool {
+		return cs.events[i].Priority < cs.events[j].Priority
 	})
 	var b strings.Builder
 	b.WriteString("<compaction_context>\n")
