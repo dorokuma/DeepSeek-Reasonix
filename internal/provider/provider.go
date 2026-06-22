@@ -199,6 +199,10 @@ func SanitizeMultiModalParts(msgs []Message, keepTurns int) []Message {
 	return out
 }
 
+// TODO(Phase 4): integrate SanitizeHistory into the request pipeline.
+// Currently unused; will be called from buildRequest paths once
+// KeepMultimodalTurns is wired through the Options → provider chain.
+
 // SanitizeHistory performs both tool-call pairing repair and multimodal
 // content pruning in one pass. keepTurns controls how many recent turns
 // retain full multimodal content (see SanitizeMultiModalParts).

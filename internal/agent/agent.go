@@ -407,6 +407,7 @@ type Options struct {
 	// KeepMultimodalTurns controls how many recent turns retain their full
 	// multimodal content before SanitizeMultiModalParts prunes older parts.
 	// Default 3 when unset. 0 or negative disables pruning.
+	// TODO(Phase 4): wire into SanitizeHistory / buildRequest paths.
 	KeepMultimodalTurns int
 
 	// MaxNestingDepth sets the maximum allowed nesting depth for sub-agents.

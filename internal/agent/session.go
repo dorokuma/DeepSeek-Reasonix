@@ -142,19 +142,18 @@ func ExtractFragments(content string) []Fragment {
 
 // CalculateDiffAndFilter replaces already-sent fragments in currentMsgs with
 // lightweight <fragment-ref> tags, comparing against the previouslySent map.
-// previouslySent tracks fragment ID → last-sent content. The returned messages
-// are a transient copy — the caller must NOT persist them back to the Session.
+// previouslySent tracks fragment ID → last-sent content. The caller must pass a
+// copy (e.g. from Snapshot) — currentMsgs is modified in-place to avoid an extra
+// allocation. The returned messages are the same slice; the caller must NOT
+// persist them back to the Session.
 func CalculateDiffAndFilter(currentMsgs []provider.Message, previouslySent map[string]string) ([]provider.Message, map[string]string) {
 	nextSent := make(map[string]string, len(previouslySent))
 	for k, v := range previouslySent {
 		nextSent[k] = v
 	}
 
-	filtered := make([]provider.Message, len(currentMsgs))
-	copy(filtered, currentMsgs)
-
-	for i := range filtered {
-		content := filtered[i].Content
+	for i := range currentMsgs {
+		content := currentMsgs[i].Content
 
 		// 1. Process regular string content
 		fragments := ExtractFragments(content)
@@ -170,9 +169,9 @@ func CalculateDiffAndFilter(currentMsgs []provider.Message, previouslySent map[s
 
 		// 2. Process multimodal parts (text-type only)
 		var filteredParts []provider.ContentPart
-		if len(filtered[i].Parts) > 0 {
-			filteredParts = make([]provider.ContentPart, len(filtered[i].Parts))
-			for j, part := range filtered[i].Parts {
+		if len(currentMsgs[i].Parts) > 0 {
+			filteredParts = make([]provider.ContentPart, len(currentMsgs[i].Parts))
+			for j, part := range currentMsgs[i].Parts {
 				if part.Type == provider.PartTypeText {
 					partContent := part.Text
 					frags := ExtractFragments(partContent)
@@ -191,9 +190,9 @@ func CalculateDiffAndFilter(currentMsgs []provider.Message, previouslySent map[s
 			}
 		}
 
-		filtered[i].Content = content
-		filtered[i].Parts = filteredParts
+		currentMsgs[i].Content = content
+		currentMsgs[i].Parts = filteredParts
 	}
 
-	return filtered, nextSent
+	return currentMsgs, nextSent
 }

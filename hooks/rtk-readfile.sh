@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+if ! command -v jq &>/dev/null; then cat; exit 0; fi
 payload=$(cat)
 limit=$(echo "$payload" | jq -r '.toolArgs.limit // empty')
 if [ -n "$limit" ]; then echo "$payload"; exit 0; fi
