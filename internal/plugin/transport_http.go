@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"strings"
@@ -117,10 +118,12 @@ func (t *httpTransport) call(ctx context.Context, method string, params any) (js
 		return nil, err
 	}
 
+	slog.Debug("mcp http call", "name", t.name, "method", method, "url", t.url)
 	resp, err := t.do(ctx, body)
 	if err != nil {
 		return nil, fmt.Errorf("plugin %q: %s: %w", t.name, method, err)
 	}
+	slog.Debug("mcp http response", "name", t.name, "status", resp.StatusCode)
 	defer resp.Body.Close()
 	t.captureSession(resp)
 

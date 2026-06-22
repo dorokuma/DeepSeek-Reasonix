@@ -582,6 +582,31 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 			Render:      func(args []string) string { return cmd.Render(args) },
 		})
 	}
+	// /tools slash command: lists all registered tools with their descriptions.
+	slashEntries = append(slashEntries, command.SlashEntry{
+		Name:        "tools",
+		Description: "List all registered tools with their names and descriptions.",
+		Render: func(_ []string) string {
+			// Snapshot current registry state.
+			names := reg.Names()
+			var b strings.Builder
+			b.WriteString("Available tools:\n")
+			for _, n := range names {
+				t, ok := reg.Get(n)
+				if !ok {
+					continue
+				}
+				desc := t.Description()
+				// Truncate long descriptions for readability.
+				if len(desc) > 120 {
+					desc = desc[:117] + "..."
+				}
+				b.WriteString(fmt.Sprintf("- **%s**: %s\n", n, desc))
+			}
+			b.WriteString(fmt.Sprintf("\n*Total: %d tools*", len(names)))
+			return b.String()
+		},
+	})
 	reg.Add(command.NewSlashCommandTool(slashEntries))
 
 	var runner agent.Runner = executor

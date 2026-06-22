@@ -15,6 +15,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"strings"
 	"sync"
 	"time"
@@ -87,8 +88,10 @@ func (s *lazySpawn) run() {
 		s.state = spawnFailed
 		s.spawnErr = err
 		s.host.RecordFailure(s.spec, err)
+		slog.Info("plugin handshake failed", "name", s.spec.Name, "err", err)
 		return
 	}
+	slog.Info("plugin handshake succeeded", "name", s.spec.Name, "tools", len(real))
 	s.real = make(map[string]tool.Tool, len(real))
 	for _, t := range real {
 		s.real[t.Name()] = t
