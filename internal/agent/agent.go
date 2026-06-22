@@ -333,6 +333,25 @@ func (a *Agent) SetSessionCost(cost float64, currency string) {
 	a.sessCostInfo.Store(sessionCostInfo{cost: cost, currency: currency})
 }
 
+// AddSessionUsage merges a sub-agent's accumulated cache/cost counters into
+// the parent agent's session-level totals so frontends see a unified number.
+func (a *Agent) AddSessionUsage(hit, miss int64, cost float64, currency string) {
+	a.sessCacheHit.Add(hit)
+	a.sessCacheMiss.Add(miss)
+	if cost > 0 {
+		prev := a.sessCostInfo.Load()
+		var info sessionCostInfo
+		if prev != nil {
+			info, _ = prev.(sessionCostInfo)
+		}
+		info.cost += cost
+		if info.currency == "" {
+			info.currency = currency
+		}
+		a.sessCostInfo.Store(info)
+	}
+}
+
 // ContextWindow returns the configured context-window size in tokens. 0
 // means compaction is disabled for this agent.
 func (a *Agent) ContextWindow() int { return a.contextWindow }
@@ -1143,6 +1162,7 @@ func (a *Agent) executeOne(ctx context.Context, call provider.ToolCall) toolOutc
 	}
 	cctx := withCallContext(ctx, call.ID, a.sink, a.asker)
 	cctx = WithSession(cctx, a.session)
+	cctx = WithAgent(cctx, a)
 	if len(a.projectChecks) > 0 {
 		cctx = instruction.WithChecks(cctx, a.projectChecks)
 	}

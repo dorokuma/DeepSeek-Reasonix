@@ -359,6 +359,20 @@ func RunSubAgent(ctx context.Context, prov provider.Provider, reg *tool.Registry
 	if err := sub.Run(ctx, prompt); err != nil {
 		return "", fmt.Errorf("sub-agent: %w", err)
 	}
+	// Merge sub-agent's accumulated cache/cost stats into the parent agent
+	// so the frontend shows unified session-level numbers.
+	if parentAgent := AgentFromContext(ctx); parentAgent != nil {
+		hit := sub.sessCacheHit.Load()
+		miss := sub.sessCacheMiss.Load()
+		var cost float64
+		var currency string
+		if v := sub.sessCostInfo.Load(); v != nil {
+			info, _ := v.(sessionCostInfo)
+			cost = info.cost
+			currency = info.currency
+		}
+		parentAgent.AddSessionUsage(hit, miss, cost, currency)
+	}
 	// Walk the session backwards for the last assistant message with content —
 	// that's the sub-agent's final answer. Intermediate assistant messages with
 	// tool_calls but no text don't count.

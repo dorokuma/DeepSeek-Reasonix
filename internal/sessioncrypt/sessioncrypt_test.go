@@ -4,17 +4,21 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
 // setTempConfigHome sets XDG_CONFIG_HOME to a temp dir so KeyPath() points
-// inside that dir. It returns the previous value for restoration.
-func setTempConfigHome(t *testing.T) string {
+// inside that dir. On non-Linux systems the test is skipped because
+// XDG_CONFIG_HOME is only respected on Linux and we don't want to clobber
+// the real session key.
+func setTempConfigHome(t *testing.T) {
 	t.Helper()
-	old := os.Getenv("XDG_CONFIG_HOME")
+	if runtime.GOOS != "linux" {
+		t.Skip("sessioncrypt tests require Linux (XDG_CONFIG_HOME override)")
+	}
 	td := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", td)
-	return old
 }
 
 // TestKeyGeneratedOnFirstUse verifies that loadOrCreateKey creates a key file

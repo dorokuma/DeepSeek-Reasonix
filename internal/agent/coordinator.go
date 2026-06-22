@@ -137,6 +137,17 @@ func (c *Coordinator) plan(ctx context.Context, input string) (string, error) {
 	// usage line, mirroring the old Fprintln + printUsage tail.
 	c.sink.Emit(event.Event{Kind: event.Usage, Usage: usage, Pricing: c.plannerPricing})
 
+	// Merge planner's cache/cost stats into executor.
+	if c.executor != nil && usage != nil {
+		var cost float64
+		var currency string
+		if c.plannerPricing != nil {
+			cost = c.plannerPricing.Cost(usage)
+			currency = c.plannerPricing.Symbol()
+		}
+		c.executor.AddSessionUsage(int64(usage.CacheHitTokens), int64(usage.CacheMissTokens), cost, currency)
+	}
+
 	plan := text.String()
 	c.plannerSess.Add(provider.Message{Role: provider.RoleAssistant, Content: plan})
 	return plan, nil
@@ -149,6 +160,19 @@ func (c *Coordinator) planWithTools(ctx context.Context, input string) (string, 
 	before := len(c.plannerSess.Messages)
 	if err := c.plannerAgent.Run(ctx, input); err != nil {
 		return "", err
+	}
+	// Merge planner agent's cache/cost stats into executor.
+	if c.executor != nil {
+		hit := c.plannerAgent.sessCacheHit.Load()
+		miss := c.plannerAgent.sessCacheMiss.Load()
+		var cost float64
+		var currency string
+		if v := c.plannerAgent.sessCostInfo.Load(); v != nil {
+			info, _ := v.(sessionCostInfo)
+			cost = info.cost
+			currency = info.currency
+		}
+		c.executor.AddSessionUsage(hit, miss, cost, currency)
 	}
 	for i := len(c.plannerSess.Messages) - 1; i >= before; i-- {
 		m := c.plannerSess.Messages[i]

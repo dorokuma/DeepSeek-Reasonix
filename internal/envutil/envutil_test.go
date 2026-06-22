@@ -4,6 +4,7 @@ import (
 	"os"
 	"reflect"
 	"runtime"
+	"strings"
 	"testing"
 )
 
@@ -270,7 +271,7 @@ func TestMergePathLists(t *testing.T) {
 	secondary := "/b:/d:/e"
 	got := MergePathLists(primary, secondary)
 	sep := string(os.PathListSeparator)
-	parts := stringsSplit(got, sep)
+	parts := strings.Split(got, sep)
 	expected := []string{"/a", "/b", "/c", "/d", "/e"}
 	if !reflect.DeepEqual(parts, expected) {
 		t.Errorf("got %v, want %v", parts, expected)
@@ -280,7 +281,7 @@ func TestMergePathLists(t *testing.T) {
 func TestMergePathLists_EmptyParts(t *testing.T) {
 	got := MergePathLists("/a::/b", "/b:/c")
 	sep := string(os.PathListSeparator)
-	parts := stringsSplit(got, sep)
+	parts := strings.Split(got, sep)
 	expected := []string{"/a", "/b", "/c"}
 	if !reflect.DeepEqual(parts, expected) {
 		t.Errorf("got %v, want %v", parts, expected)
@@ -292,21 +293,4 @@ func TestMergePathLists_BothEmpty(t *testing.T) {
 	if got != "" {
 		t.Errorf("expected empty, got %q", got)
 	}
-}
-
-// stringsSplit is a small helper to avoid importing strings in tests.
-func stringsSplit(s, sep string) []string {
-	var out []string
-	for i := 0; i < len(s); {
-		j := i + len(sep)
-		if j > len(s) || s[i:j] != sep {
-			j = i + 1
-			for j <= len(s) && s[j-1:j] != sep {
-				j++
-			}
-		}
-		out = append(out, s[i:j-len(sep)])
-		i = j
-	}
-	return out
 }
