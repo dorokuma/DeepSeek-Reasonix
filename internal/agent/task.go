@@ -366,6 +366,8 @@ func RunSubAgent(ctx context.Context, prov provider.Provider, reg *tool.Registry
 		if parentAgent := AgentFromContext(ctx); parentAgent != nil {
 			hit := sub.sessCacheHit.Load()
 			miss := sub.sessCacheMiss.Load()
+			prompt := sub.sessPromptTokens.Load()
+			total := sub.sessTotalTokens.Load()
 			var cost float64
 			var currency string
 			if v := sub.sessCostInfo.Load(); v != nil {
@@ -373,7 +375,7 @@ func RunSubAgent(ctx context.Context, prov provider.Provider, reg *tool.Registry
 				cost = info.cost
 				currency = info.currency
 			}
-			parentAgent.AddSessionUsage(hit, miss, cost, currency)
+			parentAgent.AddSessionUsage(hit, miss, prompt, total, cost, currency)
 		}
 	}
 	if err := sub.Run(ctx, prompt); err != nil {

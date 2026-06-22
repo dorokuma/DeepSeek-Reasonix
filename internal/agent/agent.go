@@ -337,9 +337,11 @@ func (a *Agent) SetSessionCost(cost float64, currency string) {
 
 // AddSessionUsage merges a sub-agent's accumulated cache/cost counters into
 // the parent agent's session-level totals so frontends see a unified number.
-func (a *Agent) AddSessionUsage(hit, miss int64, cost float64, currency string) {
+func (a *Agent) AddSessionUsage(hit, miss, prompt, total int64, cost float64, currency string) {
 	a.sessCacheHit.Add(hit)
 	a.sessCacheMiss.Add(miss)
+	a.sessPromptTokens.Add(prompt)
+	a.sessTotalTokens.Add(total)
 	if cost > 0 || currency != "" {
 		prev := a.sessCostInfo.Load()
 		var info sessionCostInfo

@@ -56,12 +56,14 @@ type Coordinator struct {
 	// trivial, non-work turn (a question, a greeting) skip straight to the
 	// executor instead of paying a planner round on it.
 	shouldPlan func(string) bool
-	// plannerPrevHit/Miss/Cost track the planner agent's cumulative stats at the
-	// time of the last merge, so planWithTools only adds the delta (not the full
-	// cumulative value) to the executor each turn.
-	plannerPrevHit  int64
-	plannerPrevMiss int64
-	plannerPrevCost float64
+	// plannerPrevHit/Miss/Cost/Prompt/Total track the planner agent's cumulative
+	// stats at the time of the last merge, so planWithTools only adds the delta
+	// (not the full cumulative value) to the executor each turn.
+	plannerPrevHit    int64
+	plannerPrevMiss   int64
+	plannerPrevCost   float64
+	plannerPrevPrompt int64
+	plannerPrevTotal  int64
 }
 
 // NewCoordinator wires a planner provider (with its own session) to an executor.
@@ -151,7 +153,7 @@ func (c *Coordinator) plan(ctx context.Context, input string) (string, error) {
 			cost = c.plannerPricing.Cost(usage)
 			currency = c.plannerPricing.Symbol()
 		}
-		c.executor.AddSessionUsage(int64(usage.CacheHitTokens), int64(usage.CacheMissTokens), cost, currency)
+		c.executor.AddSessionUsage(int64(usage.CacheHitTokens), int64(usage.CacheMissTokens), int64(usage.PromptTokens), int64(usage.TotalTokens), cost, currency)
 	}
 
 	plan := text.String()
@@ -171,6 +173,8 @@ func (c *Coordinator) planWithTools(ctx context.Context, input string) (string, 
 	if c.executor != nil {
 		currHit := c.plannerAgent.sessCacheHit.Load()
 		currMiss := c.plannerAgent.sessCacheMiss.Load()
+		currPrompt := c.plannerAgent.sessPromptTokens.Load()
+		currTotal := c.plannerAgent.sessTotalTokens.Load()
 		var currCost float64
 		var currency string
 		if v := c.plannerAgent.sessCostInfo.Load(); v != nil {
@@ -180,11 +184,15 @@ func (c *Coordinator) planWithTools(ctx context.Context, input string) (string, 
 		}
 		deltaHit := currHit - c.plannerPrevHit
 		deltaMiss := currMiss - c.plannerPrevMiss
+		deltaPrompt := currPrompt - c.plannerPrevPrompt
+		deltaTotal := currTotal - c.plannerPrevTotal
 		deltaCost := currCost - c.plannerPrevCost
-		c.executor.AddSessionUsage(deltaHit, deltaMiss, deltaCost, currency)
+		c.executor.AddSessionUsage(deltaHit, deltaMiss, deltaPrompt, deltaTotal, deltaCost, currency)
 		c.plannerPrevHit = currHit
 		c.plannerPrevMiss = currMiss
 		c.plannerPrevCost = currCost
+		c.plannerPrevPrompt = currPrompt
+		c.plannerPrevTotal = currTotal
 	}
 	for i := len(c.plannerSess.Messages) - 1; i >= before; i-- {
 		m := c.plannerSess.Messages[i]
