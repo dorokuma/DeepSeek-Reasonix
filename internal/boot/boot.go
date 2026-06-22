@@ -372,7 +372,6 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	// Sub-agents always run headless: they have no UI to answer a prompt, so they
 	// inherit this same gate.
 	policy := permission.New(cfg.Permissions.Mode, cfg.Permissions.Allow, cfg.Permissions.Ask, cfg.Permissions.Deny)
-	headlessGate := permission.NewGate(policy, nil)
 
 	// Hooks: load the global settings.json plus the project's (only when trusted —
 	// project hooks run arbitrary shell commands, so cloning a repo must not
@@ -427,7 +426,7 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	taskEffort := firstNonEmpty(cfg.Agent.SubagentEfforts["task"], cfg.Agent.SubagentEffort)
 	reg.Add(agent.NewTaskTool(execProv, entry.Price, reg, maxSteps,
 		entry.ContextWindow, cfg.Agent.SoftCompactRatio, cfg.Agent.CompactRatio, cfg.Agent.CompactForceRatio,
-		cfg.Agent.Temperature, config.ArchiveDir(), "", headlessGate,
+		cfg.Agent.Temperature, config.ArchiveDir(), "", nil,
 		taskModel, taskEffort, resolveSubagentProvider))
 
 	// Session history tools let the AI discover and read past conversations.
@@ -476,7 +475,7 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 			MaxSteps:      steps,
 			Temperature:   cfg.Agent.Temperature,
 			Pricing:       price,
-			Gate:          headlessGate,
+			Gate:          nil,
 			ContextWindow: ctxWin,
 			ArchiveDir:    config.ArchiveDir(),
 		}, agent.NestedSink(sctx, event.Discard))
@@ -545,7 +544,7 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 		MaxSteps:          maxSteps,
 		Temperature:       cfg.Agent.Temperature,
 		Pricing:           entry.Price,
-		Gate:              headlessGate,
+		Gate:              nil,
 		Hooks:             hookRunner,
 		Jobs:              jm,
 		ProjectChecks:     projectChecks,
@@ -631,7 +630,7 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 			runner = agent.NewCoordinator(plannerProv, plannerSess, pe.Price, plannerTools, agent.Options{
 				MaxSteps:          cfg.Agent.PlannerMaxSteps,
 				MaxStepsKey:       "agent.planner_max_steps",
-				Gate:              headlessGate,
+				Gate:              nil,
 				ContextWindow:     pe.ContextWindow,
 				SoftCompactRatio:  cfg.Agent.SoftCompactRatio,
 				CompactRatio:      cfg.Agent.CompactRatio,
