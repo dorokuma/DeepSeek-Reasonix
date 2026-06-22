@@ -3,6 +3,8 @@
 package agent
 
 import (
+	"fmt"
+	"regexp"
 	"sync"
 
 	"reasonix/internal/provider"
@@ -78,4 +80,99 @@ func (s *Session) HasContent() bool {
 		}
 	}
 	return false
+}
+
+// Fragment represents a tagged, replaceable content block within a message.
+type Fragment struct {
+	ID      string
+	Type    string // "config", "state", "code-context"
+	Content string
+}
+
+var fragmentRegex = regexp.MustCompile(`(?s)<fragment\s+id="([^"]+)"\s+type="([^"]+)">(.*?)</fragment>`)
+
+// fragmentReplaceCache caches compiled replacement regexps keyed by fragment ID,
+// avoiding regexp.MustCompile on every iteration of CalculateDiffAndFilter.
+// NOTE: unbounded; a production implementation should add an eviction strategy.
+var fragmentReplaceCache sync.Map
+
+// fragmentReplacePattern returns a compiled regex for replacing a specific
+// fragment tag. The pattern matches the full <fragment ...>...</fragment>
+// block for the given ID.
+func fragmentReplacePattern(fragID string) *regexp.Regexp {
+	if cached, ok := fragmentReplaceCache.Load(fragID); ok {
+		return cached.(*regexp.Regexp)
+	}
+	re := regexp.MustCompile(fmt.Sprintf(`(?s)<fragment\s+id="%s"\s+type="[^"]+">(.*?)</fragment>`, regexp.QuoteMeta(fragID)))
+	fragmentReplaceCache.Store(fragID, re)
+	return re
+}
+
+// ExtractFragments scans a message content string and returns all parsed fragments.
+func ExtractFragments(content string) []Fragment {
+	matches := fragmentRegex.FindAllStringSubmatch(content, -1)
+	var frags []Fragment
+	for _, m := range matches {
+		if len(m) == 4 {
+			frags = append(frags, Fragment{
+				ID:      m[1],
+				Type:    m[2],
+				Content: m[3],
+			})
+		}
+	}
+	return frags
+}
+
+// CalculateDiffAndFilter replaces already-sent fragments in currentMsgs with
+// lightweight <fragment-ref> tags, comparing against the previouslySent map.
+// previouslySent tracks fragment ID → last-sent content. The returned messages
+// are a transient copy — the caller must NOT persist them back to the Session.
+func CalculateDiffAndFilter(currentMsgs []provider.Message, previouslySent map[string]string) []provider.Message {
+	filtered := make([]provider.Message, len(currentMsgs))
+	copy(filtered, currentMsgs)
+
+	for i := range filtered {
+		content := filtered[i].Content
+
+		// 1. Process regular string content
+		fragments := ExtractFragments(content)
+		for _, frag := range fragments {
+			lastVal, exists := previouslySent[frag.ID]
+			if exists && lastVal == frag.Content {
+				refTag := fmt.Sprintf(`<fragment-ref id="%s" status="unchanged" />`, frag.ID)
+				content = fragmentReplacePattern(frag.ID).ReplaceAllString(content, refTag)
+			} else {
+				previouslySent[frag.ID] = frag.Content
+			}
+		}
+
+		// 2. Process multimodal parts (text-type only)
+		var filteredParts []provider.ContentPart
+		if len(filtered[i].Parts) > 0 {
+			filteredParts = make([]provider.ContentPart, len(filtered[i].Parts))
+			for j, part := range filtered[i].Parts {
+				if part.Type == provider.PartTypeText {
+					partContent := part.Text
+					frags := ExtractFragments(partContent)
+					for _, frag := range frags {
+						lastVal, exists := previouslySent[frag.ID]
+						if exists && lastVal == frag.Content {
+							refTag := fmt.Sprintf(`<fragment-ref id="%s" status="unchanged" />`, frag.ID)
+							partContent = fragmentReplacePattern(frag.ID).ReplaceAllString(partContent, refTag)
+						} else {
+							previouslySent[frag.ID] = frag.Content
+						}
+					}
+					part.Text = partContent
+				}
+				filteredParts[j] = part
+			}
+		}
+
+		filtered[i].Content = content
+		filtered[i].Parts = filteredParts
+	}
+
+	return filtered
 }

@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -24,9 +25,17 @@ type Journal struct {
 func openJournal(dir string) (*Journal, error) {
 	dsn := ":memory:"
 	if dir != "" {
-		dsn = filepath.Join(dir, "journal.db")
+		u := &url.URL{
+			Scheme: "file",
+			Opaque: filepath.Join(dir, "journal.db"),
+		}
+		q := u.Query()
+		q.Set("_pragma", "busy_timeout(5000)")
+		q.Set("_pragma", "journal_mode(WAL)")
+		u.RawQuery = q.Encode()
+		dsn = u.String()
 	}
-	db, err := sql.Open("sqlite", dsn+"?_pragma=journal_mode(WAL)")
+	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, err
 	}
@@ -77,6 +86,29 @@ func (j *Journal) Close() {
 	j.db = nil
 }
 
+// writeRetry wraps a database write operation with a small number of retries
+// to survive transient SQLITE_BUSY errors. After busy_timeout is deployed
+// and monitoring confirms stability, this wrapper may be removed.
+func writeRetry(op func() error) error {
+	const maxRetries = 2
+	const backoff = 200 * time.Millisecond
+	var err error
+	for attempt := 0; attempt <= maxRetries; attempt++ {
+		if attempt > 0 {
+			time.Sleep(backoff)
+		}
+		err = op()
+		if err == nil {
+			return nil
+		}
+		// Only retry on busy; other errors propagate immediately.
+		if !strings.Contains(err.Error(), "SQLITE_BUSY") {
+			return err
+		}
+	}
+	return fmt.Errorf("writeRetry: %w after %d retries", err, maxRetries)
+}
+
 // Record appends one indexed event.
 func (j *Journal) Record(kind, subject, detail string) {
 	if j == nil || j.db == nil {
@@ -84,10 +116,13 @@ func (j *Journal) Record(kind, subject, detail string) {
 	}
 	subject = truncateField(subject, 400)
 	detail = truncateField(detail, 800)
-	if _, err := j.db.Exec(
-		`INSERT INTO events(ts, kind, subject, detail) VALUES(?, ?, ?, ?)`,
-		time.Now().Unix(), kind, subject, detail,
-	); err != nil {
+	if err := writeRetry(func() error {
+		_, err := j.db.Exec(
+			`INSERT INTO events(ts, kind, subject, detail) VALUES(?, ?, ?, ?)`,
+			time.Now().Unix(), kind, subject, detail,
+		)
+		return err
+	}); err != nil {
 		LogJournalErr("record", err)
 	}
 }

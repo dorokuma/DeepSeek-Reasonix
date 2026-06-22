@@ -236,9 +236,33 @@ func (c *client) buildRequest(req provider.Request) chatRequest {
 			wire.Function.Arguments = tc.Arguments
 			cm.ToolCalls = append(cm.ToolCalls, wire)
 		}
-		if m.Role != provider.RoleAssistant || len(cm.ToolCalls) == 0 || m.Content != "" {
+		if len(m.Parts) > 0 {
+			var parts []openaiContentPart
+			for _, p := range m.Parts {
+				switch p.Type {
+				case provider.PartTypeText:
+					parts = append(parts, openaiContentPart{Type: "text", Text: p.Text})
+				case provider.PartTypeImage:
+					url := p.ImageURL
+					if url == "" && p.Image != nil {
+						url = p.Image.URL
+					}
+					if url != "" {
+						parts = append(parts, openaiContentPart{Type: "image_url", ImageURL: &openaiImageURL{URL: url, Detail: p.Image.Detail}})
+					} else if p.Image != nil && p.Image.Data != "" {
+						// Inline base64 data – OpenAI supports data: URIs.
+						parts = append(parts, openaiContentPart{Type: "image_url", ImageURL: &openaiImageURL{URL: "data:" + p.Image.Mime + ";base64," + p.Image.Data}})
+					}
+				case provider.PartTypeAudio:
+					// OpenAI may not support inline audio; skip.
+				}
+			}
+			cm.Content = parts
+		} else if m.Content != "" || m.Role != provider.RoleAssistant || len(cm.ToolCalls) == 0 {
 			content := m.Content
 			cm.Content = &content
+		} else {
+			cm.Content = nil
 		}
 		msgs[i] = cm
 	}
@@ -492,12 +516,10 @@ type streamOptions struct {
 
 type chatMessage struct {
 	Role string `json:"role"`
-	// content is always present (never omitted): DeepSeek's strict deserializer
-	// rejects a message missing the field. A pure tool_calls assistant turn
-	// serializes as null (OpenAI-spec, and what strict clones expect); every
-	// other role/message serializes as a string, empty included — null is
-	// rejected by some backends for a tool message.
-	Content    *string        `json:"content"`
+	// content holds either a plain string or an array of content parts for
+	// multimodal messages. When m.Parts is non-empty, buildRequest sets this
+	// to []openaiContentPart; otherwise it falls back to the Content string.
+	Content    interface{}    `json:"content"`
 	ToolCalls  []chatToolCall `json:"tool_calls,omitempty"`
 	ToolCallID string         `json:"tool_call_id,omitempty"`
 	Name       string         `json:"name,omitempty"`
@@ -505,6 +527,19 @@ type chatMessage struct {
 	// for tool-call turns; omitempty on a plain string would drop the field and
 	// DeepSeek returns HTTP 400.
 	ReasoningContent *string `json:"reasoning_content,omitempty"`
+}
+
+// openaiContentPart is a single content block within a message's content array.
+type openaiContentPart struct {
+	Type     string           `json:"type"`
+	Text     string           `json:"text,omitempty"`
+	ImageURL *openaiImageURL  `json:"image_url,omitempty"`
+}
+
+// openaiImageURL is the image_url object for an image content part.
+type openaiImageURL struct {
+	URL    string `json:"url"`
+	Detail string `json:"detail,omitempty"`
 }
 
 type chatTool struct {

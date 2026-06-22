@@ -16,6 +16,7 @@ import (
 	"reasonix/internal/diff"
 	"reasonix/internal/event"
 	"reasonix/internal/evidence"
+	"reasonix/internal/hook"
 	"reasonix/internal/instruction"
 	"reasonix/internal/jobs"
 	"reasonix/internal/memory"
@@ -118,6 +119,15 @@ type ToolHooks interface {
 	PreCompact(ctx context.Context, trigger string) string
 }
 
+// PostToolRewriter is an optional extension to ToolHooks. When the hook
+// implementation also satisfies this interface, PostToolRewrite is called
+// after PostToolUse and may transform the tool result string before it is
+// fed back to the model. Panics are recovered; on panic the original result
+// is kept.
+type PostToolRewriter interface {
+	PostToolRewrite(ctx context.Context, name string, args json.RawMessage, result string) string
+}
+
 // sessionCostInfo bundles the cumulative cost and its currency for atomic storage.
 type sessionCostInfo struct {
 	cost     float64
@@ -204,6 +214,11 @@ type Agent struct {
 
 	// ctxStore holds sandboxed tool output for ctx_read/ctx_search/ctx_run. nil when REASONIX_CTX=off.
 	ctxStore *ctxmode.Store
+
+	// sentFragments tracks fragment ID → last-sent content across turns.
+	// It is NOT persisted to checkpoint; on cold start it resets and all
+	// fragments are re-sent once (acceptable trade-off).
+	sentFragments map[string]string
 
 	// Context management: when a turn's prompt nears contextWindow, the older
 	// middle of the session is summarized away, keeping a token-bounded recent
@@ -388,6 +403,16 @@ type Options struct {
 
 	// ProjectChecks are host-observable structured checks extracted during boot.
 	ProjectChecks []instruction.VerifyCheck
+
+	// KeepMultimodalTurns controls how many recent turns retain their full
+	// multimodal content before SanitizeMultiModalParts prunes older parts.
+	// Default 3 when unset. 0 or negative disables pruning.
+	KeepMultimodalTurns int
+
+	// MaxNestingDepth sets the maximum allowed nesting depth for sub-agents.
+	// When this limit is reached, spawning a new sub-agent is blocked.
+	// Default 3 when unset. Must be >= 1.
+	MaxNestingDepth int
 }
 
 // New constructs an Agent. MaxSteps <= 0 means no cap — the run loop continues
@@ -422,6 +447,14 @@ func New(prov provider.Provider, tools *tool.Registry, session *Session, opts Op
 	if ctxStore == nil && ctxmode.Active() {
 		ctxStore = ctxmode.NewStore()
 	}
+
+	// Wire RTK pipe compaction into the PostToolRewrite hook.
+	if hooks != nil {
+		if r, ok := hooks.(*hook.Runner); ok {
+			r.SetRTKCompaction(hook.NewRTKRewriter(opts.Jobs))
+		}
+	}
+
 	maxStepsKey := opts.MaxStepsKey
 	if strings.TrimSpace(maxStepsKey) == "" {
 		maxStepsKey = "agent.max_steps"
@@ -439,6 +472,7 @@ func New(prov provider.Provider, tools *tool.Registry, session *Session, opts Op
 		hooks:                hooks,
 		jobs:                 opts.Jobs,
 		ctxStore:             ctxStore,
+		sentFragments:        make(map[string]string),
 		projectChecks:        append([]instruction.VerifyCheck(nil), opts.ProjectChecks...),
 		writeFailureVerifier: true,
 		contextWindow:        opts.ContextWindow,
@@ -686,8 +720,13 @@ func (a *Agent) stream(ctx context.Context, turn int) (string, string, string, [
 	ctx = provider.WithRetryNotify(ctx, func(info provider.RetryInfo) {
 		a.sink.Emit(event.Event{Kind: event.Retrying, RetryAttempt: info.Attempt, RetryMax: info.Max})
 	})
+	// Apply fragment dedup: replace already-sent fragments with <fragment-ref>
+	// tags. This is a transient transformation — we do NOT write the filtered
+	// messages back to the Session (would break compaction).
+	msgs := a.session.Snapshot()
+	msgs = CalculateDiffAndFilter(msgs, a.sentFragments)
 	ch, err := a.prov.Stream(ctx, provider.Request{
-		Messages:    a.session.Messages,
+		Messages:    msgs,
 		Tools:       a.tools.Schemas(),
 		Temperature: a.temperature,
 	})
@@ -1139,6 +1178,23 @@ func (a *Agent) executeOne(ctx context.Context, call provider.ToolCall) toolOutc
 	if a.hooks != nil {
 		a.hooks.PostToolUse(ctx, call.Name, json.RawMessage(call.Arguments), result)
 	}
+	// PostToolRewrite: optional hook-level result transformation.
+	// Panics are recovered; on panic the original result is kept.
+	if a.hooks != nil {
+		if rewriter, ok := a.hooks.(PostToolRewriter); ok {
+			func() {
+				defer func() {
+					if r := recover(); r != nil {
+						slog.Warn("PostToolRewriter panicked, using original result",
+							"tool", call.Name,
+							"panic", r,
+						)
+					}
+				}()
+				result = rewriter.PostToolRewrite(ctx, call.Name, json.RawMessage(call.Arguments), result)
+			}()
+		}
+	}
 	if err != nil {
 		detail := result
 		// Malformed-args failures are a transient model JSON glitch (e.g. options
@@ -1148,7 +1204,7 @@ func (a *Agent) executeOne(ctx context.Context, call provider.ToolCall) toolOutc
 		if !json.Valid([]byte(call.Arguments)) {
 			detail = strings.TrimRight(detail, "\n") + "\nThe arguments were not valid JSON. Re-emit them exactly per this schema:\n" + string(t.Schema())
 		}
-		body, truncMsg := compactToolOutput(a.ctxStore, call.Name, json.RawMessage(call.Arguments), a.jobs, fmt.Sprintf("error: %v\n%s", err, detail))
+		body, truncMsg := compactToolOutput(a.ctxStore, call.Name, json.RawMessage(call.Arguments), fmt.Sprintf("error: %v\n%s", err, detail))
 		return toolOutcome{output: body, errMsg: firstLine(err.Error()), truncated: truncMsg != "" || strings.Contains(body, "[truncated "), truncMsg: truncMsg}
 	}
 	a.recordRepeatSuccess(call, t)
@@ -1158,7 +1214,7 @@ func (a *Agent) executeOne(ctx context.Context, call provider.ToolCall) toolOutc
 	if a.hooks != nil && call.Name == "task" && !isBackgroundTaskCall(call.Arguments) {
 		a.hooks.SubagentStop(ctx, result)
 	}
-	body, truncMsg := compactToolOutput(a.ctxStore, call.Name, json.RawMessage(call.Arguments), a.jobs, result)
+	body, truncMsg := compactToolOutput(a.ctxStore, call.Name, json.RawMessage(call.Arguments), result)
 	// PostCallGuidance: if the tool teaches a post-call workflow, append it
 	// to the result so the model is explicitly reminded what to do next.
 	if pg, ok := t.(tool.PostCallGuidance); ok {

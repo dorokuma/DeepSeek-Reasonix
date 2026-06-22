@@ -15,7 +15,7 @@ import (
 	"golang.org/x/text/transform"
 
 	fileenc "reasonix/internal/fileutil/encoding"
-	"reasonix/internal/rtk"
+	// "reasonix/internal/rtk" // RTK migrated to PreToolUse hook (hooks/rtk-readfile.sh)
 	"reasonix/internal/tool"
 )
 
@@ -69,7 +69,8 @@ func (r readFile) Execute(ctx context.Context, args json.RawMessage) (string, er
 		p.Offset = 0
 	}
 	if p.Limit <= 0 {
-		p.Limit = rtk.ReadFileDefaultLimit()
+		// RTK migrated to PreToolUse hook (hooks/rtk-readfile.sh); hardcoded default 200
+		p.Limit = 200
 	}
 
 	// A directory can be os.Open'd but not read as text — catch it up front with

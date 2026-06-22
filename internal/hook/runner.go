@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+
+	"reasonix/internal/rtk"
 )
 
 // Runner binds a set of resolved hooks to a session: a working directory, the
@@ -17,6 +19,9 @@ type Runner struct {
 	cwd     string
 	spawner Spawner
 	notify  func(string) // surface a non-blocking (warn/error) hook message; may be nil
+	rtkRewriter interface {
+		PostToolRewrite(ctx context.Context, name string, args json.RawMessage, result string) string
+	}
 }
 
 // NewRunner builds a Runner. spawner nil uses DefaultSpawner; notify nil drops
@@ -255,4 +260,20 @@ func clipRunes(s string, max int) string {
 		return ""
 	}
 	return string(r[:max]) + "…"
+}
+
+func (r *Runner) PostToolRewrite(ctx context.Context, name string, args json.RawMessage, result string) string {
+	if r.rtkRewriter != nil {
+		return r.rtkRewriter.PostToolRewrite(ctx, name, args, result)
+	}
+	return result
+}
+
+func (r *Runner) SetRTKCompaction(rw interface {
+	PostToolRewrite(ctx context.Context, name string, args json.RawMessage, result string) string
+}) {
+	if !rtk.Active() {
+		return
+	}
+	r.rtkRewriter = rw
 }

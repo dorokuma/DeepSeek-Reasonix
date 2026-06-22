@@ -17,7 +17,7 @@ import (
 	"reasonix/internal/envutil"
 	"reasonix/internal/shell"
 	"reasonix/internal/jobs"
-	"reasonix/internal/rtk"
+	// "reasonix/internal/rtk" // RTK migrated to PreToolUse hook (hooks/rtk-bash.sh)
 	"reasonix/internal/tool"
 )
 
@@ -144,10 +144,8 @@ func (b bash) Execute(ctx context.Context, args json.RawMessage) (string, error)
 		return "", fmt.Errorf("command too long (%d bytes, max 65536)", len(p.Command))
 	}
 
-	// Transparent RTK proxy: rewrite the command when RTK has a compact filter.
-	// Background jobs still benefit from compact command output; only the
-	// incremental bash_output polling path is unchanged.
-	p.Command = rtk.ApplySegmentsCtx(ctx, p.Command)
+	// RTK migrated to PreToolUse hook (hooks/rtk-bash.sh)
+	// p.Command = rtk.ApplySegmentsCtx(ctx, p.Command)
 
 	sh := b.resolved()
 	if !sh.SupportsChaining() && (hasUnquotedSeq(p.Command, "&&") || hasUnquotedSeq(p.Command, "||")) {

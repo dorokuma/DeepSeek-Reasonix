@@ -156,6 +156,17 @@ func (t *TaskTool) effectiveProfile(model, effort string) (string, string) {
 }
 
 func (t *TaskTool) Execute(ctx context.Context, args json.RawMessage) (string, error) {
+	// Depth guard: enforce nesting limit from Agent Options.
+	depth := NestingDepthFrom(ctx)
+	const defaultMaxNestingDepth = 3
+	maxDepth := defaultMaxNestingDepth
+	if opts := OptionsFromContext(ctx); opts != nil && opts.MaxNestingDepth > 0 {
+		maxDepth = opts.MaxNestingDepth
+	}
+	if depth >= maxDepth {
+		return "", fmt.Errorf("sub-agent blocked: nesting depth limit (%d) reached", maxDepth)
+	}
+
 	var p struct {
 		Prompt          string   `json:"prompt"`
 		Description     string   `json:"description"`
@@ -187,7 +198,11 @@ func (t *TaskTool) Execute(ctx context.Context, args json.RawMessage) (string, e
 		}
 	}
 
-	subReg := t.buildSubReg(p.Tools)
+	// When the next depth level is still below the limit, allow recursive
+	// nesting by including meta-tools in the sub-registry. At the limit we
+	// keep the default behaviour which excludes them.
+	allowMeta := depth+1 < maxDepth
+	subReg := t.buildSubReg(p.Tools, allowMeta)
 	modelRef, effortRef := t.effectiveProfile(p.Model, p.Effort)
 
 	// Background: register a job that runs the sub-agent under the manager's
@@ -206,7 +221,11 @@ func (t *TaskTool) Execute(ctx context.Context, args json.RawMessage) (string, e
 			label = "task"
 		}
 		job, err := jm.Start("task", label, func(jobCtx context.Context, _ io.Writer) (string, error) {
-			return t.runSub(jobCtx, p.Prompt, subReg, nested, maxSteps, modelRef, effortRef)
+			bgCtx := WithNestingDepth(jobCtx, depth+1)
+			if opts := OptionsFromContext(ctx); opts != nil {
+				bgCtx = WithOptions(bgCtx, opts)
+			}
+			return t.runSub(bgCtx, p.Prompt, subReg, nested, maxSteps, modelRef, effortRef)
 		})
 		if err != nil {
 			return "", err
@@ -215,13 +234,21 @@ func (t *TaskTool) Execute(ctx context.Context, args json.RawMessage) (string, e
 	}
 
 	// Foreground: run synchronously, nesting events under this call.
-	return t.runSub(ctx, p.Prompt, subReg, subSink(ctx), maxSteps, modelRef, effortRef)
+	subCtx := WithNestingDepth(ctx, depth+1)
+	if opts := OptionsFromContext(ctx); opts != nil {
+		subCtx = WithOptions(subCtx, opts)
+	}
+	return t.runSub(subCtx, p.Prompt, subReg, subSink(ctx), maxSteps, modelRef, effortRef)
 }
 
 // buildSubReg returns the sub-agent's tool set: the named whitelist (minus
 // subagent/skill meta-tools, to bar recursive nesting), or every parent tool
-// except those meta-tools.
-func (t *TaskTool) buildSubReg(names []string) *tool.Registry {
+// except those meta-tools. When allowMeta is true, meta-tools are included
+// to permit deeper recursive nesting.
+func (t *TaskTool) buildSubReg(names []string, allowMeta bool) *tool.Registry {
+	if allowMeta {
+		return FilterRegistry(t.parentReg, names)
+	}
 	return FilterRegistry(t.parentReg, names, SubagentMetaTools()...)
 }
 

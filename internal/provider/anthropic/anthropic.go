@@ -193,7 +193,24 @@ func (c *client) buildRequest(req provider.Request) anthRequest {
 				system = append(system, textBlock{Type: "text", Text: m.Content})
 			}
 		case provider.RoleUser:
-			if m.Content != "" {
+			if len(m.Parts) > 0 {
+				var blocks []contentBlock
+				for _, p := range m.Parts {
+					switch p.Type {
+					case provider.PartTypeText:
+						blocks = append(blocks, contentBlock{Type: "text", Text: p.Text})
+					case provider.PartTypeImage:
+						src := &imageSource{Type: "base64", MediaType: p.Image.Mime, Data: p.Image.Data}
+						if p.Image.URL != "" {
+							src = &imageSource{Type: "url", URL: p.Image.URL}
+						}
+						blocks = append(blocks, contentBlock{Type: "image", Source: src})
+					case provider.PartTypeAudio:
+						// Anthropic may not support inline audio; skip.
+					}
+				}
+				appendBlocks("user", blocks...)
+			} else if m.Content != "" {
 				appendBlocks("user", contentBlock{Type: "text", Text: m.Content})
 			}
 		case provider.RoleTool:
@@ -211,7 +228,22 @@ func (c *client) buildRequest(req provider.Request) anthRequest {
 			if c.thinking != "" && m.ReasoningContent != "" && m.ReasoningSignature != "" {
 				blocks = append(blocks, contentBlock{Type: "thinking", Thinking: m.ReasoningContent, Signature: m.ReasoningSignature})
 			}
-			if m.Content != "" {
+			if len(m.Parts) > 0 {
+				for _, p := range m.Parts {
+					switch p.Type {
+					case provider.PartTypeText:
+						blocks = append(blocks, contentBlock{Type: "text", Text: p.Text})
+					case provider.PartTypeImage:
+						src := &imageSource{Type: "base64", MediaType: p.Image.Mime, Data: p.Image.Data}
+						if p.Image.URL != "" {
+							src = &imageSource{Type: "url", URL: p.Image.URL}
+						}
+						blocks = append(blocks, contentBlock{Type: "image", Source: src})
+					case provider.PartTypeAudio:
+						// Anthropic may not support inline audio; skip.
+					}
+				}
+			} else if m.Content != "" {
 				blocks = append(blocks, contentBlock{Type: "text", Text: m.Content})
 			}
 			for _, tc := range m.ToolCalls {
@@ -498,7 +530,16 @@ type contentBlock struct {
 	Input        json.RawMessage `json:"input,omitempty"`       // tool_use
 	ToolUseID    string          `json:"tool_use_id,omitempty"` // tool_result
 	Content      string          `json:"content,omitempty"`     // tool_result
+	Source       *imageSource    `json:"source,omitempty"`      // image
 	CacheControl *cacheControl   `json:"cache_control,omitempty"`
+}
+
+// imageSource is the source of an image content block for the Anthropic API.
+type imageSource struct {
+	Type      string `json:"type"`
+	MediaType string `json:"media_type"`
+	Data      string `json:"data,omitempty"`
+	URL       string `json:"url,omitempty"`
 }
 
 type anthTool struct {

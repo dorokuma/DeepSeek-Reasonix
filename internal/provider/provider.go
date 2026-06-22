@@ -38,6 +38,50 @@ type Message struct {
 	ToolCalls          []ToolCall `json:"tool_calls,omitempty"`   // set by assistant
 	ToolCallID         string     `json:"tool_call_id,omitempty"` // links a tool result to its call
 	Name               string     `json:"name,omitempty"`         // tool message: tool name
+	// Parts carries multimodal content blocks (images, audio, files) alongside
+	// or instead of the plain-text Content field. When non-empty, providers
+	// should prefer Parts over Content when constructing API requests. Stored
+	// as nil when only text content is present.
+	Parts []ContentPart `json:"parts,omitempty"`
+}
+
+// ContentPartType enumerates the kinds of content parts a message may carry
+// alongside or instead of its plain-text Content field.
+type ContentPartType string
+
+const (
+	PartTypeText  ContentPartType = "text"
+	PartTypeImage ContentPartType = "image"
+	PartTypeAudio ContentPartType = "audio"
+)
+
+// ImagePart holds inline image data or a URL reference. Only one of URL and
+// Data should be set; providers decide which to render.
+type ImagePart struct {
+	URL    string `json:"url,omitempty"`
+	Data   string `json:"data,omitempty"`   // base64-encoded
+	Mime   string `json:"mime,omitempty"`   // e.g. "image/png"
+	Detail string `json:"detail,omitempty"` // e.g. "high", "low", "auto"
+}
+
+// AudioPart holds inline audio data or a URL reference.
+type AudioPart struct {
+	URL  string `json:"url,omitempty"`
+	Data string `json:"data,omitempty"` // base64-encoded
+	Mime string `json:"mime,omitempty"` // e.g. "audio/wav"
+}
+
+// ContentPart is a single multimodal content block within a message. For text
+// the Text field is set and Type is PartTypeText. For non-text parts the
+// corresponding typed field (Image, Audio) is populated. Only one of Text /
+// Image / Audio should be set per part.
+type ContentPart struct {
+	Type     ContentPartType `json:"type"`
+	Text     string          `json:"text,omitempty"`
+	ImageURL string          `json:"image_url,omitempty"` // shorthand for simple URL-only images
+	AudioURL string          `json:"audio_url,omitempty"` // shorthand for simple URL-only audio
+	Image    *ImagePart      `json:"image,omitempty"`
+	Audio    *AudioPart      `json:"audio,omitempty"`
 }
 
 // ToolCall is a tool invocation requested by the model. Arguments is raw JSON.
@@ -98,6 +142,69 @@ func SanitizeToolPairing(msgs []Message) []Message {
 		i++
 	}
 	return out
+}
+
+// SanitizeMultiModalParts prunes heavy multimodal payloads (images, audio) from
+// messages older than keepTurns turns. Messages within the recent keepTurns
+// are left intact. Heavy parts are replaced with a light placeholder string
+// to conserve context budget while keeping the conversation structure valid.
+// keepTurns <= 0 disables pruning (all parts retained).
+func SanitizeMultiModalParts(msgs []Message, keepTurns int) []Message {
+	if keepTurns <= 0 || len(msgs) == 0 {
+		return msgs
+	}
+
+	// Count turns from the end to find the cutoff index.
+	// A "turn" is an assistant message (with or without tool calls).
+	turnCount := 0
+	cutoff := len(msgs)
+	for i := len(msgs) - 1; i >= 0; i-- {
+		if msgs[i].Role == RoleAssistant {
+			turnCount++
+			if turnCount == keepTurns {
+				cutoff = i
+				break
+			}
+		}
+	}
+
+	const placeholder = "[content omitted to conserve context]"
+
+	out := make([]Message, len(msgs))
+	for i, m := range msgs {
+		if i >= cutoff || len(m.Parts) == 0 {
+			out[i] = m
+			continue
+		}
+
+		// Prune heavy parts from older messages.
+		pruned := make([]ContentPart, 0, len(m.Parts))
+		for _, p := range m.Parts {
+			switch p.Type {
+			case PartTypeText:
+				pruned = append(pruned, p)
+			case PartTypeImage, PartTypeAudio:
+				// Replace heavy payload with a lightweight text placeholder.
+				pruned = append(pruned, ContentPart{
+					Type: PartTypeText,
+					Text: placeholder,
+				})
+			default:
+				pruned = append(pruned, p)
+			}
+		}
+		out[i] = m
+		out[i].Parts = pruned
+	}
+	return out
+}
+
+// SanitizeHistory performs both tool-call pairing repair and multimodal
+// content pruning in one pass. keepTurns controls how many recent turns
+// retain full multimodal content (see SanitizeMultiModalParts).
+func SanitizeHistory(msgs []Message, keepTurns int) []Message {
+	paired := SanitizeToolPairing(msgs)
+	return SanitizeMultiModalParts(paired, keepTurns)
 }
 
 // pairToolResults answers each tool_call with its result, backfilling a
