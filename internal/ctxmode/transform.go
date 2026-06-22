@@ -3,6 +3,7 @@ package ctxmode
 import (
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"strings"
 
 	"reasonix/internal/tool"
@@ -44,6 +45,11 @@ func TransformCooperative(store *Store, toolName string, args json.RawMessage, f
 	} else {
 		summary = buildSummary(id, toolName, subject, fullBody)
 	}
+
+	// Record compaction stats
+	store.Stats.Record(len(fullBody), len(summary))
+	slog.Info("ctx status=hit", "ref", id, "tool", toolName, "bytes", fmt.Sprintf("%d→%d", len(fullBody), len(summary)))
+
 	return summary, notice, true
 }
 

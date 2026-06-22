@@ -69,6 +69,11 @@ func (j *Journal) migrate() error {
 			INSERT INTO events_fts(events_fts, rowid, subject, detail) VALUES('delete', old.id, old.subject, old.detail);
 			INSERT INTO events_fts(rowid, subject, detail) VALUES (new.id, new.subject, new.detail);
 		END`,
+		`CREATE VIRTUAL TABLE IF NOT EXISTS indexed_content USING fts5(
+			rel_path,
+			content,
+			tokenize='porter unicode61'
+		)`,
 	}
 	for _, s := range stmts {
 		if _, err := j.db.Exec(s); err != nil {
@@ -287,6 +292,102 @@ func truncateField(s string, max int) string {
 		return s
 	}
 	return s[:max] + "…"
+}
+
+// FTSResult holds a single full-text search hit.
+type FTSResult struct {
+	RelPath string
+	Snippet string // matching context, ~80 chars around match
+	Score   float64
+}
+
+// IndexContent inserts or replaces a file's content into the FTS5 indexed_content table.
+func (j *Journal) IndexContent(relPath, content string) error {
+	if j == nil || j.db == nil {
+		return nil // silently skip, no FTS available
+	}
+	return writeRetry(func() error {
+		_, err := j.db.Exec(
+			`INSERT OR REPLACE INTO indexed_content(rowid, rel_path, content) VALUES (
+				COALESCE((SELECT rowid FROM indexed_content WHERE rel_path = ?), NULL), ?, ?
+			)`,
+			relPath, relPath, content,
+		)
+		return err
+	})
+}
+
+// SearchFTS queries the FTS5 indexed_content table using BM25 ranking.
+func (j *Journal) SearchFTS(pattern string, limit int) ([]FTSResult, error) {
+	if j == nil || j.db == nil {
+		return nil, fmt.Errorf("journal unavailable")
+	}
+	if limit <= 0 {
+		limit = 10
+	}
+	// Escape FTS5 special characters and build a safe MATCH expression.
+	ftsPattern := fts5Query(pattern)
+	if ftsPattern == "" {
+		return nil, nil
+	}
+	rows, err := j.db.Query(
+		`SELECT rel_path, snippet(indexed_content, 1, '', '', '…', 40), bm25(indexed_content)
+		 FROM indexed_content WHERE indexed_content MATCH ? ORDER BY bm25(indexed_content) LIMIT ?`,
+		ftsPattern, limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var results []FTSResult
+	for rows.Next() {
+		var r FTSResult
+		var score float64
+		if err := rows.Scan(&r.RelPath, &r.Snippet, &score); err != nil {
+			continue
+		}
+		r.Score = score
+		if r.Snippet == "" {
+			r.Snippet = "…"
+		}
+		results = append(results, r)
+	}
+	return results, nil
+}
+
+// fts5Query converts a user-supplied pattern into an FTS5-safe query string.
+// It wraps each token in double quotes for exact matching. If the pattern
+// contains only FTS5-safe characters (alphanumeric + space), it returns
+// the phrase as-is for more flexible matching.
+func fts5Query(pattern string) string {
+	pattern = strings.TrimSpace(pattern)
+	if pattern == "" {
+		return ""
+	}
+	// Split into tokens and quote each one for safety.
+	tokens := strings.Fields(pattern)
+	if len(tokens) == 0 {
+		return ""
+	}
+	var parts []string
+	for _, tok := range tokens {
+		// Remove any characters that could break FTS5 syntax.
+		clean := strings.Map(func(r rune) rune {
+			if r == '"' || r == '*' || r == '(' || r == ')' || r == '^' {
+				return -1
+			}
+			return r
+		}, tok)
+		clean = strings.TrimSpace(clean)
+		if len(clean) >= 2 {
+			parts = append(parts, `"`+clean+`"`)
+		}
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return strings.Join(parts, " OR ")
 }
 
 // RecordUserPrompt indexes the user's latest message.

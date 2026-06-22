@@ -211,6 +211,14 @@ func (a *Agent) compact(ctx context.Context, trigger, instructions string, force
 		}
 	}
 
+	if a.ctxStore != nil && a.ctxStore.Snapshot != nil {
+		snap := a.ctxStore.Snapshot.Build()
+		if snap != "" {
+			instructions += "\n\n" + snap
+			a.ctxStore.Snapshot.Reset()
+		}
+	}
+
 	archived := ""
 	if a.archiveDir != "" {
 		path, err := archiveMessages(a.archiveDir, region)

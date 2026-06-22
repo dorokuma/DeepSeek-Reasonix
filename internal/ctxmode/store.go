@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"reasonix/internal/config"
 )
@@ -30,6 +31,12 @@ type stored struct {
 	path string // on-disk body path when set
 }
 
+// cacheEntry tracks indexed files and their freshness.
+type cacheEntry struct {
+	indexedAt time.Time
+	ttl       time.Duration // 0 = never expires (force refresh only)
+}
+
 // Store holds sandboxed tool output for one agent session.
 type Store struct {
 	mu      sync.Mutex
@@ -38,13 +45,23 @@ type Store struct {
 	data    map[string]stored
 	indexed map[string]string // Key: relative path, Value: file content
 	journal *Journal
+	Stats   *Stats
+
+	// cache tracks indexed files and their freshness.
+	cache   map[string]cacheEntry // key = absPath (normalized)
+	cacheMu sync.Mutex
+
+	Snapshot *CompactSnapshot
 }
 
 // NewStore creates a session-local store under the reasonix cache dir.
 func NewStore() *Store {
 	s := &Store{
-		data:    map[string]stored{},
-		indexed: map[string]string{},
+		data:     map[string]stored{},
+		indexed:  map[string]string{},
+		cache:    map[string]cacheEntry{},
+		Stats:    &Stats{},
+		Snapshot: &CompactSnapshot{},
 	}
 	base := config.CacheDir()
 	if base != "" {
@@ -225,6 +242,7 @@ func (s *Store) Remove() {
 	if s == nil {
 		return
 	}
+	s.FlushCache()
 	if s.journal != nil {
 		s.journal.Close()
 		s.journal = nil
@@ -236,9 +254,28 @@ func (s *Store) Remove() {
 
 // IndexFile reads a single file and stores it in the session-local store.
 func (s *Store) IndexFile(relPath, absPath string) error {
+	return s.IndexFileWithTTL(relPath, absPath, 24*time.Hour)
+}
+
+// IndexFileWithTTL indexes a file with an explicit cache TTL. ttl <= 0
+// forces a re-index unconditionally. Default TTL is 24h.
+func (s *Store) IndexFileWithTTL(relPath, absPath string, ttl time.Duration) error {
 	if s == nil {
 		return fmt.Errorf("context store unavailable")
 	}
+
+	// Normalize path for cache key
+	absPath = filepath.Clean(absPath)
+
+	s.cacheMu.Lock()
+	entry, ok := s.cache[absPath]
+	s.cacheMu.Unlock()
+
+	if ok && ttl > 0 && time.Since(entry.indexedAt) < ttl {
+		return nil // cache hit, skip
+	}
+
+	// Proceed with indexing
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	data, err := os.ReadFile(absPath)
@@ -246,7 +283,34 @@ func (s *Store) IndexFile(relPath, absPath string) error {
 		return err
 	}
 	s.indexed[relPath] = string(data)
+
+	// Also index into FTS5 journal for full-text search.
+	if s.journal != nil {
+		if err := s.journal.IndexContent(relPath, string(data)); err != nil {
+			LogJournalErr("index_content", err)
+		}
+	}
+
+	// Update cache
+	s.cacheMu.Lock()
+	if ttl <= 0 {
+		ttl = 24 * time.Hour
+	}
+	s.cache[absPath] = cacheEntry{indexedAt: time.Now(), ttl: ttl}
+	s.cacheMu.Unlock()
+
 	return nil
+}
+
+// FlushCache clears the index cache, forcing all subsequent IndexFile
+// calls to re-index regardless of TTL.
+func (s *Store) FlushCache() {
+	if s == nil {
+		return
+	}
+	s.cacheMu.Lock()
+	s.cache = make(map[string]cacheEntry)
+	s.cacheMu.Unlock()
 }
 
 // SearchGlobal searches for pattern in all indexed files, returning matching snippets.
@@ -254,6 +318,19 @@ func (s *Store) SearchGlobal(pattern string, limit int) (string, error) {
 	if s == nil {
 		return "", fmt.Errorf("context store unavailable")
 	}
+	if limit <= 0 {
+		limit = 5
+	}
+
+	// Try FTS5 first.
+	if s.journal != nil {
+		results, err := s.journal.SearchFTS(pattern, limit)
+		if err == nil && len(results) > 0 {
+			return formatFTSResults(results, limit), nil
+		}
+		// Fall through to legacy search on error or empty results.
+	}
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -298,4 +375,21 @@ func (s *Store) SearchGlobal(pattern string, limit int) (string, error) {
 		resText = resText[:40000] + "\n\n... (truncated search results)"
 	}
 	return resText, nil
+}
+
+// formatFTSResults formats FTS5 search results into a human-readable string.
+func formatFTSResults(results []FTSResult, limit int) string {
+	var b strings.Builder
+	displayed := 0
+	for _, r := range results {
+		if displayed >= limit {
+			break
+		}
+		fmt.Fprintf(&b, "Match in %s (score: %.2f):\n  %s\n", r.RelPath, r.Score, r.Snippet)
+		displayed++
+	}
+	if displayed == 0 {
+		return "(no matches)"
+	}
+	return b.String()
 }
