@@ -613,7 +613,20 @@ function applyEvent(s: State, e: WireEvent): State {
       // Plan approval can arrive before turn_done on some Wails event paths.
       // Keep that gate visible instead of clearing the only UI that can answer it.
       const keepPlanApproval = s.approval?.tool === "exit_plan_mode";
-      return { ...s, items, live: undefined, running: false, turnActive: false, pendingPrompt: false, cancelRequested: false, cancellable: false, currentAssistant: undefined, approval: keepPlanApproval ? s.approval : undefined, ask: undefined, seq: s.seq + 1 };
+      return {
+        ...s,
+        items,
+        live: undefined,
+        running: keepPlanApproval,
+        turnActive: keepPlanApproval,
+        pendingPrompt: keepPlanApproval,
+        cancelRequested: false,
+        cancellable: keepPlanApproval,
+        currentAssistant: undefined,
+        approval: keepPlanApproval ? s.approval : undefined,
+        ask: undefined,
+        seq: s.seq + 1,
+      };
     }
     default: return s;
   }

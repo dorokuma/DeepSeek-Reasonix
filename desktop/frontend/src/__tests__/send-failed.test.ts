@@ -61,6 +61,8 @@ eq(
   "plan-1",
   "turn_done preserves out-of-order plan approval",
 );
+eq(planTurnDoneAfter.running, true, "preserved plan approval keeps the tab running");
+eq(planTurnDoneAfter.pendingPrompt, true, "preserved plan approval keeps the prompt gate active");
 
 let replayCalls = 0;
 replayPendingPromptsForActiveTab(undefined, () => {
