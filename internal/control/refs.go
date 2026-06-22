@@ -182,13 +182,7 @@ func visionFileImageDataURL(path, baseDir string) (string, error) {
 		return "", os.ErrNotExist
 	}
 	if absBase == "" {
-		return visionFileImageDataURLUnscoped(absPath)
-	}
-
-	if info, err := os.Lstat(absPath); err != nil {
-		return "", err
-	} else if info.Mode()&os.ModeSymlink != 0 {
-		return "", fmt.Errorf("image path must not be a symlink")
+		return "", fmt.Errorf("workspace root is required for file image references")
 	}
 
 	root, err := os.OpenRoot(absBase)
@@ -201,23 +195,8 @@ func visionFileImageDataURL(path, baseDir string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	info, err := root.Stat(rel)
-	if err != nil {
-		return "", err
-	}
-	if info.IsDir() || info.Size() <= 0 || info.Size() > maxImageAttachmentBytes {
-		return "", fmt.Errorf("image must be between 1 byte and 10 MB")
-	}
-	f, err := root.Open(rel)
-	if err != nil {
-		return "", err
-	}
-	defer f.Close()
-	return dataURLFromImageReader(f, path)
-}
 
-func visionFileImageDataURLUnscoped(path string) (string, error) {
-	info, err := os.Lstat(path)
+	info, err := root.Lstat(rel)
 	if err != nil {
 		return "", err
 	}
@@ -227,11 +206,18 @@ func visionFileImageDataURLUnscoped(path string) (string, error) {
 	if info.IsDir() || info.Size() <= 0 || info.Size() > maxImageAttachmentBytes {
 		return "", fmt.Errorf("image must be between 1 byte and 10 MB")
 	}
-	f, err := os.Open(path)
+	f, err := root.Open(rel)
 	if err != nil {
 		return "", err
 	}
 	defer f.Close()
+	opened, err := f.Stat()
+	if err != nil {
+		return "", err
+	}
+	if !os.SameFile(info, opened) {
+		return "", fmt.Errorf("image changed while opening")
+	}
 	return dataURLFromImageReader(f, path)
 }
 
