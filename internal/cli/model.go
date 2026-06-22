@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"strings"
 
 	tea "charm.land/bubbletea/v2"
 
@@ -80,15 +81,26 @@ func (m *chatTUI) runModelSubcommand(input string) {
 
 // showModels lists the configured provider/model refs, marking the active one.
 func (m *chatTUI) showModels() {
-	cfg, err := config.Load()
-	if err != nil {
-		m.notice("model: " + err.Error())
+	cfg := liveCfg.Load()
+	if cfg == nil {
+		m.notice("model: config not loaded")
 		return
+	}
+	hasOpenCodeGo := false
+	for i := range cfg.Providers {
+		p := &cfg.Providers[i]
+		if strings.Contains(p.BaseURL, "opencode.ai/zen/go") && p.Configured() {
+			hasOpenCodeGo = true
+			break
+		}
 	}
 	var refs []string
 	for i := range cfg.Providers {
 		p := &cfg.Providers[i]
 		if !p.Configured() {
+			continue
+		}
+		if hasOpenCodeGo && strings.HasPrefix(p.Name, "mimo-") {
 			continue
 		}
 		for _, model := range p.ModelList() {
@@ -133,10 +145,21 @@ func modelRefs() []string {
 			return nil
 		}
 	}
+	hasOpenCodeGo := false
+	for i := range cfg.Providers {
+		p := &cfg.Providers[i]
+		if strings.Contains(p.BaseURL, "opencode.ai/zen/go") && p.Configured() {
+			hasOpenCodeGo = true
+			break
+		}
+	}
 	var out []string
 	for i := range cfg.Providers {
 		p := &cfg.Providers[i]
 		if !p.Configured() {
+			continue
+		}
+		if hasOpenCodeGo && strings.HasPrefix(p.Name, "mimo-") {
 			continue
 		}
 		for _, model := range p.ModelList() {
