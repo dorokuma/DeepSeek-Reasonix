@@ -169,6 +169,8 @@ type Agent struct {
 	sessCacheHit  atomic.Int64
 	sessCacheMiss atomic.Int64
 	sessCostInfo  atomic.Value // stores sessionCostInfo{cost, currency}
+	sessPromptTokens  atomic.Int64 // cumulative prompt tokens across all API calls
+	sessTotalTokens   atomic.Int64 // cumulative total tokens across all API calls
 
 	// lastPrefixShape records the previous provider request's cacheable prefix
 	// so usage events can explain prefix churn on the next request.
@@ -577,7 +579,9 @@ func (a *Agent) Run(ctx context.Context, input string) error {
 			a.sink.Emit(event.Event{Kind: event.Usage, Usage: usage, Pricing: a.pricing,
 				CacheDiagnostics: &cacheDiagnostics,
 				SessionHit:       int(a.sessCacheHit.Load()), SessionMiss: int(a.sessCacheMiss.Load()),
-				SessionCost: sCost, SessionCurrency: sCurrency})
+				SessionCost:      sCost, SessionCurrency: sCurrency,
+				SessionPrompt:    int(a.sessPromptTokens.Load()),
+				SessionTotal:     int(a.sessTotalTokens.Load())})
 		}
 		if msg, ok := finishReasonMessage(usage); ok {
 			a.sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelWarn, Text: msg})
@@ -814,6 +818,8 @@ func (a *Agent) stream(ctx context.Context, turn int) (string, string, string, [
 			a.lastUsage.Store(chunk.Usage)
 			a.sessCacheHit.Add(int64(chunk.Usage.CacheHitTokens))
 			a.sessCacheMiss.Add(int64(chunk.Usage.CacheMissTokens))
+			a.sessPromptTokens.Add(int64(chunk.Usage.PromptTokens))
+			a.sessTotalTokens.Add(int64(chunk.Usage.TotalTokens))
 			if a.pricing != nil {
 				prev := a.sessCostInfo.Load()
 				var info sessionCostInfo

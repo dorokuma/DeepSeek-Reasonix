@@ -83,6 +83,8 @@ type wireUsage struct {
 	SessionCacheMissTokens int     `json:"sessionCacheMissTokens"`
 	SessionCost            float64 `json:"sessionCost,omitempty"`
 	SessionCurrency        string  `json:"sessionCurrency,omitempty"`
+	SessionPromptTokens    int     `json:"sessionPromptTokens"`
+	SessionTotalTokens     int     `json:"sessionTotalTokens"`
 	Cost                   float64 `json:"cost,omitempty"`
 	Currency               string  `json:"currency,omitempty"`
 	// CostUSD is kept for older status consumers. It mirrors Cost and does not
@@ -172,6 +174,7 @@ func toWire(e event.Event) wireEvent {
 				CacheMissTokens: u.CacheMissTokens, ReasoningTokens: u.ReasoningTokens,
 				SessionCacheHitTokens: e.SessionHit, SessionCacheMissTokens: e.SessionMiss,
 				SessionCost: e.SessionCost, SessionCurrency: e.SessionCurrency,
+				SessionPromptTokens: e.SessionPrompt, SessionTotalTokens: e.SessionTotal,
 			}
 			if e.CacheDiagnostics != nil {
 				w.Usage.CacheDiagnostics = toWireCacheDiagnostics(e.CacheDiagnostics)
