@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -263,7 +264,9 @@ func (s *service) sessionPrompt(ctx context.Context, raw json.RawMessage) (any, 
 
 	// Persist after the turn (best-effort) so a crash loses at most this prompt;
 	// save even on cancel/error since the partial conversation is still resumable.
-	_ = sess.ctrl.Snapshot()
+	if err := sess.ctrl.Snapshot(); err != nil {
+		slog.Warn("session snapshot failed", "session", sess.id, "error", err)
+	}
 
 	stop := StopEndTurn
 	if runErr != nil {
