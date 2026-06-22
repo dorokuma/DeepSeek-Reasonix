@@ -56,6 +56,12 @@ type Coordinator struct {
 	// trivial, non-work turn (a question, a greeting) skip straight to the
 	// executor instead of paying a planner round on it.
 	shouldPlan func(string) bool
+	// plannerPrevHit/Miss/Cost track the planner agent's cumulative stats at the
+	// time of the last merge, so planWithTools only adds the delta (not the full
+	// cumulative value) to the executor each turn.
+	plannerPrevHit  int64
+	plannerPrevMiss int64
+	plannerPrevCost float64
 }
 
 // NewCoordinator wires a planner provider (with its own session) to an executor.
@@ -161,18 +167,24 @@ func (c *Coordinator) planWithTools(ctx context.Context, input string) (string, 
 	if err := c.plannerAgent.Run(ctx, input); err != nil {
 		return "", err
 	}
-	// Merge planner agent's cache/cost stats into executor.
+	// Merge planner agent's cache/cost stats into executor (delta only).
 	if c.executor != nil {
-		hit := c.plannerAgent.sessCacheHit.Load()
-		miss := c.plannerAgent.sessCacheMiss.Load()
-		var cost float64
+		currHit := c.plannerAgent.sessCacheHit.Load()
+		currMiss := c.plannerAgent.sessCacheMiss.Load()
+		var currCost float64
 		var currency string
 		if v := c.plannerAgent.sessCostInfo.Load(); v != nil {
 			info, _ := v.(sessionCostInfo)
-			cost = info.cost
+			currCost = info.cost
 			currency = info.currency
 		}
-		c.executor.AddSessionUsage(hit, miss, cost, currency)
+		deltaHit := currHit - c.plannerPrevHit
+		deltaMiss := currMiss - c.plannerPrevMiss
+		deltaCost := currCost - c.plannerPrevCost
+		c.executor.AddSessionUsage(deltaHit, deltaMiss, deltaCost, currency)
+		c.plannerPrevHit = currHit
+		c.plannerPrevMiss = currMiss
+		c.plannerPrevCost = currCost
 	}
 	for i := len(c.plannerSess.Messages) - 1; i >= before; i-- {
 		m := c.plannerSess.Messages[i]
