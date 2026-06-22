@@ -37,6 +37,22 @@ func (s *Session) Add(m provider.Message) {
 	s.Messages = append(s.Messages, m)
 }
 
+// AddUserNudge appends content to the last message if it's a user message,
+// otherwise adds a new user message.
+func (s *Session) AddUserNudge(content string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	n := len(s.Messages)
+	if n > 0 && s.Messages[n-1].Role == provider.RoleUser {
+		s.Messages[n-1].Content += "\n\n" + content
+	} else {
+		s.Messages = append(s.Messages, provider.Message{
+			Role:    provider.RoleUser,
+			Content: content,
+		})
+	}
+}
+
 // Replace swaps the whole message log — used by compaction, which rewrites the
 // middle of the history.
 func (s *Session) Replace(msgs []provider.Message) {
@@ -128,7 +144,12 @@ func ExtractFragments(content string) []Fragment {
 // lightweight <fragment-ref> tags, comparing against the previouslySent map.
 // previouslySent tracks fragment ID → last-sent content. The returned messages
 // are a transient copy — the caller must NOT persist them back to the Session.
-func CalculateDiffAndFilter(currentMsgs []provider.Message, previouslySent map[string]string) []provider.Message {
+func CalculateDiffAndFilter(currentMsgs []provider.Message, previouslySent map[string]string) ([]provider.Message, map[string]string) {
+	nextSent := make(map[string]string, len(previouslySent))
+	for k, v := range previouslySent {
+		nextSent[k] = v
+	}
+
 	filtered := make([]provider.Message, len(currentMsgs))
 	copy(filtered, currentMsgs)
 
@@ -138,12 +159,12 @@ func CalculateDiffAndFilter(currentMsgs []provider.Message, previouslySent map[s
 		// 1. Process regular string content
 		fragments := ExtractFragments(content)
 		for _, frag := range fragments {
-			lastVal, exists := previouslySent[frag.ID]
+			lastVal, exists := nextSent[frag.ID]
 			if exists && lastVal == frag.Content {
 				refTag := fmt.Sprintf(`<fragment-ref id="%s" status="unchanged" />`, frag.ID)
 				content = fragmentReplacePattern(frag.ID).ReplaceAllString(content, refTag)
 			} else {
-				previouslySent[frag.ID] = frag.Content
+				nextSent[frag.ID] = frag.Content
 			}
 		}
 
@@ -156,12 +177,12 @@ func CalculateDiffAndFilter(currentMsgs []provider.Message, previouslySent map[s
 					partContent := part.Text
 					frags := ExtractFragments(partContent)
 					for _, frag := range frags {
-						lastVal, exists := previouslySent[frag.ID]
+						lastVal, exists := nextSent[frag.ID]
 						if exists && lastVal == frag.Content {
 							refTag := fmt.Sprintf(`<fragment-ref id="%s" status="unchanged" />`, frag.ID)
 							partContent = fragmentReplacePattern(frag.ID).ReplaceAllString(partContent, refTag)
 						} else {
-							previouslySent[frag.ID] = frag.Content
+							nextSent[frag.ID] = frag.Content
 						}
 					}
 					part.Text = partContent
@@ -174,5 +195,5 @@ func CalculateDiffAndFilter(currentMsgs []provider.Message, previouslySent map[s
 		filtered[i].Parts = filteredParts
 	}
 
-	return filtered
+	return filtered, nextSent
 }

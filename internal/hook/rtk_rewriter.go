@@ -31,6 +31,7 @@ func (r *rtkRewriter) PostToolRewrite(_ context.Context, name string, args json.
 	}
 	out, err := rtk.PipeCompact(filter, result)
 	if err != nil {
+		rtk.LogFail("pipe", name, err)
 		rtk.LogMissPipe(name, filter, len(result), "pipe_declined")
 		return result
 	}

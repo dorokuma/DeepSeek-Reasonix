@@ -52,6 +52,7 @@ func PipeCompact(filter, input string) (string, error) {
 	c.Stdin = strings.NewReader(input)
 	out, err := c.Output()
 	if err != nil {
+		LogFail("pipe", filter, err)
 		return "", fmt.Errorf("rtk pipe -f %s: %w", filter, err)
 	}
 	compacted := string(out)

@@ -74,6 +74,7 @@ func NewCoordinator(planner provider.Provider, plannerSession *Session, plannerP
 	}
 	if executor != nil {
 		executor.executorHandoffGuard = true
+		executor.sink = executorSink(executor.sink)
 	}
 	return &Coordinator{
 		planner:        planner,
@@ -169,6 +170,18 @@ func plannerSink(sink event.Sink) event.Sink {
 		default:
 			sink.Emit(e)
 		}
+	})
+}
+
+func executorSink(sink event.Sink) event.Sink {
+	if nilutil.IsNil(sink) {
+		sink = event.Discard
+	}
+	return event.FuncSink(func(e event.Event) {
+		if e.Kind == event.TurnStarted {
+			return
+		}
+		sink.Emit(e)
 	})
 }
 

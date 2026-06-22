@@ -521,22 +521,21 @@ func (a *Agent) Run(ctx context.Context, input string) error {
 		if err != nil {
 			if interrupted && streamRecoveries < maxStreamRecoveries {
 				streamRecoveries++
-				if hasVisibleFinalAnswer(text) || reasoning != "" {
-					// 如果已生成可见的最终回答，或者已生成了推理思考过程，则需要将当前的 assistant 消息添加进会话 session。
-					// 这样做是为了保留已经生成的推理思考过程（reasoning），避免在接下来的重试中丢失。
-					// 如果不保存该推理，模型在重试时需要从头重新进行长时间思考（长考），
-					// 这不仅耗费资源，还极易在后续生成中再次由于达到 max_tokens 限制而被异常截断。
-					a.session.Add(provider.Message{
-						Role:               provider.RoleAssistant,
-						Content:            text,
-						ReasoningContent:   reasoning,
-						ReasoningSignature: signature,
-					})
+				if hasVisibleFinalAnswer(text) || reasoning != "" || partialToolStarted {
+					if hasVisibleFinalAnswer(text) || reasoning != "" {
+						// 如果已生成可见的最终回答，或者已生成了推理思考过程，则需要将当前的 assistant 消息添加进会话 session。
+						// 这样做是为了保留已经生成的推理思考过程（reasoning），避免在接下来的重试中丢失。
+						// 如果不保存该推理，模型在重试时需要从头重新进行长时间思考（长考），
+						// 这不仅耗费资源，还极易在后续生成中再次由于达到 max_tokens 限制而被异常截断。
+						a.session.Add(provider.Message{
+							Role:               provider.RoleAssistant,
+							Content:            text,
+							ReasoningContent:   reasoning,
+							ReasoningSignature: signature,
+						})
+					}
+					a.session.AddUserNudge(streamRecoveryMessage(hasVisibleFinalAnswer(text), partialToolStarted))
 				}
-				a.session.Add(provider.Message{
-					Role:    provider.RoleUser,
-					Content: streamRecoveryMessage(hasVisibleFinalAnswer(text), partialToolStarted),
-				})
 				a.sink.Emit(event.Event{Kind: event.Retrying, RetryAttempt: streamRecoveries, RetryMax: maxStreamRecoveries})
 				step-- // recovery retries do not consume the tool-round maxSteps budget
 				continue
@@ -582,8 +581,10 @@ func (a *Agent) Run(ctx context.Context, input string) error {
 				// 在重试前，先将已生成的 assistant 消息（包含已生成的 reasoning 思考过程和 signature 等）添加进会话 session。
 				// 这样做是为了保留已有的推理思考过程，避免重试时模型需要从头重新进行长时间思考（长考），
 				// 如果不保存，模型重新思考不仅耗费资源，还极易在下一次输出时再次因为达到 max_tokens 而被截断。
-				a.session.Add(assistantMsg)
-				a.session.Add(provider.Message{Role: provider.RoleUser, Content: emptyFinalRetryMessage()})
+				if reasoning != "" {
+					a.session.Add(assistantMsg)
+					a.session.Add(provider.Message{Role: provider.RoleUser, Content: emptyFinalRetryMessage()})
+				}
 				a.maybeCompact(ctx, usage)
 				continue
 			}
@@ -724,7 +725,7 @@ func (a *Agent) stream(ctx context.Context, turn int) (string, string, string, [
 	// tags. This is a transient transformation — we do NOT write the filtered
 	// messages back to the Session (would break compaction).
 	msgs := a.session.Snapshot()
-	msgs = CalculateDiffAndFilter(msgs, a.sentFragments)
+	msgs, nextSent := CalculateDiffAndFilter(msgs, a.sentFragments)
 	ch, err := a.prov.Stream(ctx, provider.Request{
 		Messages:    msgs,
 		Tools:       a.tools.Schemas(),
@@ -733,6 +734,7 @@ func (a *Agent) stream(ctx context.Context, turn int) (string, string, string, [
 	if err != nil {
 		return "", "", "", nil, nil, false, false, err
 	}
+	a.sentFragments = nextSent
 
 	// A PostLLMCall hook rewrites the whole reasoning block, so when one is wired
 	// up we buffer reasoning silently and emit the transformed text once after the

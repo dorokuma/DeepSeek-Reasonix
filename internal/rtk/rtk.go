@@ -135,6 +135,7 @@ func rewriteWithMode(ctx context.Context, cmd string, mode Mode) string {
 	if err != nil {
 		var exitErr *exec.ExitError
 		if !errors.As(err, &exitErr) {
+			LogFail("rewrite", cmd, err)
 			rewriteCache.Store(cmd, "")
 			return ""
 		}

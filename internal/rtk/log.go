@@ -36,14 +36,22 @@ func logMiss(surface, detail string) {
 	if LogLevelFromEnv() < LogMiss {
 		return
 	}
-	slog.Info("rtk miss", "surface", surface, "detail", detail)
+	slog.Info("rtk status=miss", "surface", surface, "detail", detail)
 }
 
 func logHit(cmd, rewritten string) {
 	if LogLevelFromEnv() < LogAll {
 		return
 	}
-	slog.Info("rtk hit", "cmd", cmd, "rewritten", rewritten)
+	slog.Info("rtk status=hit", "cmd", cmd, "rewritten", rewritten)
+}
+
+// LogFail records a failed RTK invocation (binary error, timeout, etc).
+func LogFail(surface, cmd string, err error) {
+	if LogLevelFromEnv() < LogMiss {
+		return
+	}
+	slog.Warn("rtk status=fail", "surface", surface, "cmd", cmd, "error", err)
 }
 
 // LogMissBuiltin records a builtin gate fallback (grep, ls, …).
