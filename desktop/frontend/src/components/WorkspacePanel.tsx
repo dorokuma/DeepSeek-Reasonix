@@ -27,6 +27,7 @@ import {
 import { app } from "../lib/bridge";
 import { useT } from "../lib/i18n";
 import { loadLayoutSize, saveLayoutSize } from "../lib/layoutPreferences";
+import { createRafResizeUpdater } from "../lib/resizeDrag";
 import type { DirEntry, FilePreview, GitCommitView, GitCommitDetailView, WorkspaceChangeView } from "../lib/types";
 import { formatWorkspaceReference, WORKSPACE_REF_DRAG_TYPE } from "../lib/workspaceDrag";
 import { cleanGitDiff } from "../lib/diff";
@@ -844,16 +845,23 @@ export function WorkspacePanel({
   const startTreeResize = useCallback(
     (event: ReactPointerEvent<HTMLButtonElement>) => {
       if (!treeVisible) return;
-      const rect = panelRef.current?.getBoundingClientRect();
-      if (!rect) return;
+      const panel = panelRef.current;
+      const rect = panel?.getBoundingClientRect();
+      if (!panel || !rect) return;
       event.preventDefault();
       setTreeResizing(true);
       let nextWidth = effectiveTreeWidth;
+      const liveResize = createRafResizeUpdater({
+        target: panel,
+        separator: event.currentTarget,
+        cssVar: "--workspace-tree-width",
+      });
       const onMove = (moveEvent: PointerEvent) => {
         nextWidth = clampWorkspaceTreeWidth(moveEvent.clientX - rect.left, rect.width);
-        setTreeWidth(nextWidth);
+        liveResize.schedule(nextWidth);
       };
       const onDone = () => {
+        liveResize.cancel();
         setTreeWidth(nextWidth);
         saveWorkspaceTreeWidth(nextWidth);
         setTreeResizing(false);
