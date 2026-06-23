@@ -11,6 +11,7 @@
 // invoking the exported save* helpers exactly where they did before, so the
 // on-disk localStorage schema and write timing are byte-identical.
 
+import type { Dispatch, SetStateAction } from "react";
 import { create } from "zustand";
 
 import { loadLayoutSize, saveLayoutSize } from "../lib/layoutPreferences";
@@ -103,15 +104,39 @@ export function saveRightDockPreviewWidth(width: number): void {
   saveLayoutSize("rightDockPreviewWidth", width, clampRightDockPreviewWidth);
 }
 
+// rightDockMode selects what the right dock shows; the workspace-panel flags are
+// its open/maximized/preview layout configuration. None of these four are
+// persisted — they reset to the defaults below on launch, exactly as the prior
+// App-local useState did. (The truly view-local interaction ephemera — resize
+// drag flags, button-press animation flags, measured footer height, viewport
+// width — deliberately stay as useState in App.tsx; they have no cross-component
+// readers and don't belong in shared state.)
+export type RightDockMode = "context" | "files" | "changed";
+
+// resolve mirrors React's setState contract: a setter accepts either the next
+// value or an updater (prev => next), so the migrated call sites — including
+// functional toggles like setWorkspacePanelMaximized(v => !v) — are drop-in.
+function resolve<T>(prev: T, update: SetStateAction<T>): T {
+  return typeof update === "function" ? (update as (value: T) => T)(prev) : update;
+}
+
 export type LayoutState = {
   sidebarCollapsed: boolean;
   sidebarWidth: number;
   rightDockTreeWidth: number;
   rightDockPreviewWidth: number;
+  workspacePanelOpen: boolean;
+  workspacePanelMaximized: boolean;
+  workspacePreviewActive: boolean;
+  rightDockMode: RightDockMode;
   setSidebarCollapsed: (collapsed: boolean) => void;
   setSidebarWidth: (width: number) => void;
   setRightDockTreeWidth: (width: number) => void;
   setRightDockPreviewWidth: (width: number) => void;
+  setWorkspacePanelOpen: Dispatch<SetStateAction<boolean>>;
+  setWorkspacePanelMaximized: Dispatch<SetStateAction<boolean>>;
+  setWorkspacePreviewActive: Dispatch<SetStateAction<boolean>>;
+  setRightDockMode: Dispatch<SetStateAction<RightDockMode>>;
 };
 
 export const useLayoutStore = create<LayoutState>((set) => ({
@@ -119,8 +144,16 @@ export const useLayoutStore = create<LayoutState>((set) => ({
   sidebarWidth: loadSidebarWidth(),
   rightDockTreeWidth: loadRightDockTreeWidth(),
   rightDockPreviewWidth: loadRightDockPreviewWidth(),
+  workspacePanelOpen: true,
+  workspacePanelMaximized: false,
+  workspacePreviewActive: false,
+  rightDockMode: "context",
   setSidebarCollapsed: (collapsed) => set({ sidebarCollapsed: collapsed }),
   setSidebarWidth: (width) => set({ sidebarWidth: width }),
   setRightDockTreeWidth: (width) => set({ rightDockTreeWidth: width }),
   setRightDockPreviewWidth: (width) => set({ rightDockPreviewWidth: width }),
+  setWorkspacePanelOpen: (update) => set((s) => ({ workspacePanelOpen: resolve(s.workspacePanelOpen, update) })),
+  setWorkspacePanelMaximized: (update) => set((s) => ({ workspacePanelMaximized: resolve(s.workspacePanelMaximized, update) })),
+  setWorkspacePreviewActive: (update) => set((s) => ({ workspacePreviewActive: resolve(s.workspacePreviewActive, update) })),
+  setRightDockMode: (update) => set((s) => ({ rightDockMode: resolve(s.rightDockMode, update) })),
 }));

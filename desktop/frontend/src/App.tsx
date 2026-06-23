@@ -104,6 +104,7 @@ import {
   RIGHT_DOCK_PREVIEW_MIN_WIDTH,
   RIGHT_DOCK_TREE_MAX_WIDTH,
   RIGHT_DOCK_TREE_MIN_WIDTH,
+  type RightDockMode,
   SIDEBAR_MAX_WIDTH,
   SIDEBAR_MIN_WIDTH,
   clampCreationSidebarWidth,
@@ -172,7 +173,6 @@ function normalizeDesktopLayoutStyle(style: string | undefined): DesktopLayoutSt
   if (style === "creation") return "creation";
   return "classic";
 }
-type RightDockMode = "context" | "files" | "changed";
 const SHOW_CONTEXT_DOCK = true;
 type HistoryScopeFilter = { scope: "global" | "project"; workspaceRoot: string };
 type DesktopPlatform = "darwin" | "windows" | "linux";
@@ -859,12 +859,14 @@ export default function App() {
   const setSidebarWidth = useLayoutStore((s) => s.setSidebarWidth);
   const [sidebarResizing, setSidebarResizing] = useState(false);
   const [viewportWidth, setViewportWidth] = useState(() => (typeof window === "undefined" ? 1440 : window.innerWidth));
-  const [workspacePanelOpen, setWorkspacePanelOpen] = useState(true);
+  const workspacePanelOpen = useLayoutStore((s) => s.workspacePanelOpen);
+  const setWorkspacePanelOpen = useLayoutStore((s) => s.setWorkspacePanelOpen);
   const rightDockTreeWidth = useLayoutStore((s) => s.rightDockTreeWidth);
   const setRightDockTreeWidth = useLayoutStore((s) => s.setRightDockTreeWidth);
   const rightDockPreviewWidth = useLayoutStore((s) => s.rightDockPreviewWidth);
   const setRightDockPreviewWidth = useLayoutStore((s) => s.setRightDockPreviewWidth);
-  const [workspacePreviewActive, setWorkspacePreviewActive] = useState(false);
+  const workspacePreviewActive = useLayoutStore((s) => s.workspacePreviewActive);
+  const setWorkspacePreviewActive = useLayoutStore((s) => s.setWorkspacePreviewActive);
   // Bump dockRefreshKey after each turn so WorkspacePanel/ContextPanel re-fetch
   // workspace changes, git history, and session metadata after AI tool writes.
   useEffect(() => {
@@ -878,8 +880,10 @@ export default function App() {
   }, []);
 
   const [workspacePanelResizing, setWorkspacePanelResizing] = useState(false);
-  const [workspacePanelMaximized, setWorkspacePanelMaximized] = useState(false);
-  const [rightDockMode, setRightDockMode] = useState<RightDockMode>("context");
+  const workspacePanelMaximized = useLayoutStore((s) => s.workspacePanelMaximized);
+  const setWorkspacePanelMaximized = useLayoutStore((s) => s.setWorkspacePanelMaximized);
+  const rightDockMode = useLayoutStore((s) => s.rightDockMode);
+  const setRightDockMode = useLayoutStore((s) => s.setRightDockMode);
   const [dockRefreshKey, setDockRefreshKey] = useState(0);
   const [projectRevision, setProjectRevision] = useState(0);
   const [activeTopicTurns, setActiveTopicTurns] = useState<number | undefined>(undefined);
