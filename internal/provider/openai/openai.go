@@ -10,6 +10,8 @@
 //     disabled instead of reasoning_effort, which Zhipu silently ignores.
 //   - everything else (MiMo and other OpenAI-compatible gateways) uses the
 //     vanilla reasoning_effort scale (low/medium/high).
+//
+// See docs/REASONING_PROVIDERS.md for the per-backend protocol reference.
 package openai
 
 import (
