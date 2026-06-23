@@ -1509,6 +1509,7 @@ func (a *App) buildTabControllerWithLoadedSession(tab *WorkspaceTab, loadedSessi
 	}
 
 	// Load config for this tab's workspace root.
+	_ = config.MigrateLegacyCredentialsForRoot(root)
 	cfg, err := config.LoadForRoot(root)
 	if err != nil {
 		a.mu.Lock()
@@ -1518,10 +1519,6 @@ func (a *App) buildTabControllerWithLoadedSession(tab *WorkspaceTab, loadedSessi
 		a.emitReady(wailsCtx)
 		return
 	}
-
-	// One-time legacy bridge: lift old ~/.env provider keys into Reasonix's
-	// global .env so every workspace observes the same saved credentials.
-	promoteProviderKeysToCredentials(cfg)
 
 	if tab.sink != nil {
 		tab.sink.setContext(wailsCtx)
