@@ -35,19 +35,22 @@ import (
 // memory, permissions) scoped to a workspace root, so multiple projects and
 // topics can be active concurrently without interfering.
 type WorkspaceTab struct {
-	ID            string             // stable random id
-	Scope         string             // "project" | "global"
-	WorkspaceRoot string             // project root dir (empty for global)
-	SharedHostKey string             // opaque key for the shared plugin host (set by buildTabController)
-	TopicID       string             // topic within the project
-	TopicTitle    string             // display title
-	SessionPath   string             // exact .jsonl file this tab continues
-	ReadOnly      bool               // true for external channel transcripts opened for browsing
-	Ctrl          control.SessionAPI // nil while booting / on error
-	Label         string             // model label (for the tab badge)
-	Ready         bool               // true once boot.Build completes
-	StartupErr    string             // build error, surfaced to the frontend
-	sink          *tabEventSink      // routes events with this tab's ID
+	ID              string             // stable random id
+	Scope           string             // "project" | "global"
+	WorkspaceRoot   string             // project root dir (empty for global)
+	SharedHostKey   string             // opaque key for the shared plugin host (set by buildTabController)
+	TopicID         string             // topic within the project
+	TopicTitle      string             // display title
+	SessionPath     string             // exact .jsonl file this tab continues
+	ReadOnly        bool               // true for external channel transcripts opened for browsing
+	Ctrl            control.SessionAPI // nil while booting / on error
+	Label           string             // model label (for the tab badge)
+	Ready           bool               // true once boot.Build completes
+	StartupErr      string             // build error, surfaced to the frontend
+	sink            *tabEventSink      // routes events with this tab's ID
+	buildCancel     context.CancelFunc // cancels in-flight boot for tabs removed before Ready
+	buildGeneration uint64             // identifies the current in-flight build
+	removed         bool               // set when the visible tab is pruned/closed before build completes
 
 	ActivityStatus string // transient project-tree status for the in-flight turn
 
@@ -1457,6 +1460,9 @@ func (a *App) CloseTab(tabID string) error {
 	if tab.Ctrl != nil && !tab.ReadOnly {
 		_ = tab.Ctrl.Snapshot()
 	}
+	if tab.Ctrl == nil || !tab.hasActiveRuntimeWork() {
+		a.markTabRemovedLocked(tab)
+	}
 
 	ordered := a.orderedTabIDsLocked()
 	closedIndex := -1
@@ -1520,6 +1526,12 @@ func (a *App) keepOnlyVisibleTab(tabID string) (TabMeta, error) {
 		if id == tabID {
 			continue
 		}
+		if tab.Ctrl != nil && !tab.ReadOnly {
+			_ = tab.Ctrl.Snapshot()
+		}
+		if tab.Ctrl == nil || !tab.hasActiveRuntimeWork() {
+			a.markTabRemovedLocked(tab)
+		}
 		removed = append(removed, tab)
 		delete(a.tabs, id)
 		a.removeTabOrderLocked(id)
@@ -1571,7 +1583,49 @@ func (a *App) removeVisibleTabRuntime(tab *WorkspaceTab) {
 	if tab.Ctrl != nil && tab.hasActiveRuntimeWork() && a.detachSessionRuntime(tab) {
 		return
 	}
+	a.markTabRemoved(tab)
 	a.closeTabRuntime(tab)
+}
+
+func (a *App) markTabRemoved(tab *WorkspaceTab) {
+	a.mu.Lock()
+	a.markTabRemovedLocked(tab)
+	a.mu.Unlock()
+}
+
+func (a *App) markTabRemovedLocked(tab *WorkspaceTab) {
+	if tab == nil {
+		return
+	}
+	tab.removed = true
+	if tab.buildCancel != nil {
+		tab.buildCancel()
+		tab.buildCancel = nil
+	}
+}
+
+func (a *App) tabRemovedForBuild(tab *WorkspaceTab) bool {
+	if tab == nil {
+		return true
+	}
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	return tab.removed || a.tabs[tab.ID] != tab
+}
+
+func (a *App) clearTabBuildCancel(tab *WorkspaceTab, generation uint64, cancel context.CancelFunc) {
+	if cancel == nil {
+		return
+	}
+	defer cancel()
+	if tab == nil {
+		return
+	}
+	a.mu.Lock()
+	if tab.buildGeneration == generation {
+		tab.buildCancel = nil
+	}
+	a.mu.Unlock()
 }
 
 func (a *App) closeTabRuntime(tab *WorkspaceTab) {
@@ -1594,11 +1648,22 @@ func (a *App) closeTabRuntime(tab *WorkspaceTab) {
 // same way buildController works for the single-controller App. On success it
 // wires the controller and flips Ready; on failure it stores StartupErr.
 func (a *App) startTabControllerBuild(tab *WorkspaceTab) {
-	if a.ctx == nil {
-		a.buildTabController(tab)
+	buildCtx, cancel := context.WithCancel(a.bootContext())
+	a.mu.Lock()
+	if tab == nil || tab.removed {
+		a.mu.Unlock()
+		cancel()
 		return
 	}
-	go a.buildTabController(tab)
+	tab.buildGeneration++
+	generation := tab.buildGeneration
+	tab.buildCancel = cancel
+	a.mu.Unlock()
+	if a.ctx == nil {
+		a.buildTabControllerWithContext(tab, loadedTabSession{}, buildCtx, generation, cancel)
+		return
+	}
+	go a.buildTabControllerWithContext(tab, loadedTabSession{}, buildCtx, generation, cancel)
 }
 
 func (a *App) buildTabController(tab *WorkspaceTab) {
@@ -1615,9 +1680,16 @@ func (s loadedTabSession) matches(path string) bool {
 }
 
 func (a *App) buildTabControllerWithLoadedSession(tab *WorkspaceTab, loadedSession loadedTabSession) {
+	a.buildTabControllerWithContext(tab, loadedSession, a.bootContext(), 0, nil)
+}
+
+func (a *App) buildTabControllerWithContext(tab *WorkspaceTab, loadedSession loadedTabSession, buildCtx context.Context, buildGeneration uint64, buildCancel context.CancelFunc) {
 	defer a.recoverToPending("buildTabController")
+	defer a.clearTabBuildCancel(tab, buildGeneration, buildCancel)
 	wailsCtx := a.ctx
-	buildCtx := a.bootContext()
+	if a.tabRemovedForBuild(tab) {
+		return
+	}
 
 	a.reconcileTabWithPinnedSessionMeta(tab)
 
@@ -1633,6 +1705,10 @@ func (a *App) buildTabControllerWithLoadedSession(tab *WorkspaceTab, loadedSessi
 	cfg, err := config.LoadForRoot(root)
 	if err != nil {
 		a.mu.Lock()
+		if tab.removed || a.tabs[tab.ID] != tab {
+			a.mu.Unlock()
+			return
+		}
 		tab.StartupErr = err.Error()
 		tab.Ready = true
 		a.mu.Unlock()
@@ -1640,6 +1716,9 @@ func (a *App) buildTabControllerWithLoadedSession(tab *WorkspaceTab, loadedSessi
 		return
 	}
 
+	if a.tabRemovedForBuild(tab) {
+		return
+	}
 	if tab.sink != nil {
 		tab.sink.setContext(wailsCtx)
 	}
@@ -1701,6 +1780,10 @@ func (a *App) buildTabControllerWithLoadedSession(tab *WorkspaceTab, loadedSessi
 	}
 
 	a.mu.Lock()
+	if tab.removed || a.tabs[tab.ID] != tab {
+		a.mu.Unlock()
+		return
+	}
 	tab.model = model
 	tab.Label = model
 	a.saveTabsLocked()
@@ -1728,11 +1811,21 @@ func (a *App) buildTabControllerWithLoadedSession(tab *WorkspaceTab, loadedSessi
 	})
 	if err != nil {
 		a.mu.Lock()
+		if tab.removed || a.tabs[tab.ID] != tab {
+			a.releaseTabSharedHost(tab)
+			a.mu.Unlock()
+			return
+		}
 		tab.StartupErr = err.Error()
 		tab.Ready = true
 		a.releaseTabSharedHost(tab)
 		a.mu.Unlock()
 		a.emitReady(wailsCtx)
+		return
+	}
+	if a.tabRemovedForBuild(tab) {
+		ctrl.Close()
+		a.releaseTabSharedHost(tab)
 		return
 	}
 
@@ -1807,6 +1900,12 @@ func (a *App) buildTabControllerWithLoadedSession(tab *WorkspaceTab, loadedSessi
 	}
 
 	a.mu.Lock()
+	if tab.removed || a.tabs[tab.ID] != tab {
+		a.mu.Unlock()
+		ctrl.Close()
+		a.releaseTabSharedHost(tab)
+		return
+	}
 	tab.Ctrl = ctrl
 	tab.Label = ctrl.Label()
 	tab.Ready = true

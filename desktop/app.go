@@ -2810,6 +2810,10 @@ func (a *App) RemoveWorkspace(dir string) error {
 		if !tabInWorkspace(tab, dir) {
 			continue
 		}
+		if tab.Ctrl != nil && !tab.ReadOnly {
+			_ = tab.Ctrl.Snapshot()
+		}
+		a.markTabRemovedLocked(tab)
 		closeTabs = append(closeTabs, tab)
 		delete(a.tabs, id)
 		a.removeTabOrderLocked(id)
@@ -2840,9 +2844,6 @@ func (a *App) RemoveWorkspace(dir string) error {
 	a.mu.Unlock()
 
 	for _, tab := range closeTabs {
-		if tab.Ctrl != nil && !tab.ReadOnly {
-			_ = tab.Ctrl.Snapshot()
-		}
 		a.closeTabRuntime(tab)
 	}
 	for _, tab := range closeDetached {

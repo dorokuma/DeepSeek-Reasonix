@@ -1542,9 +1542,12 @@ export function useController() {
       if (id !== meta.id) statesRef.current.delete(id);
     }
     setActiveTabId(meta.id);
-    await loadSessionDataForTab(meta.id, true);
+    activeTabIdRef.current = meta.id;
+    confirmBackendActiveTab(meta.id);
+    dispatchTo(meta.id, { type: "optimistic_meta", meta: metaFromTab(meta, statesRef.current.get(meta.id)?.meta) });
+    void loadSessionDataForTab(meta.id, true, "open-topic");
     return meta;
-  }, [loadSessionDataForTab]);
+  }, [confirmBackendActiveTab, dispatchTo, loadSessionDataForTab]);
 
   // Ensure a blank tab exists for the given scope — reuses an existing one
   // or creates a new tab, then loads its session data.
@@ -1564,9 +1567,12 @@ export function useController() {
       if (id !== meta.id) statesRef.current.delete(id);
     }
     setActiveTabId(meta.id);
-    await loadSessionDataForTab(meta.id, true);
+    activeTabIdRef.current = meta.id;
+    confirmBackendActiveTab(meta.id);
+    dispatchTo(meta.id, { type: "optimistic_meta", meta: metaFromTab(meta, statesRef.current.get(meta.id)?.meta) });
+    void loadSessionDataForTab(meta.id, true, "open-topic");
     return meta;
-  }, [loadSessionDataForTab]);
+  }, [confirmBackendActiveTab, dispatchTo, loadSessionDataForTab]);
 
   const closeTab = useCallback(async (tabId: string) => {
     try {
