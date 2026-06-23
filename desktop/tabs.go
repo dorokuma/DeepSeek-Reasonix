@@ -344,6 +344,10 @@ func (a *App) attachExistingSessionRuntime(tab *WorkspaceTab, path string, wails
 	}
 
 	a.mu.Lock()
+	if tab.removed || a.tabs[tab.ID] != tab {
+		a.mu.Unlock()
+		return false
+	}
 	detached := a.detachedSessions[key]
 	if detached != nil {
 		delete(a.detachedSessions, key)
@@ -1614,11 +1618,13 @@ func (a *App) tabRemovedForBuild(tab *WorkspaceTab) bool {
 	return tab.removed || a.tabs[tab.ID] != tab
 }
 
-func (a *App) clearTabBuildCancel(tab *WorkspaceTab, generation uint64, cancel context.CancelFunc) {
+func (a *App) clearTabBuildCancel(tab *WorkspaceTab, generation uint64, cancel context.CancelFunc, keepContext bool) {
 	if cancel == nil {
 		return
 	}
-	defer cancel()
+	if !keepContext {
+		defer cancel()
+	}
 	if tab == nil {
 		return
 	}
@@ -1686,7 +1692,10 @@ func (a *App) buildTabControllerWithLoadedSession(tab *WorkspaceTab, loadedSessi
 
 func (a *App) buildTabControllerWithContext(tab *WorkspaceTab, loadedSession loadedTabSession, buildCtx context.Context, buildGeneration uint64, buildCancel context.CancelFunc) {
 	defer a.recoverToPending("buildTabController")
-	defer a.clearTabBuildCancel(tab, buildGeneration, buildCancel)
+	keepBuildContext := false
+	defer func() {
+		a.clearTabBuildCancel(tab, buildGeneration, buildCancel, keepBuildContext)
+	}()
 	wailsCtx := a.ctx
 	if a.tabRemovedForBuild(tab) {
 		return
@@ -1911,6 +1920,7 @@ func (a *App) buildTabControllerWithContext(tab *WorkspaceTab, loadedSession loa
 	tab.Label = ctrl.Label()
 	tab.Ready = true
 	tab.StartupErr = ""
+	keepBuildContext = true
 	a.mu.Unlock()
 	a.emitReady(wailsCtx)
 }
