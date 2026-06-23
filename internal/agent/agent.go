@@ -595,7 +595,7 @@ func (a *Agent) Run(ctx context.Context, input string) error {
 			return ctx.Err()
 		default:
 		}
-		schemas := a.tools.Schemas()
+		schemas := a.getSchemasForContext(ctx)
 		prefixShape := a.capturePrefixShape(schemas)
 		prevPrefixShape := a.lastPrefixShape
 		if !a.haveLastPrefixShape {
@@ -815,7 +815,7 @@ func (a *Agent) stream(ctx context.Context, turn int) (string, string, string, [
 	msgs, nextSent := CalculateDiffAndFilter(msgs, a.sentFragments)
 	ch, err := a.prov.Stream(ctx, provider.Request{
 		Messages:    msgs,
-		Tools:       a.tools.Schemas(),
+		Tools:       a.getSchemasForContext(ctx),
 		Temperature: a.temperature,
 	})
 	if err != nil {
@@ -938,6 +938,20 @@ func (a *Agent) systemPrompt() string {
 		b.WriteString(m.Content)
 	}
 	return b.String()
+}
+
+func (a *Agent) getSchemasForContext(ctx context.Context) []provider.ToolSchema {
+	schemas := a.tools.Schemas()
+	if allow := a.mainAgentAllowed; allow != nil && NestingDepthFrom(ctx) == 0 {
+		filtered := make([]provider.ToolSchema, 0, len(schemas))
+		for _, s := range schemas {
+			if allow[s.Name] {
+				filtered = append(filtered, s)
+			}
+		}
+		return filtered
+	}
+	return schemas
 }
 
 // executeBatch dispatches one model turn's tool calls. A ToolDispatch event is
