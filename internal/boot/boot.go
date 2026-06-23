@@ -471,14 +471,15 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 				steps = 5
 			}
 		}
-		return agent.RunSubAgent(sctx, prov, subReg, sk.Body, task, agent.Options{
+		subCtx := agent.WithNestingDepth(sctx, agent.NestingDepthFrom(sctx)+1)
+		return agent.RunSubAgent(subCtx, prov, subReg, sk.Body, task, agent.Options{
 			MaxSteps:      steps,
 			Temperature:   cfg.Agent.Temperature,
 			Pricing:       price,
 			Gate:          nil,
 			ContextWindow: ctxWin,
 			ArchiveDir:    config.ArchiveDir(),
-		}, agent.NestedSink(sctx, event.Discard))
+		}, agent.NestedSink(subCtx, event.Discard))
 	}
 	skillProfile := func(sk skill.Skill) *event.Profile {
 		model, effort := subagentModelRef(cfg, sk), subagentEffortRef(cfg, sk)
@@ -539,20 +540,32 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 		reg.Add(t)
 	}
 
+	var mainAgentAllowed map[string]bool
+	if len(cfg.Permissions.MainAgentAllowed) > 0 {
+		mainAgentAllowed = make(map[string]bool)
+		for _, name := range cfg.Permissions.MainAgentAllowed {
+			mainAgentAllowed[name] = true
+		}
+	} else {
+		mainAgentAllowed = agent.DefaultMainAgentAllowed
+	}
+
 	execSess := agent.NewSession(sysPrompt)
 	executor := agent.New(execProv, reg, execSess, agent.Options{
-		MaxSteps:          maxSteps,
-		Temperature:       cfg.Agent.Temperature,
-		Pricing:           entry.Price,
-		Gate:              nil,
-		Hooks:             hookRunner,
-		Jobs:              jm,
-		ProjectChecks:     projectChecks,
-		ContextWindow:     entry.ContextWindow,
-		SoftCompactRatio:  cfg.Agent.SoftCompactRatio,
-		CompactRatio:      cfg.Agent.CompactRatio,
-		CompactForceRatio: cfg.Agent.CompactForceRatio,
-		ArchiveDir:        config.ArchiveDir(),
+		MaxSteps:                  maxSteps,
+		Temperature:               cfg.Agent.Temperature,
+		Pricing:                   entry.Price,
+		Gate:                      nil,
+		Hooks:                     hookRunner,
+		Jobs:                      jm,
+		ProjectChecks:             projectChecks,
+		ContextWindow:             entry.ContextWindow,
+		SoftCompactRatio:          cfg.Agent.SoftCompactRatio,
+		CompactRatio:              cfg.Agent.CompactRatio,
+		CompactForceRatio:         cfg.Agent.CompactForceRatio,
+		ArchiveDir:                config.ArchiveDir(),
+		MainAgentAllowed:          mainAgentAllowed,
+		MaxMainAgentReadonlyCalls: cfg.Agent.MaxMainAgentReadonlyCalls,
 	}, sink)
 
 	// Custom slash commands (.reasonix/commands + user dir). Best-effort: a malformed

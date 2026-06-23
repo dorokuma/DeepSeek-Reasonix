@@ -182,6 +182,9 @@ type Agent struct {
 	// (depth-0) agent may invoke. nil means no restriction.
 	mainAgentAllowed map[string]bool
 
+	maxMainAgentReadonlyCalls int
+	readonlyCallsCount        atomic.Int64
+
 	// executorHandoffGuard is enabled by Coordinator for the executor agent. The
 	// per-turn marker check in Run keeps ordinary single-model turns unaffected.
 	executorHandoffGuard bool
@@ -482,6 +485,10 @@ type Options struct {
 	// agent may use any registered tool. Set this to DefaultMainAgentAllowed (or
 	// a custom map) to restrict the root agent to a safe subset.
 	MainAgentAllowed map[string]bool
+
+	// MaxMainAgentReadonlyCalls limits the maximum number of readonly tool calls
+	// the main agent (nesting depth 0) can make. 0 or negative means unlimited.
+	MaxMainAgentReadonlyCalls int
 }
 
 // New constructs an Agent. MaxSteps <= 0 means no cap — the run loop continues
@@ -551,6 +558,7 @@ func New(prov provider.Provider, tools *tool.Registry, session *Session, opts Op
 		recentKeep:           opts.RecentKeep,
 		archiveDir:           opts.ArchiveDir,
 		mainAgentAllowed:     opts.MainAgentAllowed,
+		maxMainAgentReadonlyCalls: opts.MaxMainAgentReadonlyCalls,
 	}
 }
 
@@ -563,7 +571,11 @@ func New(prov provider.Provider, tools *tool.Registry, session *Session, opts Op
 func (a *Agent) Run(ctx context.Context, input string) error {
 	a.repeatSuccessCounts = nil
 	a.sink.Emit(event.Event{Kind: event.TurnStarted})
-	a.session.Add(provider.Message{Role: provider.RoleUser, Content: input})
+	// Parse multimodal data URLs embedded in the input text (e.g.
+	// [REASONIX_IMAGE:data:image/jpeg;base64,...]) and convert them to
+	// ContentPart objects so the model can "see" images directly.
+	cleanInput, parts := parseMultimodalInput(input)
+	a.session.Add(provider.Message{Role: provider.RoleUser, Content: cleanInput, Parts: parts})
 	if a.ctxStore != nil {
 		ctxmode.RecordUserPrompt(a.ctxStore.Journal(), input)
 	}
@@ -1169,6 +1181,18 @@ func (a *Agent) executeOne(ctx context.Context, call provider.ToolCall) toolOutc
 			errMsg:  fmt.Sprintf("permission denied: tool %q not allowed for main agent", call.Name),
 		}
 	}
+	// Main-agent readonly calls limit: when nesting depth is 0 (root/main agent),
+	// enforce maximum limit of readonly tool calls.
+	if t.ReadOnly() && NestingDepthFrom(ctx) == 0 && a.maxMainAgentReadonlyCalls > 0 {
+		count := a.readonlyCallsCount.Add(1)
+		if count > int64(a.maxMainAgentReadonlyCalls) {
+			return toolOutcome{
+				output:  fmt.Sprintf("permission denied: main agent readonly call limit reached (%d)", a.maxMainAgentReadonlyCalls),
+				blocked: true,
+				errMsg:  fmt.Sprintf("main agent readonly call limit reached (%d)", a.maxMainAgentReadonlyCalls),
+			}
+		}
+	}
 	if out, blocked := a.repeatedSuccessBlock(call, t); blocked {
 		return toolOutcome{
 			output:  out,
@@ -1518,4 +1542,71 @@ func finishReasonMessage(u *provider.Usage) (string, bool) {
 	default:
 		return "", false
 	}
+}
+
+// parseMultimodalInput scans the input text for [REASONIX_IMAGE:data:...]
+// markers, extracts each as a ContentPart with Type PartTypeImage, and returns
+// the cleaned text (with markers removed) together with the extracted parts.
+// If no markers are found, returns the original text and nil parts.
+func parseMultimodalInput(input string) (string, []provider.ContentPart) {
+	const prefix = "[REASONIX_IMAGE:"
+	const suffix = "]"
+
+	var parts []provider.ContentPart
+	cleaned := input
+
+	for {
+		start := strings.Index(cleaned, prefix)
+		if start < 0 {
+			break
+		}
+		end := strings.Index(cleaned[start+len(prefix):], suffix)
+		if end < 0 {
+			break
+		}
+		end = start + len(prefix) + end + len(suffix)
+
+		// Extract the data URL between markers
+		dataURL := cleaned[start+len(prefix) : end-len(suffix)]
+
+		// Parse the data URL into MIME type and base64 data
+		mime, data := parseDataURL(dataURL)
+		if mime != "" && data != "" {
+			parts = append(parts, provider.ContentPart{
+				Type: provider.PartTypeImage,
+				Image: &provider.ImagePart{
+					Data: data,
+					Mime: mime,
+				},
+			})
+		}
+
+		// Remove the marker from the text (including the newline around it)
+		cleaned = cleaned[:start] + cleaned[end:]
+	}
+
+	// Clean up leftover blank lines from marker removal
+	cleaned = strings.TrimSpace(cleaned)
+
+	if len(parts) == 0 {
+		return input, nil
+	}
+	return cleaned, parts
+}
+
+// parseDataURL extracts the MIME type and base64 data from a data URL.
+// Input: "data:image/jpeg;base64,/9j/4AAQ..."
+// Output: "image/jpeg", "/9j/4AAQ..."
+func parseDataURL(dataURL string) (mime, data string) {
+	rest := strings.TrimPrefix(dataURL, "data:")
+	if rest == dataURL {
+		return "", ""
+	}
+	idx := strings.Index(rest, ";base64,")
+	if idx < 0 {
+		return "", ""
+	}
+	mime = rest[:idx]
+	data = rest[idx+len(";base64,"):]
+	return
 }

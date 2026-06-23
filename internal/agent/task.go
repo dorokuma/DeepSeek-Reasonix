@@ -124,7 +124,7 @@ func (t *TaskTool) Schema() json.RawMessage {
 // ReadOnly is true: a sub-agent can invoke any whitelisted tool, including
 // writers. Conservative classification keeps the parallel-dispatch path from
 // running two sub-agents at once and letting their writes race.
-func (t *TaskTool) ReadOnly() bool { return true }
+func (t *TaskTool) ReadOnly() bool { return false }
 
 // ResolveProfile extracts model/effort from task args and applies config defaults.
 func (t *TaskTool) ResolveProfile(args json.RawMessage) *event.Profile {

@@ -251,3 +251,53 @@ func TestExecuteBatchSegmentsAroundWrites(t *testing.T) {
 	}
 }
 
+func TestMaxMainAgentReadonlyCalls(t *testing.T) {
+	reg := tool.NewRegistry()
+	reg.Add(fakeTool{name: "ro1", readOnly: true})
+	reg.Add(fakeTool{name: "ro2", readOnly: true})
+	reg.Add(fakeTool{name: "rw1", readOnly: false})
+
+	a := New(nil, reg, NewSession(""), Options{
+		MaxMainAgentReadonlyCalls: 1,
+	}, event.Discard)
+
+	ctx := context.Background()
+
+	res1 := a.executeOne(ctx, provider.ToolCall{Name: "ro1"})
+	if res1.blocked || res1.errMsg != "" {
+		t.Errorf("expected ro1 to succeed, got blocked=%v, errMsg=%q", res1.blocked, res1.errMsg)
+	}
+
+	res2 := a.executeOne(ctx, provider.ToolCall{Name: "ro2"})
+	if !res2.blocked || !strings.Contains(res2.output, "readonly call limit reached") {
+		t.Errorf("expected ro2 to be blocked by readonly call limit, got output=%q, blocked=%v", res2.output, res2.blocked)
+	}
+
+	res3 := a.executeOne(ctx, provider.ToolCall{Name: "rw1"})
+	if res3.blocked || res3.errMsg != "" {
+		t.Errorf("expected rw1 to succeed, got blocked=%v, errMsg=%q", res3.blocked, res3.errMsg)
+	}
+}
+
+func TestMainAgentAllowedWhitelist(t *testing.T) {
+	reg := tool.NewRegistry()
+	reg.Add(fakeTool{name: "ro1", readOnly: true})
+	reg.Add(fakeTool{name: "rw1", readOnly: false})
+
+	a := New(nil, reg, NewSession(""), Options{
+		MainAgentAllowed: map[string]bool{"ro1": true},
+	}, event.Discard)
+
+	ctx := context.Background()
+
+	res1 := a.executeOne(ctx, provider.ToolCall{Name: "ro1"})
+	if res1.blocked || res1.errMsg != "" {
+		t.Errorf("expected ro1 to succeed, got blocked=%v, errMsg=%q", res1.blocked, res1.errMsg)
+	}
+
+	res2 := a.executeOne(ctx, provider.ToolCall{Name: "rw1"})
+	if !res2.blocked || !strings.Contains(res2.output, "not allowed for main agent") {
+		t.Errorf("expected rw1 to be blocked by whitelist, got output=%q, blocked=%v", res2.output, res2.blocked)
+	}
+}
+
