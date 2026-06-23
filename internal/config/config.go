@@ -430,6 +430,7 @@ type AgentConfig struct {
 	SubagentModels   map[string]string `toml:"subagent_models"`
 	SubagentEffort   string            `toml:"subagent_effort"`
 	SubagentEfforts  map[string]string `toml:"subagent_efforts"`
+	MaxSubagentSteps int               `toml:"max_subagent_steps"`
 	MaxMainAgentReadonlyCalls int      `toml:"max_main_agent_readonly_calls"`
 	// OutputStyle selects a persona/tone block folded into the system prompt at
 	// startup (a built-in like "explanatory"/"learning"/"concise", or a custom

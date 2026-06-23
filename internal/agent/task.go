@@ -56,6 +56,7 @@ type TaskTool struct {
 	pricing           *provider.Pricing
 	parentReg         *tool.Registry
 	maxSteps          int
+	maxSubagentSteps  int
 	contextWindow     int
 	softCompactRatio  float64
 	compactRatio      float64
@@ -76,7 +77,7 @@ type TaskTool struct {
 // deny rules still bite while autonomous sub-agents are never blocked on an
 // interactive prompt (there is no UI to answer one).
 func NewTaskTool(prov provider.Provider, pricing *provider.Pricing, parentReg *tool.Registry,
-	maxSteps, contextWindow int, softCompactRatio, compactRatio, compactForceRatio, temperature float64, archiveDir, sysPrompt string, gate Gate,
+	maxSteps, maxSubagentSteps, contextWindow int, softCompactRatio, compactRatio, compactForceRatio, temperature float64, archiveDir, sysPrompt string, gate Gate,
 	subagentModel, subagentEffort string, resolveProvider func(string, string) (provider.Provider, *provider.Pricing, int, error)) *TaskTool {
 	if sysPrompt == "" {
 		sysPrompt = DefaultTaskSystemPrompt
@@ -86,6 +87,7 @@ func NewTaskTool(prov provider.Provider, pricing *provider.Pricing, parentReg *t
 		pricing:           pricing,
 		parentReg:         parentReg,
 		maxSteps:          maxSteps,
+		maxSubagentSteps:  maxSubagentSteps,
 		contextWindow:     contextWindow,
 		softCompactRatio:  softCompactRatio,
 		compactRatio:      compactRatio,
@@ -188,7 +190,9 @@ func (t *TaskTool) Execute(ctx context.Context, args json.RawMessage) (string, e
 		// shorter than the whole turn; an unbounded parent yields an unbounded
 		// sub-agent. The sub-agent shares the parent's ctx, so cancelling the turn
 		// stops it, and it compacts its own context — the same bounds the parent has.
-		if t.maxSteps > 0 {
+		if t.maxSubagentSteps > 0 {
+			maxSteps = t.maxSubagentSteps
+		} else if t.maxSteps > 0 {
 			maxSteps = t.maxSteps / 2
 			if maxSteps < 5 {
 				maxSteps = 5

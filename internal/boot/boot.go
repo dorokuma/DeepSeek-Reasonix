@@ -424,7 +424,7 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	}
 	taskModel := firstNonEmpty(cfg.Agent.SubagentModels["task"], cfg.Agent.SubagentModel)
 	taskEffort := firstNonEmpty(cfg.Agent.SubagentEfforts["task"], cfg.Agent.SubagentEffort)
-	reg.Add(agent.NewTaskTool(execProv, entry.Price, reg, maxSteps,
+	reg.Add(agent.NewTaskTool(execProv, entry.Price, reg, maxSteps, cfg.Agent.MaxSubagentSteps,
 		entry.ContextWindow, cfg.Agent.SoftCompactRatio, cfg.Agent.CompactRatio, cfg.Agent.CompactForceRatio,
 		cfg.Agent.Temperature, config.ArchiveDir(), "", nil,
 		taskModel, taskEffort, resolveSubagentProvider))
@@ -447,6 +447,34 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	// has none, so ask resolves to "decide for yourself".
 	reg.Add(agent.NewAskTool())
 
+	var mainAgentAllowed map[string]bool
+	if len(cfg.Permissions.MainAgentAllowed) > 0 {
+		mainAgentAllowed = make(map[string]bool)
+		for _, name := range cfg.Permissions.MainAgentAllowed {
+			mainAgentAllowed[name] = true
+		}
+	} else {
+		mainAgentAllowed = agent.DefaultMainAgentAllowed
+	}
+
+	agentOpts := agent.Options{
+		MaxSteps:                  maxSteps,
+		MaxSubagentSteps:          cfg.Agent.MaxSubagentSteps,
+		Temperature:               cfg.Agent.Temperature,
+		Pricing:                   entry.Price,
+		Gate:                      nil,
+		Hooks:                     hookRunner,
+		Jobs:                      jm,
+		ProjectChecks:             projectChecks,
+		ContextWindow:             entry.ContextWindow,
+		SoftCompactRatio:          cfg.Agent.SoftCompactRatio,
+		CompactRatio:              cfg.Agent.CompactRatio,
+		CompactForceRatio:         cfg.Agent.CompactForceRatio,
+		ArchiveDir:                config.ArchiveDir(),
+		MainAgentAllowed:          mainAgentAllowed,
+		MaxMainAgentReadonlyCalls: cfg.Agent.MaxMainAgentReadonlyCalls,
+	}
+
 	// Skill tools: run_skill / install_skill plus the dedicated subagent wrappers
 	// (explore / research / review / security_review). A subagent skill reuses the
 	// sub-agent machinery via this runner — an isolated loop with the skill body
@@ -466,7 +494,9 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 		}
 		subReg := agent.FilterRegistry(reg, sk.AllowedTools, agent.SubagentMetaTools()...)
 		steps := maxSteps
-		if steps > 0 {
+		if agentOpts.MaxSubagentSteps > 0 {
+			steps = agentOpts.MaxSubagentSteps
+		} else if steps > 0 {
 			if steps /= 2; steps < 5 {
 				steps = 5
 			}
@@ -540,33 +570,8 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 		reg.Add(t)
 	}
 
-	var mainAgentAllowed map[string]bool
-	if len(cfg.Permissions.MainAgentAllowed) > 0 {
-		mainAgentAllowed = make(map[string]bool)
-		for _, name := range cfg.Permissions.MainAgentAllowed {
-			mainAgentAllowed[name] = true
-		}
-	} else {
-		mainAgentAllowed = agent.DefaultMainAgentAllowed
-	}
-
 	execSess := agent.NewSession(sysPrompt)
-	executor := agent.New(execProv, reg, execSess, agent.Options{
-		MaxSteps:                  maxSteps,
-		Temperature:               cfg.Agent.Temperature,
-		Pricing:                   entry.Price,
-		Gate:                      nil,
-		Hooks:                     hookRunner,
-		Jobs:                      jm,
-		ProjectChecks:             projectChecks,
-		ContextWindow:             entry.ContextWindow,
-		SoftCompactRatio:          cfg.Agent.SoftCompactRatio,
-		CompactRatio:              cfg.Agent.CompactRatio,
-		CompactForceRatio:         cfg.Agent.CompactForceRatio,
-		ArchiveDir:                config.ArchiveDir(),
-		MainAgentAllowed:          mainAgentAllowed,
-		MaxMainAgentReadonlyCalls: cfg.Agent.MaxMainAgentReadonlyCalls,
-	}, sink)
+	executor := agent.New(execProv, reg, execSess, agentOpts, sink)
 
 	// Custom slash commands (.reasonix/commands + user dir). Best-effort: a malformed
 	// file is skipped, and a load error never blocks the session.
