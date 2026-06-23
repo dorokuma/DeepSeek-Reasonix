@@ -103,7 +103,7 @@ func NewTaskTool(prov provider.Provider, pricing *provider.Pricing, parentReg *t
 func (t *TaskTool) Name() string { return "task" }
 
 func (t *TaskTool) Description() string {
-	return "Spawn a sub-agent for a focused sub-task. The sub-agent runs in its own session with the same provider and a filtered tool list (defaults to every parent tool except subagent/skill meta-tools, so delegation stays one layer deep). Only its final answer is returned. Use this to (a) keep long exploration sequences out of the parent's context budget, or (b) delegate self-contained work like 'find every place that calls X and summarise the patterns'."
+	return "Spawn a sub-agent for a focused sub-task. The sub-agent runs in its own session with the same provider and a filtered tool list (all 53 tools by default; meta-tools that enable recursive nesting are still excluded). Only its final answer is returned. Use this to (a) keep long exploration sequences out of the parent's context budget, or (b) delegate self-contained work like 'find every place that calls X and summarise the patterns'."
 }
 
 func (t *TaskTool) Schema() json.RawMessage {
@@ -112,7 +112,6 @@ func (t *TaskTool) Schema() json.RawMessage {
 "properties":{
   "prompt":{"type":"string","description":"What the sub-agent should accomplish. Be specific about the deliverable — the sub-agent does not see this conversation."},
   "description":{"type":"string","description":"Short label for the sub-task (3-7 words). Surfaced in the dispatch line so the user sees what's running."},
-  "tools":{"type":"array","items":{"type":"string"},"description":"Optional tool whitelist. Subagent/skill meta-tools are still excluded so delegation stays one layer deep."},
   "max_steps":{"type":"integer","description":"Optional cap on tool-call rounds. Defaults to half the parent's cap (min 5).","minimum":1},
   "run_in_background":{"type":"boolean","description":"Run the sub-agent asynchronously: returns a job id immediately and keeps working across turns. Collect its final answer with wait, and you'll be notified when it finishes. Use for long, independent sub-tasks you don't need to block on right now."},
   "model":{"type":"string","description":"Optional model override for the sub-agent (a configured provider/model name)."},
@@ -170,7 +169,6 @@ func (t *TaskTool) Execute(ctx context.Context, args json.RawMessage) (string, e
 	var p struct {
 		Prompt          string   `json:"prompt"`
 		Description     string   `json:"description"`
-		Tools           []string `json:"tools"`
 		MaxSteps        int      `json:"max_steps"`
 		RunInBackground bool     `json:"run_in_background"`
 		Model           string   `json:"model"`
@@ -202,7 +200,7 @@ func (t *TaskTool) Execute(ctx context.Context, args json.RawMessage) (string, e
 	// nesting by including meta-tools in the sub-registry. At the limit we
 	// keep the default behaviour which excludes them.
 	allowMeta := depth+1 < maxDepth
-	subReg := t.buildSubReg(p.Tools, allowMeta)
+	subReg := t.buildSubReg(nil, allowMeta)
 	modelRef, effortRef := t.effectiveProfile(p.Model, p.Effort)
 
 	// Background: register a job that runs the sub-agent under the manager's
