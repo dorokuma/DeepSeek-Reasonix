@@ -240,7 +240,7 @@ func runAgent(args []string) int {
 		return 2
 	}
 
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
 	// Live run: render the agent's event stream to stdout. Markdown post-stream
@@ -358,7 +358,12 @@ func runServe(args []string) int {
 		fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
 		return 1
 	}
-	defer ctrl.Close()
+	srv := serve.New(ctrl, bc)
+	defer func() {
+		if cur := srv.Ctl(); cur != nil {
+			cur.Close()
+		}
+	}()
 
 	// Auto-save target: reuse the resumed file, else a fresh one — same as chat.
 	if *resume != "" {
@@ -374,7 +379,7 @@ func runServe(args []string) int {
 	// Use graceful shutdown so SIGINT/SIGTERM drain active connections.
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	if err := serve.New(ctrl, bc).RunGraceful(ctx, *addr); err != nil {
+	if err := srv.RunGraceful(ctx, *addr); err != nil {
 		fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
 		return 1
 	}

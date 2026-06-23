@@ -63,3 +63,15 @@ func (b *Broadcaster) Subscribers() int {
 	defer b.mu.Unlock()
 	return len(b.subs)
 }
+
+// Close unsubscribes every subscriber, closing their channels. SSE handlers
+// detect the closed channel and exit, allowing http.Server.Shutdown to drain
+// gracefully instead of timing out on long-lived streaming connections.
+func (b *Broadcaster) Close() {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	for ch := range b.subs {
+		close(ch)
+		delete(b.subs, ch)
+	}
+}

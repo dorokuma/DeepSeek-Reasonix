@@ -148,6 +148,9 @@ type Controller struct {
 	// a fresh memory takes effect this session without busting the prompt cache;
 	// it joins the prefix naturally on the next session.
 	pendingMemory []string
+
+	wg        sync.WaitGroup
+	closeOnce sync.Once
 }
 
 type approvalReply struct {
@@ -318,7 +321,9 @@ func (c *Controller) runGuarded(body func(ctx context.Context) error) {
 	c.running = true
 	c.mu.Unlock()
 
+	c.wg.Add(1)
 	go func() {
+		defer c.wg.Done()
 		defer cancel()
 		err := body(ctx)
 		c.mu.Lock()
@@ -1679,22 +1684,31 @@ func (c *Controller) WorkspaceRoot() string { return c.cpRoot }
 // Close stops plugin subprocesses and releases resources. A session that ever
 // started fires SessionEnd so a teardown hook runs.
 func (c *Controller) Close() {
-	c.closeCancel()
-	c.mu.Lock()
-	started := c.startedOnce
-	c.mu.Unlock()
-	if started {
-		c.hooks.SessionEnd(context.Background())
-	}
-	if c.executor != nil {
-		c.executor.CleanupCtxStore()
-	}
-	if c.jobs != nil {
-		c.jobs.Close() // cancel any still-running background jobs
-	}
-	if c.cleanup != nil {
-		c.cleanup()
-	}
+	c.closeOnce.Do(func() {
+		c.closeCancel()
+		c.wg.Wait()
+
+		c.mu.Lock()
+		started := c.startedOnce
+		c.mu.Unlock()
+		if started {
+			c.hooks.SessionEnd(context.Background())
+		}
+		if c.executor != nil {
+			c.executor.CleanupCtxStore()
+		}
+		if c.jobs != nil {
+			c.jobs.Close() // cancel any still-running background jobs
+		}
+		if c.cleanup != nil {
+			c.cleanup()
+		}
+	})
+}
+
+// Wait blocks until any in-flight turns have finished.
+func (c *Controller) Wait() {
+	c.wg.Wait()
 }
 
 // Jobs returns the still-running background jobs for the status bar (nil when

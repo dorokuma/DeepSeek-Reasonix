@@ -57,6 +57,11 @@ func (s *Server) ctl() *control.Controller {
 	return s.ctrl
 }
 
+// Ctl returns the current controller.
+func (s *Server) Ctl() *control.Controller {
+	return s.ctl()
+}
+
 // initTitleProvider builds a lightweight flash-model provider used solely to
 // generate short session titles. Errors are silently swallowed — title
 // generation is best-effort, and the server works fine without it.
@@ -296,10 +301,14 @@ func csrfGuard(next http.Handler) http.Handler {
 // "ask" decisions surface as approval_request events answered via POST /approve.
 
 // RunGraceful serves with graceful shutdown. It listens for SIGINT/SIGTERM on
-// the provided context and drains active connections for up to 10 seconds
-// before returning.
+// the provided context and drains active connections before returning. On
+// shutdown it first cancels any in-flight turn, waits briefly for it to
+// complete (so the SSE stream delivers TurnDone to clients), then signals SSE
+// handlers to exit, and finally calls http.Server.Shutdown with a generous
+// timeout so long-lived streaming connections are not cut off mid-response.
 func (s *Server) RunGraceful(ctx context.Context, addr string) error {
-	s.ctl().EnableInteractiveApproval()
+	ctrl := s.ctl()
+	ctrl.EnableInteractiveApproval()
 	srv := &http.Server{
 		Addr:              addr,
 		Handler:           s.Handler(),
@@ -317,11 +326,36 @@ func (s *Server) RunGraceful(ctx context.Context, addr string) error {
 		return err
 	case <-ctx.Done():
 		slog.Info("serve: shutting down gracefully")
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+
+		// Step 1: cancel the in-flight turn so it can emit TurnDone.
+		ctrl.Cancel()
+
+		// Step 2: wait for the turn to actually finish (timeout 5s).
+		waitCtx, waitCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer waitCancel()
+		done := make(chan struct{})
+		go func() {
+			ctrl.Wait()
+			close(done)
+		}()
+		select {
+		case <-done:
+		case <-waitCtx.Done():
+			slog.Warn("serve: timed out waiting for turn to finish")
+		}
+
+		// Step 3: shut down the HTTP server with a generous timeout.
+		// The 60-second window covers any remaining active requests
+		// (non-SSE) that need to complete.
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 		defer cancel()
 		if err := srv.Shutdown(shutdownCtx); err != nil {
 			slog.Warn("serve: graceful shutdown failed", "err", err)
 		}
+
+		// Step 4: close the broadcaster so SSE handlers exit cleanly.
+		s.bc.Close()
+
 		return <-errCh
 	}
 }
