@@ -487,3 +487,313 @@ func TestBuildRequestContentNullForAssistantToolCalls(t *testing.T) {
 		t.Errorf("no-param tool should serialize a valid empty-object schema: %s", s)
 	}
 }
+
+// --- Supports-vision (non-vision) degradation tests ---
+
+func TestInferSupportsVision(t *testing.T) {
+	tests := []struct {
+		model string
+		want  bool
+	}{
+		// Default vision models
+		{"gpt-4o", true},
+		{"gpt-4o-mini", true},
+		{"claude-3-opus-20240229", true},
+		// DeepSeek vision models
+		{"deepseek-vl", true},
+		{"deepseek-vl-7b-chat", true},
+		{"deepseek-vision", true},
+		// DeepSeek non-vision models
+		{"deepseek-v4-flash", false},
+		{"deepseek-v4-pro", false},
+		{"deepseek-v4", false},
+		{"deepseek-v3", false},
+		{"deepseek-chat", false},
+		{"deepseek-reasoner", false},
+		// GLM non-vision
+		{"glm-5.1", false},
+		{"glm-5.2", false},
+		{"glm-5.1-flash", false},
+		{"glm-5.2-pro", false},
+		// GLM vision models
+		{"glm-4v", true},
+		{"glm-4v-plus", true},
+	}
+	for _, tc := range tests {
+		got := inferSupportsVision(tc.model)
+		if got != tc.want {
+			t.Errorf("inferSupportsVision(%q) = %v, want %v", tc.model, got, tc.want)
+		}
+	}
+	// Case insensitivity
+	if !inferSupportsVision("DeepSeek-VL") {
+		t.Error("inferSupportsVision should be case-insensitive")
+	}
+	if inferSupportsVision("DEEPSEEK-V4-FLASH") {
+		t.Error("inferSupportsVision should detect deepseek-v4-flash case-insensitively")
+	}
+}
+
+func TestBuildRequestVisionModelKeepsImageURL(t *testing.T) {
+	c := &client{
+		name:           "vision",
+		model:          "gpt-4o",
+		supportsVision: true,
+	}
+	req := c.buildRequest(provider.Request{
+		Messages: []provider.Message{
+			{
+				Role: provider.RoleUser,
+				Parts: []provider.ContentPart{
+					{Type: provider.PartTypeText, Text: "describe this"},
+					{Type: provider.PartTypeImage, Image: &provider.ImagePart{URL: "https://example.com/img.png", Detail: "auto"}},
+				},
+			},
+		},
+	})
+	b, err := json.Marshal(req.Messages)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	s := string(b)
+	if !strings.Contains(s, `"type":"image_url"`) {
+		t.Errorf("vision model should output image_url type, got: %s", s)
+	}
+	if !strings.Contains(s, `"url":"https://example.com/img.png"`) {
+		t.Errorf("vision model should include the image URL: %s", s)
+	}
+	if strings.Contains(s, `[image]`) {
+		t.Errorf("vision model should not degrade images to [image]: %s", s)
+	}
+}
+
+func TestBuildRequestNonVisionModelDegradesImage(t *testing.T) {
+	tests := []struct {
+		name  string
+		model string
+	}{
+		{"DeepSeek V4 Flash", "deepseek-v4-flash"},
+		{"DeepSeek V4 Pro", "deepseek-v4-pro"},
+		{"DeepSeek V3", "deepseek-v3"},
+		{"DeepSeek Chat", "deepseek-chat"},
+		{"GLM 5.1", "glm-5.1"},
+		{"GLM 5.2", "glm-5.2"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			c := &client{
+				name:           "test",
+				model:          tc.model,
+				supportsVision: false,
+			}
+			req := c.buildRequest(provider.Request{
+				Messages: []provider.Message{
+					{
+						Role: provider.RoleUser,
+						Parts: []provider.ContentPart{
+							{Type: provider.PartTypeText, Text: "describe this"},
+							{Type: provider.PartTypeImage, Image: &provider.ImagePart{URL: "https://example.com/img.png"}},
+						},
+					},
+				},
+			})
+			b, err := json.Marshal(req.Messages)
+			if err != nil {
+				t.Fatalf("marshal: %v", err)
+			}
+			s := string(b)
+
+			if strings.Contains(s, `"type":"image_url"`) {
+				t.Errorf("non-vision model should NOT output image_url, got: %s", s)
+			}
+			if !strings.Contains(s, `[image]`) {
+				t.Errorf("non-vision model should degrade image to [image], got: %s", s)
+			}
+			// Text part should remain intact
+			if !strings.Contains(s, `"text":"describe this"`) {
+				t.Errorf("text part should survive non-vision degradation: %s", s)
+			}
+		})
+	}
+}
+
+func TestBuildRequestNonVisionModelDegradesAudio(t *testing.T) {
+	c := &client{
+		name:           "test",
+		model:          "deepseek-v4-flash",
+		supportsVision: false,
+	}
+	req := c.buildRequest(provider.Request{
+		Messages: []provider.Message{
+			{
+				Role: provider.RoleUser,
+				Parts: []provider.ContentPart{
+					{Type: provider.PartTypeAudio, Audio: &provider.AudioPart{URL: "https://example.com/audio.wav"}},
+					{Type: provider.PartTypeText, Text: "transcribe please"},
+				},
+			},
+		},
+	})
+	b, err := json.Marshal(req.Messages)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	s := string(b)
+	if !strings.Contains(s, `[audio]`) {
+		t.Errorf("non-vision model should degrade audio to [audio], got: %s", s)
+	}
+	if strings.Contains(s, `"type":"image_url"`) {
+		t.Errorf("non-vision model should not produce image_url for audio: %s", s)
+	}
+}
+
+func TestBuildRequestNonVisionModelNoImageURLInJSON(t *testing.T) {
+	// The key regression guard: the word "image_url" must not appear in the
+	// serialised request body at all for a non-vision model.
+	c := &client{
+		name:           "test",
+		model:          "glm-5.1",
+		supportsVision: false,
+	}
+	req := c.buildRequest(provider.Request{
+		Messages: []provider.Message{
+			{
+				Role: provider.RoleUser,
+				Parts: []provider.ContentPart{
+					{Type: provider.PartTypeText, Text: "hello"},
+					{Type: provider.PartTypeImage, Image: &provider.ImagePart{URL: "data:image/png;base64,iVBORw0KGgo="}},
+				},
+			},
+		},
+	})
+	b, err := json.Marshal(req.Messages)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	s := string(b)
+	if strings.Contains(s, `image_url`) {
+		t.Errorf("non-vision model JSON must not contain image_url, got: %s", s)
+	}
+	if !strings.Contains(s, `[image]`) {
+		t.Errorf("non-vision model should have [image] placeholder, got: %s", s)
+	}
+}
+
+func TestBuildRequestVisionModelViaConfigOverride(t *testing.T) {
+	// Explicit supports_vision=true overrides a heuristic non-vision model name.
+	cfg := provider.Config{
+		Name:    "deepseek-custom",
+		BaseURL: "https://api.example.com",
+		Model:   "deepseek-v4-flash",
+		Extra:   map[string]any{"supports_vision": true},
+	}
+	p, err := New(cfg)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	c := p.(*client)
+	if !c.supportsVision {
+		t.Error("explicit supports_vision=true should override heuristic")
+	}
+}
+
+func TestBuildRequestNonVisionModelViaConfigOverride(t *testing.T) {
+	// Explicit supports_vision=false overrides a heuristic vision model name.
+	cfg := provider.Config{
+		Name:    "gpt-4o",
+		BaseURL: "https://api.example.com",
+		Model:   "gpt-4o",
+		Extra:   map[string]any{"supports_vision": false},
+	}
+	p, err := New(cfg)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	c := p.(*client)
+	if c.supportsVision {
+		t.Error("explicit supports_vision=false should override heuristic")
+	}
+}
+
+func TestBuildRequestNonVisionModelViaStringConfigOverride(t *testing.T) {
+	// Explicit supports_vision="false" (string) overrides a heuristic vision model.
+	cfg := provider.Config{
+		Name:    "gpt-4o",
+		BaseURL: "https://api.example.com",
+		Model:   "gpt-4o",
+		Extra:   map[string]any{"supports_vision": "false"},
+	}
+	p, err := New(cfg)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	c := p.(*client)
+	if c.supportsVision {
+		t.Error("explicit supports_vision=\"false\" should override heuristic")
+	}
+}
+
+func TestBuildRequestNewDeepSeekV4Heuristic(t *testing.T) {
+	// Verify that New() sets supportsVision=false for deepseek-v4-flash/pro
+	cfg := provider.Config{
+		Name:    "deepseek-flash",
+		BaseURL: "https://api.deepseek.com",
+		Model:   "deepseek-v4-flash",
+	}
+	p, err := New(cfg)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	c := p.(*client)
+	if c.supportsVision {
+		t.Error("deepseek-v4-flash should be detected as non-vision by heuristic")
+	}
+
+	cfg2 := provider.Config{
+		Name:    "deepseek-pro",
+		BaseURL: "https://api.deepseek.com",
+		Model:   "deepseek-v4-pro",
+	}
+	p2, err := New(cfg2)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	c2 := p2.(*client)
+	if c2.supportsVision {
+		t.Error("deepseek-v4-pro should be detected as non-vision by heuristic")
+	}
+}
+
+func TestBuildRequestGLM51Heuristic(t *testing.T) {
+	cfg := provider.Config{
+		Name:    "glm",
+		BaseURL: "https://open.bigmodel.cn/api/paas/v4",
+		Model:   "glm-5.1",
+	}
+	p, err := New(cfg)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	c := p.(*client)
+	if c.supportsVision {
+		t.Error("glm-5.1 should be detected as non-vision by heuristic")
+	}
+}
+
+func TestBuildRequestGLM4vHeuristic(t *testing.T) {
+	// glm-4v is vision-capable — must be true.
+	cfg := provider.Config{
+		Name:    "glm-vision",
+		BaseURL: "https://open.bigmodel.cn/api/paas/v4",
+		Model:   "glm-4v",
+	}
+	p, err := New(cfg)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	c := p.(*client)
+	if !c.supportsVision {
+		t.Error("glm-4v should be detected as vision-capable by heuristic")
+	}
+}

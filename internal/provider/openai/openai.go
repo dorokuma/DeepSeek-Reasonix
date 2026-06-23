@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/url"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -48,6 +49,18 @@ func New(cfg provider.Config) (provider.Provider, error) {
 	}
 	keyEnv, _ := cfg.Extra["api_key_env"].(string) // for actionable auth errors
 	effort, _ := cfg.Extra["effort"].(string)
+
+	supportsVision := inferSupportsVision(cfg.Model)
+	if v, ok := cfg.Extra["supports_vision"]; ok {
+		switch val := v.(type) {
+		case bool:
+			supportsVision = val
+		case string:
+			if b, err := strconv.ParseBool(val); err == nil {
+				supportsVision = b
+			}
+		}
+	}
 	deepseek := isDeepSeekBaseURL(cfg.BaseURL) || isDeepSeekModel(cfg.Model)
 	minimax := false // MiniMax not supported in this fork
 	if deepseek {
@@ -76,16 +89,17 @@ func New(cfg provider.Config) (provider.Provider, error) {
 		return nil, fmt.Errorf("openai: network: %w", err)
 	}
 	return &client{
-		name:        name,
-		apiKey:      cfg.APIKey,
-		keyEnv:      keyEnv,
-		baseURL:     strings.TrimRight(cfg.BaseURL, "/"),
-		model:       cfg.Model,
-		deepseek:    deepseek,
-		minimax:     minimax,
-		effort:      effort,
-		http:        httpClient,
-		idleTimeout: defaultStreamIdleTimeout,
+		name:           name,
+		apiKey:         cfg.APIKey,
+		keyEnv:         keyEnv,
+		baseURL:        strings.TrimRight(cfg.BaseURL, "/"),
+		model:          cfg.Model,
+		deepseek:       deepseek,
+		minimax:        minimax,
+		effort:         effort,
+		supportsVision: supportsVision,
+		http:           httpClient,
+		idleTimeout:    defaultStreamIdleTimeout,
 	}, nil
 }
 
@@ -100,16 +114,17 @@ func newHTTPClient(cfg provider.Config) (*http.Client, error) {
 }
 
 type client struct {
-	name        string
-	apiKey      string
-	keyEnv      string // api_key_env name, surfaced in auth errors
-	baseURL     string
-	model       string
-	http        *http.Client
-	deepseek    bool
-	minimax     bool          // true for api.minimaxi.com — emits MiniMax-M3's thinking knob instead of reasoning_effort
-	effort      string        // reasoning_effort for OpenAI; thinking.type for MiniMax; "" = auto/provider default
-	idleTimeout time.Duration // SSE stall watchdog window; defaultStreamIdleTimeout unless a test overrides
+	name           string
+	apiKey         string
+	keyEnv         string // api_key_env name, surfaced in auth errors
+	baseURL        string
+	model          string
+	http           *http.Client
+	deepseek       bool
+	minimax        bool          // true for api.minimaxi.com — emits MiniMax-M3's thinking knob instead of reasoning_effort
+	effort         string        // reasoning_effort for OpenAI; thinking.type for MiniMax; "" = auto/provider default
+	supportsVision bool          // whether the model accepts image_url content blocks
+	idleTimeout    time.Duration // SSE stall watchdog window; defaultStreamIdleTimeout unless a test overrides
 }
 
 func (c *client) Name() string { return c.name }
@@ -125,6 +140,35 @@ func isDeepSeekBaseURL(baseURL string) bool {
 
 func isDeepSeekModel(model string) bool {
 	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(model)), "deepseek")
+}
+
+// inferSupportsVision heuristically identifies known non-vision models by name.
+// Returns false when the model is known to lack vision support, true otherwise.
+// Callers should override with an explicit supports_vision config when the
+// heuristic is wrong.
+func inferSupportsVision(model string) bool {
+	m := strings.ToLower(strings.TrimSpace(model))
+
+	// DeepSeek non-vision models: deepseek-v4*, deepseek-v3*, deepseek-chat,
+	// deepseek-reasoner. DeepSeek models that accept image_url are named
+	// deepseek-vl* (vision-language) or deepseek-vision*.
+	if strings.HasPrefix(m, "deepseek") {
+		if strings.HasPrefix(m, "deepseek-chat") || strings.HasPrefix(m, "deepseek-reasoner") {
+			return false
+		}
+		// deepseek-v4*, deepseek-v3* (but not deepseek-vl*)
+		if (strings.Contains(m, "v4") || strings.Contains(m, "v3")) && !strings.Contains(m, "vl") {
+			return false
+		}
+		return true // deepseek-vl*, deepseek-vision*, etc. are vision-capable
+	}
+
+	// GLM non-vision models: glm-5.1*, glm-5.2*. glm-4v, glm-4v-plus are vision.
+	if strings.HasPrefix(m, "glm-5.1") || strings.HasPrefix(m, "glm-5.2") {
+		return false
+	}
+
+	return true // default: assume vision-capable
 }
 
 // bufPool reuses byte buffers for JSON-marshalled request bodies. Each turn
@@ -243,18 +287,27 @@ func (c *client) buildRequest(req provider.Request) chatRequest {
 				case provider.PartTypeText:
 					parts = append(parts, openaiContentPart{Type: "text", Text: p.Text})
 				case provider.PartTypeImage:
-					url := p.ImageURL
-					if url == "" && p.Image != nil {
-						url = p.Image.URL
-					}
-					if url != "" {
-						parts = append(parts, openaiContentPart{Type: "image_url", ImageURL: &openaiImageURL{URL: url, Detail: p.Image.Detail}})
-					} else if p.Image != nil && p.Image.Data != "" {
-						// Inline base64 data – OpenAI supports data: URIs.
-						parts = append(parts, openaiContentPart{Type: "image_url", ImageURL: &openaiImageURL{URL: "data:" + p.Image.Mime + ";base64," + p.Image.Data}})
+					if !c.supportsVision {
+						// Non-vision model: replace image with placeholder text.
+						parts = append(parts, openaiContentPart{Type: "text", Text: "[image]"})
+					} else {
+						url := p.ImageURL
+						if url == "" && p.Image != nil {
+							url = p.Image.URL
+						}
+						if url != "" {
+							parts = append(parts, openaiContentPart{Type: "image_url", ImageURL: &openaiImageURL{URL: url, Detail: p.Image.Detail}})
+						} else if p.Image != nil && p.Image.Data != "" {
+							// Inline base64 data – OpenAI supports data: URIs.
+							parts = append(parts, openaiContentPart{Type: "image_url", ImageURL: &openaiImageURL{URL: "data:" + p.Image.Mime + ";base64," + p.Image.Data}})
+						}
 					}
 				case provider.PartTypeAudio:
-					// OpenAI may not support inline audio; skip.
+					if !c.supportsVision {
+						// Non-vision model: replace audio with placeholder text.
+						parts = append(parts, openaiContentPart{Type: "text", Text: "[audio]"})
+					}
+					// When supportsVision is true, OpenAI may not support inline audio; skip.
 				}
 			}
 			cm.Content = parts
