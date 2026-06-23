@@ -38,9 +38,9 @@ import (
 )
 
 // chatTUI is a bubbletea Model that normally owns the terminal with an
-// alt-screen transcript viewport. Termux is the exception: enabling mouse mode
-// prevents taps from raising the soft keyboard, so it stays in the normal buffer
-// and commits finalized output to native scrollback via tea.Println.
+// alt-screen transcript viewport. Termux is the exception: it stays in the
+// normal buffer and commits finalized output to native scrollback via
+// tea.Println so taps can still focus the soft keyboard.
 type chatTUI struct {
 	ctrl    control.SessionAPI
 	label   string
@@ -48,8 +48,8 @@ type chatTUI struct {
 
 	width  int
 	height int
-	// nativeScrollback keeps Termux out of alt-screen/mouse mode so taps still
-	// focus the textarea and raise the soft keyboard.
+	// nativeScrollback keeps Termux out of alt-screen mode so taps still focus
+	// the textarea and raise the soft keyboard.
 	nativeScrollback bool
 
 	input   textarea.Model
@@ -1375,8 +1375,7 @@ func (m chatTUI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 // finalize drains the committed-line queue and batches the turn's commands. In
 // the default alt-screen path the queue is already mirrored in m.transcript. In
-// Termux we cannot enable mouse mode without breaking soft-keyboard focus, so
-// finalized lines are also emitted into the terminal's native scrollback.
+// Termux finalized lines are also emitted into the terminal's native scrollback.
 func finalize(m chatTUI, cmds []tea.Cmd) tea.Cmd {
 	if m.nativeScrollback && len(*m.pendingCommit) > 0 {
 		out := strings.TrimRight(clampWidth(strings.Join(*m.pendingCommit, "\n"), m.width), "\n")
@@ -2399,7 +2398,6 @@ func (m chatTUI) View() tea.View {
 	}
 	v := tea.NewView(mainArea + "\n" + strings.Join(parts, "\n"))
 	v.AltScreen = true
-	v.MouseMode = tea.MouseModeCellMotion // wheel scrolls the transcript
 	// Anchor the real terminal cursor at the textarea's insertion point only when
 	// the composer is visible. input.Cursor() is relative to the textarea; offset
 	// by the viewport height + rows above + the box's top border row (+1 column
