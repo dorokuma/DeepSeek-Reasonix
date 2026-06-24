@@ -3301,12 +3301,14 @@ a[href] {
   white-space: nowrap;
 }
 
-.transcript > .jump-bar {
+.transcript-shell > .jump-bar {
   position: absolute;
   top: 50%;
   right: 0;
-  margin: 0;
+  z-index: var(--z-inline-sticky);
   max-width: none;
+  margin: 0;
+  transform: translate(4px, -50%);
 }
 .jump-bar {
   z-index: var(--z-inline-sticky);
@@ -3318,7 +3320,6 @@ a[href] {
   padding: 0 12px;
   opacity: 0;
   pointer-events: none;
-  transform: translate(4px, -50%);
   animation: jump-bar-in 0.18s ease-out 0.08s forwards;
 }
 .jump-scroll {
