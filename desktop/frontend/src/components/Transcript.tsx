@@ -94,6 +94,7 @@ export function Transcript({
   actionHoverMenus = false,
   rewindSignal = 0,
   revealSignal = 0,
+  hydrating = false,
 }: {
   items: Item[];
   live?: LiveStream;
@@ -112,6 +113,7 @@ export function Transcript({
   actionHoverMenus?: boolean;
   rewindSignal?: number;
   revealSignal?: number;
+  hydrating?: boolean;
 }) {
   const t = useT();
   const {
@@ -600,7 +602,7 @@ export function Transcript({
         ref={scrollRef}
         onScroll={onScroll}
       >
-        {empty && <Welcome onPrompt={onPrompt} variant={welcomeVariant} />}
+        {empty && !hydrating && <Welcome onPrompt={onPrompt} variant={welcomeVariant} />}
 
         <LiveStreamContext.Provider value={live}>
           {turnGroups.length > HOT_TURNS && (

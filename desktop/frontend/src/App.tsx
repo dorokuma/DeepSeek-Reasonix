@@ -3077,6 +3077,7 @@ export default function App() {
                 actionHoverMenus={sidebarCreation}
                 rewindSignal={rewindSignal}
                 revealSignal={transcriptRevealSignal}
+                hydrating={state.hydrating}
               />
             )}
           </main>
