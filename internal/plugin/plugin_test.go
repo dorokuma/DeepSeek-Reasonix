@@ -39,8 +39,8 @@ func TestStdioEndToEnd(t *testing.T) {
 	if len(tools) != 2 {
 		t.Fatalf("want 2 tools, got %d", len(tools))
 	}
-	if got := tools[0].Name(); got != "mcp__mock__echo" {
-		t.Fatalf("tool name: want mcp__mock__echo, got %q", got)
+	if got := tools[0].Name(); got != "mcp_mock_echo" {
+		t.Fatalf("tool name: want mcp_mock_echo, got %q", got)
 	}
 	if got, want := string(tools[0].Schema()), `{"properties":{"msg":{"type":"string"}},"required":["msg","z"],"type":"object"}`; got != want {
 		t.Fatalf("tool schema = %s, want %s", got, want)
@@ -79,16 +79,16 @@ func TestSpecReadOnlyToolNamesMarksUnhintedToolsReadOnly(t *testing.T) {
 	for _, tl := range tools {
 		byName[tl.Name()] = tl
 	}
-	echo := byName["mcp__mock__echo"]
+	echo := byName["mcp_mock_echo"]
 	if echo == nil {
-		t.Fatalf("mcp__mock__echo missing from %v", byName)
+		t.Fatalf("mcp_mock_echo missing from %v", byName)
 	}
 	if !echo.ReadOnly() {
 		t.Fatal("read-only override did not mark unhinted echo tool read-only")
 	}
-	zed := byName["mcp__mock__zed"]
+	zed := byName["mcp_mock_zed"]
 	if zed == nil {
-		t.Fatalf("mcp__mock__zed missing from %v", byName)
+		t.Fatalf("mcp_mock_zed missing from %v", byName)
 	}
 	if zed.ReadOnly() {
 		t.Fatal("read-only override should not mark non-listed tools read-only")
@@ -511,7 +511,7 @@ func TestStartPhaseBDoesNotBlockToolCalls(t *testing.T) {
 
 	var echo tool.Tool
 	for _, t := range tools {
-		if t.Name() == "mcp__mock__echo" {
+		if t.Name() == "mcp_mock_echo" {
 			echo = t
 			break
 		}

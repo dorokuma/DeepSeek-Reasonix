@@ -107,7 +107,7 @@ func Providers(cfg *config.Config) []ProviderInfo {
 }
 
 // ToolInfo is a GUI-ready view of one available tool. Source is "builtin" or
-// "mcp:<server>" (derived from the mcp__<server>__<tool> naming). Previewable
+// "mcp:<server>" (derived from the mcp_<server>__<tool> naming). Previewable
 // reports whether the tool implements tool.Previewer (the file-writers), so a
 // UI knows it can show a diff before approval. Schema is the raw JSON Schema
 // for the tool's parameters.
@@ -146,7 +146,7 @@ func Tools(reg *tool.Registry) []ToolInfo {
 	return out
 }
 
-// toolSource classifies a tool by its name: an mcp__<server>__<tool> name maps
+// toolSource classifies a tool by its name: an mcp_<server>__<tool> name maps
 // to "mcp:<server>", anything else is a compiled-in "builtin".
 func toolSource(name string) string {
 	if server, _, ok := tool.SplitMCPName(name); ok {
@@ -187,7 +187,7 @@ func Servers(host *plugin.Host) []ServerInfo {
 }
 
 // PromptInfo is one MCP prompt, surfaced as a slash command. Name is the full
-// mcp__<server>__<prompt> command body (without a leading slash).
+// mcp_<server>__<prompt> command body (without a leading slash).
 type PromptInfo struct {
 	Name        string          `json:"name"`
 	Server      string          `json:"server"`

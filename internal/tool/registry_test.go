@@ -29,23 +29,23 @@ func (s stubTool) ReadOnly() bool                                           { re
 func TestRegistryRemovePrefix(t *testing.T) {
 	r := NewRegistry()
 	r.Add(stubTool{name: "bash"})
-	r.Add(stubTool{name: "mcp__fs__read"})
-	r.Add(stubTool{name: "mcp__fs__write"})
-	r.Add(stubTool{name: "mcp__stripe__charge"})
+	r.Add(stubTool{name: "mcp_fs_read"})
+	r.Add(stubTool{name: "mcp_fs_write"})
+	r.Add(stubTool{name: "mcp_stripe_charge"})
 
-	if got := r.RemovePrefix("mcp__fs__"); got != 2 {
+	if got := r.RemovePrefix("mcp_fs__"); got != 2 {
 		t.Fatalf("RemovePrefix returned %d, want 2", got)
 	}
 	if r.Len() != 2 {
 		t.Fatalf("registry has %d tools after removal, want 2", r.Len())
 	}
-	if _, ok := r.Get("mcp__fs__read"); ok {
-		t.Errorf("mcp__fs__read should be gone")
+	if _, ok := r.Get("mcp_fs_read"); ok {
+		t.Errorf("mcp_fs_read should be gone")
 	}
-	if _, ok := r.Get("mcp__stripe__charge"); !ok {
+	if _, ok := r.Get("mcp_stripe_charge"); !ok {
 		t.Errorf("another server's tool should survive")
 	}
-	want := []string{"bash", "mcp__stripe__charge"}
+	want := []string{"bash", "mcp_stripe_charge"}
 	got := r.Names()
 	if len(got) != len(want) {
 		t.Fatalf("names = %v, want %v", got, want)
@@ -57,7 +57,7 @@ func TestRegistryRemovePrefix(t *testing.T) {
 	}
 
 	// Removing a prefix that matches nothing is a no-op.
-	if got := r.RemovePrefix("mcp__nope__"); got != 0 {
+	if got := r.RemovePrefix("mcp_nope__"); got != 0 {
 		t.Errorf("RemovePrefix on absent prefix returned %d, want 0", got)
 	}
 }

@@ -8,10 +8,10 @@ import (
 )
 
 // Prompt is an MCP prompt exposed by a server. It surfaces in the chat TUI as a
-// slash command "/mcp__<server>__<prompt>"; running it fetches the rendered
+// slash command "/mcp_<server>_<prompt>"; running it fetches the rendered
 // prompt and sends it to the model as a turn.
 type Prompt struct {
-	Name        string      // "mcp__<server>__<prompt>" — the slash-command body
+	Name        string      // "mcp_<server>_<prompt>" — the slash-command body
 	Server      string      // owning server name
 	Raw         string      // original prompt name for prompts/get
 	Description string      // human-readable summary
@@ -51,7 +51,7 @@ func (c *Client) listPrompts(ctx context.Context) ([]Prompt, error) {
 	prompts := make([]Prompt, 0, len(out.Prompts))
 	for _, p := range out.Prompts {
 		prompts = append(prompts, Prompt{
-			Name:        "mcp__" + normalizeName(c.name) + "__" + normalizeName(p.Name),
+			Name:        "mcp_" + normalizeName(c.name) + "_" + normalizeName(p.Name),
 			Server:      c.name,
 			Raw:         p.Name,
 			Description: p.Description,

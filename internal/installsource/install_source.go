@@ -42,7 +42,7 @@ type MCPConnector func(config.PluginEntry) (MCPConnectResult, error)
 type ApprovalFunc func(actions []action) error
 
 // OnDisconnectFunc tells the host to remove a server from the live session and
-// drop the corresponding mcp__<name>__ tools from its Registry. It returns true
+// drop the corresponding mcp_<name>__ tools from its Registry. It returns true
 // when a live server was actually removed, letting replace/rollback restore the
 // old connection only when there was one.
 type OnDisconnectFunc func(serverName string) bool

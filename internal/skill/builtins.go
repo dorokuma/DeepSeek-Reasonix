@@ -34,7 +34,7 @@ The 'task' the parent gave you is the question you must answer. Treat any other 
 const builtinResearchBody = `You are running as a research subagent. Gather information from code AND the web, synthesize it, and return one focused conclusion.
 
 How to operate:
-- Combine code reading (read_file, grep, glob) with mcp__jina__read_url / mcp__jina__search_web as appropriate.
+- Combine code reading (read_file, grep, glob) with mcp_jina_read_url / mcp_jina_search_web as appropriate.
 - For "how does X work" questions: use read_file for full context, grep for cross-references.
 - For "is Y supported" questions: fetch the canonical reference, then verify against the local code.
 - For "what's our policy on Z" / "where do we use Q": local code first, web only to compare against external standards.
@@ -217,7 +217,7 @@ func builtinSkills() []Skill {
 			Scope:        ScopeBuiltin,
 			Path:         "(builtin)",
 			RunAs:        RunSubagent,
-			AllowedTools: append(append([]string(nil), readCodeTools...), "mcp__jina__read_url", "mcp__jina__search_web"),
+			AllowedTools: append(append([]string(nil), readCodeTools...), "mcp_jina_read_url", "mcp_jina_search_web"),
 		},
 		{
 			Name:        "install-capability",

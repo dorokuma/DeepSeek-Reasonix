@@ -137,13 +137,13 @@ interface (`call` / `notify` / `close`) abstracts that, so the MCP-level logic
 - Lifecycle: `initialize` → `notifications/initialized` → `tools/list`;
   invocation via `tools/call {name, arguments}`.
 - Each remote tool is adapted to the `Tool` interface and injected into the run
-  registry, namespaced `mcp__<server>__<tool>` (spaces normalised to `_`) to
+  registry, namespaced `mcp_<server>__<tool>` (spaces normalised to `_`) to
   match Claude Code and avoid clashes.
 - A tool's MCP `annotations.readOnlyHint` maps to `Tool.ReadOnly()`. It defaults
   to false (a remote tool is opaque — we can't see its side effects), so a
   plugin opts a tool into parallel-batch dispatch and the permission layer's
   reader-default by declaring `readOnlyHint: true` in `tools/list`.
-- `prompts/list` + `prompts/get` surface as `/mcp__<server>__<prompt>` slash
+- `prompts/list` + `prompts/get` surface as `/mcp_<server>__<prompt>` slash
   commands; `resources/list` + `resources/read` are referenced as
   `@<server>:<uri>` in chat. `/mcp` shows connected servers and their counts.
 - `cmd/reasonix-plugin-example` is a runnable reference stdio server (`echo`,
@@ -251,7 +251,7 @@ The chat TUI accepts `/command` input. Three kinds share one dispatch:
   name clash. A file `review.md` becomes `/review`; a subdirectory namespaces it
   (`git/commit.md` → `/git:commit`). Invoking one renders its body and sends the
   result as the next user turn.
-- **MCP prompts** (§3.3) appear as `/mcp__<server>__<prompt>`.
+- **MCP prompts** (§3.3) appear as `/mcp_<server>__<prompt>`.
 
 ```markdown
 ---

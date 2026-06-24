@@ -1173,7 +1173,7 @@ func (a *Agent) executeOne(ctx context.Context, call provider.ToolCall) toolOutc
 	if !ok {
 		// Tool not found — auto-correct via fuzzy matching instead of just
 		// reporting an error. Prevents the model from looping on hallucinated
-		// tool names (e.g. context vs mcp__context).
+		// tool names (e.g. context vs mcp_context).
 		if suggestion, found := a.tools.Suggest(call.Name); found {
 			slog.Info("tool auto-correct", "from", call.Name, "to", suggestion)
 			t, ok = a.tools.Get(suggestion)

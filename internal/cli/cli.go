@@ -557,22 +557,14 @@ func chatREPL(args []string) int {
 	}
 	m.refreshEffortStatus()
 
-	// No alt-screen: finalized transcript lines are committed to the terminal's
-	// normal buffer (via tea.Println) so native scrollback, the wheel, and copy
-	// all work — the bubbletea-managed region is just the bottom input/status.
-	// Route slog output to a file while the TUI owns the terminal.
 	// The default handler writes directly to stderr, which bypasses Bubble
 	// Tea's alt-screen rendering and corrupts the display.
 	slg := slog.New(slog.NewTextHandler(slogFile(), nil))
 	slog.SetDefault(slg)
 
-	if m.nativeScrollback {
-		reserveNativeScrollbackFrame(os.Stdout, m.bottomRows())
-	}
-
-	// Non-Android terminals use an alt-screen transcript viewport. Android stays
-	// in the normal buffer so native touch scrollback and soft-keyboard focus
-	// keep working; finalized transcript lines are emitted via tea.Println.
+	// Both modes use alt-screen now. Native-scrollback (Conduit/Android) keeps
+	// mouse mode off so taps still raise the soft keyboard; swipe gestures on
+	// the terminal are translated to arrow keys which scroll the viewport.
 	p := tea.NewProgram(m)
 	final, runErr := p.Run()
 	// Close the active controller plus any retired ones from /model switches.

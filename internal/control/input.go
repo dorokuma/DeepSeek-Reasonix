@@ -93,7 +93,7 @@ func (c *Controller) skillByName(name string) (skill.Skill, bool) {
 	return skill.Skill{}, false
 }
 
-// MCPPrompt resolves a "/mcp__server__prompt args…" line: it maps the positional
+// MCPPrompt resolves a "/mcp_server_prompt args…" line: it maps the positional
 // args onto the prompt's declared arguments and fetches the rendered prompt from
 // the MCP server (an async prompts/get). found is false when no such prompt
 // exists; err carries a fetch failure. Honours ctx.

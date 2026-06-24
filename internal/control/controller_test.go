@@ -161,13 +161,13 @@ func TestSnapshotActivityRefreshesSessionActivity(t *testing.T) {
 
 func TestDisconnectMCPServerRemovesLazyPlaceholder(t *testing.T) {
 	reg := tool.NewRegistry()
-	reg.Add(fakeControlTool{name: "mcp__mock__connect"})
+	reg.Add(fakeControlTool{name: "mcp_mock_connect"})
 	c := New(Options{Host: plugin.NewHost(), Registry: reg})
 
 	if ok := c.DisconnectMCPServer("mock"); !ok {
 		t.Fatal("DisconnectMCPServer returned false for a registered lazy placeholder")
 	}
-	if _, found := reg.Get("mcp__mock__connect"); found {
+	if _, found := reg.Get("mcp_mock_connect"); found {
 		t.Fatalf("lazy placeholder still registered after disconnect; names=%v", reg.Names())
 	}
 }
@@ -187,7 +187,7 @@ tier = "lazy"
 	}
 
 	reg := tool.NewRegistry()
-	reg.Add(fakeControlTool{name: "mcp__mock__connect"})
+	reg.Add(fakeControlTool{name: "mcp_mock_connect"})
 	c := New(Options{Host: plugin.NewHost(), Registry: reg})
 
 	disconnected, err := c.RemoveMCPServer("mock")
@@ -197,7 +197,7 @@ tier = "lazy"
 	if disconnected {
 		t.Fatal("RemoveMCPServer reported a live disconnect for an unconnected lazy placeholder")
 	}
-	if _, found := reg.Get("mcp__mock__connect"); found {
+	if _, found := reg.Get("mcp_mock_connect"); found {
 		t.Fatalf("lazy placeholder still registered after remove; names=%v", reg.Names())
 	}
 	if names := c.ConfiguredMCPNames(); len(names) != 0 {

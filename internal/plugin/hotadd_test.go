@@ -25,8 +25,8 @@ func TestHostAddRemove(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Add: %v", err)
 	}
-	if len(tools) != 1 || tools[0].Name() != "mcp__h__greet" {
-		t.Fatalf("tools = %v, want [mcp__h__greet]", names(tools))
+	if len(tools) != 1 || tools[0].Name() != "mcp_h_greet" {
+		t.Fatalf("tools = %v, want [mcp_h_greet]", names(tools))
 	}
 	if got := h.Servers(); len(got) != 1 || got[0].Name != "h" || got[0].Tools != 1 {
 		t.Fatalf("Servers() = %+v, want one server 'h' with 1 tool", got)
@@ -38,8 +38,8 @@ func TestHostAddRemove(t *testing.T) {
 	}
 
 	prefix, found := h.Remove("h")
-	if !found || prefix != "mcp__h__" {
-		t.Fatalf("Remove = (%q, %v), want (\"mcp__h__\", true)", prefix, found)
+	if !found || prefix != "mcp_h__" {
+		t.Fatalf("Remove = (%q, %v), want (\"mcp_h__\", true)", prefix, found)
 	}
 	if len(h.Servers()) != 0 {
 		t.Errorf("server should be gone after Remove, got %+v", h.Servers())

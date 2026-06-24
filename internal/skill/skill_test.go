@@ -306,7 +306,7 @@ func TestBuiltinSubagentSkillsDeclareAllowedTools(t *testing.T) {
 	st := New(Options{HomeDir: t.TempDir()})
 	cases := map[string][]string{
 		"explore":         {"read_file", "ls", "glob", "grep", "ctx_read", "ctx_search", "ctx_run"},
-		"research":        {"read_file", "ls", "glob", "grep", "ctx_read", "ctx_search", "ctx_run", "mcp__jina__read_url", "mcp__jina__search_web"},
+		"research":        {"read_file", "ls", "glob", "grep", "ctx_read", "ctx_search", "ctx_run", "mcp_jina_read_url", "mcp_jina_search_web"},
 		"review":          {"read_file", "ls", "glob", "grep", "ctx_read", "ctx_search", "ctx_run", "bash"},
 		"security-review": {"read_file", "ls", "glob", "grep", "ctx_read", "ctx_search", "ctx_run", "bash"},
 	}

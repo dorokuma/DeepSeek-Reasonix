@@ -120,7 +120,7 @@ func (s *lazySpawn) trySwap() {
 // state machine, kicking off the handshake on first call.
 type lazyTool struct {
 	shared   *lazySpawn
-	name     string // namespaced "mcp__<server>__<tool>"
+	name     string // namespaced "mcp_<server>__<tool>"
 	desc     string
 	schema   json.RawMessage
 	readOnly bool
@@ -215,7 +215,7 @@ func (lt *lazyTool) Execute(ctx context.Context, args json.RawMessage) (string, 
 // cached tool, carrying the cached schema so the model can pass real args;
 // the first Execute runs the handshake synchronously and swaps in real tools.
 // When cs is nil (cache miss) the returned slice has a single stub named
-// "mcp__<server>__connect": the model can call it to drive the spawn, and the
+// "mcp_<server>__connect": the model can call it to drive the spawn, and the
 // real tools surface on the next turn.
 //
 // kick=true (background tier) also fires off the spawn immediately, so an

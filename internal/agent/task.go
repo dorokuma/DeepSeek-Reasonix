@@ -114,7 +114,7 @@ func (t *TaskTool) Schema() json.RawMessage {
 "properties":{
   "prompt":{"type":"string","description":"What the sub-agent should accomplish. Be specific about the deliverable — the sub-agent does not see this conversation."},
   "description":{"type":"string","description":"Short label for the sub-task (3-7 words). Surfaced in the dispatch line so the user sees what's running."},
-  "max_steps":{"type":"integer","description":"Optional cap on tool-call rounds. Defaults to half the parent's cap (min 5).","minimum":1},
+  "max_steps":{"type":"integer","description":"Optional cap on tool-call rounds. Default is no limit (0); only set when necessary.","minimum":0},
   "run_in_background":{"type":"boolean","description":"Run the sub-agent asynchronously: returns a job id immediately and keeps working across turns. Collect its final answer with wait, and you'll be notified when it finishes. Use for long, independent sub-tasks you don't need to block on right now."},
   "model":{"type":"string","description":"Optional model override for the sub-agent (a configured provider/model name)."},
   "effort":{"type":"string","description":"Optional reasoning effort for the sub-agent (e.g. high, max)."}
@@ -184,21 +184,7 @@ func (t *TaskTool) Execute(ctx context.Context, args json.RawMessage) (string, e
 	}
 
 	maxSteps := p.MaxSteps
-	if maxSteps <= 0 {
-		// No explicit cap from the caller: mirror the parent. A finite parent caps
-		// the sub-agent at half its budget (min 5) so a delegated sub-task stays
-		// shorter than the whole turn; an unbounded parent yields an unbounded
-		// sub-agent. The sub-agent shares the parent's ctx, so cancelling the turn
-		// stops it, and it compacts its own context — the same bounds the parent has.
-		if t.maxSubagentSteps > 0 {
-			maxSteps = t.maxSubagentSteps
-		} else if t.maxSteps > 0 {
-			maxSteps = t.maxSteps / 2
-			if maxSteps < 5 {
-				maxSteps = 5
-			}
-		}
-	}
+	// Default is no limit (0). Only capped when explicitly set by the caller.
 
 	// When the next depth level is still below the limit, allow recursive
 	// nesting by including meta-tools in the sub-registry. At the limit we

@@ -120,9 +120,9 @@ func TestRenderHelpGroupsCommands(t *testing.T) {
 	got := renderHelp(width,
 		[]command.Command{{Name: "review", Description: "review code"}},
 		[]skill.Skill{{Name: "explore", Description: "inspect repo"}},
-		[]plugin.Prompt{{Name: "mcp__docs__summarize", Description: "summarize docs"}},
+		[]plugin.Prompt{{Name: "mcp_docs_summarize", Description: "summarize docs"}},
 	)
-	for _, want := range []string{"commands", "built-in", "/tree", "custom", "/review", "skills", "/explore", "MCP prompts", "/mcp__docs__summarize"} {
+	for _, want := range []string{"commands", "built-in", "/tree", "custom", "/review", "skills", "/explore", "MCP prompts", "/mcp_docs_summarize"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("help view missing %q:\n%s", want, got)
 		}
@@ -148,7 +148,7 @@ func TestRenderMCPStatusStaysWithinWidth(t *testing.T) {
 	width := 72
 	got := renderMCPStatus(width,
 		[]plugin.ServerStatus{{Name: "a-very-long-server-name-that-should-not-wrap", Transport: "stdio", Tools: 12}},
-		[]plugin.Prompt{{Server: "a-very-long-server-name-that-should-not-wrap", Name: "mcp__server__prompt_with_a_really_long_name", Description: strings.Repeat("describe ", 20)}},
+		[]plugin.Prompt{{Server: "a-very-long-server-name-that-should-not-wrap", Name: "mcp_server_prompt_with_a_really_long_name", Description: strings.Repeat("describe ", 20)}},
 		[]plugin.Resource{{Server: "a-very-long-server-name-that-should-not-wrap", URI: "file:///Users/me/project/docs/really/deep/resource.md", Name: strings.Repeat("resource ", 20)}},
 		[]plugin.Failure{{Name: "another-very-long-server-name-that-should-not-wrap", Transport: "stdio", Error: strings.Repeat("failure ", 20)}},
 	)

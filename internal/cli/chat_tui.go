@@ -48,8 +48,10 @@ type chatTUI struct {
 
 	width  int
 	height int
-	// nativeScrollback keeps Android terminals out of alt-screen/mouse mode so taps still
-	// focus tap events and raise the soft keyboard.
+	// nativeScrollback enables the Conduit-friendly mode on Android terminals:
+	// alt-screen is active (so swipe gestures translate to arrow keys), but mouse
+	// mode stays off so taps still raise the soft keyboard. Arrow keys scroll the
+	// transcript viewport instead of recalling input history when scrolled up.
 	nativeScrollback bool
 	// ForceNativeScrollback overrides auto-detection when set to true (e.g. via
 	// the --native-scrollback CLI flag).
@@ -694,7 +696,7 @@ func (m chatTUI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// newest output) shifts the whole window. Some terminals (Warp) mishandle
 	// the renderer's scroll/insert-line optimization and strand stale rows, so
 	// force a full clear+redraw whenever the offset actually moved.
-	if cm.viewport.YOffset() != prevYOff && !cm.nativeScrollback {
+	if cm.viewport.YOffset() != prevYOff {
 		return cm, tea.Batch(tea.ClearScreen, cmd)
 	}
 	return cm, cmd
@@ -941,16 +943,32 @@ func (m chatTUI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if m.navigateQueue(-1) {
 					return m, nil
 				}
-			} else if m.recallSubmittedInput(-1) {
-				return m, nil
+			} else {
+				// nativeScrollback: arrow keys scroll the viewport when there is
+				// content above the visible area; only recall input history when
+				// already at the bottom. This lets Conduit's swipe→arrow gesture
+				// scroll the transcript instead of cycling through history.
+				if m.nativeScrollback && !m.viewport.AtBottom() {
+					m.viewport.ScrollUp(3)
+					return m, nil
+				}
+				if m.recallSubmittedInput(-1) {
+					return m, nil
+				}
 			}
 		case "down":
 			if m.state == tuiRunning {
 				if m.navigateQueue(1) {
 					return m, nil
 				}
-			} else if m.recallSubmittedInput(1) {
-				return m, nil
+			} else {
+				if m.nativeScrollback && !m.viewport.AtBottom() {
+					m.viewport.ScrollDown(3)
+					return m, nil
+				}
+				if m.recallSubmittedInput(1) {
+					return m, nil
+				}
 			}
 		case "enter":
 			// Don't reset queue navigation — the Enter handler below needs
@@ -1329,21 +1347,11 @@ func (m chatTUI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, finalize(m, cmds)
 }
 
-// finalize drains the committed-line queue and batches the turn's commands. In
-// the default alt-screen path the queue is already mirrored in m.transcript. On
-// Android we cannot enable mouse mode without breaking soft-keyboard focus, so
-// finalized lines are also emitted into the terminal's native scrollback.
+// finalize drains the committed-line queue and batches the turn's commands.
+// In alt-screen mode the queue is already mirrored in m.transcript which feeds
+// the viewport; this just clears the buffer. (Native-scrollback mode previously
+// emitted lines via tea.Println, but now it uses alt-screen + viewport too.)
 func finalize(m chatTUI, cmds []tea.Cmd) tea.Cmd {
-	if m.nativeScrollback && len(*m.pendingCommit) > 0 {
-		out := strings.TrimRight(clampWidth(strings.Join(*m.pendingCommit, "\n"), m.width), "\n")
-		*m.pendingCommit = (*m.pendingCommit)[:0]
-		var prints []tea.Cmd
-		for _, chunk := range chunkLines(out, m.scrollChunkHeight()) {
-			prints = append(prints, tea.Println(chunk))
-		}
-		cmds = append(cmds, tea.Sequence(prints...))
-		return tea.Batch(cmds...)
-	}
 	*m.pendingCommit = (*m.pendingCommit)[:0]
 	return tea.Batch(cmds...)
 }
@@ -1417,8 +1425,7 @@ func (m *chatTUI) commitSpacer() {
 // bottomRows is the terminal-row height of the pinned bottom region: any open
 // bottom panels (approval / chooser / rewind / completion), the composer
 // when visible, and the two fixed status rows. Full-screen managers such as MCP
-// and skills normally render inside the main transcript area; in native
-// scrollback mode they join the bottom rail because there is no main viewport.
+// and skills render inside the main transcript area.
 func (m chatTUI) bottomRows() int {
 	rows := 0
 	for _, s := range []string{
@@ -1435,11 +1442,6 @@ func (m chatTUI) bottomRows() int {
 	}
 	if m.state == tuiRunning {
 		rows++ // the working spinner line above the box
-	}
-	if m.nativeScrollback {
-		if main := m.renderMainManager(); main != "" {
-			rows += strings.Count(main, "\n") + 1
-		}
 	}
 	if footer := m.renderMainManagerFooter(); footer != "" {
 		rows += strings.Count(footer, "\n") + 1
@@ -1630,12 +1632,8 @@ func (m *chatTUI) streamToolOutput(id, chunk string) {
 		m.toolTail = m.toolTail[:0]
 		m.toolPartial = ""
 		m.toolLineCount = 0
-		if m.nativeScrollback {
-			m.toolStreamIdx = -1
-		} else {
-			m.toolStreamIdx = len(m.transcript)
-			m.commitLine("")
-		}
+		m.toolStreamIdx = len(m.transcript)
+		m.commitLine("")
 	}
 	// Accumulate full output for shell commands so Ctrl+B can expand it.
 	if strings.HasPrefix(id, "shell-") {
@@ -1656,9 +1654,6 @@ func (m *chatTUI) streamToolOutput(id, chunk string) {
 	vis := m.toolTail
 	if m.toolPartial != "" {
 		vis = append(append([]string{}, m.toolTail...), m.toolPartial)
-	}
-	if m.nativeScrollback {
-		return
 	}
 	lines := make([]string, len(vis))
 	for i, ln := range vis {
@@ -1685,44 +1680,6 @@ func (m *chatTUI) pushToolLine(line string) {
 // prefix), it shows the first shellPreviewLines with a Ctrl+B hint instead.
 // No-op when id isn't streaming.
 func (m *chatTUI) collapseToolOutput(id string) {
-	if m.nativeScrollback {
-		if id == "" || m.toolStreamID != id {
-			return
-		}
-		n := m.toolLineCount
-		if m.toolPartial != "" {
-			n++
-		}
-		if n > 0 {
-			if full, ok := m.shellOutputs[id]; ok {
-				lines := strings.Split(strings.TrimRight(full, "\n"), "\n")
-				total := len(lines)
-				if total > shellPreviewLines {
-					preview := make([]string, shellPreviewLines+1)
-					for i := 0; i < shellPreviewLines; i++ {
-						preview[i] = dim(clampPlain(lines[i], m.width-len([]rune(connector))))
-					}
-					preview[shellPreviewLines] = dim(fmt.Sprintf("… %d more lines (Ctrl+B)", total-shellPreviewLines))
-					m.commitLine(connectorBlock(preview))
-				} else {
-					rendered := make([]string, total)
-					for i, ln := range lines {
-						rendered[i] = dim(clampPlain(ln, m.width-len([]rune(connector))))
-					}
-					m.commitLine(connectorBlock(rendered))
-				}
-				m.shellTranscriptIdx[id] = len(m.transcript) - 1
-			} else {
-				m.commitLine(connectorBlock([]string{dim(fmt.Sprintf("%d lines", n))}))
-			}
-		}
-		m.toolStreamIdx = -1
-		m.toolStreamID = ""
-		m.toolTail = m.toolTail[:0]
-		m.toolPartial = ""
-		m.toolLineCount = 0
-		return
-	}
 	if m.toolStreamIdx < 0 || id == "" || m.toolStreamID != id {
 		return
 	}
@@ -1821,9 +1778,6 @@ func (m *chatTUI) toggleShellOutput() {
 		m.transcript[lastIdx] = connectorBlock(rendered)
 	}
 	m.transcriptDirty = true
-	if m.nativeScrollback {
-		m.commitLine(m.transcript[lastIdx])
-	}
 }
 
 // toolWorkingFrames is the braille spinner cycled once per second on the
@@ -1844,10 +1798,6 @@ func (m *chatTUI) beginToolRunning(id string) {
 	m.toolLineCount = 0
 	m.toolStreamStart = time.Now()
 	m.toolStreamFrame = 0
-	if m.nativeScrollback {
-		m.toolStreamIdx = -1
-		return
-	}
 	m.toolStreamIdx = len(m.transcript)
 	m.commitLine(connectorBlock([]string{dim(fmt.Sprintf(i18n.M.ChatToolWorkingFmt, toolWorkingFrames[0], 0))}))
 }
@@ -1855,9 +1805,6 @@ func (m *chatTUI) beginToolRunning(id string) {
 // tickToolRunning re-renders the working line of a tool that's dispatched but
 // hasn't produced output yet. A no-op once output streams in or no tool runs.
 func (m *chatTUI) tickToolRunning() {
-	if m.nativeScrollback {
-		return
-	}
 	if m.toolStreamIdx < 0 || m.toolLineCount != 0 || m.toolPartial != "" {
 		return
 	}
@@ -1914,9 +1861,6 @@ func (m *chatTUI) commitReasoning() {
 // stays buffered (a half-written fence/list never renders early), and it only
 // re-renders when a new paragraph actually closes.
 func (m *chatTUI) streamAnswer() {
-	if m.nativeScrollback {
-		return
-	}
 	prefix := flushableMarkdownPrefix(m.pending.String())
 	if len(prefix) <= m.answerFlushed {
 		return
@@ -2217,12 +2161,6 @@ func (m chatTUI) View() tea.View {
 		parts = append(parts, menu)
 		rowsAboveBox += strings.Count(menu, "\n") + 1
 	}
-	if m.nativeScrollback {
-		if card := m.renderMainManager(); card != "" {
-			parts = append(parts, card)
-			rowsAboveBox += strings.Count(card, "\n") + 1
-		}
-	}
 	// Layout: the working spinner (when running), then the composer when visible,
 	// then the two status rows (line 1 = mode + run config + worktree identity, line 2 = live run data).
 	// Each row is clamped to width independently so neither wraps; padding to full
@@ -2245,29 +2183,25 @@ func (m chatTUI) View() tea.View {
 	}
 	parts = append(parts, statusBlockStyle.Width(boxW).MaxWidth(boxW).Render(statusBlock))
 
-	if m.nativeScrollback {
-		v := tea.NewView(strings.Join(parts, "\n"))
-		v.ReportFocus = true
-		if !hideComposer {
-			if cur := m.input.Cursor(); cur != nil {
-				cur.X += 1
-				cur.Y += rowsAboveBox + 1
-				v.Cursor = cur
-			}
-		}
-		return v
-	}
-
 	// Full-screen frame: the transcript viewport on top (it pads to exactly its
 	// height), the pinned bottom region beneath. Alt-screen owns the grid, so
 	// resize repaints cleanly — no scrollback reflow, no ghost borders.
+	// Native-scrollback mode also uses alt-screen now, but with mouse mode off:
+	// Conduit (Android) translates swipe gestures to arrow keys when alt-buffer is
+	// active, and mouse-mode-off keeps taps from being intercepted so the soft
+	// keyboard still raises on tap.
 	mainArea := m.renderTranscript()
 	if card := m.renderMainManager(); card != "" {
 		mainArea = m.renderTranscriptWithMainManager(card)
 	}
 	v := tea.NewView(mainArea + "\n" + strings.Join(parts, "\n"))
-	v.AltScreen = true
-	v.MouseMode = tea.MouseModeCellMotion // wheel scrolls the transcript
+	if m.nativeScrollback {
+		v.AltScreen = true
+		// MouseMode stays at default (MouseModeNone)
+	} else {
+		v.AltScreen = true
+		v.MouseMode = tea.MouseModeCellMotion // wheel scrolls the transcript
+	}
 	// Anchor the real terminal cursor at the textarea's insertion point only when
 	// the composer is visible. input.Cursor() is relative to the textarea; offset
 	// by the viewport height + rows above + the box's top border row (+1 column
@@ -2454,7 +2388,7 @@ func (m chatTUI) renderApprovalBanner() string {
 }
 
 // approvalToolDetails turns provider-visible tool IDs into user-facing labels.
-// MCP tools are advertised as mcp__<server>__<tool>; showing the short tool name
+// MCP tools are advertised as mcp_<server>__<tool>; showing the short tool name
 // first keeps the approval prompt readable while preserving the source.
 func approvalToolDetails(toolName string) (name, detail string) {
 	if server, short, ok := tool.SplitMCPName(toolName); ok {
@@ -3064,7 +2998,7 @@ func elapsedTick() tea.Cmd {
 func (m *chatTUI) runSlashCommand(input string) tea.Cmd {
 	cmd := strings.TrimSpace(strings.SplitN(input, " ", 2)[0])
 
-	if strings.HasPrefix(cmd, "/mcp__") {
+	if strings.HasPrefix(cmd, "/mcp_") {
 		return m.runMCPPrompt(input)
 	}
 
@@ -3300,7 +3234,7 @@ func (m *chatTUI) resolveRefs(sent, display, restore string) tea.Cmd {
 	}
 }
 
-// runMCPPrompt resolves a /mcp__server__prompt command off the event loop via
+// runMCPPrompt resolves a /mcp_server_prompt command off the event loop via
 // the controller, delivering a promptResolvedMsg with the rendered prompt.
 func (m *chatTUI) runMCPPrompt(input string) tea.Cmd {
 	return func() tea.Msg {

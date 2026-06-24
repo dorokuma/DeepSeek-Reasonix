@@ -59,13 +59,13 @@ func TestExamplePluginEndToEnd(t *testing.T) {
 		t.Fatalf("want 2 tools, got %d (%v)", len(tools), byName)
 	}
 
-	echo, ok := byName["mcp__example__echo"]
+	echo, ok := byName["mcp_example_echo"]
 	if !ok {
-		t.Fatal("mcp__example__echo not listed")
+		t.Fatal("mcp_example_echo not listed")
 	}
-	wc, ok := byName["mcp__example__wordcount"]
+	wc, ok := byName["mcp_example_wordcount"]
 	if !ok {
-		t.Fatal("mcp__example__wordcount not listed")
+		t.Fatal("mcp_example_wordcount not listed")
 	}
 
 	// readOnlyHint: true must surface as ReadOnly() == true.
@@ -114,8 +114,8 @@ func TestExamplePluginEndToEnd(t *testing.T) {
 	// Prompts: the server advertises the capability, so the host discovers the
 	// "review" prompt and can render it with arguments.
 	prompts := host.Prompts()
-	if len(prompts) != 1 || prompts[0].Name != "mcp__example__review" {
-		t.Fatalf("prompts = %+v, want one mcp__example__review", prompts)
+	if len(prompts) != 1 || prompts[0].Name != "mcp_example_review" {
+		t.Fatalf("prompts = %+v, want one mcp_example_review", prompts)
 	}
 	if len(prompts[0].Args) != 1 || prompts[0].Args[0].Name != "path" {
 		t.Errorf("prompt args = %+v, want one 'path'", prompts[0].Args)
