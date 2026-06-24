@@ -717,9 +717,13 @@ func (a *Agent) Run(ctx context.Context, input string) (runErr error) {
 	a.repeatSuccessCounts = nil
 	a.sink.Emit(event.Event{Kind: event.TurnStarted})
 	rawInput := input
+	memoryCompilerInput := rawInput
+	if sourceInput, ok := MemoryCompilerSourceInputFromContext(ctx); ok {
+		memoryCompilerInput = sourceInput
+	}
 	input = a.withReasoningLanguage(rawInput)
 	if memCompiler := a.memoryCompilerRuntime(); memCompiler != nil {
-		if compiledInput, turn := memCompiler.StartTurn(ctx, rawInput, a.session.Snapshot()); turn != nil {
+		if compiledInput, turn := memCompiler.StartTurn(ctx, memoryCompilerInput, a.session.Snapshot()); turn != nil {
 			a.compilerTurn = turn
 			defer func() {
 				turn.Finish(runErr)

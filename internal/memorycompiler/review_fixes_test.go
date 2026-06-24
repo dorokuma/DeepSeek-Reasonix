@@ -72,3 +72,42 @@ func TestEmptyIRDoesNotReserveFullToolBudget(t *testing.T) {
 		t.Fatalf("empty IR reserved %d tool calls (MaxToolCalls=%d); want only the IR's steps", got, max)
 	}
 }
+
+func TestToolResultsFitMemoryWritebackReservation(t *testing.T) {
+	now := time.Now().UTC()
+	rt := New(t.TempDir())
+	st := state{Production: normalizeProductionState(ProductionState{})}
+	ir := PlannerIR{
+		Version:        version,
+		Goal:           "fix a bug",
+		SourceEvent:    "fix a bug",
+		Constraints:    []Constraint{{Type: "must_use", Text: "verify carefully", Source: "test"}},
+		ExecutionSteps: []Step{{ID: "one", Action: "Run one check"}, {ID: "two", Action: "Run another check"}},
+	}
+	hardening := rt.hardeningTraceForStart(context.Background(), ir, "fix a bug", st, now, "trace-tool-results")
+	records := make([]ToolRecord, 8)
+	for i := range records {
+		records[i] = ToolRecord{Name: "bash", Output: "ok"}
+	}
+	tr := ExecutionTrace{
+		ID:                  "trace-tool-results",
+		IRVersion:           version,
+		Goal:                "fix a bug",
+		Steps:               ir.ExecutionSteps,
+		Outcome:             "success",
+		ToolResults:         records,
+		Cost:                CostMetrics{EstimatedInputTokens: 5, EstimatedCompiledTokens: 5, ToolCalls: len(ir.ExecutionSteps)},
+		ProductionHardening: hardening,
+		StartedAt:           now,
+		CompletedAt:         now.Add(time.Second),
+	}
+	_, tr = rt.applyProductionHardening(st, tr, defaultControlPolicy(), now)
+	if tr.ProductionHardening == nil {
+		t.Fatal("missing production hardening")
+	}
+	for _, reason := range tr.ProductionHardening.ResourceDecision.Reasons {
+		if strings.Contains(reason, "unreserved memory growth") {
+			t.Fatalf("tool-result writeback was not reserved: %+v", tr.ProductionHardening.ResourceDecision)
+		}
+	}
+}

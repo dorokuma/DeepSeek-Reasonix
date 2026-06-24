@@ -1434,18 +1434,36 @@ func sandboxHasActiveEscape(snapshot runtimesandbox.ExecutionSnapshot) bool {
 }
 
 func estimatedMemoryWritebackGrowth(ir PlannerIR) int {
-	growth := 3 + len(ir.ExecutionSteps)
+	const (
+		baseWritebackNodes          = 6
+		defaultToolResultNodeBudget = 12
+		maxWritebackNodeBudget      = 256
+	)
+	toolResultNodes := len(ir.ExecutionSteps)
+	if toolResultNodes < defaultToolResultNodeBudget {
+		toolResultNodes = defaultToolResultNodeBudget
+	}
+	growth := baseWritebackNodes + toolResultNodes
 	if len(ir.MemoryReferences) > 0 {
 		growth += 1
 	}
 	if len(ir.Constraints) > 0 {
 		growth += 1
 	}
-	if growth < 6 {
-		return 6
+	if growth > maxWritebackNodeBudget {
+		return maxWritebackNodeBudget
 	}
-	if growth > 24 {
-		return 24
+	return growth
+}
+
+func actualMemoryWritebackGrowth(tr ExecutionTrace) int {
+	const (
+		baseWritebackNodes     = 6
+		maxWritebackNodeBudget = 256
+	)
+	growth := baseWritebackNodes + len(tr.ToolResults)
+	if growth > maxWritebackNodeBudget {
+		return maxWritebackNodeBudget
 	}
 	return growth
 }
@@ -1974,18 +1992,21 @@ func (r *Runtime) writeTraceAndLearn(tr ExecutionTrace, strategyID string) {
 	var evaluations []MutationEvaluation
 	st.Mutations, evaluations = evaluateMutations(st.Mutations, tr)
 	tr.MutationEvaluations = evaluations
+	now := time.Now().UTC()
+	policy := controlPolicyForState(st, DriftReport{})
+	st, tr = r.applyProductionHardening(st, tr, policy, now)
 	baseline := baselineScore(st, strategyID)
 	st.Strategies = updateStrategy(st.Strategies, strategyID, tr.Outcome)
 	learning := analyzeTrace(tr, strategyID)
 	if hasLearning(learning) {
 		st.Learnings = appendLearning(st.Learnings, learning)
 	}
-	policy := controlPolicyForState(st, DriftReport{})
+	policy = controlPolicyForState(st, DriftReport{})
 	st.Nodes, st.Edges, st.Decisions = updateGraph(st.Nodes, st.Edges, st.Decisions, tr, learning)
 	st.ExecutionState = updateExecutionState(st.ExecutionState, tr, learning)
 	st.NoisyRefs = updateNoisyRefs(st.NoisyRefs, learning)
 	st.Mutations = mergeMutationsWithPolicy(policy, st.Mutations, mutationsFromLearning(learning, baseline)...)
-	st, drift := applyDriftControl(st, time.Now().UTC(), tr.ID)
+	st, drift := applyDriftControl(st, now, tr.ID)
 	policy = controlPolicyForState(st, drift)
 	tr.SemanticShift = append([]string(nil), policy.SemanticShift...)
 	tr.ControlMode = policy.Mode
@@ -1995,9 +2016,7 @@ func (r *Runtime) writeTraceAndLearn(tr ExecutionTrace, strategyID string) {
 	if hasDrift(drift) {
 		st.DriftReports = appendDriftReport(st.DriftReports, drift)
 	}
-	now := time.Now().UTC()
 	st.ControlReports = appendControlReport(st.ControlReports, controlReportForTrace(tr.ID, policy, now))
-	st, tr = r.applyProductionHardening(st, tr, policy, now)
 	st, tr = applyCausalCompression(st, tr, learning, policy, now)
 	st.UpdatedAt = now
 	bundle := splitTrace(tr, learning, debugTraceEnabled())
@@ -2021,7 +2040,7 @@ func (r *Runtime) applyProductionHardening(st state, tr ExecutionTrace, policy C
 	actualUsage := runtimeresource.Usage{
 		Tokens:      tr.Cost.EstimatedInputTokens + tr.Cost.EstimatedCompiledTokens,
 		ToolCalls:   tr.Cost.ToolCalls,
-		MemoryNodes: len(st.Nodes),
+		MemoryNodes: len(st.Nodes) + actualMemoryWritebackGrowth(tr),
 	}
 	if actualUsage.Tokens <= 0 {
 		actualUsage.Tokens = estimateTokens(tr.Goal)

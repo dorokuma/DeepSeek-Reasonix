@@ -31,11 +31,15 @@ func (f *fakeAutoPlanClassifier) NeedsPlan(ctx context.Context, input string, sc
 }
 
 type fakeTurnRunner struct {
-	inputs []string
+	inputs               []string
+	memoryCompilerInputs []string
 }
 
 func (f *fakeTurnRunner) Run(ctx context.Context, input string) error {
 	f.inputs = append(f.inputs, input)
+	if source, ok := agent.MemoryCompilerSourceInputFromContext(ctx); ok {
+		f.memoryCompilerInputs = append(f.memoryCompilerInputs, source)
+	}
 	return nil
 }
 
