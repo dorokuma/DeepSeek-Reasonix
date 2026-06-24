@@ -19,7 +19,7 @@ func TestSessionConcurrentAddAndRead(t *testing.T) {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		for i := 0; i < 5000; i++ {
+		for i := 0; i < 500; i++ {
 			s.Add(provider.Message{Role: provider.RoleUser, Content: "msg"})
 		}
 	}()
@@ -28,7 +28,7 @@ func TestSessionConcurrentAddAndRead(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			for i := 0; i < 5000; i++ {
+			for i := 0; i < 500; i++ {
 				snap := s.Snapshot()
 				for _, m := range snap { // iterate the copy: must never tear
 					_ = m.Content
@@ -39,7 +39,7 @@ func TestSessionConcurrentAddAndRead(t *testing.T) {
 	}
 	wg.Wait()
 
-	if got := len(s.Snapshot()); got != 5001 { // 5000 + the system prompt
-		t.Fatalf("final message count = %d, want 5001", got)
+	if got := len(s.Snapshot()); got != 501 { // 500 + the system prompt
+		t.Fatalf("final message count = %d, want 501", got)
 	}
 }

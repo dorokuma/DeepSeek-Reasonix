@@ -14,7 +14,7 @@ fmt:
 	gofmt -w .
 
 test:
-	go test ./...
+	go test ./... -timeout=180s
 
 hooks:
 	@git config core.hooksPath .githooks
