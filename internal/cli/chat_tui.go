@@ -650,7 +650,7 @@ func (m *chatTUI) prompts() []plugin.Prompt {
 
 func (m chatTUI) Init() tea.Cmd {
 	return tea.Batch(
-		// textarea.Blink removed — disables cursor blink to reduce render frequency
+		textarea.Blink,
 		waitForAgentEvent(m.eventCh),
 		fetchBalance(m.ctrl),
 		m.runStatusline(), // nil (no-op) unless a custom status line is configured
