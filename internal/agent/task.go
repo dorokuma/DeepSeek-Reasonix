@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"time"
 
 	"reasonix/internal/ctxmode"
 	"reasonix/internal/event"
@@ -209,6 +210,23 @@ func (t *TaskTool) Execute(ctx context.Context, args json.RawMessage) (string, e
 			label = "task"
 		}
 		job, err := jm.Start("task", label, func(jobCtx context.Context, _ io.Writer) (string, error) {
+			// Heartbeat: keep lastActive fresh so the stale monitor (30s timeout)
+			// won't kill a busy task sub-agent whose output doesn't flow through the writer.
+			heartbeatDone := make(chan struct{})
+			defer close(heartbeatDone)
+			go func() {
+				ticker := time.NewTicker(10 * time.Second)
+				defer ticker.Stop()
+				for {
+					select {
+					case <-heartbeatDone:
+						return
+					case <-ticker.C:
+						jobs.UpdateJobActivity(jobCtx)
+					}
+				}
+			}()
+
 			bgCtx := WithNestingDepth(jobCtx, depth+1)
 			if parentAgent := AgentFromContext(ctx); parentAgent != nil {
 				bgCtx = WithAgent(bgCtx, parentAgent)

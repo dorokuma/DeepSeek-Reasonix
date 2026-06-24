@@ -146,14 +146,20 @@ func Tools(reg *tool.Registry) []ToolInfo {
 	return out
 }
 
-// toolSource classifies a tool by its name: an mcp_<server>__<tool> name maps
+// toolSource classifies a tool by its name: an mcp_<server>_<tool> name maps
 // to "mcp:<server>", anything else is a compiled-in "builtin".
 func toolSource(name string) string {
 	if server, _, ok := tool.SplitMCPName(name); ok {
 		return "mcp:" + server
 	}
+	// Fallback: when no MCP prefixes are registered (e.g. in tests or early
+	// startup), try a simple heuristic: mcp_<server>_<tool> (exactly 3 parts).
 	if strings.HasPrefix(name, tool.MCPNamePrefix) {
-		return "mcp" // carries the namespace but malformed (missing a part)
+		parts := strings.SplitN(name, "_", 3)
+		if len(parts) == 3 {
+			return "mcp:" + parts[1]
+		}
+		return "mcp" // malformed (less than 3 parts)
 	}
 	return "builtin"
 }
