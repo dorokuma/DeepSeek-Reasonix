@@ -20828,7 +20828,6 @@ a[href] {
 :root[data-theme-style] .composer-card:focus-within {
   border-color: color-mix(in srgb, var(--accent) 48%, var(--border));
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 15%, transparent);
-  transform: translateY(-1px);
 }
 
 :root[data-theme-style] .composer {
