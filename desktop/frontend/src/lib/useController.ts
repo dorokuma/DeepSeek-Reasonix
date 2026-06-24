@@ -1493,33 +1493,61 @@ export function useController() {
 
   const openProjectTab = useCallback(async (workspaceRoot: string, topicId: string): Promise<TabMeta> => {
     const meta = await app.OpenProjectTab(workspaceRoot, topicId);
+    const prevItems = activeTabIdRef.current ? statesRef.current.get(activeTabIdRef.current)?.items : undefined;
+    const isNewTab = !statesRef.current.has(meta.id);
     setActiveTabId(meta.id);
     activeTabIdRef.current = meta.id;
     confirmBackendActiveTab(meta.id);
     dispatchTo(meta.id, { type: "optimistic_meta", meta: metaFromTab(meta, statesRef.current.get(meta.id)?.meta) });
-    void loadSessionDataForTab(meta.id, !statesRef.current.has(meta.id), "open-topic");
+    // Transfer previous items as placeholder for new tabs
+    if (isNewTab && prevItems?.length) {
+      const s = statesRef.current.get(meta.id);
+      if (s && !s.items.length) {
+        statesRef.current.set(meta.id, { ...s, items: prevItems });
+        bump();
+      }
+    }
+    void loadSessionDataForTab(meta.id, isNewTab, "open-topic");
     return meta;
-  }, [confirmBackendActiveTab, dispatchTo, loadSessionDataForTab]);
+  }, [bump, confirmBackendActiveTab, dispatchTo, loadSessionDataForTab]);
 
   const openGlobalTab = useCallback(async (topicId: string): Promise<TabMeta> => {
     const meta = await app.OpenGlobalTab(topicId);
+    const prevItems = activeTabIdRef.current ? statesRef.current.get(activeTabIdRef.current)?.items : undefined;
+    const isNewTab = !statesRef.current.has(meta.id);
     setActiveTabId(meta.id);
     activeTabIdRef.current = meta.id;
     confirmBackendActiveTab(meta.id);
     dispatchTo(meta.id, { type: "optimistic_meta", meta: metaFromTab(meta, statesRef.current.get(meta.id)?.meta) });
-    void loadSessionDataForTab(meta.id, !statesRef.current.has(meta.id), "open-topic");
+    if (isNewTab && prevItems?.length) {
+      const s = statesRef.current.get(meta.id);
+      if (s && !s.items.length) {
+        statesRef.current.set(meta.id, { ...s, items: prevItems });
+        bump();
+      }
+    }
+    void loadSessionDataForTab(meta.id, isNewTab, "open-topic");
     return meta;
-  }, [confirmBackendActiveTab, dispatchTo, loadSessionDataForTab]);
+  }, [bump, confirmBackendActiveTab, dispatchTo, loadSessionDataForTab]);
 
   const openTopicSession = useCallback(async (scope: string, workspaceRoot: string, topicId: string, sessionPath: string): Promise<TabMeta> => {
     const meta = await app.OpenTopicSession(scope, workspaceRoot, topicId, sessionPath);
+    const prevItems = activeTabIdRef.current ? statesRef.current.get(activeTabIdRef.current)?.items : undefined;
+    const isNewTab = !statesRef.current.has(meta.id);
     setActiveTabId(meta.id);
     activeTabIdRef.current = meta.id;
     confirmBackendActiveTab(meta.id);
     dispatchTo(meta.id, { type: "optimistic_meta", meta: metaFromTab(meta, statesRef.current.get(meta.id)?.meta) });
-    void loadSessionDataForTab(meta.id, !statesRef.current.has(meta.id), "open-topic");
+    if (isNewTab && prevItems?.length) {
+      const s = statesRef.current.get(meta.id);
+      if (s && !s.items.length) {
+        statesRef.current.set(meta.id, { ...s, items: prevItems });
+        bump();
+      }
+    }
+    void loadSessionDataForTab(meta.id, isNewTab, "open-topic");
     return meta;
-  }, [confirmBackendActiveTab, dispatchTo, loadSessionDataForTab]);
+  }, [bump, confirmBackendActiveTab, dispatchTo, loadSessionDataForTab]);
 
   const activateTopic = useCallback(async (scope: string, workspaceRoot: string, topicId: string, sessionPath = ""): Promise<TabMeta> => {
     const meta = await app.ActivateTopic(scope, workspaceRoot, topicId, sessionPath);
