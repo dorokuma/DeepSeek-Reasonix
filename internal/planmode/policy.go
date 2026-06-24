@@ -28,14 +28,28 @@ type Policy struct {
 }
 
 var knownBlockedTools = map[string]bool{
-	"write_file":    true,
-	"edit_file":     true,
-	"multi_edit":    true,
-	"move_file":     true,
-	"apply_patch":   true,
-	"edit_notebook": true,
-	"range_delete":  true,
-	"symbol_delete": true,
+	"write_file":     true,
+	"edit_file":      true,
+	"multi_edit":     true,
+	"move_file":      true,
+	"apply_patch":    true,
+	"edit_notebook":  true,
+	"range_delete":   true,
+	"symbol_delete":  true,
+	"complete_step":  true,
+	"task":           true,
+	"parallel_tasks": true,
+	"run_skill":      true,
+	"install_source": true,
+	"install_skill":  true,
+	"remember":       true,
+	"forget":         true,
+	"kill_shell":     true,
+}
+
+var alwaysAllowedTools = map[string]bool{
+	"ask":        true,
+	"todo_write": true,
 }
 
 var bashMetachars = []string{"&&", "||", ">>", "<<", "$(", "\x60", ";", "|", ">", "<", "&", "\n", "\r"}
@@ -77,6 +91,9 @@ func (p Policy) Decide(call Call) Decision {
 	if knownBlockedTools[name] {
 		return blockKnown(name)
 	}
+	if alwaysAllowedTools[name] {
+		return Decision{}
+	}
 	if call.ReadOnly {
 		return Decision{}
 	}
@@ -117,6 +134,12 @@ func (p Policy) allowed(name string) bool {
 }
 
 func blockKnown(name string) Decision {
+	if name == "complete_step" {
+		return Decision{
+			Blocked: true,
+			Message: "blocked: complete_step is only available after plan approval. While planning, keep task state with todo_write and present the plan for user approval.",
+		}
+	}
 	return Decision{
 		Blocked: true,
 		Message: fmt.Sprintf("blocked: %q is not available in plan mode. Keep exploring with read-only tools — the user will be asked to approve the plan before any changes are made.", name),
