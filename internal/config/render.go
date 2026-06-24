@@ -293,8 +293,16 @@ func RenderTOMLForScope(c *Config, scope RenderScope) string {
 	b.WriteString(renderRuleList("allow", c.Permissions.Allow, `["bash(go test*)", "bash(git status*)"]   # never prompted`))
 	b.WriteString(renderRuleList("ask", c.Permissions.Ask, `["write_file"]   # force a prompt even if otherwise allowed`))
 	b.WriteString("\n")
-
-
+	b.WriteString("# main_agent_allowed restricts which tools the root (depth-0) agent may\n")
+	b.WriteString("# invoke. Empty (default) uses a minimal built-in set (task/ask/note/\n")
+	b.WriteString("# audit_finish/read_skill/run_skill/slash_command). Non-empty replaces\n")
+	b.WriteString("# the default entirely — list every tool the root agent should see.\n")
+	if len(c.Permissions.MainAgentAllowed) > 0 {
+		fmt.Fprintf(&b, "main_agent_allowed = %s\n", renderStringArray(c.Permissions.MainAgentAllowed))
+	} else {
+		b.WriteString("# main_agent_allowed = [\"task\", \"ask\", \"note\", \"audit_finish\", \"read_skill\", \"run_skill\", \"slash_command\"]\n")
+	}
+	b.WriteString("\n")
 
 	b.WriteString("[statusline]\n")
 	b.WriteString("# A custom status line: a command whose first stdout line replaces the built-in\n")

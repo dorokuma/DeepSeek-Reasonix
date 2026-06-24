@@ -36,39 +36,18 @@ const maxEmptyFinalBlocks = 3
 const maxStreamRecoveries = 1
 const maxExecutorHandoffNudges = 1
 
-// DefaultMainAgentAllowed is the default whitelist of tools the root (depth-0)
-// agent may invoke when Options.MainAgentAllowed is nil.
+// DefaultMainAgentAllowed is the minimal default whitelist for the root
+// (depth-0) agent. It covers the "project lead" workflow: communicate with
+// the user, delegate work to sub-agents, load SOPs, and perform audits.
+// Configure permissions.main_agent_allowed in reasonix.toml to override.
 var DefaultMainAgentAllowed = map[string]bool{
-	"task":             true,
-	"ask":              true,
-	"note":             true,
-	"audit_finish":     true,
-	"remember":         true,
-	"forget":           true,
-	"read_skill":       true,
-	"run_skill":        true,
-	"install_skill":    true,
-	"explore":          true,
-	"research":         true,
-	"review":           true,
-	"security_review":  true,
-	"list_scheduled_tasks": true,
-	"list_sessions":    true,
-	"read_session":     true,
-	"read_file":        true,
-	"grep":             true,
-	"glob":             true,
-	"ls":               true,
-	"lsp_definition":   true,
-	"lsp_hover":        true,
-	"lsp_references":   true,
-	"lsp_diagnostics":  true,
-	"bash_output":      true,
-	"slash_command":    true,
-	"ctx_read":         true,
-	"ctx_search":       true,
-	"ctx_index":        true,
-	"ctx_run":          true,
+	"task":          true,
+	"ask":           true,
+	"note":          true,
+	"audit_finish":  true,
+	"read_skill":    true,
+	"run_skill":     true,
+	"slash_command": true,
 }
 
 // Renderer redraws the assistant's final-answer text as styled output. It is
@@ -483,9 +462,8 @@ type Options struct {
 	MaxNestingDepth int
 
 	// MainAgentAllowed is the whitelist of tools the root (depth-0) agent may
-	// invoke when set (non-nil). If nil, no whitelist is enforced, and the main
-	// agent may use any registered tool. Set this to DefaultMainAgentAllowed (or
-	// a custom map) to restrict the root agent to a safe subset.
+	// invoke. When nil, DefaultMainAgentAllowed (a minimal set) is used. Set a
+	// custom map to further restrict or expand.
 	MainAgentAllowed map[string]bool
 
 	// MaxMainAgentReadonlyCalls limits the maximum number of readonly tool calls
