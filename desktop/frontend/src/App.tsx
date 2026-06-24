@@ -135,6 +135,7 @@ import {
 import { applyTextSize, DEFAULT_TEXT_SIZE, getTextSize, nextTextSize } from "./lib/textSize";
 import { useViewportHeightVar, useWindowStatePersistence } from "./lib/windowState";
 import { availableWorkspacePanelWidth, resolveWorkspacePanelWidth, workspacePanelAriaMinWidth } from "./lib/workspaceLayout";
+import { createRafResizeUpdater } from "./lib/resizeDrag";
 import { useGlobalShortcut } from "./lib/keyboardShortcuts";
 import { topicShortcutIndexFromEvent, useTopicShortcuts, type TopicShortcutEntry } from "./lib/topicShortcuts";
 import logoWordmark from "./assets/logo-wordmark.svg";
@@ -914,6 +915,7 @@ export default function App() {
   const topicRenameSkipCommitRef = useRef(false);
   const topicRenameCommitHandledRef = useRef(false);
   const appRef = useRef<HTMLDivElement>(null);
+  const layoutRef = useRef<HTMLDivElement>(null);
   const sidebarTogglePressTimerRef = useRef<number | null>(null);
   const workspaceTogglePressTimerRef = useRef<number | null>(null);
 
@@ -1686,15 +1688,23 @@ export default function App() {
   const startSidebarResize = useCallback(
     (event: ReactPointerEvent<HTMLButtonElement>) => {
       if (sidebarCollapsed) return;
+      const layout = layoutRef.current;
+      if (!layout) return;
       event.preventDefault();
       closeTransientOverlays();
       setSidebarResizing(true);
       let nextWidth = sidebarWidth;
+      const liveResize = createRafResizeUpdater({
+        target: layout,
+        separator: event.currentTarget,
+        cssVar: "--sidebar-expanded-width",
+      });
       const onMove = (moveEvent: PointerEvent) => {
         nextWidth = sidebarWidthClamp(moveEvent.clientX);
-        setSidebarWidth(nextWidth);
+        liveResize.schedule(nextWidth);
       };
       const onDone = () => {
+        liveResize.flush();
         setSidebarWidth(nextWidth);
         saveSidebarWidth(nextWidth);
         setSidebarResizing(false);
@@ -1760,22 +1770,31 @@ export default function App() {
   const startWorkspacePanelResize = useCallback(
     (event: ReactPointerEvent<HTMLButtonElement>) => {
       if (!workspacePanelOpen) return;
+      const layout = layoutRef.current;
+      if (!layout) return;
       event.preventDefault();
       closeTransientOverlays();
       setWorkspacePanelResizing(true);
       const startX = event.clientX;
       const startDockWidth = workspacePanelRenderWidth;
       let nextDockWidth = startDockWidth;
+      const liveResize = createRafResizeUpdater({
+        target: layout,
+        separator: event.currentTarget,
+        cssVar: "--workspace-width",
+      });
       const onMove = (moveEvent: PointerEvent) => {
         const delta = moveEvent.clientX - startX;
         nextDockWidth = startDockWidth - delta;
         if (rightDockDetailActive) {
-          setRightDockPreviewWidth(clampRightDockPreviewWidth(nextDockWidth));
+          nextDockWidth = clampRightDockPreviewWidth(nextDockWidth);
         } else {
-          setRightDockTreeWidth(clampRightDockTreeWidth(nextDockWidth));
+          nextDockWidth = clampRightDockTreeWidth(nextDockWidth);
         }
+        liveResize.schedule(nextDockWidth);
       };
       const onDone = () => {
+        liveResize.flush();
         setSavedWorkspacePanelWidth(nextDockWidth);
         setWorkspacePanelResizing(false);
         window.removeEventListener("pointermove", onMove);
@@ -2480,6 +2499,7 @@ export default function App() {
       ].filter(Boolean).join(" ")}
     >
       <div
+        ref={layoutRef}
         className={[
           "layout",
           sidebarWorkbench ? "layout--workbench" : "",

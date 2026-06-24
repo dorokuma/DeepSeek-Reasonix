@@ -33,6 +33,7 @@ import {
   type WorkspaceSplitTreeWidthMode,
   workspaceSplitTreeWidthFromPointer,
 } from "../lib/workspaceSplit";
+import { createRafResizeUpdater } from "../lib/resizeDrag";
 import type { DirEntry, FilePreview, GitCommitView, GitCommitDetailView, WorkspaceChangeView } from "../lib/types";
 import { formatWorkspaceReference, WORKSPACE_REF_DRAG_TYPE } from "../lib/workspaceDrag";
 import { cleanGitDiff } from "../lib/diff";
@@ -874,12 +875,18 @@ export function WorkspacePanel({
   const startTreeResize = useCallback(
     (event: ReactPointerEvent<HTMLButtonElement>) => {
       if (!treeVisible) return;
-      const rect = panelRef.current?.getBoundingClientRect();
-      if (!rect) return;
+      const panel = panelRef.current;
+      const rect = panel?.getBoundingClientRect();
+      if (!panel || !rect) return;
       event.preventDefault();
       setTreeWidthMode("manual");
       setTreeResizing(true);
       let nextWidth = effectiveTreeWidth;
+      const liveResize = createRafResizeUpdater({
+        target: panel,
+        separator: event.currentTarget,
+        cssVar: "--workspace-tree-width",
+      });
       const onMove = (moveEvent: PointerEvent) => {
         nextWidth = workspaceSplitTreeWidthFromPointer({
           clientX: moveEvent.clientX,
@@ -889,9 +896,10 @@ export function WorkspacePanel({
           treeMinWidth: WORKSPACE_TREE_MIN_WIDTH,
           previewMinWidth: WORKSPACE_PREVIEW_MIN_WIDTH,
         });
-        setTreeWidth(nextWidth);
+        liveResize.schedule(nextWidth);
       };
       const onDone = () => {
+        liveResize.flush();
         setTreeWidth(nextWidth);
         setTreeResizing(false);
         window.removeEventListener("pointermove", onMove);
