@@ -33,7 +33,7 @@ func TestRegistryRemovePrefix(t *testing.T) {
 	r.Add(stubTool{name: "mcp_fs_write"})
 	r.Add(stubTool{name: "mcp_stripe_charge"})
 
-	if got := r.RemovePrefix("mcp_fs__"); got != 2 {
+	if got := r.RemovePrefix("mcp_fs_"); got != 2 {
 		t.Fatalf("RemovePrefix returned %d, want 2", got)
 	}
 	if r.Len() != 2 {
@@ -57,7 +57,7 @@ func TestRegistryRemovePrefix(t *testing.T) {
 	}
 
 	// Removing a prefix that matches nothing is a no-op.
-	if got := r.RemovePrefix("mcp_nope__"); got != 0 {
+	if got := r.RemovePrefix("mcp_nope_"); got != 0 {
 		t.Errorf("RemovePrefix on absent prefix returned %d, want 0", got)
 	}
 }

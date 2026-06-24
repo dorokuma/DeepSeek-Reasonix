@@ -38,8 +38,8 @@ func TestHostAddRemove(t *testing.T) {
 	}
 
 	prefix, found := h.Remove("h")
-	if !found || prefix != "mcp_h__" {
-		t.Fatalf("Remove = (%q, %v), want (\"mcp_h__\", true)", prefix, found)
+	if !found || prefix != "mcp_h_" {
+		t.Fatalf("Remove = (%q, %v), want (\"mcp_h_\", true)", prefix, found)
 	}
 	if len(h.Servers()) != 0 {
 		t.Errorf("server should be gone after Remove, got %+v", h.Servers())
