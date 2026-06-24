@@ -300,7 +300,6 @@ func defaultBashShellPATH(ctx context.Context) string {
 	const marker = "__REASONIX_BASH_PATH__="
 	script := "printf '\\n" + marker + "%s\\n' \"$PATH\""
 	for _, args := range [][]string{
-		{"-l", "-i", "-c", script},
 		{"-l", "-c", script},
 		{"-c", script},
 	} {
