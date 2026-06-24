@@ -104,7 +104,7 @@ var toolCategory = map[string]string{
 }
 
 // toolDisplayName returns the card verb for a tool: a mapped builtin verb, the
-// short name for an MCP tool (mcp__server__tool), or the raw id as a fallback.
+// short name for an MCP tool (mcp_server_tool), or the raw id as a fallback.
 func toolDisplayName(name string) string {
 	if _, short, ok := tool.SplitMCPName(name); ok {
 		return short

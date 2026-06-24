@@ -68,7 +68,7 @@ When a tool result exceeds ~32KB, Reasonix tries `rtk pipe` only when a safe fil
 
 - `bash` / `bash_output` / `wait` — from the command (via rewrite mapping)
 - `grep` builtin — `grep` filter
-- MCP (`mcp__*`) — never piped
+- MCP (`mcp_*`) — never piped
 
 Allowed pipe filters match RTK’s allowlist: `git-log`, `git-status`, `git-diff`, `grep`, `find`, `pytest`, `cargo-test`, `go-test`, `go-build`, `tsc`, `vitest`, `mypy`, `ruff-check`, `ruff-format`, `prettier`, `log`, `fd`, `rg`.
 

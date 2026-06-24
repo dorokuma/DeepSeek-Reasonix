@@ -163,11 +163,11 @@ Reasonix is an MCP client. A `[[plugins]]` entry's `type` selects the transport:
 `stdio` (default) launches a local subprocess (`command`/`args`/`env`); `http`
 (Streamable HTTP) connects to a remote `url` with optional static `headers`
 (`${VAR}` / `${VAR:-default}` expanded from the environment, so tokens stay out
-of the file). Tools surface to the model as `mcp__<server>__<tool>`; a tool
+of the file). Tools surface to the model as `mcp_<server>__<tool>`; a tool
 declaring MCP's `readOnlyHint: true` joins parallel dispatch and the permission
 reader-default.
 
-A server's **prompts** surface as `/mcp__<server>__<prompt>` slash commands
+A server's **prompts** surface as `/mcp_<server>__<prompt>` slash commands
 (positional args after the command); its **resources** are pulled in by writing
 `@<server>:<uri>` in a message; `/mcp` lists connected servers and what each
 exposes. `make build` also produces `bin/reasonix-plugin-example` — a runnable
@@ -231,7 +231,7 @@ Review the staged diff. Focus on $ARGUMENTS, list bugs with file:line.
 ```
 
 `$ARGUMENTS` expands to all space-separated args, `$1`…`$N` to positional ones.
-MCP prompts also appear here as `/mcp__<server>__<prompt>`.
+MCP prompts also appear here as `/mcp_<server>__<prompt>`.
 
 ### @ references
 
@@ -306,7 +306,7 @@ controller-driven approval, live token/activity readout, pinned task list,
 per-call **permissions** (allow/ask/deny rules; chat prompts before writers, deny
 rules hard-block everywhere), a **workspace sandbox** confining file-writers to
 the project (symlink/`..`-safe), an MCP client — **stdio + Streamable HTTP**
-transports, tools (`mcp__server__tool`, `readOnlyHint`-aware), prompts (slash
+transports, tools (`mcp_server__tool`, `readOnlyHint`-aware), prompts (slash
 commands), resources (`@`-references), and `/mcp`, configured via `[[plugins]]`
 or a project `.mcp.json` — custom slash commands (`.reasonix/commands/*.md`),
 `@file` / `@resource` references, plus a runnable reference plugin

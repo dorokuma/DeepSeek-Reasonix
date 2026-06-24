@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"reasonix/internal/diff"
 	"reasonix/internal/provider"
@@ -153,26 +154,55 @@ func (r *Registry) Add(t Tool) {
 }
 
 // MCPNamePrefix is the namespace every MCP tool name carries: the
-// model-visible name is "mcp__<server>__<tool>".
-const MCPNamePrefix = "mcp__"
+// model-visible name is "mcp_<server>_<tool>".
+const MCPNamePrefix = "mcp_"
 
-// SplitMCPName splits a model-visible MCP tool name "mcp__<server>__<tool>" into
-// its server and tool parts. ok is false for non-MCP (built-in) names and for
-// malformed names missing either part.
+// mcpPrefixes holds the list of registered MCP server tool-name prefixes
+// (e.g. "mcp_jina_", "mcp_codegraph_"). Loaded by SplitMCPName for dynamic
+// prefix routing. The atomic.Value stores a []string.
+var mcpPrefixes atomic.Value
+
+// RegisterMCPPrefixes sets the list of active MCP server prefixes used by
+// SplitMCPName to resolve tool names. Call this after any server connect or
+// disconnect so the prefix list stays in sync. Passing nil or an empty slice
+// disables all MCP name resolution.
+func RegisterMCPPrefixes(prefixes []string) {
+	mcpPrefixes.Store(prefixes)
+}
+
+// SplitMCPName splits a model-visible MCP tool name "mcp_<server>_<tool>" into
+// its server and tool parts using the registered prefix list. ok is false for
+// non-MCP (built-in) names and for names that don't match any registered
+// prefix.
 func SplitMCPName(name string) (server, tool string, ok bool) {
 	if !strings.HasPrefix(name, MCPNamePrefix) {
 		return "", "", false
 	}
-	rest := name[len(MCPNamePrefix):]
-	parts := strings.SplitN(rest, "__", 2)
-	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+	raw := mcpPrefixes.Load()
+	prefixes, ok := raw.([]string)
+	if !ok || len(prefixes) == 0 {
 		return "", "", false
 	}
-	return parts[0], parts[1], true
+	// Find the longest matching prefix
+	best := ""
+	for _, p := range prefixes {
+		if strings.HasPrefix(name, p) && len(p) > len(best) {
+			best = p
+		}
+	}
+	if best == "" {
+		return "", "", false
+	}
+	tool = strings.TrimPrefix(name, best)
+	if tool == "" {
+		return "", "", false
+	}
+	server = best[len(MCPNamePrefix) : len(best)-1]
+	return server, tool, true
 }
 
 // RemovePrefix unregisters every tool whose name starts with prefix — used to
-// drop an MCP server's "mcp__<server>__" namespace when it's disconnected — and
+// drop an MCP server's "mcp_<server>_" namespace when it's disconnected — and
 // returns the count removed.
 func (r *Registry) RemovePrefix(prefix string) int {
 	r.mu.Lock()

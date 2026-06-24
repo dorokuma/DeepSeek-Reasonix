@@ -104,8 +104,8 @@ func runHTTPTransportTest(t *testing.T, sse bool) {
 	}
 	defer host.Close()
 
-	if len(tools) != 1 || tools[0].Name() != "mcp__h__greet" {
-		t.Fatalf("tools = %v, want [mcp__h__greet]", names(tools))
+	if len(tools) != 1 || tools[0].Name() != "mcp_h_greet" {
+		t.Fatalf("tools = %v, want [mcp_h_greet]", names(tools))
 	}
 	if !tools[0].ReadOnly() {
 		t.Error("readOnlyHint not honoured over HTTP")

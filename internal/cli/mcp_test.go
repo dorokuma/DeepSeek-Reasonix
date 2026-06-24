@@ -104,7 +104,7 @@ func TestRenderMCPStatusGroupsAndCompactsResources(t *testing.T) {
 	longURI := "file:///Users/example/project/docs/really/deep/path/with/a/very/long/resource-name.md"
 	got := renderMCPStatus(110,
 		[]plugin.ServerStatus{{Name: "docs", Transport: "stdio", Tools: 2}},
-		[]plugin.Prompt{{Server: "docs", Name: "mcp__docs__summarize", Description: "Summarize a selected document for review"}},
+		[]plugin.Prompt{{Server: "docs", Name: "mcp_docs_summarize", Description: "Summarize a selected document for review"}},
 		[]plugin.Resource{{Server: "docs", URI: longURI, Name: "Resource manual", MimeType: "text/markdown"}},
 		nil,
 	)
@@ -112,7 +112,7 @@ func TestRenderMCPStatusGroupsAndCompactsResources(t *testing.T) {
 		"MCP servers (1)",
 		"docs",
 		"prompts",
-		"/mcp__docs__summarize",
+		"/mcp_docs_summarize",
 		"resources",
 		"@docs:file:///",
 		"…",

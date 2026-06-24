@@ -396,7 +396,7 @@ func lastAssistantText(msgs []provider.Message) string {
 // a browser client only POSTs the typed line.
 //
 // Slash commands route to the matching primitive: /compact and /new run their
-// session op and emit a Notice; /mcp__server__prompt and custom /commands
+// session op and emit a Notice; /mcp_server_prompt and custom /commands
 // resolve to a turn; an unknown slash emits a Notice. Anything else is a normal
 // turn with its @-references resolved first.
 func (c *Controller) Submit(input string) {
@@ -449,7 +449,7 @@ func (c *Controller) Submit(input string) {
 			c.notice("new session")
 			return nil
 		})
-	case strings.HasPrefix(trimmed, "/mcp__"):
+	case strings.HasPrefix(trimmed, "/mcp_"):
 		c.runGuarded(func(ctx context.Context) error {
 			sent, found, err := c.MCPPrompt(ctx, trimmed)
 			if err != nil {

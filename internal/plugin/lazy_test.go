@@ -105,9 +105,9 @@ func TestLazyCacheHitSyncSpawn(t *testing.T) {
 	// Before any Execute: registry exposes real cached schemas (not the empty
 	// {"type":"object"} stub). The model relies on this to call the tool with
 	// real args on the very first turn.
-	echoBefore, ok := reg.Get("mcp__mock__echo")
+	echoBefore, ok := reg.Get("mcp_mock_echo")
 	if !ok {
-		t.Fatal("registry missing mcp__mock__echo after LazyToolset")
+		t.Fatal("registry missing mcp_mock_echo after LazyToolset")
 	}
 	if _, isLazy := echoBefore.(*lazyTool); !isLazy {
 		t.Fatalf("pre-Execute echo should be a *lazyTool, got %T", echoBefore)
@@ -137,7 +137,7 @@ func TestLazyCacheHitSyncSpawn(t *testing.T) {
 	// placeholder. Subsequent calls bypass the state machine and Execute
 	// directly. Compare via type name so this test doesn't need to import the
 	// unexported type by name.
-	echoAfter, _ := reg.Get("mcp__mock__echo")
+	echoAfter, _ := reg.Get("mcp_mock_echo")
 	if got := fmt.Sprintf("%T", echoAfter); !strings.Contains(got, "remoteTool") {
 		t.Fatalf("post-Execute echo should be a remoteTool, got %s", got)
 	}
@@ -166,16 +166,16 @@ func TestLazyToolsetAppliesSpecReadOnlyOverrideToCachedTools(t *testing.T) {
 	for _, tl := range tools {
 		byName[tl.Name()] = tl
 	}
-	echo := byName["mcp__mock__echo"]
+	echo := byName["mcp_mock_echo"]
 	if echo == nil {
-		t.Fatalf("mcp__mock__echo missing from %v", byName)
+		t.Fatalf("mcp_mock_echo missing from %v", byName)
 	}
 	if !echo.ReadOnly() {
 		t.Fatal("lazy cached echo should use the spec read-only override")
 	}
-	zed := byName["mcp__mock__zed"]
+	zed := byName["mcp_mock_zed"]
 	if zed == nil {
-		t.Fatalf("mcp__mock__zed missing from %v", byName)
+		t.Fatalf("mcp_mock_zed missing from %v", byName)
 	}
 	if zed.ReadOnly() {
 		t.Fatal("lazy cached zed should keep cached non-read-only status")
@@ -206,9 +206,9 @@ func TestLazyCacheMissAsyncSpawn(t *testing.T) {
 		reg.Add(lt)
 	}
 
-	connect, ok := reg.Get("mcp__mock__connect")
+	connect, ok := reg.Get("mcp_mock_connect")
 	if !ok {
-		t.Fatalf("registry missing mcp__mock__connect; names=%v", reg.Names())
+		t.Fatalf("registry missing mcp_mock_connect; names=%v", reg.Names())
 	}
 
 	// First Execute must NOT forward — schema is unknown, so the model would
@@ -228,14 +228,14 @@ func TestLazyCacheMissAsyncSpawn(t *testing.T) {
 	// Execute call.
 	waitForServer(t, host, "mock", 5*time.Second)
 
-	if _, found := reg.Get("mcp__mock__connect"); found {
+	if _, found := reg.Get("mcp_mock_connect"); found {
 		t.Errorf("connect stub should be removed after swap, names=%v", reg.Names())
 	}
-	if _, found := reg.Get("mcp__mock__echo"); !found {
-		t.Errorf("real mcp__mock__echo missing after swap, names=%v", reg.Names())
+	if _, found := reg.Get("mcp_mock_echo"); !found {
+		t.Errorf("real mcp_mock_echo missing after swap, names=%v", reg.Names())
 	}
-	if _, found := reg.Get("mcp__mock__zed"); !found {
-		t.Errorf("real mcp__mock__zed missing after swap, names=%v", reg.Names())
+	if _, found := reg.Get("mcp_mock_zed"); !found {
+		t.Errorf("real mcp_mock_zed missing after swap, names=%v", reg.Names())
 	}
 }
 
@@ -256,9 +256,9 @@ func TestLazySwapDoesNotRaceRegistrySchemas(t *testing.T) {
 	for _, lt := range tools {
 		reg.Add(lt)
 	}
-	echo, _ := reg.Get("mcp__mock__echo")
+	echo, _ := reg.Get("mcp_mock_echo")
 	if echo == nil {
-		t.Fatal("missing mcp__mock__echo placeholder")
+		t.Fatal("missing mcp_mock_echo placeholder")
 	}
 
 	done := make(chan struct{})
@@ -319,7 +319,7 @@ func TestLazyBackgroundKick(t *testing.T) {
 	// Now Execute: the state is already spawnReady, so this should swap +
 	// forward in one shot without a second Add call. The result must still be
 	// correct.
-	echo, _ := reg.Get("mcp__mock__echo")
+	echo, _ := reg.Get("mcp_mock_echo")
 	out, err := echo.Execute(ctx, json.RawMessage(`{"msg":"bg"}`))
 	if err != nil {
 		t.Fatalf("Execute after background ready: %v", err)
@@ -364,7 +364,7 @@ func TestLazyConcurrentExecuteOnlyOneSpawn(t *testing.T) {
 	for _, lt := range tools {
 		reg.Add(lt)
 	}
-	echo, _ := reg.Get("mcp__mock__echo")
+	echo, _ := reg.Get("mcp_mock_echo")
 
 	const goroutines = 10
 	var wg sync.WaitGroup
@@ -467,7 +467,7 @@ func TestLazyHandshakeFailureSurfaced(t *testing.T) {
 	for _, lt := range tools {
 		reg.Add(lt)
 	}
-	doit, _ := reg.Get("mcp__missing__doit")
+	doit, _ := reg.Get("mcp_missing_doit")
 
 	_, err1 := doit.Execute(ctx, json.RawMessage(`{}`))
 	if err1 == nil {

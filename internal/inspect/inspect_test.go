@@ -75,7 +75,7 @@ func TestTools(t *testing.T) {
 		}
 	}
 	// A fake MCP-named tool exercises source classification.
-	reg.Add(fakeTool{name: "mcp__demo__echo", readOnly: true})
+	reg.Add(fakeTool{name: "mcp_demo_echo", readOnly: true})
 
 	got := Tools(reg)
 	if len(got) != 3 {
@@ -93,7 +93,7 @@ func TestTools(t *testing.T) {
 	if wf := by["write_file"]; wf.ReadOnly || !wf.Previewable || wf.Source != "builtin" {
 		t.Errorf("write_file should be a previewable builtin writer: %+v", wf)
 	}
-	if e := by["mcp__demo__echo"]; e.Source != "mcp:demo" {
+	if e := by["mcp_demo_echo"]; e.Source != "mcp:demo" {
 		t.Errorf("mcp tool source = %q, want mcp:demo", e.Source)
 	}
 	if len(by["read_file"].Schema) == 0 {
@@ -105,9 +105,9 @@ func TestToolSource(t *testing.T) {
 	cases := map[string]string{
 		"read_file":           "builtin",
 		"bash":                "builtin",
-		"mcp__stripe__charge": "mcp:stripe",
-		"mcp__fs__read":       "mcp:fs",
-		"mcp__weird":          "mcp", // malformed (no second __) falls back
+		"mcp_stripe_charge": "mcp:stripe",
+		"mcp_fs_read":       "mcp:fs",
+		"mcp_weird":          "mcp", // malformed (no second __) falls back
 	}
 	for name, want := range cases {
 		if got := toolSource(name); got != want {

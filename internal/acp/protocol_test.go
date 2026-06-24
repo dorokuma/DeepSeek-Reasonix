@@ -74,7 +74,7 @@ func TestToolKindFor(t *testing.T) {
 		"bash":                  "execute",
 		"webfetch":              "other",
 		"task":                  "other",
-		"mcp__server__do_thing": "other",
+		"mcp_server_do_thing": "other",
 		"semantic_search":       "search", // heuristic fallback
 		"run_command":           "execute",
 		"unknown":               "other",

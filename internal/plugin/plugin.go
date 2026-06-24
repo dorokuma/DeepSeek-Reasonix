@@ -53,8 +53,8 @@ type Spec struct {
 	ReadOnlyToolNames map[string]bool
 	// StripRawPrefix, when non-empty, removes this prefix from each MCP tool's
 	// raw name before namespacing. For example, StripRawPrefix="myplugin_" turns
-	// "myplugin_search" into "search", yielding "mcp__myplugin__search"
-	// instead of the redundant "mcp__myplugin__myplugin_search". The original
+	// "myplugin_search" into "search", yielding "mcp_myplugin_search"
+	// instead of the redundant "mcp_myplugin_myplugin_search". The original
 	// raw name is preserved for MCP protocol calls.
 	StripRawPrefix string
 }
@@ -122,6 +122,18 @@ func (h *Host) ServerNames() []string {
 	return names
 }
 
+// ServerPrefixes returns the model-visible tool-name prefix for every connected
+// server (e.g. "mcp_jina_"). Used by tool.RegisterMCPPrefixes for SplitMCPName.
+func (h *Host) ServerPrefixes() []string {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	prefixes := make([]string, 0, len(h.clients))
+	for _, c := range h.clients {
+		prefixes = append(prefixes, ToolPrefix(c.name))
+	}
+	return prefixes
+}
+
 // ReadResource reads a resource uri from the named server. It is how the chat
 // UI resolves an @server:uri reference — the uri need not be one listed by
 // resources/list (servers may expose templated uris), so we read it directly.
@@ -175,7 +187,7 @@ const defaultStartConcurrency = 8
 const defaultStartTimeout = 5 * time.Second
 
 // StartAll connects every plugin in parallel, performs the MCP handshake, and
-// returns the union of their tools (namespaced "mcp__<server>__<tool>"). On any
+// returns the union of their tools (namespaced "mcp_<server>_<tool>"). On any
 // failure it tears down everything started so far. The caller must Close the Host.
 //
 // For stdio plugins, subprocess lifetime is bound to ctx (via
@@ -339,6 +351,7 @@ func Start(ctx context.Context, specs []Spec, p StartPolicy) (*Host, []tool.Tool
 		h.Close()
 		return nil, nil, firstErr
 	}
+	tool.RegisterMCPPrefixes(h.ServerPrefixes())
 	return h, tools, nil
 }
 
@@ -642,6 +655,7 @@ func (h *Host) addConnected(ctx context.Context, s Spec) ([]tool.Tool, error) {
 	h.clients = append(h.clients, c)
 	h.clearFailure(s.Name)
 	h.mu.Unlock()
+	tool.RegisterMCPPrefixes(h.ServerPrefixes())
 	// Prompts and resources stream in on the long ctx the caller passed (Host.Add
 	// uses the session-scoped PluginCtx, not a per-turn ctx), so the slow list
 	// calls cannot starve a /mcp add of its return value. nil sink keeps hot-add
@@ -750,7 +764,7 @@ func (h *Host) addConnected(ctx context.Context, s Spec) ([]tool.Tool, error) {
 }
 
 // Remove disconnects the named server and drops its prompts/resources, returning
-// the namespaced tool-name prefix ("mcp__<server>__") the caller unregisters from
+// the namespaced tool-name prefix ("mcp_<server>_") the caller unregisters from
 // the tool registry, and whether the server was connected.
 func (h *Host) Remove(name string) (toolPrefix string, found bool) {
 	h.mu.Lock()
@@ -785,10 +799,11 @@ func (h *Host) Remove(name string) (toolPrefix string, found bool) {
 	h.resources = keptR
 	h.clearFailure(name)
 	h.mu.Unlock()
+	tool.RegisterMCPPrefixes(h.ServerPrefixes())
 
 	removed.close() // kills the subprocess: outside the lock
 
-	return "mcp__" + normalizeName(name) + "__", true
+	return ToolPrefix(name), true
 }
 
 // start opens the transport on lifeCtx (whose cancellation later closes the
@@ -931,7 +946,7 @@ func (c *Client) listTools(ctx context.Context) ([]tool.Tool, error) {
 	return sortToolsByName(tools), nil
 }
 
-// toolName builds the model-visible namespaced name "mcp__<server>__<tool>",
+// toolName builds the model-visible namespaced name "mcp_<server>_<tool>",
 // matching Claude Code. Spaces in either part are normalised to underscores so
 // the name is a clean identifier the model can call.
 func toolName(server, raw string) string {
@@ -940,7 +955,7 @@ func toolName(server, raw string) string {
 
 // ToolPrefix is the model-visible namespace prefix for every tool from server.
 func ToolPrefix(server string) string {
-	return "mcp__" + normalizeName(server) + "__"
+	return "mcp_" + normalizeName(server) + "_"
 }
 
 var invalidNameChars = regexp.MustCompile(`[^a-zA-Z0-9_-]+`)
@@ -999,7 +1014,7 @@ func (e *rpcError) Error() string { return fmt.Sprintf("rpc error %d: %s", e.Cod
 
 type remoteTool struct {
 	client   *Client
-	name     string // namespaced "mcp__<server>__<tool>"
+	name     string // namespaced "mcp_<server>_<tool>"
 	rawName  string // original name for tools/call
 	desc     string
 	schema   json.RawMessage

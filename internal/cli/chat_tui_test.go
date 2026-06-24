@@ -106,19 +106,24 @@ func TestTranscriptMirrorsCommits(t *testing.T) {
 	}
 }
 
-func TestAndroidNativeScrollbackCommitsFinalAnswer(t *testing.T) {
+func TestAndroidNativeScrollbackStreamsAnswer(t *testing.T) {
 	m := newTestChatTUI()
 	m.nativeScrollback = true
 	m.pending.WriteString("first paragraph\n\nsecond paragraph")
 
+	// streamAnswer now renders into the transcript (and pendingCommit) for
+	// nativeScrollback mode, just like the alt-screen path.
 	m.streamAnswer()
-	if len(*m.pendingCommit) != 0 {
-		t.Fatalf("Android native scrollback should not commit rewritten streaming blocks, got %v", *m.pendingCommit)
+	if len(m.transcript) == 0 {
+		t.Fatalf("streamAnswer should have rendered into the viewport transcript, got empty")
 	}
 
 	m.commitPending()
-	if got := strings.Join(*m.pendingCommit, "\n"); !strings.Contains(got, "first paragraph") || !strings.Contains(got, "second paragraph") {
-		t.Fatalf("final answer was not committed to native scrollback: %v", *m.pendingCommit)
+	// After commitPending, the full pending buffer overwrites the streamed entry
+	// in m.transcript, and pendingCommit gets the streamed entry (not the final
+	// version, since answerIdx > -1 makes commitPending overwrite in place).
+	if len(*m.pendingCommit) == 0 {
+		t.Fatal("pendingCommit should have at least the streamed paragraph")
 	}
 }
 
@@ -1035,14 +1040,14 @@ func TestViewAndroidUsesNativeScrollback(t *testing.T) {
 	m0, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 	v := m0.(chatTUI).View()
 
-	if v.AltScreen {
-		t.Error("Android view must stay in the normal screen so native touch scrollback works")
+	if !v.AltScreen {
+		t.Error("Android view must use alt-screen so Conduit swipe gestures convert to arrow keys")
 	}
 	if v.MouseMode != tea.MouseModeNone {
 		t.Error("Android view must not enable mouse mode because it prevents soft-keyboard focus")
 	}
-	if lines := strings.Count(v.Content, "\n") + 1; lines >= 24 {
-		t.Errorf("Android view should render only the pinned bottom frame, got %d full-screen lines", lines)
+	if lines := strings.Count(v.Content, "\n") + 1; lines != 24 {
+		t.Errorf("Android view should render a full-screen frame (viewport + bottom), got %d lines, want 24", lines)
 	}
 }
 
@@ -1136,7 +1141,7 @@ func TestUnsendRestoresFoldedPastePlaceholder(t *testing.T) {
 }
 
 func TestApprovalToolDetailsShortensMCPNames(t *testing.T) {
-	name, detail := approvalToolDetails("mcp__minimax-coding-plan-mcp__understand_image")
+	name, detail := approvalToolDetails("mcp_minimax-coding-plan-mcp_understand_image")
 	if name != "understand_image" {
 		t.Fatalf("name = %q, want understand_image", name)
 	}

@@ -9,8 +9,8 @@
 //	name    = "example"
 //	command = "reasonix-plugin-example"
 //
-// Then reasonix surfaces its tools as "mcp__example__echo" / "mcp__example__wordcount",
-// its prompt as the "/mcp__example__review" slash command, and its resource as
+// Then reasonix surfaces its tools as "mcp_example_echo" / "mcp_example_wordcount",
+// its prompt as the "/mcp_example_review" slash command, and its resource as
 // the "@example:doc://style-guide" reference.
 //
 // Protocol, one JSON object per line:
@@ -260,7 +260,7 @@ func textResult(text string, isError bool) map[string]any {
 // --- prompts ---
 
 // promptList advertises the server's prompts. They surface in reasonix as
-// /mcp__example__<name> slash commands.
+// /mcp_example__<name> slash commands.
 func promptList() []map[string]any {
 	return []map[string]any{{
 		"name":        "review",
