@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"reasonix/internal/agent"
@@ -494,6 +495,57 @@ func TestRestoreTrashedSessionFile(t *testing.T) {
 	}
 	if got := loadSessionTitles(dir)["session.jsonl"]; got != "My Title" {
 		t.Fatalf("title should survive restore, got %q", got)
+	}
+}
+
+func TestRestoreTrashedSessionFileWithEmptyLiveStub(t *testing.T) {
+	dir := t.TempDir()
+	sessionPath := filepath.Join(dir, "restore-stub.jsonl")
+	if err := os.WriteFile(sessionPath, []byte("data"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := deleteSessionFile(dir, sessionPath); err != nil {
+		t.Fatalf("trash: %v", err)
+	}
+	trashPath := filepath.Join(dir, sessionTrashDir, filepath.Base(sessionPath), filepath.Base(sessionPath))
+	if err := os.WriteFile(sessionPath, nil, 0o644); err != nil {
+		t.Fatalf("write live stub: %v", err)
+	}
+
+	if err := restoreTrashedSessionFile(dir, trashPath); err != nil {
+		t.Fatalf("restore should replace empty live stub: %v", err)
+	}
+	if got, err := os.ReadFile(sessionPath); err != nil || string(got) != "data" {
+		t.Fatalf("restored session = %q, %v; want trash data", string(got), err)
+	}
+	if _, err := os.Stat(filepath.Dir(trashPath)); !os.IsNotExist(err) {
+		t.Fatalf("trash item should be removed after restore, err=%v", err)
+	}
+}
+
+func TestRestoreTrashedSessionFileRejectsNonEmptyLiveConflict(t *testing.T) {
+	dir := t.TempDir()
+	sessionPath := filepath.Join(dir, "restore-conflict.jsonl")
+	if err := os.WriteFile(sessionPath, []byte("trash data"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := deleteSessionFile(dir, sessionPath); err != nil {
+		t.Fatalf("trash: %v", err)
+	}
+	trashPath := filepath.Join(dir, sessionTrashDir, filepath.Base(sessionPath), filepath.Base(sessionPath))
+	if err := os.WriteFile(sessionPath, []byte(`{"role":"user","content":"live"}`+"\n"), 0o644); err != nil {
+		t.Fatalf("write live session: %v", err)
+	}
+
+	err := restoreTrashedSessionFile(dir, trashPath)
+	if err == nil || !strings.Contains(err.Error(), "session already exists") {
+		t.Fatalf("restore conflict error = %v, want session already exists", err)
+	}
+	if got, err := os.ReadFile(sessionPath); err != nil || !strings.Contains(string(got), "live") {
+		t.Fatalf("live session should remain, got %q err=%v", string(got), err)
+	}
+	if _, err := os.Stat(trashPath); err != nil {
+		t.Fatalf("trash session should remain after rejected restore: %v", err)
 	}
 }
 

@@ -67,6 +67,12 @@ func TestEnsureBlankTabReusesExistingBlankTab(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if first.SessionPath == "" {
+		t.Fatal("EnsureBlankTab should pre-create a session path for immediate deletion")
+	}
+	if _, err := os.Stat(first.SessionPath); err != nil {
+		t.Fatalf("pre-created blank session should exist: %v", err)
+	}
 	second, err := app.EnsureBlankTab("global", "")
 	if err != nil {
 		t.Fatal(err)
@@ -76,6 +82,47 @@ func TestEnsureBlankTabReusesExistingBlankTab(t *testing.T) {
 	}
 	if tabs := app.ListTabs(); len(tabs) != 1 {
 		t.Fatalf("ListTabs length = %d, want 1: %+v", len(tabs), tabs)
+	}
+}
+
+func TestEnsureBlankTabReusesPrecreatedBlankBeforeControllerReady(t *testing.T) {
+	isolateDesktopUserDirs(t)
+
+	globalRoot := globalWorkspaceRoot()
+	if err := os.MkdirAll(globalRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	sessionPath := agent.NewSessionPath(desktopSessionDir(globalRoot), "")
+	if err := os.MkdirAll(filepath.Dir(sessionPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(sessionPath, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	app := NewApp()
+	topic, err := app.CreateTopic("global", "", "")
+	if err != nil {
+		t.Fatalf("create topic: %v", err)
+	}
+	app.tabs["blank"] = &WorkspaceTab{
+		ID:            "blank",
+		Scope:         "global",
+		WorkspaceRoot: globalRoot,
+		TopicID:       topic.ID,
+		TopicTitle:    defaultTopicTitle,
+		SessionPath:   sessionPath,
+		disabledMCP:   map[string]ServerView{},
+	}
+	app.tabOrder = []string{"blank"}
+	app.activeTabID = "blank"
+
+	meta, err := app.EnsureBlankTab("global", "")
+	if err != nil {
+		t.Fatalf("EnsureBlankTab: %v", err)
+	}
+	if meta.ID != "blank" {
+		t.Fatalf("EnsureBlankTab created duplicate blank tab %q, want existing pre-created blank", meta.ID)
 	}
 }
 

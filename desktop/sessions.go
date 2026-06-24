@@ -209,12 +209,55 @@ func validateSessionTrashTarget(dir, sessionPath, key string) error {
 		return err
 	}
 	itemDir := filepath.Join(sessionTrashPath(dir), key)
-	if _, err := os.Stat(itemDir); err == nil {
-		return fmt.Errorf("session already exists in trash: %s", key)
+	if info, err := os.Stat(itemDir); err == nil {
+		if !info.IsDir() {
+			return fmt.Errorf("session trash target is not a directory: %s", key)
+		}
+		trashPath := filepath.Join(itemDir, key)
+		if trashInfo, err := os.Stat(trashPath); err == nil && !trashInfo.IsDir() {
+			discardable, err := liveSessionDiscardable(sessionPath)
+			if err != nil {
+				return err
+			}
+			if discardable {
+				return removeDesktopSessionArtifacts(sessionPath)
+			}
+			return fmt.Errorf("session already exists in trash: %s", key)
+		} else if err != nil && !os.IsNotExist(err) {
+			return err
+		}
+		if err := os.RemoveAll(itemDir); err != nil {
+			return err
+		}
+		return nil
 	} else if !os.IsNotExist(err) {
 		return err
 	}
 	return nil
+}
+
+func liveSessionDiscardable(sessionPath string) (bool, error) {
+	if agent.IsCleanupPending(sessionPath) {
+		return true, nil
+	}
+	info, err := os.Stat(sessionPath)
+	if os.IsNotExist(err) {
+		return true, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if info.IsDir() {
+		return false, nil
+	}
+	if info.Size() == 0 {
+		return true, nil
+	}
+	session, err := agent.LoadSession(sessionPath)
+	if err != nil {
+		return false, nil
+	}
+	return !session.HasContent(), nil
 }
 
 func trashSessionArtifactsBeforeMove(dir, sessionPath, key string, beforeMove func()) error {
@@ -304,7 +347,16 @@ func restoreTrashedSessionFile(dir, path string) error {
 	}
 	target := filepath.Join(dir, key)
 	if _, err := os.Stat(target); err == nil {
-		return fmt.Errorf("session already exists: %s", key)
+		discardable, err := liveSessionDiscardable(target)
+		if err != nil {
+			return err
+		}
+		if !discardable {
+			return fmt.Errorf("session already exists: %s", key)
+		}
+		if err := removeDesktopSessionArtifacts(target); err != nil {
+			return err
+		}
 	} else if !os.IsNotExist(err) {
 		return err
 	}

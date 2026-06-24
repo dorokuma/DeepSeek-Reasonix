@@ -1047,6 +1047,14 @@ func (a *App) openTopicTabWithActivation(scope, workspaceRoot, topicID, sessionP
 
 	tabID := a.newUniqueTabIDLocked()
 	topicTitle := topicTitleForTab(scope, workspaceRoot, topicID)
+	if sessionPath == "" {
+		var err error
+		sessionPath, err = createEmptySessionFile(desktopSessionDir(actualRoot), "")
+		if err != nil {
+			a.mu.Unlock()
+			return TabMeta{}, err
+		}
+	}
 	tab := &WorkspaceTab{
 		ID:               tabID,
 		Scope:            scope,
@@ -1255,6 +1263,14 @@ func (a *App) EnsureBlankTab(scope, workspaceRoot string) (TabMeta, error) {
 		a.tabs[tabID] = created
 		a.tabOrder = append(a.tabOrder, tabID)
 		a.activeTabID = tabID
+		prePath, err := createEmptySessionFile(desktopSessionDir(actualRoot), inheritedModel)
+		if err != nil {
+			delete(a.tabs, tabID)
+			a.removeTabOrderLocked(tabID)
+			a.mu.Unlock()
+			return TabMeta{}, err
+		}
+		created.SessionPath = prePath
 		a.saveTabsLocked()
 		meta := a.tabMeta(created, true)
 		a.mu.Unlock()
@@ -1303,6 +1319,14 @@ func (a *App) EnsureBlankTab(scope, workspaceRoot string) (TabMeta, error) {
 	a.tabs[tabID] = created
 	a.tabOrder = append(a.tabOrder, tabID)
 	a.activeTabID = tabID
+	prePath, err := createEmptySessionFile(desktopSessionDir(actualRoot), inheritedModel)
+	if err != nil {
+		delete(a.tabs, tabID)
+		a.removeTabOrderLocked(tabID)
+		a.mu.Unlock()
+		return TabMeta{}, err
+	}
+	created.SessionPath = prePath
 	a.saveTabsLocked()
 	meta := a.tabMeta(created, true)
 	a.mu.Unlock()
@@ -1322,12 +1346,65 @@ func (a *App) blankTabMatchesTargetLocked(tab *WorkspaceTab, scope, workspaceRoo
 		return false
 	}
 	if tab.Ctrl == nil {
-		return strings.TrimSpace(tab.SessionPath) == ""
+		return blankTabSessionPathHasNoContent(tab)
 	}
 	if tab.hasActiveRuntimeWork() {
 		return false
 	}
 	return !messagesHaveConversationContent(tab.Ctrl.History())
+}
+
+func createEmptySessionFile(dir, model string) (string, error) {
+	dir = strings.TrimSpace(dir)
+	if dir == "" {
+		return "", fmt.Errorf("session dir is required")
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", err
+	}
+	for i := 0; i < 3; i++ {
+		path := agent.NewSessionPath(dir, model)
+		f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE|os.O_EXCL, 0o644)
+		if err == nil {
+			if closeErr := f.Close(); closeErr != nil {
+				return "", closeErr
+			}
+			return path, nil
+		}
+		if os.IsExist(err) {
+			continue
+		}
+		return "", err
+	}
+	return "", fmt.Errorf("create empty session file: exhausted filename retries")
+}
+
+func blankTabSessionPathHasNoContent(tab *WorkspaceTab) bool {
+	if tab == nil {
+		return false
+	}
+	if strings.TrimSpace(tab.SessionPath) == "" {
+		return true
+	}
+	path, ok := pinnedTabSessionPath(tabSessionDir(tab), tab.SessionPath)
+	if !ok {
+		return false
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return false
+	}
+	if info.IsDir() {
+		return false
+	}
+	if info.Size() == 0 {
+		return true
+	}
+	session, err := agent.LoadSession(path)
+	if err != nil {
+		return false
+	}
+	return !session.HasContent()
 }
 
 func resetReusableBlankTabTitle(tab *WorkspaceTab, scope, workspaceRoot string) error {
