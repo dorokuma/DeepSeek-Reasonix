@@ -119,7 +119,7 @@ func TestPlanModeDeniedToolsBlocked(t *testing.T) {
 	}
 	for _, name := range denied {
 		t.Run(name, func(t *testing.T) {
-			blocked, msg := (&Agent{}).planModeBlocked(name, false, planmode.PlanSafetyUnknown, nil)
+			blocked, msg := (&Agent{}).planModeBlocked(name, false, false, planmode.PlanSafetyUnknown, nil)
 			if !blocked {
 				t.Errorf("planModeBlocked(%q) = false, want true", name)
 			}
@@ -135,25 +135,25 @@ func TestPlanModeDeniedToolsBlocked(t *testing.T) {
 
 func TestPlanModeReadOnlyToolsAllowed(t *testing.T) {
 	// read_file is on the audited read-only whitelist — Unknown safety suffices.
-	if blocked, _ := (&Agent{}).planModeBlocked("read_file", true, planmode.PlanSafetyUnknown, nil); blocked {
+	if blocked, _ := (&Agent{}).planModeBlocked("read_file", true, false, planmode.PlanSafetyUnknown, nil); blocked {
 		t.Error("audited read-only tool read_file should not be blocked in plan mode")
 	}
 	// read_only_skill is not a built-in; it runs only via its plan-safe self-report.
-	if blocked, _ := (&Agent{}).planModeBlocked("read_only_skill", true, planmode.PlanSafetySafe, nil); blocked {
+	if blocked, _ := (&Agent{}).planModeBlocked("read_only_skill", true, false, planmode.PlanSafetySafe, nil); blocked {
 		t.Error("self-reported plan-safe read_only_skill should not be blocked in plan mode")
 	}
 }
 
 func TestPlanModeAllowedToolsOverride(t *testing.T) {
 	a := &Agent{planModeAllowedTools: []string{"custom_tool"}}
-	blocked, _ := a.planModeBlocked("custom_tool", false, planmode.PlanSafetyUnknown, nil)
+	blocked, _ := a.planModeBlocked("custom_tool", false, false, planmode.PlanSafetyUnknown, nil)
 	if blocked {
 		t.Error("tool in planModeAllowedTools should not be blocked")
 	}
 }
 
 func TestPlanModeGenericWriterBlocked(t *testing.T) {
-	blocked, msg := (&Agent{}).planModeBlocked("some_writer_tool", false, planmode.PlanSafetyUnknown, nil)
+	blocked, msg := (&Agent{}).planModeBlocked("some_writer_tool", false, false, planmode.PlanSafetyUnknown, nil)
 	if !blocked {
 		t.Error("generic writer tool should be blocked in plan mode")
 	}
@@ -180,6 +180,38 @@ func TestPlanModeExternalToolEscapeValve(t *testing.T) {
 	a.SetPlanMode(true)
 	if out := a.executeOne(context.Background(), provider.ToolCall{Name: "mcp__server__query"}); strings.HasPrefix(out.output, "blocked:") {
 		t.Errorf("plan_mode_allowed_tools should let the declared external tool run, got: %q", out.output)
+	}
+}
+
+// untrustedReadOnlyTool models an MCP tool that reports ReadOnly()==true from an
+// untrusted server readOnlyHint (PlanModeUntrustedReadOnly()==true).
+type untrustedReadOnlyTool struct {
+	fakeTool
+}
+
+func (untrustedReadOnlyTool) PlanModeUntrustedReadOnly() bool { return true }
+
+// TestPlanModeUntrustedReadOnlyToolFailsClosed proves the gate does NOT trust an
+// MCP tool's self-reported readOnlyHint: a ReadOnly()==true external tool is
+// still fail-closed in plan mode, and runs only once declared in
+// plan_mode_allowed_tools.
+func TestPlanModeUntrustedReadOnlyToolFailsClosed(t *testing.T) {
+	mk := func() *tool.Registry {
+		reg := tool.NewRegistry()
+		reg.Add(untrustedReadOnlyTool{fakeTool{name: "mcp__srv__query", readOnly: true}})
+		return reg
+	}
+
+	failClosed := New(nil, mk(), NewSession(""), Options{}, event.Discard)
+	failClosed.SetPlanMode(true)
+	if out := failClosed.executeOne(context.Background(), provider.ToolCall{Name: "mcp__srv__query"}); !strings.HasPrefix(out.output, "blocked:") {
+		t.Errorf("untrusted read-only MCP tool should fail closed in plan mode, got: %q", out.output)
+	}
+
+	declared := New(nil, mk(), NewSession(""), Options{PlanModeAllowedTools: []string{"mcp__srv__query"}}, event.Discard)
+	declared.SetPlanMode(true)
+	if out := declared.executeOne(context.Background(), provider.ToolCall{Name: "mcp__srv__query"}); strings.HasPrefix(out.output, "blocked:") {
+		t.Errorf("declared untrusted tool should run in plan mode, got: %q", out.output)
 	}
 }
 

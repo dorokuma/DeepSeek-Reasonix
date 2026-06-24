@@ -149,6 +149,23 @@ func TestReadOnlySubagentToolRegistryKeepsOnlyResearchToolsAndSafeBash(t *testin
 	}
 }
 
+// TestReadOnlySubagentToolRegistryExcludesUntrustedReadOnly proves an MCP tool
+// whose ReadOnly()==true comes from an untrusted server readOnlyHint is excluded
+// from a read-only research sub-agent, even though its ReadOnly contract is true.
+func TestReadOnlySubagentToolRegistryExcludesUntrustedReadOnly(t *testing.T) {
+	parent := tool.NewRegistry()
+	parent.Add(subagentRegistryTool{name: "read_file", readOnly: true})
+	parent.Add(untrustedReadOnlyTool{fakeTool{name: "mcp__srv__read", readOnly: true}})
+
+	sub := ReadOnlySubagentToolRegistry(parent, nil)
+	if _, ok := sub.Get("mcp__srv__read"); ok {
+		t.Fatalf("read-only subagent registry must exclude an untrusted readOnlyHint MCP tool; got %v", sub.Names())
+	}
+	if _, ok := sub.Get("read_file"); !ok {
+		t.Fatalf("a trusted read-only tool should remain; got %v", sub.Names())
+	}
+}
+
 func TestTaskToolBuildSubRegUsesSubagentToolRegistry(t *testing.T) {
 	parent := tool.NewRegistry()
 	parent.Add(subagentRegistryTool{name: "task"})

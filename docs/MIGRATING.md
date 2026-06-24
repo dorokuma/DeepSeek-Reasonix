@@ -100,9 +100,10 @@ and DeepSeek prefix-cache–oriented design.
   external tools**: `[agent].plan_mode_allowed_tools` now only declares extra
   read-only custom/external tools. It no longer unlocks known blocked plan-mode
   tools such as `bash`, `task`, writers, installers, or memory mutation tools, and
-  unsafe bash commands still remain blocked. Because plugin/MCP tools are
-  contractually non-read-only, a read-only MCP/plugin tool you want available
-  while planning must be declared here — otherwise plan mode fails closed on it.
+  unsafe bash commands still remain blocked. An MCP/plugin tool whose read-only
+  status comes from the server's untrusted `readOnlyHint` is not trusted by plan
+  mode; declare it here to use it while planning — otherwise plan mode fails closed
+  on it. First-party `ReadOnlyToolNames` overrides and built-ins stay trusted.
 - **Read-only subagent research**: use `read_only_task` for generic isolated
   research in plan mode, or `read_only_skill` when the work should follow an
   existing skill. Both expose only read-only tools and safe foreground bash, do

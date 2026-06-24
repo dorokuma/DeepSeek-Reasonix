@@ -1671,7 +1671,13 @@ func (a *Agent) executeOne(ctx context.Context, call provider.ToolCall) toolOutc
 				safety = planmode.PlanSafetyUnsafe
 			}
 		}
-		if blocked, msg := a.planModeBlocked(call.Name, t.ReadOnly(), safety, json.RawMessage(call.Arguments)); blocked {
+		// External tools (MCP) whose ReadOnly() is only a server-reported
+		// readOnlyHint are not trusted by plan mode's read-only fast path.
+		untrusted := false
+		if u, ok := t.(tool.PlanModeUntrustedReadOnly); ok {
+			untrusted = u.PlanModeUntrustedReadOnly()
+		}
+		if blocked, msg := a.planModeBlocked(call.Name, t.ReadOnly(), untrusted, safety, json.RawMessage(call.Arguments)); blocked {
 			return toolOutcome{
 				output:  msg,
 				blocked: true,
@@ -1788,12 +1794,13 @@ func (a *Agent) executeOne(ctx context.Context, call provider.ToolCall) toolOutc
 	return toolOutcome{output: body, truncated: truncMsg != "", truncMsg: truncMsg}
 }
 
-func (a *Agent) planModeBlocked(toolName string, readOnly bool, safety planmode.PlanSafety, args json.RawMessage) (blocked bool, message string) {
+func (a *Agent) planModeBlocked(toolName string, readOnly, untrusted bool, safety planmode.PlanSafety, args json.RawMessage) (blocked bool, message string) {
 	decision := planmode.Policy{AllowedTools: a.planModeAllowedTools}.Decide(planmode.Call{
-		Name:     toolName,
-		ReadOnly: readOnly,
-		Safety:   safety,
-		Args:     args,
+		Name:      toolName,
+		ReadOnly:  readOnly,
+		Untrusted: untrusted,
+		Safety:    safety,
+		Args:      args,
 	})
 	return decision.Blocked, decision.Message
 }

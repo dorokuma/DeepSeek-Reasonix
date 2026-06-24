@@ -104,10 +104,12 @@ For the full schema and every field's contract, see [`SPEC.md` §5](./SPEC.md#5-
 
 `[agent].plan_mode_allowed_tools` is an extra read-only declaration for custom or
 external tools Reasonix cannot classify itself — it is also the escape valve for
-read-only MCP/plugin tools, which are contractually non-read-only and so fail
-closed in plan mode until declared here. It never unlocks known blocked plan-mode
-tools such as `bash`, `task`, writers, installers, or memory mutation tools, and
-it never bypasses bash's plan-mode safety checks.
+MCP/plugin tools whose read-only flag comes from an untrusted server
+`readOnlyHint`, which plan mode does not trust and so fails closed on until
+declared here (first-party `ReadOnlyToolNames` overrides and built-ins stay
+trusted). It never unlocks known blocked plan-mode tools such as `bash`, `task`,
+writers, installers, or memory mutation tools, and it never bypasses bash's
+plan-mode safety checks.
 
 ## Serve web frontend
 

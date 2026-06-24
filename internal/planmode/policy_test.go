@@ -154,3 +154,24 @@ func TestDecideBlocksBashProcessControlArguments(t *testing.T) {
 		})
 	}
 }
+
+func TestDecideUntrustedReadOnlyFailsClosedThenOverride(t *testing.T) {
+	// An MCP tool can report ReadOnly()==true via the server's readOnlyHint, but
+	// that signal is untrusted. The read-only fast path must NOT let it run; it
+	// fails closed until declared in plan_mode_allowed_tools.
+	call := Call{Name: "mcp__srv__query", ReadOnly: true, Untrusted: true}
+	d := (Policy{}).Decide(call)
+	if !d.Blocked {
+		t.Fatal("untrusted read-only MCP tool must fail closed in plan mode")
+	}
+	if !strings.Contains(d.Message, "readOnlyHint") {
+		t.Fatalf("blocked message should explain the untrusted hint: %s", d.Message)
+	}
+	if d := (Policy{AllowedTools: []string{"mcp__srv__query"}}).Decide(call); d.Blocked {
+		t.Fatalf("plan_mode_allowed_tools must re-enable the declared MCP tool: %s", d.Message)
+	}
+	// A trusted read-only tool (first-party override, Untrusted=false) is allowed.
+	if d := (Policy{}).Decide(Call{Name: "mcp__srv__read", ReadOnly: true, Untrusted: false}); d.Blocked {
+		t.Fatalf("a trusted read-only tool should be allowed: %s", d.Message)
+	}
+}
