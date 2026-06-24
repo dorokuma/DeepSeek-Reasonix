@@ -30,6 +30,7 @@ import {
   clampWorkspaceSplitTreeWidth,
   initialWorkspaceSplitTreeWidth,
   resolveWorkspaceSplitTreeWidth,
+  shouldInitializeWorkspaceSplitOnFileSelect,
   type WorkspaceSplitTreeWidthMode,
   workspaceSplitCanFit,
   workspaceSplitTreeWidthFromPointer,
@@ -361,14 +362,20 @@ export function WorkspacePanel({
 
   const selectFile = useCallback(
     (path: string) => {
-      setTreeWidth(initialWorkspaceSplitTreeWidth({
-        panelWidth,
-        railWidth: WORKSPACE_TREE_RAIL_WIDTH,
-        savedTreeWidth: null,
-        treeMinWidth: WORKSPACE_TREE_MIN_WIDTH,
-        previewMinWidth: WORKSPACE_PREVIEW_MIN_WIDTH,
-      }));
-      setTreeWidthMode("even");
+      const initializeSplit = shouldInitializeWorkspaceSplitOnFileSelect({
+        previewVisible: openTabs.length > 0 || selectedPath !== null,
+        treeVisible,
+      });
+      if (initializeSplit) {
+        setTreeWidth(initialWorkspaceSplitTreeWidth({
+          panelWidth,
+          railWidth: WORKSPACE_TREE_RAIL_WIDTH,
+          savedTreeWidth: null,
+          treeMinWidth: WORKSPACE_TREE_MIN_WIDTH,
+          previewMinWidth: WORKSPACE_PREVIEW_MIN_WIDTH,
+        }));
+        setTreeWidthMode("even");
+      }
       setSelectedPath(path);
       setScopedFilePaths((current) => {
         if (current) dismissedFileListRequestIdRef.current = lastFileListRequestIdRef.current;
@@ -386,7 +393,7 @@ export function WorkspacePanel({
         if (!entriesByDir[dir]) void loadDir(dir);
       });
     },
-    [entriesByDir, loadDir, panelWidth],
+    [entriesByDir, loadDir, openTabs.length, panelWidth, selectedPath, treeVisible],
   );
 
   useEffect(() => {
@@ -892,9 +899,11 @@ export function WorkspacePanel({
       const rect = panel?.getBoundingClientRect();
       if (!panel || !rect) return;
       event.preventDefault();
+      const committedTreeWidth = clampWorkspaceTreeWidth(effectiveTreeWidth, panelWidth);
+      setTreeWidth(committedTreeWidth);
       setTreeWidthMode("manual");
       setTreeResizing(true);
-      let nextWidth = effectiveTreeWidth;
+      let nextWidth = committedTreeWidth;
       const liveResize = createRafResizeUpdater({
         target: panel,
         separator: event.currentTarget,
@@ -927,7 +936,7 @@ export function WorkspacePanel({
       window.addEventListener("pointerup", onDone);
       window.addEventListener("pointercancel", onDone);
     },
-    [effectiveTreeWidth, treeVisible],
+    [effectiveTreeWidth, panelWidth, treeVisible],
   );
 
   const resizeTreeWithKeyboard = useCallback(

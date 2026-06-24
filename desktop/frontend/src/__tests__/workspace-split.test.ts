@@ -3,6 +3,7 @@
 import {
   initialWorkspaceSplitTreeWidth,
   resolveWorkspaceSplitTreeWidth,
+  shouldInitializeWorkspaceSplitOnFileSelect,
   workspaceSplitCanFit,
   workspaceSplitTreeWidthFromPointer,
 } from "../lib/workspaceSplit";
@@ -152,6 +153,46 @@ eq(
 const closedRecentPreview = closeWorkspacePreviewTab(["a.ts", "b.ts", "c.ts"], "c.ts");
 eq(closedRecentPreview.selectedPath, "b.ts", "closing the current preview falls back to the previous recent file");
 eq(closedRecentPreview.openTabs.join(","), "a.ts,b.ts", "closing one preview preserves the other recent files");
+
+eq(
+  shouldInitializeWorkspaceSplitOnFileSelect({ previewVisible: false, treeVisible: true }),
+  true,
+  "opening the first preview initializes an even file split",
+);
+
+eq(
+  shouldInitializeWorkspaceSplitOnFileSelect({ previewVisible: true, treeVisible: true }),
+  false,
+  "switching files while preview and tree are visible preserves the manual split",
+);
+
+eq(
+  shouldInitializeWorkspaceSplitOnFileSelect({ previewVisible: true, treeVisible: false }),
+  true,
+  "revealing the hidden tree initializes an even file split",
+);
+
+const effectiveEvenTreeWidth = resolveWorkspaceSplitTreeWidth({
+  mode: "even",
+  currentTreeWidth: TREE_MIN_WIDTH,
+  panelWidth: 660,
+  railWidth: TREE_RAIL_WIDTH,
+  treeMinWidth: TREE_MIN_WIDTH,
+  previewMinWidth: PREVIEW_MIN_WIDTH,
+});
+
+eq(
+  resolveWorkspaceSplitTreeWidth({
+    mode: "manual",
+    currentTreeWidth: effectiveEvenTreeWidth,
+    panelWidth: 660,
+    railWidth: TREE_RAIL_WIDTH,
+    treeMinWidth: TREE_MIN_WIDTH,
+    previewMinWidth: PREVIEW_MIN_WIDTH,
+  }),
+  effectiveEvenTreeWidth,
+  "entering manual resize from even split keeps the currently rendered tree width",
+);
 
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed > 0) process.exit(1);

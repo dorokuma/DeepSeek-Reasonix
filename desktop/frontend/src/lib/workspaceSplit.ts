@@ -45,6 +45,16 @@ export function initialWorkspaceSplitTreeWidth({
 
 export type WorkspaceSplitTreeWidthMode = "even" | "manual";
 
+export function shouldInitializeWorkspaceSplitOnFileSelect({
+  previewVisible,
+  treeVisible,
+}: {
+  previewVisible: boolean;
+  treeVisible: boolean;
+}): boolean {
+  return !previewVisible || !treeVisible;
+}
+
 export function resolveWorkspaceSplitTreeWidth({
   mode,
   currentTreeWidth,
