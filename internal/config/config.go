@@ -1200,9 +1200,19 @@ func (e ProviderEntry) resolveWithPrice(model string) *ProviderEntry {
 }
 
 // APIKey resolves the entry's API key from its api_key_env.
+// If {api_key_env}_FILE is set, the key is read from that file instead,
+// which avoids exposing the secret in /proc/PID/environ.
 func (e *ProviderEntry) APIKey() string {
 	if e.APIKeyEnv == "" {
 		return ""
+	}
+	// Prefer the _FILE variant (secret passed via temp file path).
+	// Falls back to the plain env var if the file is missing or unreadable.
+	if file := os.Getenv(e.APIKeyEnv + "_FILE"); file != "" {
+		b, err := os.ReadFile(file)
+		if err == nil {
+			return strings.TrimSpace(string(b))
+		}
 	}
 	return os.Getenv(e.APIKeyEnv)
 }

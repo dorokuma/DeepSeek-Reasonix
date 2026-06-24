@@ -664,7 +664,7 @@ func (a *Agent) Run(ctx context.Context, input string) error {
 				if emptyFinalBlocks >= maxEmptyFinalBlocks {
 					return fmt.Errorf("model finished without a visible final answer %d times", emptyFinalBlocks)
 				}
-				a.sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelWarn, Text: "empty final answer blocked: model returned no visible answer text; retrying"})
+				// a.sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelWarn, Text: "empty final answer blocked: model returned no visible answer text; retrying"})
 				// 在重试前，先将已生成的 assistant 消息（包含已生成的 reasoning 思考过程和 signature 等）添加进会话 session。
 				// 这样做是为了保留已有的推理思考过程，避免重试时模型需要从头重新进行长时间思考（长考），
 				// 如果不保存，模型重新思考不仅耗费资源，还极易在下一次输出时再次因为达到 max_tokens 而被截断。
