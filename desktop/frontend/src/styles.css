@@ -17960,7 +17960,7 @@ a[href] {
   --wails-draggable: no-drag;
   flex: 1 1 auto;
   min-width: 0;
-  height: 26px;
+  align-self: stretch;
   border: 1px solid var(--accent-soft);
   border-radius: 7px;
   background: var(--bg-elev);
