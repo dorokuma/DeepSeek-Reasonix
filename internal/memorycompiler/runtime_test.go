@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	runtimesnapshot "reasonix/internal/runtime/snapshot"
 )
 
 func TestStartTurnEmptyStateDoesNotInjectIR(t *testing.T) {
@@ -794,6 +796,102 @@ func TestTruthLockedNodeCannotBeOverwritten(t *testing.T) {
 	})
 	if nodes[0].Content != "original result" {
 		t.Fatalf("truth-locked node was overwritten: %+v", nodes[0])
+	}
+}
+
+func TestProductionHardeningBlocksBudgetExceededCompilerInjection(t *testing.T) {
+	dir := t.TempDir()
+	now := time.Now().UTC()
+	st := state{
+		Nodes: []MemoryNode{
+			{
+				ID:         "m1",
+				Type:       "fact",
+				Content:    "first relevant memory",
+				Timestamp:  now,
+				Confidence: 0.9,
+				Quality:    QualityHighSignal,
+				Constraint: &Constraint{Type: "must_use", Text: "use first relevant memory", Source: "m1"},
+			},
+			{
+				ID:         "m2",
+				Type:       "fact",
+				Content:    "second relevant memory",
+				Timestamp:  now,
+				Confidence: 0.8,
+				Quality:    QualityHighSignal,
+			},
+		},
+		Production: normalizeProductionState(ProductionState{}),
+	}
+	st.Production.Budget.MaxMemoryNodes = 1
+	if err := writeJSON(filepath.Join(dir, stateFile), st); err != nil {
+		t.Fatal(err)
+	}
+	ctx, turn := New(dir).StartTurn(context.Background(), "fix a bug", nil)
+	if ctx != "" {
+		t.Fatalf("budget exceeded turn injected contract:\n%s", ctx)
+	}
+	if turn == nil || turn.trace.ProductionHardening == nil {
+		t.Fatalf("missing production hardening trace: %+v", turn)
+	}
+	hardening := turn.trace.ProductionHardening
+	if hardening.Allowed {
+		t.Fatalf("hardening allowed exceeded budget: %+v", hardening)
+	}
+	if !strings.Contains(strings.Join(hardening.BlockReasons, "\n"), "memory node budget exceeded") {
+		t.Fatalf("missing memory budget reason: %+v", hardening.BlockReasons)
+	}
+}
+
+func TestProductionHardeningCreatesSnapshotAndRestoresState(t *testing.T) {
+	dir := t.TempDir()
+	rt := New(dir)
+	now := time.Now().UTC()
+	st := state{
+		Nodes: []MemoryNode{{
+			ID:         "stable",
+			Type:       "fact",
+			Content:    "stable memory",
+			Timestamp:  now,
+			Confidence: 0.9,
+			Quality:    QualityHighSignal,
+		}},
+		Strategies: ensureBuiltInStrategies(nil),
+		Production: normalizeProductionState(ProductionState{}),
+		NoisyRefs:  map[string]int{},
+	}
+	tr := ExecutionTrace{
+		ID:          "trace-production",
+		IRVersion:   version,
+		Goal:        "fix a bug",
+		Steps:       []Step{{ID: "validate", Action: "Validate"}},
+		Outcome:     "success",
+		Cost:        CostMetrics{EstimatedInputTokens: 10, EstimatedCompiledTokens: 5, ToolCalls: 1},
+		StartedAt:   now,
+		CompletedAt: now.Add(time.Second),
+	}
+	next, tr := rt.applyProductionHardening(st, tr, defaultControlPolicy(), now)
+	if tr.ProductionHardening == nil || tr.ProductionHardening.SnapshotID == "" {
+		t.Fatalf("missing production snapshot in trace: %+v", tr.ProductionHardening)
+	}
+	if next.Production.LastSnapshotID != tr.ProductionHardening.SnapshotID {
+		t.Fatalf("last snapshot = %q, trace snapshot = %q", next.Production.LastSnapshotID, tr.ProductionHardening.SnapshotID)
+	}
+	if snap, err := runtimesnapshot.Load(dir, tr.ProductionHardening.SnapshotID); err != nil || !snap.Stable {
+		t.Fatalf("snapshot load = %+v err=%v, want stable snapshot", snap, err)
+	}
+	mutated := next
+	mutated.Nodes = append(mutated.Nodes, MemoryNode{ID: "corrupted", Type: "state", Content: "bad", Quality: QualityCorrupted})
+	restored, err := restoreProductionSnapshot(dir, tr.ProductionHardening.SnapshotID, mutated.Production)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertNode(t, restored.Nodes, func(n MemoryNode) bool { return n.ID == "stable" }, "restored stable node")
+	for _, node := range restored.Nodes {
+		if node.ID == "corrupted" {
+			t.Fatalf("restore kept corrupted node: %+v", restored.Nodes)
+		}
 	}
 }
 
