@@ -50,7 +50,6 @@ const (
 type lazySpawn struct {
 	spec Spec
 	host *Host
-	reg  *tool.Registry
 	ctx  context.Context // session-scoped — outlives any single turn
 
 	mu       sync.Mutex
@@ -58,11 +57,8 @@ type lazySpawn struct {
 	real     map[string]tool.Tool // namespaced name → real tool, populated on success
 	spawnErr error
 	swapped  bool
-	// removePrefix is set for cache-miss placeholders so trySwap drops the
-	// single "<server>__connect" stub before re-registering the real tools
-	// under their actual namespaced names. Cache-hit placeholders use the
-	// same names as the real tools, so reg.Add overwrites in place and no
-	// prefix removal is needed.
+	// removePrefix is used to construct the connect-stub tool name
+	// for cache-miss placeholders.
 	removePrefix string
 }
 
@@ -100,17 +96,13 @@ func (s *lazySpawn) run() {
 	s.trySwap()
 }
 
-// trySwap installs the real tools into reg if the spawn is ready and the
-// swap hasn't happened. Caller must hold s.mu.
+// trySwap marks the swap as done. The actual registration is handled by
+// addConnected (called via host.Add), which already removes the old prefix
+// and adds the real tools. This method exists only to set the swapped flag
+// so subsequent calls are no-ops.
 func (s *lazySpawn) trySwap() {
 	if s.swapped || s.state != spawnReady {
 		return
-	}
-	if s.removePrefix != "" {
-		s.reg.RemovePrefix(s.removePrefix)
-	}
-	for _, t := range s.real {
-		s.reg.Add(t)
 	}
 	s.swapped = true
 }
@@ -221,15 +213,15 @@ func (lt *lazyTool) Execute(ctx context.Context, args json.RawMessage) (string, 
 // kick=true (background tier) also fires off the spawn immediately, so an
 // idle session warms up without waiting for the first model call.
 //
-// host is the Host that receives the real Client. reg is the registry where
-// real tools land after a successful spawn. sessionCtx must outlive any
-// single Execute (use the controller's PluginCtx) — a turn-scoped ctx would
-// kill the stdio child between turns.
-func LazyToolset(spec Spec, cs *CachedSchema, host *Host, reg *tool.Registry, sessionCtx context.Context, kick bool) []tool.Tool {
+// host is the Host that receives the real Client. The caller must have already
+// set the registry on host via SetRegistry so that addConnected auto-registers
+// the real tools after a successful spawn. sessionCtx must outlive any single
+// Execute (use the controller's PluginCtx) — a turn-scoped ctx would kill the
+// stdio child between turns.
+func LazyToolset(spec Spec, cs *CachedSchema, host *Host, sessionCtx context.Context, kick bool) []tool.Tool {
 	shared := &lazySpawn{
 		spec: spec,
 		host: host,
-		reg:  reg,
 		ctx:  sessionCtx,
 	}
 

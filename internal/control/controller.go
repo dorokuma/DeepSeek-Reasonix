@@ -1512,15 +1512,10 @@ func (c *Controller) connectMCPSpec(s plugin.Spec) (int, error) {
 	if c.host == nil {
 		c.host = plugin.NewHost()
 	}
+	c.host.SetRegistry(c.reg)
 	tools, err := c.host.Add(c.pluginCtx, s)
 	if err != nil {
 		return 0, err
-	}
-	if c.reg != nil {
-		c.reg.RemovePrefix(plugin.ToolPrefix(s.Name))
-		for _, t := range tools {
-			c.reg.Add(t)
-		}
 	}
 	return len(tools), nil
 }
@@ -1626,11 +1621,8 @@ func (c *Controller) ConnectConfiguredMCPServer(name string) (int, error) {
 // session but returns on the next start, since that file isn't ours to edit.
 func (c *Controller) RemoveMCPServer(name string) (disconnected bool, err error) {
 	if c.host != nil {
-		if prefix, ok := c.host.Remove(name); ok {
+		if _, ok := c.host.Remove(name); ok {
 			disconnected = true
-			if c.reg != nil {
-				c.reg.RemovePrefix(prefix)
-			}
 		}
 	}
 	cfg, lerr := config.Load()
@@ -1659,11 +1651,8 @@ func (c *Controller) RemoveMCPServer(name string) (disconnected bool, err error)
 func (c *Controller) DisconnectMCPServer(name string) bool {
 	disconnected := false
 	if c.host != nil {
-		if prefix, ok := c.host.Remove(name); ok {
+		if _, ok := c.host.Remove(name); ok {
 			disconnected = true
-			if c.reg != nil {
-				c.reg.RemovePrefix(prefix)
-			}
 		}
 	}
 	removedPlaceholder := 0

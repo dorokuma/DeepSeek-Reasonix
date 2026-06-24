@@ -20,6 +20,7 @@ import (
 	"reasonix/internal/event"
 	"reasonix/internal/i18n"
 	"reasonix/internal/provider"
+	"reasonix/internal/tool"
 )
 
 type blockingTurnRunner struct{ started chan struct{} }
@@ -1141,6 +1142,7 @@ func TestUnsendRestoresFoldedPastePlaceholder(t *testing.T) {
 }
 
 func TestApprovalToolDetailsShortensMCPNames(t *testing.T) {
+	tool.RegisterMCPPrefixes([]string{"mcp_minimax-coding-plan-mcp_"})
 	name, detail := approvalToolDetails("mcp_minimax-coding-plan-mcp_understand_image")
 	if name != "understand_image" {
 		t.Fatalf("name = %q, want understand_image", name)

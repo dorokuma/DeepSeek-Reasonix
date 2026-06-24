@@ -91,10 +91,11 @@ func TestLazyCacheHitSyncSpawn(t *testing.T) {
 	host := NewHost()
 	defer host.Close()
 	reg := tool.NewRegistry()
+	host.SetRegistry(reg)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	tools := LazyToolset(spec, cs, host, reg, ctx, false)
+	tools := LazyToolset(spec, cs, host, ctx, false)
 	if len(tools) != 2 {
 		t.Fatalf("LazyToolset returned %d tools, want 2 (echo + zed)", len(tools))
 	}
@@ -158,10 +159,11 @@ func TestLazyToolsetAppliesSpecReadOnlyOverrideToCachedTools(t *testing.T) {
 	host := NewHost()
 	defer host.Close()
 	reg := tool.NewRegistry()
+	host.SetRegistry(reg)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	tools := LazyToolset(spec, cs, host, reg, ctx, false)
+	tools := LazyToolset(spec, cs, host, ctx, false)
 	byName := map[string]tool.Tool{}
 	for _, tl := range tools {
 		byName[tl.Name()] = tl
@@ -195,10 +197,11 @@ func TestLazyCacheMissAsyncSpawn(t *testing.T) {
 	host := NewHost()
 	defer host.Close()
 	reg := tool.NewRegistry()
+	host.SetRegistry(reg)
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
-	tools := LazyToolset(spec, nil, host, reg, ctx, false)
+	tools := LazyToolset(spec, nil, host, ctx, false)
 	if len(tools) != 1 {
 		t.Fatalf("cache-miss LazyToolset must return 1 connect stub, got %d", len(tools))
 	}
@@ -249,10 +252,11 @@ func TestLazySwapDoesNotRaceRegistrySchemas(t *testing.T) {
 	host := NewHost()
 	defer host.Close()
 	reg := tool.NewRegistry()
+	host.SetRegistry(reg)
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
-	tools := LazyToolset(spec, cs, host, reg, ctx, false)
+	tools := LazyToolset(spec, cs, host, ctx, false)
 	for _, lt := range tools {
 		reg.Add(lt)
 	}
@@ -301,10 +305,11 @@ func TestLazyBackgroundKick(t *testing.T) {
 	host := NewHost()
 	defer host.Close()
 	reg := tool.NewRegistry()
+	host.SetRegistry(reg)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	tools := LazyToolset(spec, cs, host, reg, ctx, true) // kick=true
+	tools := LazyToolset(spec, cs, host, ctx, true) // kick=true
 	if len(tools) != 2 {
 		t.Fatalf("LazyToolset(kick=true) returned %d tools, want 2", len(tools))
 	}
@@ -357,10 +362,11 @@ func TestLazyConcurrentExecuteOnlyOneSpawn(t *testing.T) {
 	host := NewHost()
 	defer host.Close()
 	reg := tool.NewRegistry()
+	host.SetRegistry(reg)
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
-	tools := LazyToolset(spec, cs, host, reg, ctx, false)
+	tools := LazyToolset(spec, cs, host, ctx, false)
 	for _, lt := range tools {
 		reg.Add(lt)
 	}
@@ -457,10 +463,11 @@ func TestLazyHandshakeFailureSurfaced(t *testing.T) {
 	host := NewHost()
 	defer host.Close()
 	reg := tool.NewRegistry()
+	host.SetRegistry(reg)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	tools := LazyToolset(spec, cs, host, reg, ctx, false)
+	tools := LazyToolset(spec, cs, host, ctx, false)
 	if len(tools) != 1 {
 		t.Fatalf("LazyToolset returned %d tools, want 1 (doit)", len(tools))
 	}
@@ -513,10 +520,11 @@ func TestLazyToolsetCacheHitSchemaVisible(t *testing.T) {
 	host := NewHost()
 	defer host.Close()
 	reg := tool.NewRegistry()
+	host.SetRegistry(reg)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	tools := LazyToolset(spec, cs, host, reg, ctx, false)
+	tools := LazyToolset(spec, cs, host, ctx, false)
 	if len(tools) != 1 {
 		t.Fatalf("LazyToolset returned %d tools, want 1", len(tools))
 	}

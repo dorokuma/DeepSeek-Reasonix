@@ -274,6 +274,7 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	// Always construct a host, even with no plugins configured, so the controller's
 	// host pointer is stable for the session and `/mcp add` can hot-add into it.
 	pluginHost := plugin.NewHost()
+	pluginHost.SetRegistry(reg)
 
 	// Partition configured plugins by tier so eager/lazy/background can each
 	// take the path that fits them. User entries default to background: the
@@ -317,6 +318,7 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	// Eager: block until handshake. Failures show up in /mcp.
 	if len(eagerSpecs) > 0 {
 		host, ptools := plugin.StartAvailable(ctx, eagerSpecs)
+		host.SetRegistry(reg)
 		pluginHost = host
 		for _, t := range ptools {
 			reg.Add(t)
@@ -337,7 +339,7 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	registerDeferred := func(specs []plugin.Spec, kick bool) {
 		for _, s := range specs {
 			cs, _ := plugin.LoadCachedSchema(s.Name, plugin.SpecFingerprint(s))
-			for _, t := range plugin.LazyToolset(s, cs, pluginHost, reg, ctx, kick) {
+			for _, t := range plugin.LazyToolset(s, cs, pluginHost, ctx, kick) {
 				reg.Add(t)
 			}
 		}
@@ -542,16 +544,10 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 			if err != nil {
 				return installsource.MCPConnectResult{}, err
 			}
-			reg.RemovePrefix(plugin.ToolPrefix(spec.Name))
-			for _, t := range tools {
-				reg.Add(t)
-			}
 			// Disconnect closes the server and drops its namespaced tools.
 			// Used by the install_source rollback path when SaveTo fails.
 			disconnect := func() {
-				if prefix, ok := pluginHost.Remove(spec.Name); ok {
-					reg.RemovePrefix(prefix)
-				}
+				pluginHost.Remove(spec.Name)
 			}
 			return installsource.MCPConnectResult{
 				ToolCount:  len(tools),
@@ -559,11 +555,8 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 			}, nil
 		},
 		OnDisconnect: func(serverName string) bool {
-			if prefix, ok := pluginHost.Remove(serverName); ok {
-				reg.RemovePrefix(prefix)
-				return true
-			}
-			return false
+			_, ok := pluginHost.Remove(serverName)
+			return ok
 		},
 	}))
 	for _, t := range skill.BuiltinSubagentTools(skillStore, skillRunner, skillProfile) {

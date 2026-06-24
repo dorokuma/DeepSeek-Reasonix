@@ -79,6 +79,7 @@ type Host struct {
 	// after that a /mcp hot-add or -remove (one goroutine) can run concurrently
 	// with reads from a running turn's @ref resolution or the status UI.
 	mu        sync.RWMutex
+	reg       *tool.Registry
 	clients   []*Client
 	prompts   []Prompt
 	resources []Resource
@@ -594,6 +595,12 @@ func NewHost() *Host {
 	return &Host{ctx: ctx, cancel: cancel}
 }
 
+// SetRegistry injects the tool registry into the Host so that addConnected and
+// Remove can auto-register/auto-cleanup tools — eliminating duplicate
+// bookkeeping at every call site and fixing the auto-restart leak where a
+// restarted server's tools never re-entered the registry.
+func (h *Host) SetRegistry(r *tool.Registry) { h.reg = r }
+
 // has reports whether a server with this name is already connected.
 func (h *Host) has(name string) bool {
 	h.mu.RLock()
@@ -655,6 +662,17 @@ func (h *Host) addConnected(ctx context.Context, s Spec) ([]tool.Tool, error) {
 	h.clients = append(h.clients, c)
 	h.clearFailure(s.Name)
 	h.mu.Unlock()
+
+	// Auto-register tools in the registry so callers don't need to do it
+	// manually. This is the single registration point for both hot-add and
+	// auto-restart (which calls addConnected via Add after a crash).
+	if h.reg != nil {
+		h.reg.RemovePrefix(ToolPrefix(s.Name))
+		for _, t := range ts {
+			h.reg.Add(t)
+		}
+	}
+
 	tool.RegisterMCPPrefixes(h.ServerPrefixes())
 	// Prompts and resources stream in on the long ctx the caller passed (Host.Add
 	// uses the session-scoped PluginCtx, not a per-turn ctx), so the slow list
@@ -802,6 +820,10 @@ func (h *Host) Remove(name string) (toolPrefix string, found bool) {
 	tool.RegisterMCPPrefixes(h.ServerPrefixes())
 
 	removed.close() // kills the subprocess: outside the lock
+
+	if h.reg != nil {
+		h.reg.RemovePrefix(ToolPrefix(name))
+	}
 
 	return ToolPrefix(name), true
 }
