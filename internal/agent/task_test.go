@@ -216,6 +216,7 @@ func TestReadOnlyTaskToolRunsEphemerallyWithReadOnlyRegistry(t *testing.T) {
 	parentReg.Add(fakeTool{name: "write_file", readOnly: false})
 	parentReg.Add(fakeTool{name: "todo_write", readOnly: true})
 	parentReg.Add(fakeTool{name: "complete_step", readOnly: true})
+	parentReg.Add(fakeTool{name: "connect_tool_source", readOnly: true})
 	parentReg.Add(fakeTool{name: "bash", readOnly: false})
 	task := newTestTaskTool(t, sub, parentReg, "writer sys", "", "", nil)
 	readonly := NewReadOnlyTaskTool(task)
@@ -245,7 +246,7 @@ func TestReadOnlyTaskToolRunsEphemerallyWithReadOnlyRegistry(t *testing.T) {
 			t.Fatalf("read_only_task sub-agent missing %q; tools=%v", want, toolSchemaNames(sub.lastReq.Tools))
 		}
 	}
-	for _, hidden := range []string{"write_file", "todo_write", "complete_step", "task", "read_only_task"} {
+	for _, hidden := range []string{"write_file", "todo_write", "complete_step", "connect_tool_source", "task", "read_only_task"} {
 		if got[hidden] {
 			t.Fatalf("read_only_task sub-agent should hide %q; tools=%v", hidden, toolSchemaNames(sub.lastReq.Tools))
 		}

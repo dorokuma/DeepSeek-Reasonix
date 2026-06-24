@@ -1210,6 +1210,10 @@ func TestBuildTokenEconomyPlanModeCanConnectReadOnlyTask(t *testing.T) {
 		testutil.Turn{ToolCalls: []provider.ToolCall{
 			{ID: "source-1", Name: "connect_tool_source", Arguments: `{"source":"read_only_task"}`},
 		}},
+		testutil.Turn{ToolCalls: []provider.ToolCall{
+			{ID: "readonly-1", Name: "read_only_task", Arguments: `{"prompt":"inspect safely"}`},
+		}},
+		testutil.Turn{Text: "read-only findings"},
 		testutil.Turn{Text: "done"},
 	)
 	setBootTokenProfileTestProvider(t, prov)
@@ -1235,14 +1239,30 @@ model = "x"
 		t.Fatalf("Run: %v", err)
 	}
 	reqs := prov.Requests()
-	if len(reqs) != 2 {
-		t.Fatalf("requests = %d, want 2", len(reqs))
+	if len(reqs) != 4 {
+		t.Fatalf("requests = %d, want 4", len(reqs))
 	}
 	if !requestHasTool(reqs[1], "read_only_task") {
 		t.Fatalf("second request should expose read_only_task in plan economy mode; tools=%v", toolSchemaNames(reqs[1].Tools))
 	}
 	if requestHasTool(reqs[1], "task") {
 		t.Fatalf("read_only_task source should not expose writer-capable task; tools=%v", toolSchemaNames(reqs[1].Tools))
+	}
+	subReq := reqs[2]
+	if !requestHasTool(subReq, "bash") || !requestHasTool(subReq, "read_file") {
+		t.Fatalf("read_only_task child request should keep read-only research tools; tools=%v", toolSchemaNames(subReq.Tools))
+	}
+	if requestToolSchemaContains(subReq, "bash", "run_in_background") {
+		t.Fatalf("read_only_task child bash schema should not advertise run_in_background")
+	}
+	for _, forbidden := range []string{
+		"connect_tool_source", "task", "read_only_task", "parallel_tasks",
+		"install_source", "run_skill", "install_skill", "remember", "forget",
+		"write_file", "edit_file", "multi_edit", "move_file", "complete_step",
+	} {
+		if requestHasTool(subReq, forbidden) {
+			t.Fatalf("read_only_task child request should hide %q; tools=%v", forbidden, toolSchemaNames(subReq.Tools))
+		}
 	}
 	for _, msg := range ctrl.History() {
 		if msg.Role == provider.RoleTool && msg.Name == "connect_tool_source" && strings.Contains(msg.Content, "blocked:") {

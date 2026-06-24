@@ -52,6 +52,10 @@ var subagentJobTools = []string{
 	"kill_shell",
 }
 
+var readOnlySubagentWorkflowTools = []string{
+	"connect_tool_source",
+}
+
 const subagentToolBoundarySummary = "Recursive agent/skill tools and unsupported background job tools (wait, bash_output, kill_shell) are excluded; bash is exposed as foreground-only inside subagents."
 
 // SubagentMetaTools returns the tool names that spawned agents should not inherit
@@ -591,6 +595,7 @@ func PlannerToolRegistry(parent *tool.Registry) *tool.Registry {
 func ReadOnlySubagentToolRegistry(parent *tool.Registry, names []string) *tool.Registry {
 	exclude := append(SubagentMetaTools(), subagentJobTools...)
 	exclude = append(exclude, plannerNonResearchTools...)
+	exclude = append(exclude, readOnlySubagentWorkflowTools...)
 	ex := make(map[string]bool, len(exclude))
 	for _, e := range exclude {
 		ex[e] = true

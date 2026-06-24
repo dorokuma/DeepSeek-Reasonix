@@ -109,6 +109,7 @@ func TestReadOnlySubagentToolRegistryKeepsOnlyResearchToolsAndSafeBash(t *testin
 	parent.Add(subagentRegistryTool{name: "remember"})
 	parent.Add(subagentRegistryTool{name: "todo_write", readOnly: true})
 	parent.Add(subagentRegistryTool{name: "complete_step", readOnly: true})
+	parent.Add(subagentRegistryTool{name: "connect_tool_source", readOnly: true})
 	parent.Add(subagentRegistryTool{name: "read_file", readOnly: true})
 	parent.Add(subagentRegistryTool{
 		name:   "bash",
@@ -117,7 +118,7 @@ func TestReadOnlySubagentToolRegistryKeepsOnlyResearchToolsAndSafeBash(t *testin
 	})
 
 	sub := ReadOnlySubagentToolRegistry(parent, nil)
-	for _, hidden := range []string{"task", "read_only_task", "write_file", "remember", "todo_write", "complete_step"} {
+	for _, hidden := range []string{"task", "read_only_task", "write_file", "remember", "todo_write", "complete_step", "connect_tool_source"} {
 		if _, ok := sub.Get(hidden); ok {
 			t.Fatalf("read-only subagent registry should hide %q; got %v", hidden, sub.Names())
 		}
