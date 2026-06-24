@@ -38,9 +38,9 @@ import (
 )
 
 // chatTUI is a bubbletea Model that normally owns the terminal with an
-// alt-screen transcript viewport. Termux is the exception: enabling mouse mode
-// prevents taps from raising the soft keyboard, so it stays in the normal buffer
-// and commits finalized output to native scrollback via tea.Println.
+// alt-screen transcript viewport. Android terminals are the exception: enabling
+// mouse mode prevents taps from raising the soft keyboard, so they stay in the
+// normal buffer and commit finalized output to native scrollback via tea.Println.
 type chatTUI struct {
 	ctrl    *control.Controller
 	label   string
@@ -48,9 +48,12 @@ type chatTUI struct {
 
 	width  int
 	height int
-	// nativeScrollback keeps Termux out of alt-screen/mouse mode so taps still
-	// focus the textarea and raise the soft keyboard.
+	// nativeScrollback keeps Android terminals out of alt-screen/mouse mode so taps still
+	// focus tap events and raise the soft keyboard.
 	nativeScrollback bool
+	// ForceNativeScrollback overrides auto-detection when set to true (e.g. via
+	// the --native-scrollback CLI flag).
+	ForceNativeScrollback bool
 
 	input   textarea.Model
 	spinner spinner.Model
@@ -129,7 +132,7 @@ type chatTUI struct {
 	// reasoningView is a bounded trailing window (≤ reasoningViewMax bytes) of the
 	// streaming thought, rendered live; the full text stays in reasoning for verbose.
 	reasoningView []byte
-	// reasoningNative is the Termux/native-scrollback path: reasoning is buffered
+	// reasoningNative is the Android/native-scrollback path: reasoning is buffered
 	// without a live transcript block, then appended once as a final summary.
 	reasoningNative bool
 	thinkStart      time.Time
@@ -434,7 +437,7 @@ func newChatTUI(ctrl *control.Controller, missing string, eventCh chan event.Eve
 	sp.Style = themeStyle(activeCLITheme.accent)
 
 	commitBuf := []string{}
-	nativeScrollback := detectTermuxTerminal()
+	nativeScrollback := detectAndroidTerminal()
 	return chatTUI{
 		ctrl:                 ctrl,
 		label:                ctrl.Label(),
@@ -485,14 +488,36 @@ func configureChatTextarea(ti *textarea.Model) {
 	ti.Focus()
 }
 
-func isTermuxTerminal() bool {
-	if os.Getenv("TERMUX_VERSION") != "" || os.Getenv("TERMUX_APP_PID") != "" || os.Getenv("TERMUX__PREFIX") != "" {
+func isAndroidTerminal() bool {
+	// 环境变量强制启用（用于 SSH 从触屏客户端连接的场景）
+	if v := os.Getenv("REASONIX_NATIVE_SCROLLBACK"); v == "1" || v == "true" {
 		return true
 	}
-	return strings.Contains(os.Getenv("PREFIX"), "/com.termux/")
+	// 标准 Termux 环境变量
+	if os.Getenv("TERMUX_VERSION") != "" || os.Getenv("TERMUX_APP_PID") != "" || os.Getenv("TERMUX_PREFIX") != "" {
+		return true
+	}
+	// PREFIX 路径匹配（兼容 Termux 变体）
+	prefix := os.Getenv("PREFIX")
+	if strings.Contains(prefix, "/com.termux/") {
+		return true
+	}
+	// Android 系统环境变量（非 Termux 的 Android 终端通常也有这些）
+	if os.Getenv("ANDROID_ROOT") != "" || os.Getenv("ANDROID_DATA") != "" {
+		return true
+	}
+	// Termux 数据目录 fallback
+	if _, err := os.Stat("/data/data/com.termux/files"); err == nil {
+		return true
+	}
+	// 通用 Android 路径探测
+	if _, err := os.Stat("/system/build.prop"); err == nil {
+		return true
+	}
+	return false
 }
 
-var detectTermuxTerminal = isTermuxTerminal
+var detectAndroidTerminal = isAndroidTerminal
 
 func (m *chatTUI) rememberSubmittedInput(input string) {
 	if strings.TrimSpace(input) == "" {
@@ -1305,8 +1330,8 @@ func (m chatTUI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 // finalize drains the committed-line queue and batches the turn's commands. In
-// the default alt-screen path the queue is already mirrored in m.transcript. In
-// Termux we cannot enable mouse mode without breaking soft-keyboard focus, so
+// the default alt-screen path the queue is already mirrored in m.transcript. On
+// Android we cannot enable mouse mode without breaking soft-keyboard focus, so
 // finalized lines are also emitted into the terminal's native scrollback.
 func finalize(m chatTUI, cmds []tea.Cmd) tea.Cmd {
 	if m.nativeScrollback && len(*m.pendingCommit) > 0 {
@@ -2222,6 +2247,7 @@ func (m chatTUI) View() tea.View {
 
 	if m.nativeScrollback {
 		v := tea.NewView(strings.Join(parts, "\n"))
+		v.ReportFocus = true
 		if !hideComposer {
 			if cur := m.input.Cursor(); cur != nil {
 				cur.X += 1

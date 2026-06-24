@@ -836,12 +836,12 @@ function renderSlashMenu() {
     const item=el('button','slash-menu__item'+(i===slashIndex?' slash-menu__item--active':''));
     item.innerHTML='<span class="slash-menu__name">/'+c.cmd+'</span><span class="slash-menu__desc">'+c.desc+'</span>';
     item.onmouseenter=()=>{slashIndex=i;renderSlashMenu();};
-    item.onclick=()=>{input.value='/'+c.cmd+' ';closeSlashMenu();input.focus();};
+    item.onclick=()=>{input.value='/'+c.cmd+' ';closeSlashMenu();input.focus();input.scrollIntoView();};
     menu.appendChild(item);
   });
 }
 function closeSlashMenu(){slashOpen=false;const m=$('#slash-menu');if(m)m.remove();}
-function acceptSlash(){if(!slashOpen)return;const c=slashFiltered[slashIndex];if(c){input.value='/'+c.cmd+' ';}closeSlashMenu();input.focus();}
+function acceptSlash(){if(!slashOpen)return;const c=slashFiltered[slashIndex];if(c){input.value='/'+c.cmd+' ';}closeSlashMenu();input.focus();input.scrollIntoView();}
 
 // ── SSE ──
 const es=new EventSource('/events');
@@ -957,7 +957,7 @@ function loadSessions(){
 loadSessions();
 
 // ── input handling ──
-async function send(){ const v=input.value.trim(); if(!v)return; addUserMsg(v); post('/submit',{input:v}).then(r=>{if(r.ok&&r.status===204){fetchStatus();loadSessions();}}); input.value='';input.style.height='';closeSlashMenu(); input.focus(); }
+async function send(){ const v=input.value.trim(); if(!v)return; addUserMsg(v); post('/submit',{input:v}).then(r=>{if(r.ok&&r.status===204){fetchStatus();loadSessions();}}); input.value='';input.style.height='';closeSlashMenu(); input.focus();input.scrollIntoView(); }
 
 input.addEventListener('input',()=>{input.style.height='auto';input.style.height=Math.min(input.scrollHeight,140)+'px';updateSlashMenu();});
 input.addEventListener('keydown',e=>{
@@ -979,7 +979,7 @@ input.addEventListener('keydown',e=>{
 
 // keyboard shortcuts
 document.addEventListener('keydown',e=>{
-  if(e.key==='/'&&e.target!==input){e.preventDefault();input.focus();return;}
+  if(e.key==='/'&&e.target!==input){e.preventDefault();input.focus();input.scrollIntoView();return;}
 });
 
 // toolbar buttons
@@ -1024,12 +1024,26 @@ document.addEventListener('click',e=>{
   if(name&&confirm(__('delete_confirm'))){post('/delete-session',{name}).then(()=>loadSessions());}
 });
 
+// ── touch fallback: micro-swipe guard for mobile ──
+let _tsY=0;
+document.addEventListener('touchstart',e=>{_tsY=e.changedTouches[0].screenY},{passive:true});
+document.addEventListener('touchend',e=>{
+  const dy=Math.abs(e.changedTouches[0].screenY-_tsY);
+  if(dy>15)return;
+  const t=e.target;
+  const s=window.getSelection();
+  if(s&&s.toString().length>0)return;
+  if(t===input||t.closest('#input-line'))return;
+  if(t.closest('button,a,label,[role="button"]'))return;
+  input.focus();input.scrollIntoView();
+});
+
 // ── tap/click blank area → focus input for touch devices ──
 document.addEventListener('click', e => {
   if (window.getSelection()?.toString()) return;
   if (e.target === input || input.contains(e.target)) return;
   if (e.target.closest('button, a, .session-item, .welcome__ex, .sidebar__item, .slash-menu, .modal-overlay, .rewind-picker, [role="button"], [role="link"], [role="menuitem"]')) return;
-  input.focus();
+  input.focus();input.scrollIntoView();
 });
 
 // welcome examples

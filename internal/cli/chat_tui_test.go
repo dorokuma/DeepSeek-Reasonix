@@ -25,10 +25,10 @@ import (
 type blockingTurnRunner struct{ started chan struct{} }
 
 func TestMain(m *testing.M) {
-	old := detectTermuxTerminal
-	detectTermuxTerminal = func() bool { return false }
+	old := detectAndroidTerminal
+	detectAndroidTerminal = func() bool { return false }
 	code := m.Run()
-	detectTermuxTerminal = old
+	detectAndroidTerminal = old
 	os.Exit(code)
 }
 
@@ -106,14 +106,14 @@ func TestTranscriptMirrorsCommits(t *testing.T) {
 	}
 }
 
-func TestTermuxNativeScrollbackCommitsFinalAnswer(t *testing.T) {
+func TestAndroidNativeScrollbackCommitsFinalAnswer(t *testing.T) {
 	m := newTestChatTUI()
 	m.nativeScrollback = true
 	m.pending.WriteString("first paragraph\n\nsecond paragraph")
 
 	m.streamAnswer()
 	if len(*m.pendingCommit) != 0 {
-		t.Fatalf("Termux native scrollback should not commit rewritten streaming blocks, got %v", *m.pendingCommit)
+		t.Fatalf("Android native scrollback should not commit rewritten streaming blocks, got %v", *m.pendingCommit)
 	}
 
 	m.commitPending()
@@ -122,18 +122,18 @@ func TestTermuxNativeScrollbackCommitsFinalAnswer(t *testing.T) {
 	}
 }
 
-func TestTermuxNativeScrollbackDefaultsToExpandedReasoning(t *testing.T) {
-	old := detectTermuxTerminal
-	detectTermuxTerminal = func() bool { return true }
-	t.Cleanup(func() { detectTermuxTerminal = old })
+func TestAndroidNativeScrollbackDefaultsToExpandedReasoning(t *testing.T) {
+	old := detectAndroidTerminal
+	detectAndroidTerminal = func() bool { return true }
+	t.Cleanup(func() { detectAndroidTerminal = old })
 
 	ctrl := control.New(control.Options{})
 	m := newChatTUI(ctrl, "", make(chan event.Event, 1), 80)
 	if !m.nativeScrollback {
-		t.Fatal("Termux should use native scrollback")
+		t.Fatal("Android terminal should use native scrollback")
 	}
 	if !m.showReasoning {
-		t.Fatal("Termux should expand reasoning by default because live viewport reasoning is unavailable")
+		t.Fatal("Android terminal should expand reasoning by default because live viewport reasoning is unavailable")
 	}
 	m.width = 80
 
@@ -141,7 +141,7 @@ func TestTermuxNativeScrollbackDefaultsToExpandedReasoning(t *testing.T) {
 	m.ingestEvent(event.Event{Kind: event.Text, Text: "answer"})
 	got := strings.Join(*m.pendingCommit, "\n")
 	if !strings.Contains(got, "reasoning details") {
-		t.Fatalf("Termux reasoning was not expanded into native scrollback: %q", got)
+		t.Fatalf("Android terminal reasoning was not expanded into native scrollback: %q", got)
 	}
 }
 
@@ -1028,7 +1028,7 @@ func TestViewAltScreenFillsHeight(t *testing.T) {
 	}
 }
 
-func TestViewTermuxUsesNativeScrollback(t *testing.T) {
+func TestViewAndroidUsesNativeScrollback(t *testing.T) {
 	ctrl := control.New(control.Options{})
 	m := newChatTUI(ctrl, "", make(chan event.Event, 1), 80)
 	m.nativeScrollback = true
@@ -1036,13 +1036,13 @@ func TestViewTermuxUsesNativeScrollback(t *testing.T) {
 	v := m0.(chatTUI).View()
 
 	if v.AltScreen {
-		t.Error("Termux view must stay in the normal screen so native touch scrollback works")
+		t.Error("Android view must stay in the normal screen so native touch scrollback works")
 	}
 	if v.MouseMode != tea.MouseModeNone {
-		t.Error("Termux view must not enable mouse mode because it prevents soft-keyboard focus")
+		t.Error("Android view must not enable mouse mode because it prevents soft-keyboard focus")
 	}
 	if lines := strings.Count(v.Content, "\n") + 1; lines >= 24 {
-		t.Errorf("Termux view should render only the pinned bottom frame, got %d full-screen lines", lines)
+		t.Errorf("Android view should render only the pinned bottom frame, got %d full-screen lines", lines)
 	}
 }
 

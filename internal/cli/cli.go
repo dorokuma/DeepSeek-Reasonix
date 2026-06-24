@@ -398,6 +398,7 @@ func chatREPL(args []string) int {
 	resume := fs.Bool("resume", false, "list saved sessions and pick one to resume")
 	yolo := fs.Bool("dangerously-skip-permissions", false, "YOLO: auto-approve every tool call this session (deny rules still apply)")
 	fs.BoolVar(yolo, "yolo", false, "alias for --dangerously-skip-permissions")
+	nativeScrollback := fs.Bool("native-scrollback", false, "force native scrollback mode (auto-detected on Android; also set via REASONIX_NATIVE_SCROLLBACK=1 env or native_scrollback=true in config)")
 	dir := fs.String("dir", "", "change to this directory first (project root); config, sandbox and file tools resolve from here")
 	if err := fs.Parse(args); err != nil {
 		return 2
@@ -501,6 +502,20 @@ func chatREPL(args []string) int {
 	}
 
 	m := newChatTUI(ctrl, missing, eventCh, termW)
+	// Config file override (lower priority than CLI flag, higher than auto-detect).
+	// Uses NativeScrollback from the TOML config (reasonix.toml / ~/.config/reasonix/config.toml).
+	if cfg, err := config.Load(); err == nil && cfg.NativeScrollback {
+		m.ForceNativeScrollback = true
+		m.nativeScrollback = true
+	}
+	if *nativeScrollback {
+		m.ForceNativeScrollback = true
+		m.nativeScrollback = true
+	}
+	slog.Debug("native scrollback",
+		"nativeScrollback", m.nativeScrollback,
+		"forceNativeScrollback", m.ForceNativeScrollback,
+	)
 	if cfg, err := config.Load(); err == nil {
 		m.outputStyle = cfg.Agent.OutputStyle    // shown as the active entry in /output-style
 		m.statuslineCmd = cfg.Statusline.Command // custom status-line command, "" = built-in row
@@ -555,7 +570,7 @@ func chatREPL(args []string) int {
 		reserveNativeScrollbackFrame(os.Stdout, m.bottomRows())
 	}
 
-	// Non-Termux terminals use an alt-screen transcript viewport. Termux stays
+	// Non-Android terminals use an alt-screen transcript viewport. Android stays
 	// in the normal buffer so native touch scrollback and soft-keyboard focus
 	// keep working; finalized transcript lines are emitted via tea.Println.
 	p := tea.NewProgram(m)

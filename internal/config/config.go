@@ -59,6 +59,11 @@ type Config struct {
 	// (7.0). Only meaningful when a provider with usd-denominated pricing (e.g.
 	// OpenCode Go) is configured.
 	UsdCnyRate float64 `toml:"usd_cny_rate"`
+	// NativeScrollback forces native terminal scrollback mode (keeps soft
+	// keyboard on touch devices connected over SSH). Equivalent to setting
+	// the REASONIX_NATIVE_SCROLLBACK=1 env var or the --native-scrollback CLI
+	// flag. Lower priority than both env var and CLI flag.
+	NativeScrollback bool `toml:"native_scrollback"`
 }
 
 // UIConfig controls CLI presentation-only settings. Desktop appearance is kept in
