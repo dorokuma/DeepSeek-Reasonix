@@ -291,6 +291,43 @@ func (s *SubagentStore) PrepareContinue(ref string, spec SubagentSpec) (*Subagen
 	return &SubagentRun{Ref: ref, Session: sess, Meta: meta, store: s, release: release}, nil
 }
 
+func (s *SubagentStore) PrepareLegacyForkFrom(ref string, spec SubagentSpec) (*SubagentRun, error) {
+	if s == nil {
+		return nil, fmt.Errorf("subagent continuation is not available in this session")
+	}
+	if err := requireParentSession(spec); err != nil {
+		return nil, err
+	}
+	ref = strings.TrimSpace(ref)
+	if ref == "" {
+		return nil, fmt.Errorf("fork_from requires a subagent reference")
+	}
+	release, err := s.lock(ref)
+	if err != nil {
+		return nil, err
+	}
+	meta, err := s.LoadMeta(ref)
+	if err != nil {
+		release()
+		return nil, err
+	}
+	owner := strings.TrimSpace(meta.ParentSession)
+	current := strings.TrimSpace(spec.ParentSession)
+	if owner == "" {
+		release()
+		return nil, fmt.Errorf("subagent reference %q has no parent session; run a fresh subagent instead", ref)
+	}
+	if owner == current {
+		release()
+		if err := validateMeta(meta, spec); err != nil {
+			return nil, err
+		}
+		return nil, fmt.Errorf("fork_from cannot be safely converted for subagent reference %q in the current conversation; use continue_from to continue it in place or start a fresh subagent for independent work", ref)
+	}
+	release()
+	return s.PrepareContinue(ref, spec)
+}
+
 func (s *SubagentStore) prepareContinueFromAncestor(sourceRef string, spec SubagentSpec) (*SubagentRun, error) {
 	sourceRef, err := s.nearestLineageSource(sourceRef, spec)
 	if err != nil {

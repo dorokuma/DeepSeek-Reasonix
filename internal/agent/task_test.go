@@ -347,6 +347,81 @@ func TestTaskToolContinueFromAncestorReturnsCopiedReferenceGuidance(t *testing.T
 	}
 }
 
+func TestTaskToolLegacyForkFromAncestorConvertsToCopiedReference(t *testing.T) {
+	sub := &mockProvider{name: "sub", streams: [][]provider.Chunk{
+		{
+			{Type: provider.ChunkText, Text: "root answer"},
+			{Type: provider.ChunkDone},
+		},
+		{
+			{Type: provider.ChunkText, Text: "child answer"},
+			{Type: provider.ChunkDone},
+		},
+	}}
+	sessionDir := t.TempDir()
+	store := NewSubagentStore(filepath.Join(sessionDir, "subagents"))
+	reg := tool.NewRegistry()
+	reg.Add(fakeTool{name: "read_file", readOnly: true})
+	task := NewTaskTool(sub, nil, reg, 20, 0, 0, 0, 0, 0, 0.0, "", "sys", nil, 0, "", "", nil).
+		WithTranscripts(store, t.TempDir(), "base-model", "base-effort")
+
+	rootCtx := WithParentSession(context.Background(), "root")
+	first, err := task.Execute(rootCtx, []byte(`{"prompt":"root task"}`))
+	if err != nil {
+		t.Fatalf("first Execute: %v", err)
+	}
+	rootRef := subagentRefFromOutput(t, first)
+
+	if err := SaveBranchMeta(filepath.Join(sessionDir, "root.jsonl"), BranchMeta{}); err != nil {
+		t.Fatalf("SaveBranchMeta root: %v", err)
+	}
+	if err := SaveBranchMeta(filepath.Join(sessionDir, "child.jsonl"), BranchMeta{ParentID: "root"}); err != nil {
+		t.Fatalf("SaveBranchMeta child: %v", err)
+	}
+
+	childCtx := WithParentSession(context.Background(), "child")
+	second, err := task.Execute(childCtx, []byte(`{"prompt":"child task","fork_from":"`+rootRef+`"}`))
+	if err != nil {
+		t.Fatalf("second Execute: %v", err)
+	}
+	childRef := subagentRefFromOutput(t, second)
+	if childRef == rootRef {
+		t.Fatalf("child ref = source ref %q, want copied ref", childRef)
+	}
+	if !strings.Contains(second, "Forked from: "+rootRef) ||
+		!strings.Contains(second, "Final answer:\nchild answer") {
+		t.Fatalf("second output = %q, want copied reference guidance and final answer", second)
+	}
+}
+
+func TestTaskToolRejectsLegacyForkFromCurrentSession(t *testing.T) {
+	sub := &mockProvider{name: "sub", streams: [][]provider.Chunk{
+		{
+			{Type: provider.ChunkText, Text: "first answer"},
+			{Type: provider.ChunkDone},
+		},
+		{
+			{Type: provider.ChunkText, Text: "should not run"},
+			{Type: provider.ChunkDone},
+		},
+	}}
+	task := newTestTaskTool(t, sub, tool.NewRegistry(), "sys", "", "", nil).
+		WithTranscripts(NewSubagentStore(t.TempDir()), t.TempDir(), "base-model", "base-effort")
+
+	first, err := task.Execute(testTaskContext(), []byte(`{"prompt":"first task"}`))
+	if err != nil {
+		t.Fatalf("first Execute: %v", err)
+	}
+	ref := subagentRefFromOutput(t, first)
+	_, err = task.Execute(testTaskContext(), []byte(`{"prompt":"second task","fork_from":"`+ref+`"}`))
+	if err == nil || !strings.Contains(err.Error(), "cannot be safely converted") {
+		t.Fatalf("legacy fork error = %v, want unsafe conversion rejection", err)
+	}
+	if len(sub.requests) != 1 {
+		t.Fatalf("provider requests = %d, want only first run", len(sub.requests))
+	}
+}
+
 func TestTaskToolFailedForegroundContinuationPersistsAndRejectsReuse(t *testing.T) {
 	sub := &mockProvider{name: "sub", streams: [][]provider.Chunk{
 		{

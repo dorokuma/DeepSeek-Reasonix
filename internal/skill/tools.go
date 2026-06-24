@@ -19,6 +19,7 @@ import (
 // silently inlining, which would lose the isolation the author asked for).
 type SubagentRunOptions struct {
 	ContinueFrom string
+	ForkFrom     string
 }
 
 type SubagentRunner func(ctx context.Context, sk Skill, task string, opts SubagentRunOptions) (string, error)
@@ -77,6 +78,7 @@ func (t *runSkillTool) Execute(ctx context.Context, args json.RawMessage) (strin
 		Name      string `json:"name"`
 		Arguments string `json:"arguments"`
 		Continue  string `json:"continue_from"`
+		Fork      string `json:"fork_from"`
 	}
 	if err := json.Unmarshal(args, &p); err != nil {
 		return "", fmt.Errorf("invalid args: %w", err)
@@ -90,7 +92,10 @@ func (t *runSkillTool) Execute(ctx context.Context, args json.RawMessage) (strin
 		return "", fmt.Errorf("unknown skill %q — available: %s", name, availableNames(t.store))
 	}
 	rawArgs := strings.TrimSpace(p.Arguments)
-	opts := SubagentRunOptions{ContinueFrom: strings.TrimSpace(p.Continue)}
+	opts := SubagentRunOptions{ContinueFrom: strings.TrimSpace(p.Continue), ForkFrom: strings.TrimSpace(p.Fork)}
+	if opts.ContinueFrom != "" && opts.ForkFrom != "" {
+		return "", fmt.Errorf("run_skill: continue_from and fork_from are mutually exclusive; pass only continue_from")
+	}
 
 	if sk.RunAs == RunSubagent {
 		if t.runner == nil {
@@ -101,8 +106,8 @@ func (t *runSkillTool) Execute(ctx context.Context, args json.RawMessage) (strin
 		}
 		return t.runner(ctx, sk, rawArgs, opts)
 	}
-	if opts.ContinueFrom != "" {
-		return "", fmt.Errorf("run_skill: continue_from is only valid for runAs=subagent skills")
+	if opts.ContinueFrom != "" || opts.ForkFrom != "" {
+		return "", fmt.Errorf("run_skill: subagent continuation is only valid for runAs=subagent skills")
 	}
 	return renderInline(sk, rawArgs), nil
 }
@@ -215,6 +220,7 @@ func (t *subagentSkillTool) Execute(ctx context.Context, args json.RawMessage) (
 	var p struct {
 		Task     string `json:"task"`
 		Continue string `json:"continue_from"`
+		Fork     string `json:"fork_from"`
 	}
 	if err := json.Unmarshal(args, &p); err != nil {
 		return "", fmt.Errorf("invalid args: %w", err)
@@ -235,7 +241,11 @@ func (t *subagentSkillTool) Execute(ctx context.Context, args json.RawMessage) (
 	if t.runner == nil {
 		return "", fmt.Errorf("%s: no subagent runner is configured in this session", t.toolName)
 	}
-	return t.runner(ctx, sk, task, SubagentRunOptions{ContinueFrom: strings.TrimSpace(p.Continue)})
+	opts := SubagentRunOptions{ContinueFrom: strings.TrimSpace(p.Continue), ForkFrom: strings.TrimSpace(p.Fork)}
+	if opts.ContinueFrom != "" && opts.ForkFrom != "" {
+		return "", fmt.Errorf("%s: continue_from and fork_from are mutually exclusive; pass only continue_from", t.toolName)
+	}
+	return t.runner(ctx, sk, task, opts)
 }
 
 func (t *subagentSkillTool) ResolveProfile(json.RawMessage) *event.Profile {

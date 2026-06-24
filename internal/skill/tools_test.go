@@ -166,6 +166,49 @@ func TestBuiltinSubagentToolsPassContinuationOptions(t *testing.T) {
 	}
 }
 
+func TestRunSkillToolPassesLegacyForkOption(t *testing.T) {
+	var got SubagentRunOptions
+	runner := func(_ context.Context, _ Skill, _ string, opts SubagentRunOptions) (string, error) {
+		got = opts
+		return "ok", nil
+	}
+	runSkill := NewRunSkillTool(New(Options{HomeDir: t.TempDir()}), runner)
+	if _, err := runSkill.Execute(context.Background(), json.RawMessage(`{"name":"review","arguments":"again","fork_from":"sa_prev"}`)); err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	if got.ForkFrom != "sa_prev" {
+		t.Fatalf("continuation opts = %+v, want fork_from sa_prev", got)
+	}
+}
+
+func TestBuiltinSubagentToolsPassLegacyForkOption(t *testing.T) {
+	var got SubagentRunOptions
+	runner := func(_ context.Context, _ Skill, _ string, opts SubagentRunOptions) (string, error) {
+		got = opts
+		return "ok", nil
+	}
+	tools := BuiltinSubagentTools(New(Options{HomeDir: t.TempDir()}), runner)
+	var review interface {
+		Name() string
+		Execute(context.Context, json.RawMessage) (string, error)
+	}
+	for _, tl := range tools {
+		if tl.Name() == "review" {
+			review = tl
+			break
+		}
+	}
+	if review == nil {
+		t.Fatal("review wrapper tool not built")
+	}
+	if _, err := review.Execute(context.Background(), json.RawMessage(`{"task":"again","fork_from":"sa_prev"}`)); err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	if got.ForkFrom != "sa_prev" {
+		t.Fatalf("continuation opts = %+v, want fork_from sa_prev", got)
+	}
+}
+
 func TestSubagentSkillSchemasExposeOnlyContinueFromForPersistence(t *testing.T) {
 	runSkill := NewRunSkillTool(New(Options{HomeDir: t.TempDir(), DisableBuiltins: true}), nil)
 	runSchema := string(runSkill.Schema())

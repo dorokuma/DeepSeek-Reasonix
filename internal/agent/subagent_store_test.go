@@ -135,6 +135,61 @@ func TestSubagentStoreContinueFromAncestorCopiesIntoCurrentSession(t *testing.T)
 	}
 }
 
+func TestSubagentStoreLegacyForkFromAncestorConvertsToContinueCopy(t *testing.T) {
+	sessionDir := t.TempDir()
+	store := NewSubagentStore(filepath.Join(sessionDir, "subagents"))
+	spec := testSubagentSpec(t, "review")
+	spec.ParentSession = "root"
+	run, err := store.PrepareFresh(spec)
+	if err != nil {
+		t.Fatalf("PrepareFresh: %v", err)
+	}
+	run.Session.Add(provider.Message{Role: provider.RoleUser, Content: "review diff"})
+	if err := store.SaveCompleted(run); err != nil {
+		t.Fatalf("SaveCompleted: %v", err)
+	}
+	run.Release()
+
+	saveTestBranchMeta(t, sessionDir, "root", "")
+	saveTestBranchMeta(t, sessionDir, "child", "root")
+	child := spec
+	child.ParentSession = "child"
+	continued, err := store.PrepareLegacyForkFrom(run.Ref, child)
+	if err != nil {
+		t.Fatalf("PrepareLegacyForkFrom: %v", err)
+	}
+	defer continued.Release()
+	if continued.Ref == run.Ref {
+		t.Fatalf("legacy fork ref should be copied into child session, got source ref %q", continued.Ref)
+	}
+	if continued.Meta.ParentSession != "child" {
+		t.Fatalf("continued parent session = %q, want child", continued.Meta.ParentSession)
+	}
+	if continued.Meta.ForkedFrom != run.Ref {
+		t.Fatalf("forkedFrom = %q, want %q", continued.Meta.ForkedFrom, run.Ref)
+	}
+	if got := continued.Session.Snapshot(); len(got) != 2 || got[1].Content != "review diff" {
+		t.Fatalf("continued transcript = %+v, want copied source transcript", got)
+	}
+}
+
+func TestSubagentStoreRejectsLegacyForkFromCurrentSession(t *testing.T) {
+	store := NewSubagentStore(t.TempDir())
+	spec := testSubagentSpec(t, "review")
+	run, err := store.PrepareFresh(spec)
+	if err != nil {
+		t.Fatalf("PrepareFresh: %v", err)
+	}
+	if err := store.SaveCompleted(run); err != nil {
+		t.Fatalf("SaveCompleted: %v", err)
+	}
+	run.Release()
+
+	if _, err := store.PrepareLegacyForkFrom(run.Ref, spec); err == nil || !strings.Contains(err.Error(), "cannot be safely converted") {
+		t.Fatalf("PrepareLegacyForkFrom error = %v, want unsafe conversion rejection", err)
+	}
+}
+
 func TestSubagentStoreContinueFromAncestorReusesCurrentSessionCopy(t *testing.T) {
 	sessionDir := t.TempDir()
 	store := NewSubagentStore(filepath.Join(sessionDir, "subagents"))

@@ -249,6 +249,7 @@ func (t *TaskTool) Execute(ctx context.Context, args json.RawMessage) (string, e
 		Model           string   `json:"model"`
 		Effort          string   `json:"effort"`
 		ContinueFrom    string   `json:"continue_from"`
+		ForkFrom        string   `json:"fork_from"`
 	}
 	if err := json.Unmarshal(args, &p); err != nil {
 		return "", fmt.Errorf("invalid args: %w", err)
@@ -275,7 +276,7 @@ func (t *TaskTool) Execute(ctx context.Context, args json.RawMessage) (string, e
 	subReg := t.buildSubReg(p.Tools)
 	modelRef, effortRef := t.effectiveProfile(p.Model, p.Effort)
 	parentID, parent, _, _ := CallContext(ctx)
-	run, err := t.prepareTranscriptRun(subReg, modelRef, effortRef, ParentSession(ctx), parentID, p.ContinueFrom)
+	run, err := t.prepareTranscriptRun(subReg, modelRef, effortRef, ParentSession(ctx), parentID, p.ContinueFrom, p.ForkFrom)
 	if err != nil {
 		return "", err
 	}
@@ -347,9 +348,13 @@ func (t *TaskTool) Execute(ctx context.Context, args json.RawMessage) (string, e
 	return answer, nil
 }
 
-func (t *TaskTool) prepareTranscriptRun(subReg *tool.Registry, modelRef, effortRef, parentSession, parentID, continueFrom string) (*SubagentRun, error) {
+func (t *TaskTool) prepareTranscriptRun(subReg *tool.Registry, modelRef, effortRef, parentSession, parentID, continueFrom, legacyForkFrom string) (*SubagentRun, error) {
 	continueFrom = strings.TrimSpace(continueFrom)
+	legacyForkFrom = strings.TrimSpace(legacyForkFrom)
 	parentSession = strings.TrimSpace(parentSession)
+	if continueFrom != "" && legacyForkFrom != "" {
+		return nil, fmt.Errorf("continue_from and fork_from are mutually exclusive; pass only continue_from")
+	}
 	if t.transcripts == nil {
 		return nil, fmt.Errorf("subagent transcript store is required")
 	}
@@ -358,8 +363,8 @@ func (t *TaskTool) prepareTranscriptRun(subReg *tool.Registry, modelRef, effortR
 	// exactly as before persisted transcripts existed — instead of failing the
 	// call. Continuation/fork need a persisted owner, so they error here.
 	if parentSession == "" {
-		if continueFrom != "" {
-			return nil, fmt.Errorf("continue_from requires a persisted session; none is active in this run")
+		if continueFrom != "" || legacyForkFrom != "" {
+			return nil, fmt.Errorf("subagent continuation requires a persisted session; none is active in this run")
 		}
 		return EphemeralSubagentRun(t.sysPrompt), nil
 	}
@@ -377,6 +382,9 @@ func (t *TaskTool) prepareTranscriptRun(subReg *tool.Registry, modelRef, effortR
 	}
 	if continueFrom != "" {
 		return t.transcripts.PrepareContinue(continueFrom, spec)
+	}
+	if legacyForkFrom != "" {
+		return t.transcripts.PrepareLegacyForkFrom(legacyForkFrom, spec)
 	}
 	return t.transcripts.PrepareFresh(spec)
 }

@@ -592,6 +592,10 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 		}
 		subReg := agent.SubagentToolRegistry(reg, sk.AllowedTools)
 		continueFrom := strings.TrimSpace(runOpts.ContinueFrom)
+		legacyForkFrom := strings.TrimSpace(runOpts.ForkFrom)
+		if continueFrom != "" && legacyForkFrom != "" {
+			return "", fmt.Errorf("continue_from and fork_from are mutually exclusive; pass only continue_from")
+		}
 		parentID, _, _, _ := agent.CallContext(sctx)
 		parentSession := agent.ParentSession(sctx)
 		var run *agent.SubagentRun
@@ -600,8 +604,8 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 			// own a transcript. Run the skill sub-agent ephemerally, as before
 			// persisted transcripts existed, instead of failing. Continuation needs
 			// a persisted owner, so it errors here.
-			if continueFrom != "" {
-				return "", fmt.Errorf("continue_from requires a persisted session; none is active in this run")
+			if continueFrom != "" || legacyForkFrom != "" {
+				return "", fmt.Errorf("subagent continuation requires a persisted session; none is active in this run")
 			}
 			run = agent.EphemeralSubagentRun(sk.Body)
 		} else {
@@ -620,6 +624,8 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 			var prepErr error
 			if continueFrom != "" {
 				run, prepErr = subagentStore.PrepareContinue(continueFrom, spec)
+			} else if legacyForkFrom != "" {
+				run, prepErr = subagentStore.PrepareLegacyForkFrom(legacyForkFrom, spec)
 			} else {
 				run, prepErr = subagentStore.PrepareFresh(spec)
 			}
