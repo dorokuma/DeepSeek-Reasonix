@@ -957,7 +957,7 @@ function loadSessions(){
 loadSessions();
 
 // ── input handling ──
-async function send(){ const v=input.value.trim(); if(!v)return; addUserMsg(v); post('/submit',{input:v}).then(r=>{if(r.ok&&r.status===204){fetchStatus();loadSessions();}}); input.value='';input.style.height='';closeSlashMenu(); }
+async function send(){ const v=input.value.trim(); if(!v)return; addUserMsg(v); post('/submit',{input:v}).then(r=>{if(r.ok&&r.status===204){fetchStatus();loadSessions();}}); input.value='';input.style.height='';closeSlashMenu(); input.focus(); }
 
 input.addEventListener('input',()=>{input.style.height='auto';input.style.height=Math.min(input.scrollHeight,140)+'px';updateSlashMenu();});
 input.addEventListener('keydown',e=>{
@@ -1022,6 +1022,14 @@ document.addEventListener('click',e=>{
   e.stopPropagation();
   const name=del.dataset.name;
   if(name&&confirm(__('delete_confirm'))){post('/delete-session',{name}).then(()=>loadSessions());}
+});
+
+// ── tap/click blank area → focus input for touch devices ──
+document.addEventListener('click', e => {
+  if (window.getSelection()?.toString()) return;
+  if (e.target === input || input.contains(e.target)) return;
+  if (e.target.closest('button, a, .session-item, .welcome__ex, .sidebar__item, .slash-menu, .modal-overlay, .rewind-picker, [role="button"], [role="link"], [role="menuitem"]')) return;
+  input.focus();
 });
 
 // welcome examples
