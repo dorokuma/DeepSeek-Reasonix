@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/signal"
 	"strings"
+	"time"
 
 	"reasonix/internal/acp"
 	"reasonix/internal/agent"
@@ -208,8 +209,9 @@ func (f *acpFactory) NewSession(ctx context.Context, p acp.SessionParams) (*cont
 
 func acpBuiltinTools(cfg *config.Config, cwd string, writeRoots []string) []tool.Tool {
 	ws := builtin.Workspace{
-		Dir:    cwd,
-		Search: builtin.ResolveSearch(cfg.Tools.Search.Engine, cfg.Tools.Search.RgPath, nil),
+		Dir:         cwd,
+		BashTimeout: time.Duration(cfg.BashTimeoutSeconds()) * time.Second,
+		Search:      builtin.ResolveSearch(cfg.Tools.Search.Engine, cfg.Tools.Search.RgPath, nil),
 	}
 	return ws.Tools(cfg.Tools.Enabled...)
 }

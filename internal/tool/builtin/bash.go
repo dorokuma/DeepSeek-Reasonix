@@ -58,7 +58,7 @@ func cachedBashShellPATH(ctx context.Context) string {
 }
 
 // bash runs a shell command. sb, when it enforces, wraps the command in an OS
-// sandbox; the zero value registered at init runs unrestricted and is overridden
+// sandbox; the zero value registered at init runs unconfined and is overridden
 // per run by ConfineBash. shell is the resolved interpreter (real bash, or
 // PowerShell on a Windows host without bash); the zero value resolves lazily.
 // workDir, when non-empty, is the directory the command runs in (cmd.Dir);
@@ -83,7 +83,6 @@ func (lw *limitedWriter) Write(p []byte) (int, error) {
 	lw.written += int64(len(p))
 	return len(p), nil
 }
-
 type bash struct {
 	shell   shell.Shell
 	workDir string

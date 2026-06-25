@@ -4,7 +4,6 @@
 
 default_model = "deepseek"   # a provider name (→ its default model) or "provider/model"
 # language      = "zh"   # ui language; empty = auto-detect from $LANG / $REASONIX_LANG
-# native_scrollback = true   # force native scrollback (keep soft keyboard on touch/SSH clients)
 
 [ui]
 theme = "auto"   # auto|dark|light; controls CLI colors only; REASONIX_THEME can override per run
@@ -23,15 +22,13 @@ Use the provided tools to read and write files and run shell commands.
 Principles: understand the request before acting; verify with tools instead of
 guessing; keep changes minimal and correct; briefly summarize what you did."""
 # system_prompt_file = "prompts/system.md"   # overrides system_prompt when set
-max_steps         = 0    # executor tool-call rounds; 0 = no limit
-planner_max_steps = 12   # planner read-only tool-call rounds; 0 = no limit
-temperature       = 0.0
-auto_plan         = "off"   # off|on; off keeps plan mode manual
+max_steps   = 25
+temperature = 0.0
+auto_plan   = "off"   # off|on; off keeps plan mode manual
 # auto_plan_classifier = "deepseek-flash"   # optional; only used for borderline tasks
 soft_compact_ratio  = 0.5   # notice only; keeps the cache-first prefix intact
 compact_ratio       = 0.8   # try compacting when prompt reaches this fraction
 compact_force_ratio = 0.9   # force compacting at this high-water mark
-encrypt_sessions    = true  # encrypt session files at rest (AES-256-GCM); key auto-generated
 # planner_model = "mimo-pro"   # optional: enable two-model collaboration
 # subagent_model = "deepseek-pro"   # optional default for runAs=subagent skills
 # subagent_models = { review = "deepseek-pro", security_review = "deepseek-pro" }   # per-skill overrides
@@ -108,6 +105,17 @@ effort         = "high"
 [tools]
 enabled = []   # empty = all built-in tools
 bash_timeout_seconds = 120   # foreground safety cap; set 0 for no tool-local cap
+
+# CodeGraph code intelligence (symbol/call-graph search via tree-sitter + SQLite),
+# a built-in MCP server giving the agent codegraph_* search / context / explore /
+# trace / node tools. Off by default for first-run sessions. Once enabled, the
+# runtime is fetched into a per-version cache when missing (auto_install);
+# .codegraph/ is then initialised (fast) and CodeGraph's daemon indexes in the
+# background once enabled.
+# [codegraph]
+# enabled      = false
+# auto_install = true
+# path         = ""   # empty = cache, then PATH, then a bundle beside reasonix
 
 # Skills are invokable playbooks (SKILL.md / <name>.md with frontmatter), found
 # under .reasonix/skills, .agents/skills, .agent/skills, .claude/skills (project)
