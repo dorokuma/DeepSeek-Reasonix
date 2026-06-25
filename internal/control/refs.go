@@ -3,6 +3,7 @@ package control
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"fmt"
 	"io"
 	"net/http"
@@ -52,6 +53,7 @@ type ref struct {
 
 // refTokenRe matches an @reference token: '@' then a run of non-space chars.
 var refTokenRe = regexp.MustCompile(`@([^\s]+)`)
+var pathLocationSuffixRe = regexp.MustCompile(`:\d+(?::\d+)?:?$`)
 
 // parseRefTokens extracts the deduped, punctuation-trimmed tokens following '@'
 // in a line. Pure: classification (server? file?) happens in classifyRef.
@@ -77,8 +79,11 @@ func classifyRef(token string, known map[string]bool, exists func(string) bool) 
 	if i := strings.Index(token, ":"); i > 0 && i+1 < len(token) && known[token[:i]] {
 		return ref{kind: refResource, server: token[:i], uri: token[i+1:], raw: token}, true
 	}
-	if strings.HasPrefix(filepath.ToSlash(token), ".reasonix/attachments/") && exists(token) {
-		return ref{kind: refImage, path: token, raw: token}, true
+	if isAttachmentRef(token) && exists(token) {
+		if isImageAttachmentRef(token) {
+			return ref{kind: refImage, path: token, raw: token}, true
+		}
+		return ref{kind: refFile, path: token, raw: token}, true
 	}
 	if exists(token) {
 		return ref{kind: refFile, path: token, raw: token}, true
@@ -86,31 +91,55 @@ func classifyRef(token string, known map[string]bool, exists func(string) bool) 
 	return ref{}, false
 }
 
+func isAttachmentRef(token string) bool {
+	return strings.HasPrefix(filepath.ToSlash(token), ".reasonix/attachments/")
+}
+
+func isImageAttachmentRef(token string) bool {
+	switch strings.ToLower(filepath.Ext(token)) {
+	case ".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".svg", ".tif", ".tiff":
+		return true
+	}
+	return false
+}
+
 // detectRefs finds the @references in a line: MCP resources for connected
 // servers, and local paths that exist on disk.
 func (c *Controller) detectRefs(line string) []ref {
+	return c.detectRefsMode(line, false)
+}
+
+func (c *Controller) detectRefsMode(line string, scopedOnly bool) []ref {
 	known := map[string]bool{}
 	if c.host != nil {
 		for _, n := range c.host.ServerNames() {
 			known[n] = true
 		}
 	}
-	exists := func(p string) bool {
-		if c.cpRoot != "" {
-			absPath, _, ok := resolveAbsRef(p, c.cpRoot)
-			if !ok {
-				return false
-			}
-			_, err := os.Stat(absPath)
-			return err == nil
-		}
-		_, err := os.Stat(p)
-		return err == nil
-	}
 
 	var refs []ref
 	for _, tok := range parseRefTokens(line) {
-		if r, ok := classifyRef(tok, known, exists); ok {
+		if i := strings.Index(tok, ":"); i > 0 && i+1 < len(tok) && known[tok[:i]] {
+			refs = append(refs, ref{kind: refResource, server: tok[:i], uri: tok[i+1:], raw: tok})
+			continue
+		}
+		if c.cpRoot != "" {
+			if rel, ok := workspaceRefPath(tok, c.cpRoot); ok {
+				kind := refFile
+				if isAttachmentRef(rel) && isImageAttachmentRef(rel) {
+					kind = refImage
+				}
+				refs = append(refs, ref{kind: kind, path: rel, raw: tok})
+			}
+			continue
+		}
+		if scopedOnly {
+			continue
+		}
+		if r, ok := classifyRef(tok, known, func(p string) bool {
+			_, err := os.Stat(p)
+			return err == nil
+		}); ok {
 			refs = append(refs, r)
 		}
 	}
@@ -123,6 +152,105 @@ func (c *Controller) HasRefs(line string) bool {
 	return len(c.detectRefs(line)) > 0
 }
 
+// inputImages resolves image @-references in the turn input to data URLs so the
+// turn can carry them to a vision-capable model. Best-effort: an unreadable image
+// is skipped — the @ref still lands as text via ResolveRefs.
+func (c *Controller) inputImages(line string) []string {
+	var urls []string
+	for _, r := range c.detectRefs(line) {
+		if url, err := visionRefImageDataURL(r, c.cpRoot); err == nil {
+			urls = append(urls, url)
+		}
+	}
+	return urls
+}
+
+func visionRefImageDataURL(r ref, baseDir string) (string, error) {
+	switch r.kind {
+	case refImage:
+		return visionImageDataURL(r.path)
+	case refFile:
+		return visionFileImageDataURL(r.path, baseDir)
+	default:
+		return "", fmt.Errorf("reference is not an image")
+	}
+}
+
+func visionFileImageDataURL(path, baseDir string) (string, error) {
+	absPath, absBase, ok := resolveAbsRef(path, baseDir)
+	if !ok {
+		return "", os.ErrNotExist
+	}
+	if absBase == "" {
+		return visionFileImageDataURLUnscoped(absPath)
+	}
+
+	if info, err := os.Lstat(absPath); err != nil {
+		return "", err
+	} else if info.Mode()&os.ModeSymlink != 0 {
+		return "", fmt.Errorf("image path must not be a symlink")
+	}
+
+	root, err := os.OpenRoot(absBase)
+	if err != nil {
+		return "", err
+	}
+	defer root.Close()
+
+	rel, err := filepath.Rel(absBase, absPath)
+	if err != nil {
+		return "", err
+	}
+	info, err := root.Stat(rel)
+	if err != nil {
+		return "", err
+	}
+	if info.IsDir() || info.Size() <= 0 || info.Size() > maxImageAttachmentBytes {
+		return "", fmt.Errorf("image must be between 1 byte and 10 MB")
+	}
+	f, err := root.Open(rel)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	return dataURLFromImageReader(f, path)
+}
+
+func visionFileImageDataURLUnscoped(path string) (string, error) {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return "", err
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return "", fmt.Errorf("image path must not be a symlink")
+	}
+	if info.IsDir() || info.Size() <= 0 || info.Size() > maxImageAttachmentBytes {
+		return "", fmt.Errorf("image must be between 1 byte and 10 MB")
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	return dataURLFromImageReader(f, path)
+}
+
+func dataURLFromImageReader(r io.Reader, path string) (string, error) {
+	raw, err := io.ReadAll(io.LimitReader(r, maxImageAttachmentBytes+1))
+	if err != nil {
+		return "", err
+	}
+	if len(raw) == 0 || len(raw) > maxImageAttachmentBytes {
+		return "", fmt.Errorf("image must be between 1 byte and 10 MB")
+	}
+	mime := detectedImageMime(raw)
+	if mime == "" {
+		return "", fmt.Errorf("%s is not a supported image", path)
+	}
+	raw, mime = compressForVision(raw, mime)
+	return "data:" + mime + ";base64," + base64.StdEncoding.EncodeToString(raw), nil
+}
+
 // resolveBareNames batch-resolves simple filenames (no path separator) that
 // don't exist in cwd. It walks the working tree once and matches every
 // unresolved name against the set, stopping when all are found. This runs in
@@ -132,19 +260,14 @@ func resolveBareNames(refs []ref, workspaceRoot string) []ref {
 	var names []string
 	for i := range refs {
 		r := &refs[i]
-		if r.kind != refFile || strings.ContainsAny(r.raw, "/\\") {
+		if r.kind != refFile || r.path != "" || !isSafeBareRefName(r.raw) {
 			continue
 		}
-		statPath := r.raw
 		if workspaceRoot != "" {
-			absPath, _, ok := resolveAbsRef(r.raw, workspaceRoot)
-			if !ok {
+			if rel, ok := workspaceRefPath(r.raw, workspaceRoot); ok {
+				r.path = rel
 				continue
 			}
-			statPath = absPath
-		}
-		if _, err := os.Stat(statPath); err == nil {
-			continue
 		}
 		need[r.raw] = r
 		names = append(names, r.raw)
@@ -179,6 +302,16 @@ func resolveBareNames(refs []ref, workspaceRoot string) []ref {
 	return refs
 }
 
+func isSafeBareRefName(name string) bool {
+	if name == "" || name == "." || name == ".." {
+		return false
+	}
+	if strings.ContainsAny(name, "/\\") || strings.Contains(name, "..") {
+		return false
+	}
+	return filepath.Base(name) == name && filepath.IsLocal(name)
+}
+
 // FileRefLine reports whether a submitted line is nothing but a path to an
 // existing file — a dragged or pasted file lands as its bare path, which on
 // POSIX starts with '/' and would otherwise be misread as a slash command. The
@@ -194,12 +327,126 @@ func FileRefLine(line string) (string, bool) {
 	return "@" + p, true
 }
 
+// SlashPathLineRef reports whether a slash-prefixed line starts with a local file
+// path, including common compiler-location suffixes like ":12" or ":12:34".
+// It returns an @reference for the file so diagnostics that begin with an
+// absolute path can keep their original text while also attaching file context.
+func SlashPathLineRef(line, baseDir string) (string, bool) {
+	token, ok := leadingSlashPathToken(line)
+	if !ok {
+		return "", false
+	}
+	for _, p := range pathTokenCandidates(token) {
+		if fileRefExists(p, baseDir) {
+			return "@" + p, true
+		}
+	}
+	return "", false
+}
+
+// SlashPathLikeLine reports whether a slash-prefixed line looks like a POSIX
+// absolute path rather than a slash command. It intentionally stays conservative:
+// unknown "/foo" remains an unknown command, while "/foo/bar..." is sent as
+// ordinary prompt text even if the path no longer exists.
+func SlashPathLikeLine(line string) bool {
+	token, ok := leadingSlashPathToken(line)
+	if !ok {
+		return false
+	}
+	for _, p := range pathTokenCandidates(token) {
+		if strings.Contains(p[1:], "/") {
+			return true
+		}
+	}
+	return false
+}
+
+func leadingSlashPathToken(line string) (string, bool) {
+	fields := strings.Fields(strings.TrimSpace(line))
+	if len(fields) == 0 {
+		return "", false
+	}
+	token := strings.Trim(fields[0], `"'`)
+	if !strings.HasPrefix(token, "/") || strings.HasPrefix(token, "//") {
+		return "", false
+	}
+	return token, true
+}
+
+func pathTokenCandidates(token string) []string {
+	token = strings.TrimRight(strings.Trim(token, `"'`), ".,;!?)]}")
+	if token == "" {
+		return nil
+	}
+	candidates := []string{token}
+	if stripped := pathLocationSuffixRe.ReplaceAllString(token, ""); stripped != token {
+		candidates = append(candidates, stripped)
+	}
+	return candidates
+}
+
+func fileRefExists(path, baseDir string) bool {
+	if baseDir != "" {
+		rel, _, absBase, ok := workspaceRel(path, baseDir)
+		if !ok {
+			return false
+		}
+		root, err := os.OpenRoot(absBase)
+		if err != nil {
+			return false
+		}
+		defer root.Close()
+		info, err := root.Stat(rel)
+		return err == nil && !info.IsDir()
+	}
+	info, err := os.Stat(path)
+	return err == nil && !info.IsDir()
+}
+
+func workspaceRefPath(path, baseDir string) (string, bool) {
+	rel, _, absBase, ok := workspaceRel(path, baseDir)
+	if !ok {
+		return "", false
+	}
+	root, err := os.OpenRoot(absBase)
+	if err != nil {
+		return "", false
+	}
+	defer root.Close()
+	if _, err := root.Stat(rel); err != nil {
+		return "", false
+	}
+	return filepath.ToSlash(rel), true
+}
+
+func workspaceRel(path, baseDir string) (rel, absPath, absBase string, ok bool) {
+	absPath, absBase, ok = resolveAbsRef(path, baseDir)
+	if !ok || absBase == "" {
+		return "", "", "", false
+	}
+	rel, err := filepath.Rel(absBase, absPath)
+	if err != nil || !filepath.IsLocal(rel) {
+		return "", "", "", false
+	}
+	return rel, absPath, absBase, true
+}
+
 // ResolveRefs resolves the @references in a line into a single tagged context
 // block (file/dir contents, MCP resource bodies), plus per-reference error
 // strings for any that failed. An empty block means no references resolved.
 // Safe to call off a frontend's event loop; honours ctx for the resource reads.
 func (c *Controller) ResolveRefs(ctx context.Context, line string) (block string, errs []string) {
-	refs := c.detectRefs(line)
+	return c.resolveRefs(ctx, line, false)
+}
+
+// ResolveScopedRefs is the HTTP/frontend variant: file references are honored
+// only when they can be resolved under the controller workspace root.
+func (c *Controller) ResolveScopedRefs(ctx context.Context, line string) (block string, errs []string) {
+	return c.resolveRefs(ctx, line, true)
+}
+
+func (c *Controller) resolveRefs(ctx context.Context, line string, scopedOnly bool) (block string, errs []string) {
+	refs := c.detectRefsMode(line, scopedOnly)
 	refs = resolveBareNames(refs, c.cpRoot)
 	var b strings.Builder
 	for _, r := range refs {
@@ -223,7 +470,7 @@ func (c *Controller) ResolveRefs(ctx context.Context, line string) (block string
 			}
 			appendRefBlock(&b, tag, `path="`+r.path+`"`, text)
 		case refImage:
-			appendRefBlock(&b, "image", `path="`+r.path+`"`, "[image attachment available at @"+r.path+"; use an image/OCR/vision MCP tool if visual understanding is needed]")
+			appendRefBlock(&b, "image", `path="`+r.path+`"`, "[image attachment available at @"+r.path+" and attached to this turn as model image input when the selected model supports vision; no local extraction tool is needed for direct visual understanding]")
 		}
 	}
 	return b.String(), errs
@@ -266,6 +513,7 @@ func readFileRef(path, baseDir string) (content string, isDir bool, err error) {
 	if rerr != nil {
 		return "", false, rerr
 	}
+	displayPath := filepath.ToSlash(rel)
 
 	info, err := root.Stat(rel)
 	if err != nil {
@@ -302,10 +550,10 @@ func readFileRef(path, baseDir string) (content string, isDir bool, err error) {
 	data := buf[:n]
 
 	if mime := imageMime(data, rel); mime != "" {
-		return fmt.Sprintf("[image file %s, mime=%s, %d bytes — image bytes are not inlined. Use an available MCP image/OCR/vision tool with this path when visual understanding is needed.]", rel, mime, info.Size()), false, nil
+		return fmt.Sprintf("[image file %s, mime=%s, %d bytes — attached to this turn as model image input when the selected model supports vision; no local extraction tool is needed for direct visual understanding.]", displayPath, mime, info.Size()), false, nil
 	}
 	if bytes.IndexByte(data[:min(n, 8192)], 0) >= 0 {
-		return fmt.Sprintf("[binary file %s, %d bytes — not shown]", rel, info.Size()), false, nil
+		return fmt.Sprintf("[binary file %s, %d bytes — not shown]", displayPath, info.Size()), false, nil
 	}
 	if n > maxFileRefBytes {
 		return string(data[:maxFileRefBytes]) + fmt.Sprintf("\n…[truncated; file is %d bytes]…", info.Size()), false, nil
@@ -379,7 +627,7 @@ func readFileRefUnscoped(path string) (content string, isDir bool, err error) {
 	data := buf[:n]
 
 	if mime := imageMime(data, path); mime != "" {
-		return fmt.Sprintf("[image file %s, mime=%s, %d bytes — image bytes are not inlined. Use an available MCP image/OCR/vision tool with this path when visual understanding is needed.]", path, mime, info.Size()), false, nil
+		return fmt.Sprintf("[image file %s, mime=%s, %d bytes — attached to this turn as model image input when the selected model supports vision; no local extraction tool is needed for direct visual understanding.]", path, mime, info.Size()), false, nil
 	}
 	if bytes.IndexByte(data[:min(n, 8192)], 0) >= 0 {
 		return fmt.Sprintf("[binary file %s, %d bytes — not shown]", path, info.Size()), false, nil
@@ -434,7 +682,7 @@ func walkRootDir(root *os.Root, dir string, b *strings.Builder, n *int, depth in
 
 // resolveAbsRef resolves the user-supplied @-reference path against baseDir
 // and returns the absolute path plus the absolute base root to sandbox I/O
-// under. With a baseDir, the path is bound under it (a relative path that
+// under. With a baseDir, the path is confined under it (a relative path that
 // escapes via ".." is rejected). With an empty baseDir, the path is returned
 // as-is and the caller falls back to plain os.Stat/os.Open so CLI usage
 // (where there is no controller-scoped workspace) keeps working.
@@ -455,7 +703,7 @@ func resolveAbsRef(path, baseDir string) (absPath, absBase string, ok bool) {
 		cleaned = filepath.Join(absBase, cleaned)
 	}
 	rel, err := filepath.Rel(absBase, cleaned)
-	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+	if err != nil || !filepath.IsLocal(rel) {
 		return "", "", false
 	}
 	return cleaned, absBase, true
