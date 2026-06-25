@@ -57,7 +57,13 @@ func TestParseRefTokens(t *testing.T) {
 
 func TestClassifyRef(t *testing.T) {
 	known := map[string]bool{"docs": true}
-	files := map[string]bool{"src/main.go": true, "README.md": true, ".reasonix/attachments/clipboard-20260601-010203.000000.png": true}
+	files := map[string]bool{
+		"src/main.go": true,
+		"README.md":   true,
+		".reasonix/attachments/clipboard-20260601-010203.000000.png": true,
+		".reasonix/attachments/clipboard-20260601-010203.000000.yml": true,
+		".reasonix/attachments/clipboard-20260601-010203.000000.zip": true,
+	}
 	exists := func(p string) bool { return files[p] }
 
 	cases := []struct {
@@ -69,6 +75,8 @@ func TestClassifyRef(t *testing.T) {
 		{"src/main.go", true, refFile},          // existing file
 		{"README.md", true, refFile},            // existing file
 		{".reasonix/attachments/clipboard-20260601-010203.000000.png", true, refImage},
+		{".reasonix/attachments/clipboard-20260601-010203.000000.yml", true, refFile},
+		{".reasonix/attachments/clipboard-20260601-010203.000000.zip", true, refFile},
 		{"ghost:issue://1", false, 0}, // unknown server, no such file
 		{"missing.go", false, 0},      // nonexistent path → not a ref
 		{"docs:", false, 0},           // empty uri → not a resource, no file
@@ -82,6 +90,54 @@ func TestClassifyRef(t *testing.T) {
 		if ok && r.kind != c.wantKnd {
 			t.Errorf("classifyRef(%q) kind = %v, want %v", c.token, r.kind, c.wantKnd)
 		}
+	}
+}
+
+func TestResolveRefsAttachmentKinds(t *testing.T) {
+	temp := t.TempDir()
+	attachmentsDir := filepath.Join(temp, ".reasonix", "attachments")
+	if err := os.MkdirAll(attachmentsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	ymlRef := filepath.ToSlash(".reasonix/attachments/config.yml")
+	zipRef := filepath.ToSlash(".reasonix/attachments/archive.zip")
+	pngRef := filepath.ToSlash(".reasonix/attachments/shot.png")
+	if err := os.WriteFile(filepath.Join(temp, filepath.FromSlash(ymlRef)), []byte("name: reasonix\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(temp, filepath.FromSlash(zipRef)), []byte{'P', 'K', 0x03, 0x04, 0x00}, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(temp, filepath.FromSlash(pngRef)), []byte("\x89PNG\r\n\x1a\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	oldCwd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(temp); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chdir(oldCwd); err != nil {
+			t.Error(err)
+		}
+	})
+
+	line := "check @" + ymlRef + " @" + zipRef + " @" + pngRef
+	block, errs := (&Controller{}).ResolveRefs(context.Background(), line)
+	if len(errs) != 0 {
+		t.Fatalf("ResolveRefs errors = %v", errs)
+	}
+	if !strings.Contains(block, `<file path="`+ymlRef+`">`) || !strings.Contains(block, "name: reasonix") {
+		t.Fatalf("expected yml attachment to resolve as file content, got: %s", block)
+	}
+	if !strings.Contains(block, `<file path="`+zipRef+`">`) || !strings.Contains(block, "[binary file "+zipRef) {
+		t.Fatalf("expected zip attachment to resolve as binary file note, got: %s", block)
+	}
+	if !strings.Contains(block, `<image path="`+pngRef+`">`) {
+		t.Fatalf("expected png attachment to resolve as image block, got: %s", block)
 	}
 }
 
@@ -327,6 +383,63 @@ func TestResolveBareNamesWithWorkspaceRoot(t *testing.T) {
 	}
 }
 
+func TestResolveBareNamesSkipsAlreadyResolvedRefs(t *testing.T) {
+	refs := []ref{{kind: refFile, raw: "main.go", path: "main.go"}}
+
+	resolved := resolveBareNames(refs, t.TempDir())
+
+	if len(resolved) != 1 {
+		t.Fatalf("expected 1 ref, got %d", len(resolved))
+	}
+	if resolved[0].path != "main.go" {
+		t.Fatalf("already resolved ref path = %q, want main.go", resolved[0].path)
+	}
+}
+
+func TestResolveBareNamesWithWorkspaceRootStoresRootFilePath(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "main.go"), []byte("package main"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	refs := []ref{{kind: refFile, raw: "main.go"}}
+	resolved := resolveBareNames(refs, root)
+
+	if len(resolved) != 1 {
+		t.Fatalf("expected 1 ref, got %d", len(resolved))
+	}
+	if resolved[0].path != "main.go" {
+		t.Fatalf("root workspace ref path = %q, want main.go", resolved[0].path)
+	}
+}
+
+func TestResolveBareNamesRejectsUnsafeBareNames(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "safe.txt"), []byte("safe"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "bad..name.txt"), []byte("unsafe"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	refs := []ref{
+		{kind: refFile, raw: "safe.txt"},
+		{kind: refFile, raw: "bad..name.txt"},
+		{kind: refFile, raw: ".."},
+	}
+	resolved := resolveBareNames(refs, root)
+
+	if resolved[0].path != "safe.txt" {
+		t.Fatalf("safe bare name path = %q, want safe.txt", resolved[0].path)
+	}
+	if resolved[1].path != "" {
+		t.Fatalf("unsafe bare name should stay unresolved, got %q", resolved[1].path)
+	}
+	if resolved[2].path != "" {
+		t.Fatalf("parent-dir bare name should stay unresolved, got %q", resolved[2].path)
+	}
+}
+
 func TestResolveAbsRef(t *testing.T) {
 	temp := t.TempDir()
 
@@ -405,6 +518,74 @@ func TestDetectRefsUsesWorkspaceRootNotProcessCWD(t *testing.T) {
 	block, errs := (&Controller{cpRoot: workspace}).ResolveRefs(context.Background(), "see @cwd-only.txt")
 	if block != "" || len(errs) != 0 {
 		t.Fatalf("cwd-only file should not be treated as a ref, block=%q errs=%v", block, errs)
+	}
+}
+
+func TestResolveRefsWithWorkspaceRootStoresRelativePath(t *testing.T) {
+	workspace := t.TempDir()
+	absPath := filepath.Join(workspace, "docs", "note.txt")
+	if err := os.MkdirAll(filepath.Dir(absPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(absPath, []byte("workspace note"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	c := &Controller{cpRoot: workspace}
+	refs := c.detectRefs("see @" + absPath)
+	if len(refs) != 1 {
+		t.Fatalf("detectRefs absolute workspace path = %+v, want 1 ref", refs)
+	}
+	if refs[0].path != "docs/note.txt" {
+		t.Fatalf("ref path = %q, want workspace-relative path", refs[0].path)
+	}
+	block, errs := c.ResolveRefs(context.Background(), "see @"+absPath)
+	if len(errs) != 0 {
+		t.Fatalf("ResolveRefs errors = %v", errs)
+	}
+	if !strings.Contains(block, `<file path="docs/note.txt">`) || !strings.Contains(block, "workspace note") {
+		t.Fatalf("ResolveRefs block did not use relative workspace path:\n%s", block)
+	}
+}
+
+func TestWorkspaceImageRefsAlsoAttachAsModelImages(t *testing.T) {
+	workspace := t.TempDir()
+	diagram := filepath.Join(workspace, "docs", "diagram.png")
+	if err := os.MkdirAll(filepath.Dir(diagram), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(diagram, []byte("\x89PNG\r\n\x1a\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	attachment := filepath.Join(workspace, ".reasonix", "attachments", "shot.png")
+	if err := os.MkdirAll(filepath.Dir(attachment), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(attachment, []byte("\x89PNG\r\n\x1a\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	c := &Controller{cpRoot: workspace}
+	refs := c.detectRefs("see @" + diagram + " @" + attachment)
+	if len(refs) != 2 {
+		t.Fatalf("detectRefs = %+v, want two refs", refs)
+	}
+	if refs[0].kind != refFile || refs[0].path != "docs/diagram.png" {
+		t.Fatalf("workspace png ref = %+v, want file ref", refs[0])
+	}
+	if refs[1].kind != refImage || refs[1].path != ".reasonix/attachments/shot.png" {
+		t.Fatalf("attachment png ref = %+v, want image attachment ref", refs[1])
+	}
+
+	block, errs := c.ResolveRefs(context.Background(), "see @"+diagram)
+	if len(errs) != 0 {
+		t.Fatalf("ResolveRefs errors = %v", errs)
+	}
+	if !strings.Contains(block, `<file path="docs/diagram.png">`) || !strings.Contains(block, "attached to this turn as model image input") || strings.Contains(block, "OCR") {
+		t.Fatalf("workspace png should resolve as attached image-file metadata without OCR guidance:\n%s", block)
+	}
+	if urls := c.inputImages("see @" + diagram); len(urls) != 1 || !strings.HasPrefix(urls[0], "data:image/png;base64,") {
+		t.Fatalf("workspace png inputImages = %v, want one png data URL", urls)
 	}
 }
 
