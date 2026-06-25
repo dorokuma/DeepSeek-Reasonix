@@ -40,7 +40,7 @@ reasonix/
     ├── provider/            # Provider interface + types + kind→factory registry
     │   └── openai/          # OpenAI-compatible impl; init() registers "openai"
     ├── tool/                # Tool interface + Registry
-    │   └── builtin/         # read_file/write_file/edit_file/bash/ls/glob/grep
+    │   └── builtin/         # read_file/write_file/edit_file/move_file/bash/ls/glob/grep
     ├── permission/          # per-call Policy: allow/ask/deny rules → Decision
     ├── command/             # custom slash commands loaded from .reasonix/commands/*.md
     ├── plugin/              # stdio JSON-RPC (MCP) client; adapts remote tools
@@ -404,7 +404,7 @@ ask   = []                                 # force a prompt even if otherwise al
 
 [sandbox]
 # workspace_root = ""          # file-writers confined here; empty = cwd (writes stay in-project)
-# allow_write    = ["/tmp"]    # extra dirs write_file/edit_file/multi_edit may modify
+# allow_write    = ["/tmp"]    # extra dirs write_file/edit_file/multi_edit/move_file may modify
 
 [[plugins]]
 name    = "example"            # type defaults to "stdio"
@@ -437,7 +437,7 @@ Reasonix unchanged.
 
 `[sandbox]` is the *enforcement* layer beneath permissions (which are *policy*).
 Phase 0 confines the file-writing built-ins (`write_file`, `edit_file`,
-`multi_edit`) to `workspace_root` (default cwd) plus `allow_write`: a write whose
+`multi_edit`, `move_file`) to `workspace_root` (default cwd) plus `allow_write`: a write whose
 target — resolved to an absolute, symlink-free path so a symlinked dir or `..`
 cannot tunnel out — falls outside every root is refused, and the error is fed
 back to the model. Confinement is on by default (root = cwd), so edits stay in

@@ -31,6 +31,7 @@ func (w Workspace) Tools(enabled ...string) []tool.Tool {
 		"write_file":    writeFile{workDir: w.Dir},
 		"edit_file":     editFile{workDir: w.Dir},
 		"multi_edit":    multiEdit{workDir: w.Dir},
+		"move_file":     moveFile{workDir: w.Dir},
 		"notebook_edit": notebookEdit{workDir: w.Dir},
 		"delete_range":  deleteRange{workDir: w.Dir},
 		"delete_symbol": deleteSymbol{workDir: w.Dir},
