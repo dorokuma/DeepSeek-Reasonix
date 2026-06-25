@@ -7,6 +7,8 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/charmbracelet/x/ansi"
+
 	"reasonix/internal/tool"
 )
 
@@ -22,6 +24,25 @@ func connectorBlock(lines []string) string {
 	}
 	indent := strings.Repeat(" ", len([]rune(connector)))
 	out := dim(connector) + lines[0]
+	for _, ln := range lines[1:] {
+		out += "\n" + indent + ln
+	}
+	return out
+}
+
+// assistantBlock wraps rendered markdown with an assistant prefix ("▸") on the
+// first line and indents continuation lines to align under it.  This
+// distinguishes assistant replies from tool cards (which use "●") in the
+// transcript.
+func assistantBlock(rendered string) string {
+	lines := strings.Split(rendered, "\n")
+	if len(lines) < 2 {
+		// Single line (or none): just prepend the prefix.
+		return dim("  ▸ ") + rendered
+	}
+	prefix := dim("  ▸ ") // visible width: 4 cols
+	indent := "    "      // 4 spaces — aligns content under the "▸"
+	out := prefix + lines[0]
 	for _, ln := range lines[1:] {
 		out += "\n" + indent + ln
 	}
@@ -156,9 +177,48 @@ func argList(v any) string {
 	return strings.Join(parts, ", ")
 }
 
-// toolCard renders the dispatch line: "  ⏺ Verb(arg)", arg clamped to width.
+// toolCard renders the dispatch line: "  ● Verb(arg)", with the argument
+// wrapped to fit within width. Continuation lines are indented to align with
+// the opening parenthesis so the card stays readable on narrow terminals.
 func toolCard(name, args string, width int) string {
-	return "  " + toolDot(name) + " " + toolHead(name, toolArg(name, args), width)
+	arg := toolArg(name, args)
+	if arg == "" {
+		return "  " + toolDot(name) + " " + bold(toolDisplayName(name))
+	}
+
+	// Prefix for the first line: "  ● Name("
+	prefix := "  " + toolDot(name) + " " + bold(toolDisplayName(name)) + dim("(")
+	prefixW := ansi.StringWidth(prefix)
+
+	// Available width for the arg.  contentW = width-1 (scrollbar column).
+	// Reserve 1 column for ")" on the last line.
+	avail := (width - 1) - prefixW - 1
+	if avail < 1 {
+		avail = 1
+	}
+
+	wrapped := strings.Split(ansi.Wrap(arg, avail, ""), "\n")
+	last := len(wrapped) - 1
+
+	var sb strings.Builder
+	sb.WriteString(prefix)
+	sb.WriteString(wrapped[0])
+
+	if last == 0 {
+		sb.WriteString(dim(")"))
+	} else {
+		pad := strings.Repeat(" ", prefixW)
+		for i := 1; i <= last; i++ {
+			sb.WriteString("\n")
+			sb.WriteString(pad)
+			sb.WriteString(wrapped[i])
+			if i == last {
+				sb.WriteString(dim(")"))
+			}
+		}
+	}
+
+	return sb.String()
 }
 
 // toolHead builds "Verb(arg)" with the verb bold and the arg clamped to fit the
