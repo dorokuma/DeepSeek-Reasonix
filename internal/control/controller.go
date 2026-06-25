@@ -2116,6 +2116,41 @@ func (c *Controller) messageCount() int {
 	return len(c.executor.Session().Snapshot())
 }
 
+// stripTurnMessagesAfter truncates the executor's session to keep only messages
+// before the given index, discarding an incomplete turn (the user prompt plus
+// every assistant / tool message that followed).  It is called when the user
+// explicitly cancels a turn so the next prompt starts clean — the model won't
+// see leftover in-progress todo items or partial tool calls and re-execute
+// interrupted work.
+func (c *Controller) stripTurnMessagesAfter(idx int) {
+	if c.executor == nil {
+		return
+	}
+	msgs := c.executor.Session().Snapshot()
+	if len(msgs) <= idx {
+		return
+	}
+	c.executor.Session().Replace(msgs[:idx])
+	// Rebuild canonical todo state from the truncated transcript so
+	// Controller.Todos(), goal readiness, and the task panel no longer see
+	// the in_progress items written by the cancelled turn.
+	c.executor.RebuildTodoState()
+	// The mid-turn autosave may have already written a partial transcript to
+	// disk.  snapshotActivityIfChanged skips the write when messageCount()
+	// returns to startMessages, so force a flush here to overwrite the stale
+	// file.  We call Session.Save directly to cover the edge case where the
+	// strip leaves only a system message (HasContent() == false), which would
+	// cause snapshot() to return early without writing.
+	c.mu.Lock()
+	path := c.sessionPath
+	c.mu.Unlock()
+	if path != "" {
+		if err := c.executor.Session().Save(path); err != nil {
+			slog.Warn("controller: post-cancel transcript flush", "err", err)
+		}
+	}
+}
+
 func (c *Controller) snapshotActivityIfChanged(startMessages int) {
 	if c.messageCount() <= startMessages {
 		return

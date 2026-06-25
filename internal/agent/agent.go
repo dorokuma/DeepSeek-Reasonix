@@ -1086,6 +1086,13 @@ func (a *Agent) emitTodoState(todos []evidence.TodoItem, itemIndex int) {
 	a.sink.Emit(event.Event{Kind: event.ToolResult, Tool: t})
 }
 
+// RebuildTodoState re-derives canonical task state from the current session
+// transcript. Call after externally truncating the session (e.g. after a
+// user-cancel strip) so Agent.todoState stays consistent with the messages.
+func (a *Agent) RebuildTodoState() {
+	a.rebuildTodoState(a.Session().Snapshot())
+}
+
 // rebuildTodoState reconstructs the canonical task list from a transcript: the
 // latest successful todo_write is the base, then every complete_step after it
 // advances an item. Deterministic from persisted messages, so it survives a
