@@ -68,10 +68,11 @@ type ProviderInfo struct {
 
 // PricingInfo mirrors provider.Pricing as a flat, currency-tagged view.
 type PricingInfo struct {
-	CacheHit float64 `json:"cache_hit"`
-	Input    float64 `json:"input"`
-	Output   float64 `json:"output"`
-	Currency string  `json:"currency"`
+	CacheHit   float64 `json:"cache_hit"`
+	Input      float64 `json:"input"`
+	Output     float64 `json:"output"`
+	CacheWrite float64 `json:"cache_write,omitempty"`
+	Currency   string  `json:"currency"`
 }
 
 // Providers projects cfg.Providers, marking the default model and resolving key
@@ -95,10 +96,11 @@ func Providers(cfg *config.Config) []ProviderInfo {
 		}
 		if p := e.Price; p != nil {
 			info.Pricing = &PricingInfo{
-				CacheHit: p.CacheHit,
-				Input:    p.Input,
-				Output:   p.Output,
-				Currency: p.Symbol(),
+				CacheHit:   p.CacheHit,
+				Input:      p.Input,
+				Output:     p.Output,
+				CacheWrite: p.CacheWrite,
+				Currency:   p.Symbol(),
 			}
 		}
 		out = append(out, info)
