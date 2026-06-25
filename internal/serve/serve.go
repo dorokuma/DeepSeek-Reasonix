@@ -41,11 +41,18 @@ type Server struct {
 	bc        *Broadcaster
 	titleProv provider.Provider // lightweight flash provider for session titles
 	titles    *titleCache
+	auth      *authGate // nil when auth is disabled
 }
 
 // New builds a Server. bc must be the controller's event sink.
-func New(ctrl *control.Controller, bc *Broadcaster) *Server {
-	s := &Server{ctrl: ctrl, bc: bc, titles: newTitleCache(ctrl.SessionDir())}
+// serveCfg controls authentication (none, token, or password).
+func New(ctrl *control.Controller, bc *Broadcaster, serveCfg config.ServeConfig) *Server {
+	s := &Server{
+		ctrl:   ctrl,
+		bc:     bc,
+		titles: newTitleCache(ctrl.SessionDir()),
+		auth:   newAuthGate(serveCfg),
+	}
 	s.initTitleProvider()
 	return s
 }
@@ -61,6 +68,22 @@ func (s *Server) ctl() *control.Controller {
 // Ctl returns the current controller.
 func (s *Server) Ctl() *control.Controller {
 	return s.ctl()
+}
+
+// AuthToken returns the pre-shared token when in token mode, or "" otherwise.
+func (s *Server) AuthToken() string {
+	if s.auth == nil {
+		return ""
+	}
+	return s.auth.Token()
+}
+
+// AuthMode returns the authentication mode: "none", "token", or "password".
+func (s *Server) AuthMode() string {
+	if s.auth == nil {
+		return "none"
+	}
+	return s.auth.Mode()
 }
 
 // initTitleProvider builds a lightweight flash-model provider used solely to
@@ -243,7 +266,7 @@ func (s *Server) handler() http.Handler {
 	mux.HandleFunc("GET /skills", s.skills)
 	mux.HandleFunc("POST /delete-session", s.deleteSession)
 	mux.HandleFunc("POST /plan", s.plan)
-	return logMiddleware(securityHeadersMiddleware(csrfGuard(writeTimeoutMiddleware(mux, 60*time.Second))))
+	return logMiddleware(securityHeadersMiddleware(s.auth.middleware(csrfGuard(writeTimeoutMiddleware(mux, 60*time.Second)))))
 }
 
 // securityHeadersMiddleware sets standard security headers on every response.
@@ -273,7 +296,7 @@ func csrfGuard(next http.Handler) http.Handler {
 			if i := strings.IndexByte(ct, ';'); i >= 0 {
 				ct = ct[:i]
 			}
-			if strings.TrimSpace(ct) != "application/json" {
+			if !strings.EqualFold(strings.TrimSpace(ct), "application/json") {
 				http.Error(w, "Content-Type must be application/json", http.StatusUnsupportedMediaType)
 				return
 			}
