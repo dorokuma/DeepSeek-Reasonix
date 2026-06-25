@@ -677,6 +677,23 @@ function finalizeMsg() { if(currentMsg){const c=currentMsg.querySelector('.curso
 
 // ── tool cards (v1 pattern) ──
 function renderToolDispatch(tool) {
+  // If a card for this tool already exists, update its header and skip creation.
+  const existing = toolCards[tool.id];
+  if (existing) {
+    // Merge full args onto the existing card header.
+    if (tool.args) {
+      const subject = existing.querySelector('.subject');
+      if (subject) subject.textContent = tool.args.slice(0, 80);
+    }
+    // Replace the spinner with a checkmark icon (now has full args).
+    const ico = existing.querySelector('.ico');
+    if (ico) {
+      ico.className = 'ico';
+      ico.innerHTML = '<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>';
+    }
+    scrollDown();
+    return;
+  }
   hideWelcome(); const card=el('div','card'); card.id='tool-'+tool.id; card.dataset.open='false'; card.dataset.tone='accent';
   const head=el('div','card-head');
   head.innerHTML='<span class="ico spin"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="10" stroke-dasharray="60" stroke-dashoffset="20"/></svg></span><span class="name">'+escHtml(tool.name)+'</span>'+(tool.args?'<span class="subject">'+escHtml(tool.args.slice(0,80))+'</span>':'')+'<span class="grow"></span><span class="chev"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg></span>';
