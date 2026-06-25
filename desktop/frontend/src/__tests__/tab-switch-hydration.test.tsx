@@ -128,17 +128,19 @@ const checkpoints: CheckpointMeta[] = [];
 const tabA = tabMeta("tab-a", { active: true });
 const tabB = tabMeta("tab-b");
 const tabC = tabMeta("tab-c");
+const tabD = tabMeta("tab-d");
 let backendActiveId = "tab-a";
 const historyB = deferred<HistoryMessage[]>();
+const historyD = deferred<HistoryMessage[]>();
 const setActiveBGate = deferred<void>();
 const historyCalls: string[] = [];
 let setActiveCalls = 0;
 let newSessionCalls = 0;
 const runningTabs = new Set<string>();
-const tabsById = new Map([tabA, tabB, tabC].map((tab) => [tab.id, tab]));
+const tabsById = new Map([tabA, tabB, tabC, tabD].map((tab) => [tab.id, tab]));
 
 function currentTabs(): TabMeta[] {
-  return [tabA, tabB, tabC].map((tab) => ({ ...tab, active: tab.id === backendActiveId, running: runningTabs.has(tab.id) }));
+  return [tabA, tabB, tabC, tabD].map((tab) => ({ ...tab, active: tab.id === backendActiveId, running: runningTabs.has(tab.id) }));
 }
 
 window.runtime = {
@@ -158,7 +160,12 @@ window.go = {
       HistoryForTab: async (tabID: string) => {
         historyCalls.push(tabID);
         if (tabID === "tab-b") return historyB.promise;
+        if (tabID === "tab-d") return historyD.promise;
         return [userMessage("cached A")];
+      },
+      OpenProjectTab: async () => {
+        backendActiveId = "tab-d";
+        return { ...tabD, active: true };
       },
       NewSession: async () => {
         newSessionCalls += 1;
@@ -254,6 +261,22 @@ await act(async () => {
 eq(controller?.activeTabId, "tab-c", "switching to a cached running tab still updates the active tab");
 ok(controller?.state.items.some((item) => item.kind === "user" && item.text === "streaming C") ?? false, "cached running tab keeps its optimistic transcript");
 ok(!historyCalls.includes("tab-c"), "cached running tab skips history hydration");
+
+await act(async () => {
+  await controller?.openProjectTab(tabD.workspaceRoot, tabD.topicId || "");
+  await flushPromises();
+});
+eq(controller?.activeTabId, "tab-d", "openProjectTab activates the opened tab");
+eq(controller?.state.items.length, 0, "open topic keeps the new tab transcript empty while hydrating");
+ok(controller?.state.hydratePlaceholderItems?.some((item) => item.kind === "user" && item.text === "streaming C") ?? false, "open topic stores previous transcript only as a hydration placeholder");
+
+await act(async () => {
+  historyD.resolve([]);
+  await historyD.promise;
+  await flushPromises();
+});
+eq(controller?.state.items.length, 0, "empty topic history keeps the real transcript empty");
+eq(controller?.state.hydratePlaceholderItems?.length ?? 0, 0, "empty topic history clears the hydration placeholder");
 
 await act(async () => {
   root.unmount();

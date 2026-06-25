@@ -1602,6 +1602,21 @@ export default function App() {
     setTabMetas(tabs);
     return tabs;
   }, []);
+  const seedActiveTabMeta = useCallback((tab: TabMeta): void => {
+    setTabMetas((current) => {
+      const seeded = { ...tab, active: true };
+      let found = false;
+      const next = current.map((existing) => {
+        if (existing.id === tab.id) {
+          found = true;
+          return { ...existing, ...seeded };
+        }
+        return existing.active ? { ...existing, active: false } : existing;
+      });
+      return found ? next : [...next, seeded];
+    });
+    setTabOrderIds((current) => current.includes(tab.id) ? current : [...current, tab.id]);
+  }, []);
 
   useEffect(() => {
     const unsub = onEvent((e) => {
@@ -2078,11 +2093,19 @@ export default function App() {
   const rewindStateRef = useRef(rewindState);
   rewindStateRef.current = rewindState;
 
+  const hydratePlaceholderActive = Boolean(
+    state.hydrating &&
+    state.items.length === 0 &&
+    state.hydratePlaceholderItems?.length,
+  );
+  const transcriptHydrating = state.hydrating && !state.hydrateHistoryLoaded;
+  const transcriptItems = hydratePlaceholderActive ? state.hydratePlaceholderItems! : state.items;
+
   // Display items: truncated when an optimistic rewind is pending.
   const displayItems = useMemo(() => {
-    if (!rewindState) return state.items;
-    return state.items.slice(0, rewindState.boundaryIdx).filter((it) => it.kind !== "compaction");
-  }, [state.items, rewindState]);
+    if (!rewindState) return transcriptItems;
+    return transcriptItems.slice(0, rewindState.boundaryIdx).filter((it) => it.kind !== "compaction");
+  }, [transcriptItems, rewindState]);
 
   // send wrapper: commits any pending optimistic rewind before sending.
   const commitThenSend = useCallback(async (displayText: string, submitText?: string) => {
@@ -2122,6 +2145,7 @@ export default function App() {
 
   const handleMessageAction = useCallback((turn: number, scope: string) => {
     if (activeTab?.readOnly) return;
+    if (hydratePlaceholderActive) return;
     if (scope === "fork") {
       // Fork still goes through the controller (not optimistic).
       rewind(turn, scope).then((ok) => {
@@ -2185,11 +2209,11 @@ export default function App() {
     setComposerInsertRequest({ id: insertId, text: prompt, mode: "replace" });
 
     setRewindSignal((v) => v + 1);
-  }, [activeTab?.readOnly, state.items, rewind, refreshTabMetas, setComposerInsertRequest]);
+  }, [activeTab?.readOnly, hydratePlaceholderActive, state.items, rewind, refreshTabMetas, setComposerInsertRequest]);
 
   const handleEditPrompt = useCallback(async (turn: number, displayText: string, submitText?: string): Promise<boolean> => {
     const sourceTabId = activeTabId;
-    if (!sourceTabId || activeTab?.readOnly || !controllerReady || rewindStateRef.current || state.running || state.messageAction != null || state.approval != null || state.ask != null || clearContextPending) return false;
+    if (!sourceTabId || activeTab?.readOnly || !controllerReady || hydratePlaceholderActive || rewindStateRef.current || state.running || state.messageAction != null || state.approval != null || state.ask != null || clearContextPending) return false;
     const next = displayText.trim();
     if (!next) return false;
     const submit = (submitText ?? displayText).trim();
@@ -2198,24 +2222,27 @@ export default function App() {
     setRewindSignal((v) => v + 1);
     sendToTab(sourceTabId, next, submit);
     return true;
-  }, [activeTab?.readOnly, activeTabId, clearContextPending, controllerReady, sendToTab, state.approval, state.ask, state.messageAction, state.running, rewind]);
+  }, [activeTab?.readOnly, activeTabId, clearContextPending, controllerReady, hydratePlaceholderActive, sendToTab, state.approval, state.ask, state.messageAction, state.running, rewind]);
 
   const handleOpenTopic = useCallback(async (scope: string, workspaceRoot: string, topicId: string, sessionPath?: string) => {
     closeTransientOverlays();
     setSidebarImDetailConnectionId("");
+    let openedTab: TabMeta;
     if (singleSurfaceLayout) {
-      await activateTopic(scope, workspaceRoot, topicId, sessionPath || "");
+      openedTab = await activateTopic(scope, workspaceRoot, topicId, sessionPath || "");
     } else if (sessionPath) {
-      await openTopicSession(scope, workspaceRoot, topicId, sessionPath);
+      openedTab = await openTopicSession(scope, workspaceRoot, topicId, sessionPath);
     } else if (scope === "global") {
-      await openGlobalTab(topicId);
+      openedTab = await openGlobalTab(topicId);
     } else {
-      await openProjectTab(workspaceRoot, topicId);
+      openedTab = await openProjectTab(workspaceRoot, topicId);
     }
-    await refreshTabMetas();
+    seedActiveTabMeta(openedTab);
+    // Fire refreshTabMetas in background — transcript data loads independently.
+    void refreshTabMetas();
     setTabRevealSignal((signal) => signal + 1);
     setTranscriptRevealSignal((signal) => signal + 1);
-  }, [activateTopic, closeTransientOverlays, openGlobalTab, openProjectTab, openTopicSession, refreshTabMetas, singleSurfaceLayout]);
+  }, [activateTopic, closeTransientOverlays, openGlobalTab, openProjectTab, openTopicSession, refreshTabMetas, seedActiveTabMeta, singleSurfaceLayout]);
 
   const openSidebarImConnectionSession = useCallback(async (connection: SidebarImConnection) => {
     const target = sidebarImSessionTarget(connection);
@@ -2225,23 +2252,29 @@ export default function App() {
     }
     setSidebarImDetailConnectionId("");
     try {
+      let openedTab: TabMeta | undefined;
       if (connection.sessionSource === "auto" && target.kind === "path") {
         const tab = singleSurfaceLayout
           ? await ensureBlankSurface(connection.scope, connection.scope === "project" ? connection.workspaceRoot : "")
           : await ensureBlankTab(connection.scope, connection.scope === "project" ? connection.workspaceRoot : "");
+        openedTab = tab;
         await openChannelSession(target.value, tab.id);
       } else if (target.kind === "path") {
         const tab = singleSurfaceLayout
           ? await ensureBlankSurface(connection.scope, connection.scope === "project" ? connection.workspaceRoot : "")
           : await ensureBlankTab(connection.scope, connection.scope === "project" ? connection.workspaceRoot : "");
+        openedTab = tab;
         await resumeSession(target.value, tab.id);
       } else if (connection.scope === "project") {
-        if (singleSurfaceLayout) await activateTopic("project", connection.workspaceRoot, target.value);
-        else await openProjectTab(connection.workspaceRoot, target.value);
+        openedTab = singleSurfaceLayout
+          ? await activateTopic("project", connection.workspaceRoot, target.value)
+          : await openProjectTab(connection.workspaceRoot, target.value);
       } else {
-        if (singleSurfaceLayout) await activateTopic("global", "", target.value);
-        else await openGlobalTab(target.value);
+        openedTab = singleSurfaceLayout
+          ? await activateTopic("global", "", target.value)
+          : await openGlobalTab(target.value);
       }
+      if (openedTab) seedActiveTabMeta(openedTab);
       await refreshTabMetas();
       setTabRevealSignal((value) => value + 1);
       setTranscriptRevealSignal((value) => value + 1);
@@ -2250,7 +2283,7 @@ export default function App() {
       console.warn("bot sidebar open failed", err);
       showToast(t("sidebar.imOpenFailed", { name: connection.title }));
     }
-  }, [activateTopic, ensureBlankSurface, ensureBlankTab, openChannelSession, openGlobalTab, openProjectTab, refreshTabMetas, resumeSession, showToast, singleSurfaceLayout, t]);
+  }, [activateTopic, ensureBlankSurface, ensureBlankTab, openChannelSession, openGlobalTab, openProjectTab, refreshTabMetas, resumeSession, seedActiveTabMeta, showToast, singleSurfaceLayout, t]);
 
   // History drawer: project menus can open a scoped saved-session list. Idle row
   // clicks resume; running row clicks only preview through PreviewSession.
@@ -2307,11 +2340,13 @@ export default function App() {
             ? t("history.failedOpenSession")
             : (session.topicId ? "Missing workspaceRoot" : t("history.failedOpenSession")));
         }
+        seedActiveTabMeta(targetTab);
         setHistView(null);
         if (!isChannelSession(session) && !singleSurfaceLayout) {
           await resumeSession(session.path, targetTab.id);
         }
-        await refreshTabMetas();
+        // Fire refreshTabMetas in background — transcript data loads independently.
+        void refreshTabMetas();
         setTabRevealSignal((value) => value + 1);
         setTranscriptRevealSignal((value) => value + 1);
       } catch (err: any) {
@@ -2326,7 +2361,7 @@ export default function App() {
         }
       }
     },
-    [activateTopic, ensureBlankSurface, ensureBlankTab, openChannelSession, openGlobalTab, openProjectTab, refreshHistoryView, refreshTabMetas, state.running, resumeSession, singleSurfaceLayout, t, showToast],
+    [activateTopic, ensureBlankSurface, ensureBlankTab, openChannelSession, openGlobalTab, openProjectTab, refreshHistoryView, refreshTabMetas, state.running, resumeSession, seedActiveTabMeta, singleSurfaceLayout, t, showToast],
   );
 
   // Command palette: ⌘K / Ctrl+K opens a fuzzy navigator over commands and
@@ -3125,13 +3160,14 @@ export default function App() {
                 onRewind={handleMessageAction}
                 checkpoints={state.checkpoints}
                 actionPending={state.messageAction != null}
-                rewindDisabled={Boolean(activeTab?.readOnly) || !controllerReady || rewindState != null || rewindCommitting || state.running || state.messageAction != null || state.approval != null || state.ask != null || clearContextPending}
+                rewindDisabled={Boolean(activeTab?.readOnly) || !controllerReady || hydratePlaceholderActive || rewindState != null || rewindCommitting || state.running || state.messageAction != null || state.approval != null || state.ask != null || clearContextPending}
                 running={state.running || rewindCommitting}
                 welcomeVariant={sidebarCreation ? "creation" : "default"}
                 creationMode={sidebarCreation}
-                actionHoverMenus={sidebarCreation}
+                actionHoverMenus={sidebarCreation && !hydratePlaceholderActive}
                 rewindSignal={rewindSignal}
                 revealSignal={transcriptRevealSignal}
+                hydrating={transcriptHydrating}
               />
             )}
           </main>

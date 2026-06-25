@@ -187,6 +187,23 @@ ok(
   "welcome prompts and composer submit share the controller readiness gate",
 );
 
+ok(
+  /const transcriptHydrating = state\.hydrating && !state\.hydrateHistoryLoaded;/.test(appSource) &&
+    /hydrating=\{transcriptHydrating\}/.test(appSource),
+  "Welcome is suppressed only until transcript history has loaded",
+);
+
+const openTopicBlock = appSource.match(/const handleOpenTopic = useCallback\([\s\S]*?\n  \}, \[[^\]]*seedActiveTabMeta[^\]]*\]\);/)?.[0] ?? "";
+ok(
+  /let openedTab: TabMeta;/.test(openTopicBlock) &&
+    /openedTab = await activateTopic/.test(openTopicBlock) &&
+    /openedTab = await openTopicSession/.test(openTopicBlock) &&
+    /openedTab = await openGlobalTab/.test(openTopicBlock) &&
+    /openedTab = await openProjectTab/.test(openTopicBlock) &&
+    /seedActiveTabMeta\(openedTab\);[\s\S]*void refreshTabMetas\(\);/.test(openTopicBlock),
+  "opening topics seeds active tab metadata before background refresh",
+);
+
 for (const selector of [
   ".app--darwin .app-chrome--tabs",
   ":root[data-theme-style] .app--darwin .app-chrome--tabs",
