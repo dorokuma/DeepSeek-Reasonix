@@ -287,6 +287,7 @@ type Usage struct {
 	TotalTokens      int
 	CacheHitTokens   int    // prompt tokens served from cache
 	CacheMissTokens  int    // prompt tokens not cached
+	CacheWriteTokens int    // cache creation/写入 token（Anthropic cache_creation_input_tokens，计费 1.25× input）
 	ReasoningTokens  int    // subset of CompletionTokens spent on chain-of-thought
 	FinishReason     string // "stop", "tool_calls", "length", "content_filter", "repetition_truncation", …
 }
@@ -294,10 +295,11 @@ type Usage struct {
 // Pricing is a provider's per-1M-token rates, used to estimate spend. Currency
 // is just a display symbol (default "¥"). toml tags let config decode it.
 type Pricing struct {
-	CacheHit float64 `toml:"cache_hit"` // per 1M cached prompt tokens
-	Input    float64 `toml:"input"`     // per 1M uncached prompt tokens
-	Output   float64 `toml:"output"`    // per 1M completion tokens
-	Currency string  `toml:"currency"`
+	CacheHit  float64 `toml:"cache_hit"`  // per 1M cached prompt tokens
+	Input     float64 `toml:"input"`      // per 1M uncached prompt tokens
+	Output    float64 `toml:"output"`     // per 1M completion tokens
+	CacheWrite float64 `toml:"cache_write"` // per 1M cache creation tokens（Anthropic 1.25× input；OpenAI 无此概念）
+	Currency  string  `toml:"currency"`
 }
 
 // Cost estimates the spend for a usage record.
@@ -305,8 +307,13 @@ func (p *Pricing) Cost(u *Usage) float64 {
 	if p == nil || u == nil {
 		return 0
 	}
+	cwPrice := p.CacheWrite
+	if cwPrice == 0 {
+		cwPrice = p.Input // 未配置时回退到 Input 价格
+	}
 	return (float64(u.CacheHitTokens)*p.CacheHit +
 		float64(u.CacheMissTokens)*p.Input +
+		float64(u.CacheWriteTokens)*cwPrice +
 		float64(u.CompletionTokens)*p.Output) / 1e6
 }
 

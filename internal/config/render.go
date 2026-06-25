@@ -221,8 +221,8 @@ func RenderTOMLForScope(c *Config, scope RenderScope) string {
 				fmt.Fprintf(&b, "context_window = %d   # tokens; compaction triggers near this limit\n", p.ContextWindow)
 			}
 			if p.Price != nil {
-				fmt.Fprintf(&b, "price       = { cache_hit = %v, input = %v, output = %v, currency = %q }   # per 1M tokens\n",
-					p.Price.CacheHit, p.Price.Input, p.Price.Output, p.Price.Symbol())
+				fmt.Fprintf(&b, "price       = { cache_hit = %v, input = %v, output = %v, cache_write = %v, currency = %q }   # per 1M tokens\n",
+					p.Price.CacheHit, p.Price.Input, p.Price.Output, p.Price.CacheWrite, p.Price.Symbol())
 			}
 			if p.Thinking != "" {
 				fmt.Fprintf(&b, "thinking    = %q\n", p.Thinking)

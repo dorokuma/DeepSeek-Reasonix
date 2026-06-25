@@ -77,10 +77,6 @@ type wireUsage struct {
 	CacheMissTokens  int                   `json:"cacheMissTokens"`
 	ReasoningTokens  int                   `json:"reasoningTokens,omitempty"`
 	CacheDiagnostics *wireCacheDiagnostics `json:"cacheDiagnostics,omitempty"`
-	// Session-cumulative cache tokens — the status line shows the aggregate
-	// hit-rate Σhit/Σ(hit+miss), steadier than the single-turn CacheHitTokens.
-	SessionCacheHitTokens  int     `json:"sessionCacheHitTokens"`
-	SessionCacheMissTokens int     `json:"sessionCacheMissTokens"`
 	SessionCost            float64 `json:"sessionCost,omitempty"`
 	SessionCurrency        string  `json:"sessionCurrency,omitempty"`
 	SessionPromptTokens    int     `json:"sessionPromptTokens"`
@@ -172,7 +168,6 @@ func toWire(e event.Event) wireEvent {
 				PromptTokens: u.PromptTokens, CompletionTokens: u.CompletionTokens,
 				TotalTokens: u.TotalTokens, CacheHitTokens: u.CacheHitTokens,
 				CacheMissTokens: u.CacheMissTokens, ReasoningTokens: u.ReasoningTokens,
-				SessionCacheHitTokens: e.SessionHit, SessionCacheMissTokens: e.SessionMiss,
 				SessionCost: e.SessionCost, SessionCurrency: e.SessionCurrency,
 				SessionPromptTokens: e.SessionPrompt, SessionTotalTokens: e.SessionTotal,
 			}

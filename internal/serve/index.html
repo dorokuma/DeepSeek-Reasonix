@@ -857,12 +857,12 @@ es.onmessage=ev=>{setConnState('connected');
     case 'tool_result': if(e.tool)renderToolResult(e.tool); break;
     case 'tool_progress': if(e.tool)renderToolProgress(e.tool); break;
     case 'usage':
-      if(e.usage){turnTokens=e.usage.completionTokens||0;
-        cumulativeTokens+=e.usage.totalTokens||0;
+      if(e.usage){turnTokens=e.usage.completionTokens??0;
+        cumulativeTokens+=e.usage.totalTokens??0;
         const usageCost=e.usage.cost??e.usage.costUsd;
         if(typeof usageCost==='number')cumulativeCost+=usageCost;
-        cumulativeCacheHit+=e.usage.cacheHitTokens||0;
-        cumulativeCacheMiss+=e.usage.cacheMissTokens||0;
+        cumulativeCacheHit+=e.usage.cacheHitTokens??0;
+        cumulativeCacheMiss+=e.usage.cacheMissTokens??0;
         const strip=el('div','metric-strip');
         [{l:__('total'),v:fmtTok(e.usage.totalTokens),c:''},{l:__('in'),v:fmtTok(e.usage.promptTokens),c:'acc'},{l:__('out'),v:fmtTok(e.usage.completionTokens),c:'ok'}].forEach(it=>{
           const sp=el('span','item');sp.innerHTML=it.l+' <span class="v '+it.c+'">'+it.v+'</span>';strip.appendChild(sp);
@@ -890,8 +890,8 @@ function fetchStatus(){
   fetch('/status').then(r=>r.json()).then(s=>{
     if(s.label)statusModel.textContent=s.label;
     // sidebar metrics
-    const cacheTotal=(s.cacheHit||0)+(s.cacheMiss||0);
-    $('#sm-cache').textContent=cacheTotal>0?Math.round((s.cacheHit||0)/cacheTotal*100)+'%':'—';
+    const cacheTotal=(s.cacheHit??0)+(s.cacheMiss??0);
+    $('#sm-cache').textContent=cacheTotal>0?Math.round((s.cacheHit??0)/cacheTotal*100)+'%':'—';
     const lastCost=s.lastUsage?.cost??s.lastUsage?.costUsd??s.lastUsage?.totalCost;
     if(typeof lastCost==='number')$('#sm-cost').textContent=fmtMoney(lastCost,s.lastUsage?.currency);
     if(s.balance?.display)$('#sm-balance').textContent=s.balance.display;
@@ -1000,12 +1000,12 @@ function openStats(){
   fetch('/status').then(r=>r.json()).then(s=>{
     $('#stats-model').textContent=s.label||'-';
     $('#stats-sessions').textContent=sessionCount||'0';
-    const total=cumulativeTokens||s.used||0;
+    const total=cumulativeTokens||(s.used??0);
     $('#stats-total-tokens').textContent=total>=1000?fmtTok(total):String(total);
-    const hit=cumulativeCacheHit||s.cacheHit||0, miss=cumulativeCacheMiss||s.cacheMiss||0;
+    const hit=cumulativeCacheHit||(s.cacheHit??0), miss=cumulativeCacheMiss||(s.cacheMiss??0);
     const rate=hit+miss>0?Math.round(hit/(hit+miss)*100)+'%':'0%';
     $('#stats-cache-rate').textContent=rate;
-    const cost=cumulativeCost||s.lastUsage?.cost||0;
+    const cost=cumulativeCost||(s.lastUsage?.cost??0);
     $('#stats-total-cost').textContent=cost>0?fmtMoney(cost,s.lastUsage?.currency):'-';
     $('#stats-balance').textContent=s.balance?.display||'-';
     

@@ -208,10 +208,11 @@ func ScrapeOpenCodePricing(ctx context.Context) (map[string]provider.Pricing, er
 		output := parseDollar(row[2])
 		cached := parseDollar(row[3])
 		out[modelID] = provider.Pricing{
-			Input:    input,
-			Output:   output,
-			CacheHit: cached,
-			Currency: "USD",
+			Input:      input,
+			Output:     output,
+			CacheHit:   cached,
+			CacheWrite: 0, // OpenCode 价格表无 cache_write 概念，留空以便回退到 Input
+			Currency:   "USD",
 		}
 	}
 	return out, nil
@@ -301,10 +302,11 @@ func ApplyOpenCodePricing(cfg *Config, pricing map[string]provider.Pricing) {
 				continue
 			}
 			p.ModelPrices[m] = provider.Pricing{
-				CacheHit: usd.CacheHit * rate,
-				Input:    usd.Input * rate,
-				Output:   usd.Output * rate,
-				Currency: "¥",
+				CacheHit:   usd.CacheHit * rate,
+				Input:      usd.Input * rate,
+				Output:     usd.Output * rate,
+				CacheWrite: usd.CacheWrite * rate,
+				Currency:   "¥",
 			}
 		}
 		// Also set the default model's price as the shared Price so that

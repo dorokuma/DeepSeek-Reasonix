@@ -456,7 +456,8 @@ func (c *client) readStream(resp *http.Response, out chan<- provider.Chunk) {
 			CompletionTokens: outTok,
 			TotalTokens:      inTok + cacheCreate + cacheRead + outTok,
 			CacheHitTokens:   cacheRead,
-			CacheMissTokens:  inTok + cacheCreate, // uncached input + cache writes (billed ≥1×)
+			CacheMissTokens:  inTok,
+			CacheWriteTokens: cacheCreate,
 			FinishReason:     mapStopReason(stopReason),
 		}}
 	}
