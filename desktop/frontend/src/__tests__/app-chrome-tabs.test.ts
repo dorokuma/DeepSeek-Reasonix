@@ -181,7 +181,7 @@ ok(
 
 ok(
   /const controllerReady = state\.meta\?\.ready === true && !state\.backendActivationPending;/.test(appSource) &&
-    /if \(!controllerReady\) return;\s*void commitThenSend\(text\);/s.test(appSource) &&
+    /if \(!controllerReady\) return;\s*void commitThenSend\(text\)\.catch/.test(appSource) &&
     /onPrompt=\{handleTranscriptPrompt\}/.test(appSource) &&
     /submitDisabled=\{!controllerReady\}/.test(appSource),
   "welcome prompts and composer submit share the controller readiness gate",
@@ -193,15 +193,25 @@ ok(
   "Welcome is suppressed only until transcript history has loaded",
 );
 
-const openTopicBlock = appSource.match(/const handleOpenTopic = useCallback\([\s\S]*?\n  \}, \[[^\]]*seedActiveTabMeta[^\]]*\]\);/)?.[0] ?? "";
+const openTopicBlock = appSource.match(/const handleOpenTopic = useCallback\([\s\S]*?\n  \}, \[[^\]]*runOpenTopicRequest[^\]]*\]\);/)?.[0] ?? "";
 ok(
-  /let openedTab: TabMeta;/.test(openTopicBlock) &&
-    /openedTab = await activateTopic/.test(openTopicBlock) &&
-    /openedTab = await openTopicSession/.test(openTopicBlock) &&
-    /openedTab = await openGlobalTab/.test(openTopicBlock) &&
-    /openedTab = await openProjectTab/.test(openTopicBlock) &&
-    /seedActiveTabMeta\(openedTab\);[\s\S]*void refreshTabMetas\(\);/.test(openTopicBlock),
-  "opening topics seeds active tab metadata before background refresh",
+  /const openTopicRunningRef = useRef\(false\);/.test(appSource) &&
+    /const openTopicPendingRef = useRef<PendingOpenTopicRequest \| null>\(null\);/.test(appSource) &&
+    /const runOpenTopicRequest = useCallback\(async \(request: PendingOpenTopicRequest\)/.test(appSource) &&
+    /openedTab = await activateTopic\(request\.scope/.test(appSource) &&
+    /openedTab = await openTopicSession\(request\.scope/.test(appSource) &&
+    /openedTab = await openGlobalTab\(request\.topicId\)/.test(appSource) &&
+    /openedTab = await openProjectTab\(request\.workspaceRoot, request\.topicId\)/.test(appSource) &&
+    /request\.seq !== openTopicSeqRef\.current/.test(appSource) &&
+    /enqueueOpenTopicRequest\([\s\S]*runningRef: openTopicRunningRef, pendingRef: openTopicPendingRef/.test(openTopicBlock) &&
+    !/openTopicQueueRef\.current\.catch\(\(\) => \{\}\)\.then/.test(appSource) &&
+    /seedActiveTabMeta\(openedTab\);[\s\S]*void refreshTabMetas\(\);/.test(appSource),
+  "opening topics coalesces pending navigation, ignores stale results, and seeds active tab metadata before background refresh",
+);
+
+ok(
+  /<HeartbeatPanel[\s\S]*onOpenTopic=\{\(scope, workspaceRoot, topicId\) => \{[\s\S]*void handleOpenTopic\(scope, workspaceRoot, topicId\);[\s\S]*\}\}/.test(appSource),
+  "heartbeat topic navigation uses the guarded open-topic path",
 );
 
 for (const selector of [

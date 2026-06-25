@@ -107,6 +107,11 @@ type App struct {
 	readyHook              func()
 	projectTreeChangedHook func()
 
+	// singleSurfaceMu serializes open/reuse plus visible-tab pruning for the
+	// one-conversation layout so overlapping navigation cannot remove the tab
+	// another navigation is still activating.
+	singleSurfaceMu sync.Mutex
+
 	// detachedSessions keeps live session runtimes whose visible tab was closed.
 	// It is process-local by design: shutdown closes every detached controller.
 	detachedSessions map[string]*WorkspaceTab

@@ -127,6 +127,7 @@ import { useOverlayStore } from "./store/overlays";
 import { hydrateDisplayMode } from "./lib/displayMode";
 import { DEFAULT_STATUS_BAR_ITEMS, normalizeStatusBarItems, type StatusBarItemId } from "./lib/statusBarItems";
 import { sessionActivityTime } from "./lib/session";
+import { enqueueOpenTopicRequest, type PendingOpenTopicRequest } from "./lib/openTopicCoalescing";
 import {
   applyTheme,
   clearLegacyThemePreference,
@@ -2240,25 +2241,43 @@ export default function App() {
     }
   }, [activeTab?.readOnly, activeTabId, clearContextPending, controllerReady, hydratePlaceholderActive, sendToTab, state.approval, state.ask, state.messageAction, state.running, rewind]);
 
-  const handleOpenTopic = useCallback(async (scope: string, workspaceRoot: string, topicId: string, sessionPath?: string) => {
+  const openTopicSeqRef = useRef(0);
+  const openTopicRunningRef = useRef(false);
+  const openTopicPendingRef = useRef<PendingOpenTopicRequest | null>(null);
+  const runOpenTopicRequest = useCallback(async (request: PendingOpenTopicRequest) => {
+    try {
+      let openedTab: TabMeta;
+      if (singleSurfaceLayout) {
+        openedTab = await activateTopic(request.scope, request.workspaceRoot, request.topicId, request.sessionPath || "");
+      } else if (request.sessionPath) {
+        openedTab = await openTopicSession(request.scope, request.workspaceRoot, request.topicId, request.sessionPath);
+      } else if (request.scope === "global") {
+        openedTab = await openGlobalTab(request.topicId);
+      } else {
+        openedTab = await openProjectTab(request.workspaceRoot, request.topicId);
+      }
+      if (request.seq !== openTopicSeqRef.current) return;
+      seedActiveTabMeta(openedTab);
+      // Fire refreshTabMetas in background — transcript data loads independently.
+      void refreshTabMetas();
+      setTabRevealSignal((signal) => signal + 1);
+      setTranscriptRevealSignal((signal) => signal + 1);
+    } catch (err) {
+      if (request.seq !== openTopicSeqRef.current) return;
+      console.warn("topic open failed", err);
+      showToast(t("history.failedOpenSession"), "error");
+      void refreshTabMetas();
+    }
+  }, [activateTopic, openGlobalTab, openProjectTab, openTopicSession, refreshTabMetas, seedActiveTabMeta, showToast, singleSurfaceLayout, t]);
+  const handleOpenTopic = useCallback((scope: string, workspaceRoot: string, topicId: string, sessionPath?: string): Promise<void> => {
     closeTransientOverlays();
     setSidebarImDetailConnectionId("");
-    let openedTab: TabMeta;
-    if (singleSurfaceLayout) {
-      openedTab = await activateTopic(scope, workspaceRoot, topicId, sessionPath || "");
-    } else if (sessionPath) {
-      openedTab = await openTopicSession(scope, workspaceRoot, topicId, sessionPath);
-    } else if (scope === "global") {
-      openedTab = await openGlobalTab(topicId);
-    } else {
-      openedTab = await openProjectTab(workspaceRoot, topicId);
-    }
-    seedActiveTabMeta(openedTab);
-    // Fire refreshTabMetas in background — transcript data loads independently.
-    void refreshTabMetas();
-    setTabRevealSignal((signal) => signal + 1);
-    setTranscriptRevealSignal((signal) => signal + 1);
-  }, [activateTopic, closeTransientOverlays, openGlobalTab, openProjectTab, openTopicSession, refreshTabMetas, seedActiveTabMeta, singleSurfaceLayout]);
+    return enqueueOpenTopicRequest(
+      { seqRef: openTopicSeqRef, runningRef: openTopicRunningRef, pendingRef: openTopicPendingRef },
+      { scope, workspaceRoot, topicId, sessionPath },
+      runOpenTopicRequest,
+    );
+  }, [closeTransientOverlays, runOpenTopicRequest]);
 
   const openSidebarImConnectionSession = useCallback(async (connection: SidebarImConnection) => {
     const target = sidebarImSessionTarget(connection);
@@ -3473,13 +3492,7 @@ export default function App() {
       {needsOnboarding && <OnboardingOverlay onComplete={() => setNeedsOnboarding(false)} />}
 
       <HeartbeatPanel open={heartbeatOpen} onClose={() => setHeartbeatOpen(false)} onOpenTopic={(scope, workspaceRoot, topicId) => {
-        if (singleSurfaceLayout) {
-          activateTopic(scope, workspaceRoot, topicId);
-        } else if (scope === "project" && workspaceRoot) {
-          openProjectTab(workspaceRoot, topicId);
-        } else {
-          openGlobalTab(topicId);
-        }
+        void handleOpenTopic(scope, workspaceRoot, topicId);
       }} />
     </div>
     </ShellExpandProvider>

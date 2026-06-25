@@ -1333,6 +1333,9 @@ func (a *App) OpenTopicSession(scope, workspaceRoot, topicID, sessionPath string
 // the classic tab path, then prunes every non-active visible tab so historical
 // clicks do not accumulate hidden startup work.
 func (a *App) ActivateTopic(scope, workspaceRoot, topicID, sessionPath string) (TabMeta, error) {
+	a.singleSurfaceMu.Lock()
+	defer a.singleSurfaceMu.Unlock()
+
 	var meta TabMeta
 	var err error
 	if strings.TrimSpace(sessionPath) != "" {
@@ -1352,6 +1355,9 @@ func (a *App) ActivateTopic(scope, workspaceRoot, topicID, sessionPath string) (
 // creating or reusing a blank session, it removes other visible tabs while
 // preserving running runtimes as detached background sessions.
 func (a *App) EnsureBlankSurface(scope, workspaceRoot string) (TabMeta, error) {
+	a.singleSurfaceMu.Lock()
+	defer a.singleSurfaceMu.Unlock()
+
 	meta, err := a.EnsureBlankTab(scope, workspaceRoot)
 	if err != nil {
 		return TabMeta{}, err
@@ -1865,6 +1871,9 @@ func (a *App) keepOnlyVisibleTab(tabID string) (TabMeta, error) {
 }
 
 func (a *App) applySingleSurfaceTabPolicy() error {
+	a.singleSurfaceMu.Lock()
+	defer a.singleSurfaceMu.Unlock()
+
 	a.mu.RLock()
 	tabID := a.activeTabID
 	if tabID == "" || a.tabs[tabID] == nil {
