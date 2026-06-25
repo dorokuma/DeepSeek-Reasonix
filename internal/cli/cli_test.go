@@ -61,7 +61,7 @@ func TestModelForResumePathUsesStoredModelWhenAvailable(t *testing.T) {
 	if err := session.Save(path); err != nil {
 		t.Fatal(err)
 	}
-	if err := agent.SetBranchModelPreserveUpdated(path, "saved/model"); err != nil {
+	if err := agent.SetBranchModelPreserveUpdated(path, "saved"); err != nil {
 		t.Fatal(err)
 	}
 	cfg := &config.Config{
@@ -72,8 +72,8 @@ func TestModelForResumePathUsesStoredModelWhenAvailable(t *testing.T) {
 		},
 	}
 
-	if got := modelForResumePath("", path, cfg); got != "saved/model" {
-		t.Fatalf("modelForResumePath = %q, want saved/model", got)
+	if got := modelForResumePath("", path, cfg); got != "saved" {
+		t.Fatalf("modelForResumePath = %q, want saved", got)
 	}
 	if got := modelForResumePath("explicit/model", path, cfg); got != "explicit/model" {
 		t.Fatalf("explicit model was overwritten: %q", got)

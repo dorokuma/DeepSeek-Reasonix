@@ -151,6 +151,8 @@ type Controller struct {
 
 	autoReentryDepth int
 
+	pendingReentry bool
+
 	wg        sync.WaitGroup
 	closeOnce sync.Once
 }
@@ -320,6 +322,7 @@ func (c *Controller) beginCheckpoint(input string) {
 func (c *Controller) runGuarded(body func(ctx context.Context) error) {
 	c.mu.Lock()
 	if c.running {
+		c.pendingReentry = true
 		c.mu.Unlock()
 		return
 	}
@@ -336,8 +339,13 @@ func (c *Controller) runGuarded(body func(ctx context.Context) error) {
 		c.mu.Lock()
 		c.running = false
 		c.cancel = nil
+		shouldReenter := c.pendingReentry
+		c.pendingReentry = false
 		c.mu.Unlock()
 		c.sink.Emit(event.Event{Kind: event.TurnDone, Err: explainError(err)})
+		if shouldReenter {
+			c.Send("")
+		}
 	}()
 }
 
@@ -347,6 +355,7 @@ func (c *Controller) autoReenter() {
 	c.mu.Lock()
 	if c.autoReentryDepth >= 2 {
 		c.mu.Unlock()
+		slog.Warn("auto-reentry depth cap reached; background completion pending user input")
 		return
 	}
 	c.autoReentryDepth++

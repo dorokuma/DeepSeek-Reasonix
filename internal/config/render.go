@@ -295,12 +295,12 @@ func RenderTOMLForScope(c *Config, scope RenderScope) string {
 	b.WriteString("\n")
 	b.WriteString("# main_agent_allowed restricts which tools the root (depth-0) agent may\n")
 	b.WriteString("# invoke. Empty (default) uses a minimal built-in set (task/ask/note/\n")
-	b.WriteString("# audit_finish/read_skill/run_skill/slash_command). Non-empty replaces\n")
-	b.WriteString("# the default entirely — list every tool the root agent should see.\n")
+	b.WriteString("# audit_finish/read_skill/run_skill/slash_command/wait/bash_output/kill_shell).\n")
+	b.WriteString("# Non-empty replaces the default entirely — list every tool the root agent should see.\n")
 	if len(c.Permissions.MainAgentAllowed) > 0 {
 		fmt.Fprintf(&b, "main_agent_allowed = %s\n", renderStringArray(c.Permissions.MainAgentAllowed))
 	} else {
-		b.WriteString("# main_agent_allowed = [\"task\", \"ask\", \"note\", \"audit_finish\", \"read_skill\", \"run_skill\", \"slash_command\"]\n")
+		b.WriteString("# main_agent_allowed = [\"task\", \"ask\", \"note\", \"audit_finish\", \"read_skill\", \"run_skill\", \"slash_command\", \"wait\", \"bash_output\", \"kill_shell\"]\n")
 	}
 	b.WriteString("\n")
 

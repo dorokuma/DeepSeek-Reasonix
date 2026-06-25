@@ -457,7 +457,7 @@ func newChatTUI(ctrl *control.Controller, missing string, eventCh chan event.Eve
 		reasoning:            &strings.Builder{},
 		pending:              &strings.Builder{},
 		pendingCommit:        &commitBuf,
-		renderer:             newMarkdownRenderer(termW - 1),
+		renderer:             newMarkdownRenderer(termW),
 		showReasoning:        nativeScrollback,
 		shellOutputs:         make(map[string]string),
 		shellExpanded:        make(map[string]bool),
@@ -467,7 +467,7 @@ func newChatTUI(ctrl *control.Controller, missing string, eventCh chan event.Eve
 		host:                 ctrl.Host(),
 		commands:             ctrl.Commands(),
 		skills:               ctrl.Skills(),
-		viewport:             viewport.New(viewport.WithWidth(termW - 1)),
+		viewport:             viewport.New(viewport.WithWidth(termW)),
 	}
 }
 
@@ -712,7 +712,7 @@ func (m chatTUI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width = msg.Width
 		m.height = msg.Height
 		m.input.SetWidth(msg.Width - 4)
-		m.renderer = newMarkdownRenderer(msg.Width - 1)
+		m.renderer = newMarkdownRenderer(msg.Width)
 		// Commit the banner — and a resumed session's transcript — once, now
 		// that the width is known.
 		if !m.started {
@@ -720,7 +720,7 @@ func (m chatTUI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			var b strings.Builder
 			b.WriteString(renderTUIBanner(m.label, m.missing, msg.Width))
 			if len(m.history) > 0 {
-				r := newMarkdownRenderer(msg.Width - 1)
+				r := newMarkdownRenderer(msg.Width)
 				for _, sec := range replaySectionsFor(m.history, msg.Width, r) {
 					b.WriteString(sec)
 				}
@@ -1871,6 +1871,7 @@ func (m *chatTUI) streamAnswer() {
 	}
 	m.answerFlushed = len(prefix)
 	block := strings.TrimRight(rendered, "\n")
+	block = assistantBlock(block)
 	if m.answerIdx < 0 {
 		m.answerIdx = len(m.transcript)
 		m.commitLine(block)
@@ -1896,6 +1897,7 @@ func (m *chatTUI) commitPending() {
 		rendered = raw
 	}
 	block := strings.TrimRight(rendered, "\n")
+	block = assistantBlock(block)
 	if m.answerIdx < 0 {
 		m.commitLine(block)
 	} else {
@@ -2892,7 +2894,24 @@ func (m *chatTUI) ingestEvent(e event.Event) {
 		m.collapseToolOutput(e.Tool.ID)
 		if e.Tool.Err != "" {
 			m.finalizeStreamed()
-			m.commitLine("  " + red("●") + " " + bold(toolDisplayName(e.Tool.Name)) + " " + red("⊘ "+e.Tool.Err))
+			prefix := "  " + red("●") + " " + bold(toolDisplayName(e.Tool.Name)) + " "
+			errMsg := red("⊘ " + e.Tool.Err)
+			prefixW := ansi.StringWidth(prefix)
+			avail := m.width - prefixW
+			if avail < 10 {
+				avail = 10
+			}
+			lines := strings.Split(ansi.Wrap(errMsg, avail, ""), "\n")
+			var sb strings.Builder
+			sb.WriteString(prefix)
+			sb.WriteString(lines[0])
+			pad := strings.Repeat(" ", prefixW)
+			for _, l := range lines[1:] {
+				sb.WriteString("\n")
+				sb.WriteString(pad)
+				sb.WriteString(l)
+			}
+			m.commitLine(sb.String())
 		}
 
 	case event.Usage:
@@ -2903,7 +2922,28 @@ func (m *chatTUI) ingestEvent(e event.Event) {
 		}
 		if line := agent.FormatUsageLine(e.Usage, e.Pricing, e.CacheDiagnostics); line != "" {
 			m.finalizeStreamed()
-			m.commitLine(line)
+			if ansi.StringWidth(line) > m.width {
+				prefix := "  · "
+				prefixW := ansi.StringWidth(prefix)
+				avail := m.width - prefixW
+				if avail < 10 {
+					avail = 10
+				}
+				rest := line[len(prefix):]
+				wrapped := strings.Split(ansi.Wrap(rest, avail, ""), "\n")
+				var sb strings.Builder
+				sb.WriteString(prefix)
+				sb.WriteString(wrapped[0])
+				pad := strings.Repeat(" ", prefixW)
+				for _, l := range wrapped[1:] {
+					sb.WriteString("\n")
+					sb.WriteString(pad)
+					sb.WriteString(l)
+				}
+				m.commitLine(sb.String())
+			} else {
+				m.commitLine(line)
+			}
 		}
 
 	case event.Notice:
@@ -2912,7 +2952,23 @@ func (m *chatTUI) ingestEvent(e event.Event) {
 			glyph = "!"
 		}
 		m.finalizeStreamed()
-		m.commitLine(fmt.Sprintf("  %s %s", glyph, e.Text))
+		prefix := fmt.Sprintf("  %s ", glyph)
+		prefixW := ansi.StringWidth(prefix)
+		avail := m.width - prefixW
+		if avail < 10 {
+			avail = 10
+		}
+		lines := strings.Split(ansi.Wrap(e.Text, avail, ""), "\n")
+		var sb strings.Builder
+		sb.WriteString(prefix)
+		sb.WriteString(lines[0])
+		pad := strings.Repeat(" ", prefixW)
+		for _, l := range lines[1:] {
+			sb.WriteString("\n")
+			sb.WriteString(pad)
+			sb.WriteString(l)
+		}
+		m.commitLine(sb.String())
 
 	case event.CompactionStarted:
 		m.finalizeStreamed()

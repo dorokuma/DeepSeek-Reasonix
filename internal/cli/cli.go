@@ -277,6 +277,11 @@ func runAgent(args []string) int {
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
+	// Reject cleanup-pending sessions before any provider setup.
+	if *resume != "" && agent.IsCleanupPending(*resume) {
+		fmt.Fprintf(os.Stderr, "session %s is pending cleanup\n", *resume)
+		return 1
+	}
 	if rc := chdirTo(*dir); rc != 0 {
 		return rc
 	}
@@ -435,6 +440,11 @@ func runServe(args []string) int {
 	behindProxy := fs.Bool("behind-proxy", false, "trust X-Forwarded-For / X-Forwarded-Proto headers from a reverse proxy")
 	if err := fs.Parse(args); err != nil {
 		return 2
+	}
+	// Reject cleanup-pending sessions before any provider setup.
+	if *resume != "" && agent.IsCleanupPending(*resume) {
+		fmt.Fprintf(os.Stderr, "session %s is pending cleanup\n", *resume)
+		return 1
 	}
 
 	// --hash-password: generate a bcrypt hash and exit.

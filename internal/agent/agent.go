@@ -48,6 +48,9 @@ var DefaultMainAgentAllowed = map[string]bool{
 	"read_skill":    true,
 	"run_skill":     true,
 	"slash_command": true,
+	"wait":          true,
+	"bash_output":   true,
+	"kill_shell":    true,
 }
 
 // Renderer redraws the assistant's final-answer text as styled output. It is

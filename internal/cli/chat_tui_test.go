@@ -450,8 +450,18 @@ func TestIngestEventRoutesByKind(t *testing.T) {
 		m := newTestChatTUI()
 		m.ingestEvent(tc.ev)
 		got := *m.pendingCommit
-		if len(got) != 1 || !strings.Contains(got[0], tc.want) {
-			t.Errorf("%s: committed=%v, want a single line containing %q", tc.name, got, tc.want)
+		if len(got) < 1 {
+			t.Errorf("%s: committed=%v, want at least one line containing %q", tc.name, got, tc.want)
+		} else if !strings.Contains(got[0], tc.want) {
+			// When the line is wider than the terminal, wrapping splits it across
+			// multiple lines. Strip whitespace to check the content still appears.
+			gotJoined := strings.Join(got, " ")
+			gotJoined = strings.ReplaceAll(gotJoined, "\n", " ")
+			gotJoined = strings.ReplaceAll(gotJoined, "\t", "")
+			gotJoined = strings.Join(strings.Fields(gotJoined), " ")
+			if !strings.Contains(gotJoined, tc.want) {
+				t.Errorf("%s: committed=%v, want a line containing %q", tc.name, got, tc.want)
+			}
 		}
 	}
 
