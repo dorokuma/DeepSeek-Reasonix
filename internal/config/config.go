@@ -143,6 +143,19 @@ func (c *Config) DesktopLanguage() string {
 	}
 }
 
+// ReasoningLanguage returns the model-facing reasoning language from [agent].
+// Empty means no preference (model default).
+func (c *Config) ReasoningLanguage() string {
+	switch strings.ToLower(strings.TrimSpace(c.Agent.ReasoningLanguage)) {
+	case "en":
+		return "en"
+	case "zh":
+		return "zh"
+	default:
+		return ""
+	}
+}
+
 // DesktopTheme normalizes desktop.theme. New desktop users default to the dark
 // graphite product look; an explicit auto/light/dark is preserved.
 func (c *Config) DesktopTheme() string {
@@ -479,6 +492,9 @@ type AgentConfig struct {
 	// directory. Default true — the decryption is transparent on load, so old
 	// plaintext sessions remain readable.
 	EncryptSessions bool `toml:"encrypt_sessions"`
+	// ReasoningLanguage sets the language the model should use for chain-of-thought
+	// reasoning (e.g. "zh" for Chinese, "en" for English). Empty = no preference.
+	ReasoningLanguage string `toml:"reasoning_language"`
 }
 
 // ProviderEntry declares a model provider instance. ContextWindow is the model's

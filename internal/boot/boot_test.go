@@ -20,7 +20,6 @@ import (
 	"reasonix/internal/event"
 	"reasonix/internal/plugin"
 	"reasonix/internal/provider"
-	"reasonix/internal/sandbox"
 	"reasonix/internal/tool"
 	"reasonix/internal/tool/builtin"
 
@@ -34,6 +33,9 @@ import (
 // into the session's system message (the cached prefix), and the `remember`
 // tool is registered. It builds a real Controller from a throwaway project dir.
 func TestBuildFoldsProjectMemoryIntoSystemPrompt(t *testing.T) {
+	home := robustTempDir(t)
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
 	dir := robustTempDir(t)
 	t.Chdir(dir)
 
@@ -176,10 +178,10 @@ api_key_env = "REASONIX_TEST_KEY_UNSET"
 func TestAddBuiltinsWithWorkspaceRootKeepsSessionTools(t *testing.T) {
 	reg := tool.NewRegistry()
 	var stderr bytes.Buffer
-	addBuiltins(reg, nil, []string{robustTempDir(t)}, sandbox.Spec{}, 120*time.Second, builtin.SearchSpec{}, &stderr, robustTempDir(t))
+	addBuiltins(reg, nil, []string{robustTempDir(t)}, 120*time.Second, builtin.SearchSpec{}, &stderr, robustTempDir(t))
 	for _, name := range []string{
-		"todo_write",
-		"complete_step",
+		"note",
+		"audit_finish",
 		"bash_output",
 		"kill_shell",
 		"wait",
@@ -297,6 +299,9 @@ api_key_env = "REASONIX_TEST_KEY_UNSET"
 // memory files, the system prompt is exactly the configured base — the cache
 // prefix is untouched by the memory feature.
 func TestBuildWithoutMemoryLeavesPromptUnchanged(t *testing.T) {
+	home := robustTempDir(t)
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
 	dir := robustTempDir(t)
 	t.Chdir(dir)
 	writeFile(t, dir, "reasonix.toml", `
@@ -341,6 +346,9 @@ api_key_env = "REASONIX_TEST_KEY_UNSET"
 }
 
 func TestBuildLanguagePolicyIsAppended(t *testing.T) {
+	home := robustTempDir(t)
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
 	dir := robustTempDir(t)
 	t.Chdir(dir)
 	writeFile(t, dir, "reasonix.toml", `
@@ -384,6 +392,7 @@ func systemMessage(msgs []provider.Message) string {
 func stripLanguagePolicy(s string) string {
 	s = strings.TrimSpace(s)
 	for _, policy := range []string{
+		config.VisibilityPolicy,
 		config.LanguagePolicy,
 	} {
 		s = strings.TrimSpace(strings.TrimSuffix(s, policy))
@@ -1022,4 +1031,24 @@ func main() {
 		t.Fatalf("build codegraph helper: %v\n%s", err, out)
 	}
 	return path
+}
+
+// robustTempDir returns a temp directory that is cleaned up when the test
+// finishes. Unlike t.TempDir, it can be used with t.Chdir safely — the cleanup
+// always runs in the original working directory.
+func robustTempDir(t *testing.T) string {
+	t.Helper()
+	orig, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir, err := os.MkdirTemp("", "reasonix-test-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = os.Chdir(orig)
+		os.RemoveAll(dir)
+	})
+	return dir
 }

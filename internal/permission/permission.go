@@ -125,24 +125,100 @@ func New(mode string, allow, ask, deny []string) Policy {
 	}
 }
 
+// toolCategories maps a category name to the set of concrete tool names it
+// covers. A permission rule can use a category name (e.g. "Edit") in place of a
+// concrete tool name so that one rule can gate every tool in the category.
+var toolCategories = map[string][]string{
+	"Edit": {"move_file", "write_file"},
+}
+
+// resolveToolNames expands a tool or category name into the set of concrete
+// tool names it matches. A bare tool name returns itself; a category name
+// returns all tools in that category.
+func resolveToolNames(name string) []string {
+	if tools, ok := toolCategories[name]; ok {
+		return tools
+	}
+	return []string{name}
+}
+
+// categoriesFor returns all category names that include the given tool name.
+func categoriesFor(toolName string) []string {
+	var cats []string
+	for cat, tools := range toolCategories {
+		for _, t := range tools {
+			if t == toolName {
+				cats = append(cats, cat)
+				break
+			}
+		}
+	}
+	return cats
+}
+
 // Decide evaluates a tool call. readOnly is the tool's own classification; args
 // is the raw JSON the model sent, from which the call's subject is extracted
 // for glob matching. Precedence: deny > ask > allow > fallback (Allow for
 // readers, Mode for writers).
 func (p Policy) Decide(toolName string, readOnly bool, args json.RawMessage) Decision {
+	// Resolve the concrete tool names this call maps to (including category expansion).
+	concreteNames := resolveToolNames(toolName)
+	// Also include any categories that cover this tool name.
+	concreteNames = append(concreteNames, categoriesFor(toolName)...)
+
 	subject := Subject(args)
-	switch {
-	case matchAny(p.Deny, toolName, subject):
-		return Deny
-	case matchAny(p.Ask, toolName, subject):
-		return Ask
-	case matchAny(p.Allow, toolName, subject):
-		return Allow
-	case readOnly:
-		return Allow
-	default:
-		return p.Mode
+	subjects := Subjects(args)
+	if len(subjects) == 0 {
+		subjects = []string{subject}
 	}
+
+	// Deny: if any (rule, toolName, subject) triple matches, deny immediately.
+	for _, name := range concreteNames {
+		for _, s := range subjects {
+			if matchAny(p.Deny, name, s) {
+				return Deny
+			}
+		}
+	}
+
+	// Ask: if any subject triggers Ask and none trigger Deny.
+	for _, name := range concreteNames {
+		for _, s := range subjects {
+			if matchAny(p.Ask, name, s) {
+				return Ask
+			}
+		}
+	}
+
+	// Allow: every subject must match either an Allow rule or have no subject
+	// (bare tool name match). For multi-subject tools, each subject needs its
+	// own permission.
+	if len(subjects) > 0 {
+		allAllowed := true
+		for _, s := range subjects {
+			matched := false
+			for _, name := range concreteNames {
+				if matchAny(p.Allow, name, s) {
+					matched = true
+					break
+				}
+			}
+			if !matched && (s != "" || !matchAny(p.Allow, toolName, "")) {
+				allAllowed = false
+				break
+			}
+		}
+		if allAllowed {
+			return Allow
+		}
+	} else if matchAny(p.Allow, toolName, subject) {
+		return Allow
+	}
+
+	if readOnly {
+		return Allow
+	}
+	return p.Mode
 }
 
 // matchAny reports whether any rule matches the (toolName, subject) pair. A
@@ -175,7 +251,7 @@ func matchAny(rules []Rule, toolName, subject string) bool {
 // call's "subject" — the thing a Subject glob matches against. Generic so tools
 // need not implement a permission-specific method: bash exposes command, the
 // file tools expose path / file_path, grep & glob expose pattern.
-var subjectKeys = []string{"command", "file_path", "path", "pattern"}
+var subjectKeys = []string{"source_path", "command", "file_path", "path", "pattern"}
 
 // Subject extracts the matchable subject string from a call's raw JSON args,
 // returning "" when none of the known keys is present (such a call only matches
@@ -196,6 +272,46 @@ func Subject(args json.RawMessage) string {
 		}
 	}
 	return ""
+}
+
+// subjectMultiKeys are JSON argument keys that may carry multiple subject values
+// for tools that operate on more than one path (e.g. move_file).
+var subjectMultiKeys = []string{"source_path", "destination_path"}
+
+// Subjects extracts every subject value from a call's raw JSON args. For most
+// tools this returns a single-element slice (the same value as Subject). For
+// tools that reference multiple paths (e.g. move_file with source_path and
+// destination_path), it returns all of them so each path is checked against
+// permission rules independently.
+func Subjects(args json.RawMessage) []string {
+	if len(args) == 0 {
+		return nil
+	}
+	var m map[string]any
+	if err := json.Unmarshal(args, &m); err != nil {
+		return nil
+	}
+	// First check multi-key subjects.
+	var subs []string
+	for _, k := range subjectMultiKeys {
+		if v, ok := m[k]; ok {
+			if s, ok := v.(string); ok && s != "" {
+				subs = append(subs, s)
+			}
+		}
+	}
+	if len(subs) > 0 {
+		return subs
+	}
+	// Fall back to the single subject keys.
+	for _, k := range subjectKeys {
+		if v, ok := m[k]; ok {
+			if s, ok := v.(string); ok && s != "" {
+				return []string{s}
+			}
+		}
+	}
+	return nil
 }
 
 // matchGlob reports whether name matches pattern, where '*' matches any run of

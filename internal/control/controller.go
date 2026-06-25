@@ -149,6 +149,8 @@ type Controller struct {
 	// it joins the prefix naturally on the next session.
 	pendingMemory []string
 
+	autoReentryDepth int
+
 	wg        sync.WaitGroup
 	closeOnce sync.Once
 }
@@ -262,6 +264,11 @@ func New(opts Options) *Controller {
 		})
 		c.executor.SetMemoryQueue(c)
 	}
+	if c.jobs != nil {
+		c.jobs.SetOnCompletion(func(id string) {
+			c.autoReenter()
+		})
+	}
 	return c
 }
 
@@ -334,6 +341,19 @@ func (c *Controller) runGuarded(body func(ctx context.Context) error) {
 	}()
 }
 
+// autoReenter starts a turn when a background task completes so the model can
+// report results without waiting for the user's next message.
+func (c *Controller) autoReenter() {
+	c.mu.Lock()
+	if c.autoReentryDepth >= 2 {
+		c.mu.Unlock()
+		return
+	}
+	c.autoReentryDepth++
+	c.mu.Unlock()
+	c.Send("")
+}
+
 // Send starts a turn with an uncomposed message. The controller applies
 // memory and background-job framing inside the async turn path so frontends
 // do not block.
@@ -400,6 +420,9 @@ func lastAssistantText(msgs []provider.Message) string {
 // resolve to a turn; an unknown slash emits a Notice. Anything else is a normal
 // turn with its @-references resolved first.
 func (c *Controller) Submit(input string) {
+	c.mu.Lock()
+	c.autoReentryDepth = 0
+	c.mu.Unlock()
 	trimmed := strings.TrimSpace(input)
 	if strings.HasPrefix(trimmed, "!") {
 		c.RunShell(trimmed[1:])

@@ -38,6 +38,14 @@ import (
 )
 
 // Run is the CLI entry point; it returns a process exit code.
+
+// runInteractiveSession is a variable so tests can override it.
+var runInteractiveSession = chatREPL
+
+// cliIsInteractive reports whether the CLI is running on an interactive
+// terminal. Exposed as a variable so tests can override it.
+var cliIsInteractive = isInteractive
+
 func Run(args []string, version string) int {
 	// Pick the UI language up front so even pre-config paths (the first-run
 	// welcome banner) come through localized. Env-only first; if a config
@@ -119,6 +127,50 @@ func migrateLegacyConfigForCLI() {
 	if _, err := config.MigrateLegacyIfNeeded(); err != nil {
 		fmt.Fprintln(os.Stderr, "warning: config migration failed:", err)
 	}
+}
+
+// migrateMCPConfigForCLIWorkspace migrates MCP plugin entries from the current
+// workspace's reasonix.toml into the user-global config so they survive a
+// directory change. It only runs when the workspace has a local config file.
+func migrateMCPConfigForCLIWorkspace() {
+	// Load the workspace project config to discover MCP plugin entries.
+	projectCfg, err := config.LoadForRoot(".")
+	if err != nil || projectCfg == nil {
+		return
+	}
+	if len(projectCfg.Plugins) == 0 {
+		return
+	}
+	// Merge workspace plugins into the user-global config.
+	userCfg := config.LoadForEdit(config.UserConfigPath())
+	if userCfg == nil {
+		userCfg = config.Default()
+	}
+	changed := false
+	for _, plugin := range projectCfg.Plugins {
+		if !hasPlugin(userCfg, plugin.Name) {
+			userCfg.Plugins = append(userCfg.Plugins, plugin)
+			changed = true
+		}
+	}
+	if changed {
+		if err := userCfg.SaveTo(config.UserConfigPath()); err != nil {
+			fmt.Fprintln(os.Stderr, "warning: failed to save MCP migration:", err)
+		}
+	}
+}
+
+// hasPlugin reports whether the config already has a plugin with the given name.
+func hasPlugin(cfg *config.Config, name string) bool {
+	if cfg == nil {
+		return false
+	}
+	for _, p := range cfg.Plugins {
+		if p.Name == name {
+			return true
+		}
+	}
+	return false
 }
 
 func configureCLIThemeFromConfig() {
@@ -338,6 +390,35 @@ func resumeOrPinSession(ctrl *control.Controller, path string) error {
 	}
 	ctrl.Resume(loaded, path)
 	return nil
+}
+
+// loadResumableSession loads a session file and returns an error if it is
+// pending cleanup (marked for deletion).
+func loadResumableSession(path string) (*agent.Session, error) {
+	if agent.IsCleanupPending(path) {
+		return nil, fmt.Errorf("session %s is pending cleanup", path)
+	}
+	return agent.LoadSession(path)
+}
+
+// modelForResumePath returns the stored model from a session's branch meta.
+// When explicitModel is non-empty it is returned directly (user override).
+// When the session has no meta or the stored model is unknown it returns "".
+func modelForResumePath(explicitModel, path string, cfg *config.Config) string {
+	if explicitModel != "" {
+		return explicitModel
+	}
+	meta, ok, err := agent.LoadBranchMeta(path)
+	if err != nil || !ok || meta.Model == "" {
+		return ""
+	}
+	// Verify the stored model is still configured.
+	for _, p := range cfg.Providers {
+		if p.Name == meta.Model {
+			return meta.Model
+		}
+	}
+	return ""
 }
 
 func runServe(args []string) int {
@@ -675,6 +756,13 @@ func reserveNativeScrollbackFrame(w io.Writer, rows int) {
 	for i := 0; i < rows; i++ {
 		fmt.Fprintln(w)
 	}
+}
+
+// prepareNativeScrollback emits terminal control sequences that clear the
+// scrollback and put the cursor in the top-left, leaving room for rows lines.
+func prepareNativeScrollback(w io.Writer, rows int) {
+	fmt.Fprint(w, "\x1B[3J\x1B[2J\x1B[H")
+	reserveNativeScrollbackFrame(w, rows)
 }
 
 // setupTargets is where the wizard writes: the TOML config and the secrets file.
@@ -1489,6 +1577,50 @@ func withBuiltinFamilies(providers []config.ProviderEntry) []config.ProviderEntr
 		}
 	}
 	return providers
+}
+
+// withBuiltinFamiliesForLanguage returns the default built-in providers for a
+// given UI/reasoning language. When language is "zh" the defaults include
+// DeepSeek with CNY pricing; otherwise the standard defaults are used.
+func withBuiltinFamiliesForLanguage(providers []config.ProviderEntry, lang string) []config.ProviderEntry {
+	if lang == "zh" {
+		// DeepSeek-style providers with CNY pricing.
+		deepseek := []config.ProviderEntry{
+			{
+				Name:      "deepseek-flash",
+				Kind:      "openai",
+				BaseURL:   "https://api.deepseek.com",
+				Model:     "deepseek-v4-flash",
+				Models:    []string{"deepseek-v4-flash"},
+				Default:   "deepseek-v4-flash",
+				APIKeyEnv: "DEEPSEEK_API_KEY",
+				Price: &provider.Pricing{
+					Input:    0.3,
+					Output:   2,
+					Currency: "¥",
+				},
+			},
+			{
+				Name:      "deepseek-pro",
+				Kind:      "openai",
+				BaseURL:   "https://api.deepseek.com",
+				Model:     "deepseek-v4-pro",
+				Models:    []string{"deepseek-v4-pro"},
+				Default:   "deepseek-v4-pro",
+				APIKeyEnv: "DEEPSEEK_API_KEY",
+				Price: &provider.Pricing{
+					Input:    4,
+					Output:   16,
+					Currency: "¥",
+				},
+			},
+		}
+		if providers == nil {
+			return deepseek
+		}
+		return append(providers, deepseek...)
+	}
+	return withBuiltinFamilies(providers)
 }
 
 // promptMissingKeys re-runs the wizard's key-entry step for any enabled
