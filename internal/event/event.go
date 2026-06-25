@@ -200,6 +200,7 @@ type CacheDiagnostics struct {
 // Event is one increment in a turn's event stream. Read the field(s) documented
 // for Kind; the others are zero.
 type Event struct {
+	Seq              int64        // monotonic sequence number assigned by Broadcaster on Emit
 	Kind             Kind
 	Text             string            // Reasoning / Text / Message / Notice / Phase
 	Reasoning        string            // Message: the full reasoning chain

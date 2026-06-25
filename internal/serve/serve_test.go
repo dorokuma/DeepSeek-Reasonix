@@ -31,7 +31,7 @@ func TestServeSubmitRunsAndBroadcastsTurnDone(t *testing.T) {
 	srv := httptest.NewServer(New(ctrl, bc).Handler())
 	defer srv.Close()
 
-	sub, cancel := bc.Subscribe() // observe the broadcast deterministically
+	sub, cancel := bc.Subscribe(-1) // observe the broadcast deterministically
 	defer cancel()
 
 	resp, err := http.Post(srv.URL+"/submit", "application/json", strings.NewReader(`{"input":"hi"}`))

@@ -16,6 +16,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -385,6 +386,7 @@ const sseKeepaliveInterval = 15 * time.Second
 
 // events streams the controller's event flow as SSE until the client
 // disconnects. Each event is one `data:` frame of the JSON wire form.
+// Supports ?offset=N or Last-Event-ID header for reconnection replay.
 func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 	flusher, ok := w.(http.Flusher)
 	if !ok {
@@ -394,11 +396,27 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 	rc := http.NewResponseController(w)
 	_ = rc.SetWriteDeadline(time.Time{})
 
+	// Determine the starting sequence: query param ?offset= overrides
+	// Last-Event-ID (the standard browser EventSource reconnection header).
+	var afterSeq int64 = -1
+	if offsetStr := r.URL.Query().Get("offset"); offsetStr != "" {
+		if n, err := strconv.ParseInt(offsetStr, 10, 64); err == nil {
+			afterSeq = n
+		}
+	}
+	if afterSeq < 0 {
+		if lastID := r.Header.Get("Last-Event-ID"); lastID != "" {
+			if n, err := strconv.ParseInt(lastID, 10, 64); err == nil {
+				afterSeq = n
+			}
+		}
+	}
+
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
 
-	ch, unsubscribe := s.bc.Subscribe()
+	ch, unsubscribe := s.bc.Subscribe(afterSeq)
 	defer unsubscribe()
 
 	fmt.Fprint(w, ": connected\n\n") // open the stream immediately
@@ -412,6 +430,11 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 		case data, ok := <-ch:
 			if !ok {
 				return
+			}
+			// Emit the SSE id field so the browser can reconnect with Last-Event-ID.
+			var ev wireEvent
+			if err := json.Unmarshal(data, &ev); err == nil && ev.Seq > 0 {
+				fmt.Fprintf(w, "id: %d\n", ev.Seq)
 			}
 			fmt.Fprintf(w, "data: %s\n\n", data)
 			flusher.Flush()

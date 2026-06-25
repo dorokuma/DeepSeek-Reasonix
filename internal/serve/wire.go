@@ -8,6 +8,7 @@ import "reasonix/internal/event"
 // error becomes a message — so a browser frontend renders the same typed stream
 // the TUI does.
 type wireEvent struct {
+	Seq        int64           `json:"seq"`
 	Kind       string          `json:"kind"`
 	Text       string          `json:"text,omitempty"`
 	Reasoning  string          `json:"reasoning,omitempty"`
@@ -142,7 +143,7 @@ func toWireAsk(a event.Ask) *wireAsk {
 
 // toWire converts an event.Event into its JSON wire form.
 func toWire(e event.Event) wireEvent {
-	w := wireEvent{Kind: kindNames[e.Kind], Text: e.Text, Reasoning: e.Reasoning}
+	w := wireEvent{Seq: e.Seq, Kind: kindNames[e.Kind], Text: e.Text, Reasoning: e.Reasoning}
 	switch e.Kind {
 	case event.Notice:
 		if e.Level == event.LevelWarn {
