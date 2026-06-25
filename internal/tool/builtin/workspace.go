@@ -2,6 +2,7 @@ package builtin
 
 import (
 	"path/filepath"
+	"time"
 
 	"reasonix/internal/tool"
 )
@@ -16,6 +17,7 @@ import (
 // compile-time built-ins). WriteRoots is ignored (sandbox disabled).
 type Workspace struct {
 	Dir         string
+	BashTimeout time.Duration
 	Search      SearchSpec
 }
 
@@ -35,7 +37,7 @@ func (w Workspace) Tools(enabled ...string) []tool.Tool {
 		"notebook_edit": notebookEdit{workDir: w.Dir},
 		"delete_range":  deleteRange{workDir: w.Dir},
 		"delete_symbol": deleteSymbol{workDir: w.Dir},
-		"bash":          bash{workDir: w.Dir},
+		"bash":          bash{workDir: w.Dir, timeout: w.BashTimeout},
 		"ls":            listDir{workDir: w.Dir},
 		"glob":          globTool{workDir: w.Dir},
 		"grep":          grepTool{workDir: w.Dir, search: w.Search},

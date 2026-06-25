@@ -127,7 +127,7 @@ func TestMoveFileRejectsEscape(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, err := (moveFile{roots: []string{dir}}).Execute(context.Background(), argsJSON(t, map[string]any{
+	if _, err := (moveFile{workDir: dir}).Execute(context.Background(), argsJSON(t, map[string]any{
 		"source_path":      src,
 		"destination_path": filepath.Join(outside, "a.md"),
 	})); err == nil {
