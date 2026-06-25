@@ -67,25 +67,20 @@ func TestTodoWriteAllowsInitialCompletedWithoutBaseline(t *testing.T) {
 	}
 }
 
-func TestTodoWriteAllowsCompletionAfterAttemptedCompleteStep(t *testing.T) {
+func TestTodoWriteRejectsFailedCompleteStepReceipt(t *testing.T) {
 	ledger := evidence.NewLedger()
 	ledger.Record(evidence.Receipt{
 		ToolName: "todo_write",
 		Success:  true,
 		Todos:    []evidence.TodoItem{{Content: "Add parser", Status: "in_progress"}},
 	})
-	// A failed complete_step for the same step still authorizes completion —
-	// the model acted in good faith and shouldn't deadlock. See #5128.
 	ledger.Record(evidence.Receipt{ToolName: "complete_step", Success: false, Step: "Add parser"})
 	ctx := evidence.WithLedger(context.Background(), ledger)
 	args := json.RawMessage(`{"todos":[{"content":"Add parser","status":"completed"}]}`)
 
-	out, err := (todoWrite{}).Execute(ctx, args)
-	if err != nil {
-		t.Fatalf("attempted complete_step should authorize completion: %v", err)
-	}
-	if !strings.Contains(out, "1 total") {
-		t.Fatalf("unexpected output: %s", out)
+	_, err := (todoWrite{}).Execute(ctx, args)
+	if err == nil || !strings.Contains(err.Error(), "complete_step") {
+		t.Fatalf("failed complete_step without proof-bearing recovery should not authorize completion, got %v", err)
 	}
 }
 

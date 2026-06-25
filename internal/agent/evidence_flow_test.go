@@ -698,8 +698,14 @@ func TestEvidenceFlowRecoversTodoCompletionAfterFailedCompleteStepWithProgress(t
 	}
 
 	stepResult := lastToolResult(a.session, "complete_step")
-	if !strings.Contains(stepResult, "no matching successful bash receipt") {
+	if !strings.Contains(stepResult, "no matching successful receipt") {
 		t.Fatalf("complete_step result = %q, want the sign-off attempt to fail first", stepResult)
+	}
+	if !strings.Contains(stepResult, `python \"script.py\"`) {
+		t.Fatalf("complete_step result = %q, want the self-correction hint to include the real command", stepResult)
+	}
+	if strings.Contains(stepResult, "todo_write") {
+		t.Fatalf("complete_step result = %q, want command hints without todo tool noise", stepResult)
 	}
 	if got := lastToolResult(a.session, "todo_write"); !strings.Contains(got, "1 completed") {
 		t.Fatalf("todo_write result = %q, want completion recovery accepted", got)

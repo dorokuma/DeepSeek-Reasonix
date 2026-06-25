@@ -366,6 +366,9 @@ func allCommandHints(ctx context.Context, ledger *evidence.Ledger) string {
 				if failed[tc.ID] {
 					continue
 				}
+				if tc.Name == "todo_write" || tc.Name == "complete_step" {
+					continue
+				}
 				c := extractCommandFromCall(tc.Name, tc.Arguments)
 				if c == "" || seen[c] {
 					continue
