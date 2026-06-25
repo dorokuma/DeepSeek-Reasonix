@@ -457,7 +457,7 @@ func newChatTUI(ctrl *control.Controller, missing string, eventCh chan event.Eve
 		reasoning:            &strings.Builder{},
 		pending:              &strings.Builder{},
 		pendingCommit:        &commitBuf,
-		renderer:             newMarkdownRenderer(termW),
+		renderer:             newMarkdownRenderer(termW - 1),
 		showReasoning:        nativeScrollback,
 		shellOutputs:         make(map[string]string),
 		shellExpanded:        make(map[string]bool),
@@ -467,7 +467,7 @@ func newChatTUI(ctrl *control.Controller, missing string, eventCh chan event.Eve
 		host:                 ctrl.Host(),
 		commands:             ctrl.Commands(),
 		skills:               ctrl.Skills(),
-		viewport:             viewport.New(viewport.WithWidth(termW)),
+		viewport:             viewport.New(viewport.WithWidth(termW - 1)),
 	}
 }
 
@@ -712,7 +712,7 @@ func (m chatTUI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width = msg.Width
 		m.height = msg.Height
 		m.input.SetWidth(msg.Width - 4)
-		m.renderer = newMarkdownRenderer(msg.Width)
+		m.renderer = newMarkdownRenderer(msg.Width - 1)
 		// Commit the banner — and a resumed session's transcript — once, now
 		// that the width is known.
 		if !m.started {
@@ -720,7 +720,7 @@ func (m chatTUI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			var b strings.Builder
 			b.WriteString(renderTUIBanner(m.label, m.missing, msg.Width))
 			if len(m.history) > 0 {
-				r := newMarkdownRenderer(msg.Width)
+				r := newMarkdownRenderer(msg.Width - 1)
 				for _, sec := range replaySectionsFor(m.history, msg.Width, r) {
 					b.WriteString(sec)
 				}

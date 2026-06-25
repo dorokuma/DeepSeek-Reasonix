@@ -96,6 +96,7 @@ type Manager struct {
 	sem            chan struct{}
 	monitorRunning bool
 	jobDone        chan struct{}
+	onCompletion   func(id string) // called after a job's completion is recorded
 }
 
 // NewManager returns a Manager whose jobs run under a fresh session-scoped
@@ -115,6 +116,12 @@ func NewManager(sink event.Sink) *Manager {
 		jobDone: make(chan struct{}, 10),
 	}
 	return m
+}
+
+// SetOnCompletion registers a callback that fires when a job's completion
+// is recorded. Call once during initialisation, before any jobs are started.
+func (m *Manager) SetOnCompletion(fn func(id string)) {
+	m.onCompletion = fn
 }
 
 func (m *Manager) startMonitorIfNeeded() {
@@ -279,6 +286,23 @@ func (m *Manager) recordCompletion(id, kind, label string, st Status, err error)
 		text = fmt.Sprintf("background %s killed: %s", kind, id)
 	}
 	m.sink.Emit(event.Event{Kind: event.Notice, Level: level, Text: text})
+	if m.onCompletion != nil {
+		m.onCompletion(id)
+	}
+}
+
+// clearCompleted removes a job's completion entry from the completed queue.
+func (m *Manager) clearCompleted(id string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	prefix := id + " "
+	filtered := m.completed[:0]
+	for _, s := range m.completed {
+		if !strings.HasPrefix(s, prefix) {
+			filtered = append(filtered, s)
+		}
+	}
+	m.completed = filtered
 }
 
 func (m *Manager) get(id string) *Job {
@@ -304,18 +328,24 @@ func (m *Manager) Output(id string) (text string, status Status, ok bool) {
 		return "", "", false
 	}
 	j.mu.Lock()
-	defer j.mu.Unlock()
 	full := j.buf.String()
 	text = full[j.readOffset:]
 	j.readOffset = len(full)
 	// A task job streams nothing to the buffer — its answer lands in result. Once
 	// it is terminal with no buffered output, surface that result once so a task's
 	// answer is visible here too (bash_output's description promises task support).
+	var needClear bool
 	if text == "" && j.status != Running && j.result != "" && !j.resultRead {
 		text = j.result
 		j.resultRead = true
+		needClear = true
 	}
-	return text, j.status, true
+	status = j.status
+	j.mu.Unlock()
+	if needClear {
+		m.clearCompleted(j.ID)
+	}
+	return text, status, true
 }
 
 // Kill cancels a running job. Returns false when the id is unknown or the job has

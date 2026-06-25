@@ -295,9 +295,17 @@ func (r *mdRenderer) renderFenced(buf *strings.Builder, n ast.Node, src []byte, 
 }
 
 func (r *mdRenderer) renderBlockquote(buf *strings.Builder, n *ast.Blockquote, src []byte, indent int) {
-	var inner strings.Builder
-	r.renderBlocks(&inner, n, src, 0)
 	prefix := strings.Repeat(" ", indent) + dim("▎ ")
+	prefWidth := visibleWidth(prefix)
+	innerWidth := r.width - prefWidth
+	if innerWidth < 4 {
+		innerWidth = 4
+	}
+	var inner strings.Builder
+	origWidth := r.width
+	r.width = innerWidth
+	r.renderBlocks(&inner, n, src, 0)
+	r.width = origWidth
 	for _, line := range strings.Split(strings.TrimRight(inner.String(), "\n"), "\n") {
 		buf.WriteString(prefix)
 		buf.WriteString(dim(line))

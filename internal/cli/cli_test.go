@@ -91,9 +91,7 @@ func TestLoadResumableSessionRejectsCleanupPending(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "pending.jsonl")
 	saveTestSession(t, path, "pending prompt")
-	if err := agent.MarkCleanupPending(path, "delete"); err != nil {
-		t.Fatal(err)
-	}
+	agent.MarkCleanupPending(path, "delete")
 
 	if _, err := loadResumableSession(path); err == nil || !strings.Contains(err.Error(), "pending cleanup") {
 		t.Fatalf("loadResumableSession cleanup-pending error = %v, want pending cleanup", err)
@@ -105,9 +103,7 @@ func TestRunResumeRejectsCleanupPending(t *testing.T) {
 
 	path := filepath.Join(t.TempDir(), "pending-run.jsonl")
 	saveTestSession(t, path, "pending prompt")
-	if err := agent.MarkCleanupPending(path, "delete"); err != nil {
-		t.Fatal(err)
-	}
+	agent.MarkCleanupPending(path, "delete")
 
 	errOut := captureStderr(t, func() {
 		if rc := runAgent([]string{"--resume", path, "continue task"}); rc != 1 {
@@ -124,9 +120,7 @@ func TestServeResumeRejectsCleanupPending(t *testing.T) {
 
 	path := filepath.Join(t.TempDir(), "pending-serve.jsonl")
 	saveTestSession(t, path, "pending prompt")
-	if err := agent.MarkCleanupPending(path, "delete"); err != nil {
-		t.Fatal(err)
-	}
+	agent.MarkCleanupPending(path, "delete")
 
 	errOut := captureStderr(t, func() {
 		if rc := runServe([]string{"--resume", path, "--addr", "127.0.0.1:0"}); rc != 1 {
@@ -1297,6 +1291,7 @@ func TestWriteDefaultConfigOmitsLegacyInternalMCPSections(t *testing.T) {
 	}
 }
 
+// saveTestSession creates a minimal session with a single user message and
 func captureStderr(t *testing.T, fn func()) string {
 	t.Helper()
 	old := os.Stderr

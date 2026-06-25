@@ -23,6 +23,7 @@ type BranchMeta struct {
 	ForkMessageIndex int       `json:"fork_message_index,omitempty"`
 	CreatedAt        time.Time `json:"created_at"`
 	UpdatedAt        time.Time `json:"updated_at"`
+	Model            string    `json:"model,omitempty"`
 	Scope            string    `json:"scope,omitempty"`
 	WorkspaceRoot    string    `json:"workspace_root,omitempty"`
 	TopicID          string    `json:"topic_id,omitempty"`
@@ -219,4 +220,19 @@ func ListBranches(dir string) ([]BranchInfo, error) {
 		return out[i].CreatedAt.Before(out[j].CreatedAt)
 	})
 	return out, nil
+}
+
+// SetBranchModelPreserveUpdated sets the model name on a session's branch meta
+// without touching the UpdatedAt timestamp, so the session's position in the
+// resume picker stays unchanged.
+func SetBranchModelPreserveUpdated(sessionPath, model string) error {
+	m, ok, err := LoadBranchMeta(sessionPath)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		m = BranchMeta{ID: BranchID(sessionPath)}
+	}
+	m.Model = model
+	return SaveBranchMetaPreserveUpdated(sessionPath, m)
 }
