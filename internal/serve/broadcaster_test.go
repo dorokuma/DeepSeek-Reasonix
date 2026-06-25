@@ -9,8 +9,8 @@ import (
 
 func TestBroadcasterFanOut(t *testing.T) {
 	b := NewBroadcaster()
-	a, ca := b.Subscribe()
-	d, cd := b.Subscribe()
+	a, ca := b.Subscribe(-1)
+	d, cd := b.Subscribe(-1)
 	defer ca()
 	defer cd()
 
@@ -33,7 +33,7 @@ func TestBroadcasterFanOut(t *testing.T) {
 
 func TestBroadcasterUnsubscribe(t *testing.T) {
 	b := NewBroadcaster()
-	_, cancel := b.Subscribe()
+	_, cancel := b.Subscribe(-1)
 	if b.Subscribers() != 1 {
 		t.Fatalf("want 1 subscriber")
 	}
@@ -47,7 +47,7 @@ func TestBroadcasterUnsubscribe(t *testing.T) {
 
 func TestBroadcasterDropsSlowSubscriber(t *testing.T) {
 	b := NewBroadcaster()
-	ch, cancel := b.Subscribe()
+	ch, cancel := b.Subscribe(-1)
 	defer cancel()
 	// Overfill far past the 64-slot buffer without reading; Emit must not block.
 	for i := 0; i < 1000; i++ {

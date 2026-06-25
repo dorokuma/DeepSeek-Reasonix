@@ -7,44 +7,82 @@ import (
 	"reasonix/internal/event"
 )
 
+// ringEntry holds one event in the ring buffer for reconnection replay.
+type ringEntry struct {
+	seq  int64
+	data []byte
+}
+
 // Broadcaster is the event.Sink the controller emits to in server mode. It
 // marshals each event once and fans it out to every connected SSE subscriber.
 // A slow subscriber's buffer is allowed to drop rather than back-pressure the
 // agent goroutine — a browser that can't keep up loses intermediate frames, not
 // the whole session (it can refetch /history).
 type Broadcaster struct {
-	mu   sync.Mutex
-	subs map[chan []byte]struct{}
+	mu      sync.Mutex
+	subs    map[chan []byte]struct{}
+	ring    []ringEntry // ring buffer for reconnection replay (oldest entries may be overwritten)
+	ringIdx int         // next write position in ring
+	nextSeq int64       // sequence number for the next event
 }
 
 // NewBroadcaster returns an empty Broadcaster ready to accept subscribers.
 func NewBroadcaster() *Broadcaster {
-	return &Broadcaster{subs: map[chan []byte]struct{}{}}
+	return &Broadcaster{
+		subs: make(map[chan []byte]struct{}),
+		ring: make([]ringEntry, 10000), // keep the last 10 000 events
+	}
 }
 
-// Emit marshals the event to JSON and delivers it to every subscriber. Drops to
-// a subscriber whose buffer is full rather than blocking. A marshal failure is
-// dropped silently — one bad event shouldn't stall the stream.
+// Emit marshals the event to JSON, assigns a monotonically increasing sequence
+// number, stores it in the ring buffer, and delivers it to every subscriber.
+// Drops to a subscriber whose buffer is full rather than blocking. A marshal
+// failure is dropped silently — one bad event shouldn't stall the stream.
 func (b *Broadcaster) Emit(e event.Event) {
+	b.mu.Lock()
+	e.Seq = b.nextSeq
+	b.nextSeq++
 	data, err := json.Marshal(toWire(e))
 	if err != nil {
+		b.mu.Unlock()
 		return
 	}
-	b.mu.Lock()
-	defer b.mu.Unlock()
+	// Write into the ring buffer (overwrite oldest entry when full).
+	b.ring[b.ringIdx] = ringEntry{seq: e.Seq, data: data}
+	b.ringIdx = (b.ringIdx + 1) % len(b.ring)
+	// Fan out to all subscribers.
 	for ch := range b.subs {
 		select {
 		case ch <- data:
 		default: // subscriber is behind; drop this frame for it
 		}
 	}
+	b.mu.Unlock()
 }
 
 // Subscribe registers a new SSE client and returns its channel plus an
 // unsubscribe func the handler must call (defer) when the client disconnects.
-func (b *Broadcaster) Subscribe() (<-chan []byte, func()) {
+// If afterSeq >= 0 the channel is pre-filled with every event in the ring
+// buffer whose sequence number is greater than afterSeq (best-effort replay
+// for reconnection). Pass -1 to start from the next event.
+func (b *Broadcaster) Subscribe(afterSeq int64) (<-chan []byte, func()) {
 	ch := make(chan []byte, 64)
 	b.mu.Lock()
+	// Best-effort replay: deliver events newer than afterSeq from the ring.
+	if afterSeq >= 0 {
+		for i := 0; i < len(b.ring); i++ {
+			entry := b.ring[(b.ringIdx+i)%len(b.ring)]
+			if entry.seq > afterSeq && entry.data != nil {
+				select {
+				case ch <- entry.data:
+				default:
+					// channel full; stop replay to avoid blocking
+					goto doneReplay
+				}
+			}
+		}
+	}
+doneReplay:
 	b.subs[ch] = struct{}{}
 	b.mu.Unlock()
 	return ch, func() {
