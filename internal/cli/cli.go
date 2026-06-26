@@ -28,6 +28,7 @@ import (
 	"reasonix/internal/event"
 	"reasonix/internal/i18n"
 	"reasonix/internal/notify"
+	"reasonix/internal/permission"
 	"reasonix/internal/provider"
 	"reasonix/internal/provider/openai"
 	"reasonix/internal/serve"
@@ -650,6 +651,9 @@ func chatREPL(args []string) int {
 	// event and blocks until the user answers via ctrl.Approve. Sub-agents (the
 	// task tool) keep their headless gate from setup — no UI to prompt through.
 	ctrl.EnableInteractiveApproval()
+	// Register the controller's interactive approver so sub-agent
+	// dangerous-command gates can prompt the user for approval.
+	permission.SetSubAgentApprover(ctrl.SubAgentApprover())
 	// YOLO: skip every approval prompt for the session (deny rules still apply).
 	if *yolo {
 		ctrl.SetBypass(true)
@@ -695,6 +699,7 @@ func chatREPL(args []string) int {
 			c.SetSessionPath(path)
 		}
 		c.EnableInteractiveApproval()
+		permission.SetSubAgentApprover(c.SubAgentApprover())
 		if *yolo {
 			c.SetBypass(true)
 		}
