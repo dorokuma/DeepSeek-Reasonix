@@ -457,7 +457,7 @@ func newChatTUI(ctrl *control.Controller, missing string, eventCh chan event.Eve
 		reasoning:            &strings.Builder{},
 		pending:              &strings.Builder{},
 		pendingCommit:        &commitBuf,
-		renderer:             newMarkdownRenderer(termW),
+		renderer:             newMarkdownRenderer(termW - 5), // -5: reserve 4 for "▸" prefix + 1 for scrollbar
 		showReasoning:        nativeScrollback,
 		shellOutputs:         make(map[string]string),
 		shellExpanded:        make(map[string]bool),
@@ -467,7 +467,7 @@ func newChatTUI(ctrl *control.Controller, missing string, eventCh chan event.Eve
 		host:                 ctrl.Host(),
 		commands:             ctrl.Commands(),
 		skills:               ctrl.Skills(),
-		viewport:             viewport.New(viewport.WithWidth(termW)),
+		viewport:             viewport.New(viewport.WithWidth(termW - 1)),
 	}
 }
 
@@ -712,7 +712,7 @@ func (m chatTUI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width = msg.Width
 		m.height = msg.Height
 		m.input.SetWidth(msg.Width - 4)
-		m.renderer = newMarkdownRenderer(msg.Width)
+		m.renderer = newMarkdownRenderer(msg.Width - 5) // -5: reserve 4 for "▸" prefix + 1 for scrollbar
 		// Commit the banner — and a resumed session's transcript — once, now
 		// that the width is known.
 		if !m.started {
@@ -720,7 +720,7 @@ func (m chatTUI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			var b strings.Builder
 			b.WriteString(renderTUIBanner(m.label, m.missing, msg.Width))
 			if len(m.history) > 0 {
-				r := newMarkdownRenderer(msg.Width)
+				r := newMarkdownRenderer(msg.Width - 1)
 				for _, sec := range replaySectionsFor(m.history, msg.Width, r) {
 					b.WriteString(sec)
 				}
@@ -2897,7 +2897,7 @@ func (m *chatTUI) ingestEvent(e event.Event) {
 			prefix := "  " + red("●") + " " + bold(toolDisplayName(e.Tool.Name)) + " "
 			errMsg := red("⊘ " + e.Tool.Err)
 			prefixW := ansi.StringWidth(prefix)
-			avail := m.width - prefixW
+			avail := (m.width - 1) - prefixW
 			if avail < 10 {
 				avail = 10
 			}
@@ -2925,7 +2925,7 @@ func (m *chatTUI) ingestEvent(e event.Event) {
 			if ansi.StringWidth(line) > m.width {
 				prefix := "  · "
 				prefixW := ansi.StringWidth(prefix)
-				avail := m.width - prefixW
+				avail := (m.width - 1) - prefixW
 				if avail < 10 {
 					avail = 10
 				}
@@ -2954,7 +2954,7 @@ func (m *chatTUI) ingestEvent(e event.Event) {
 		m.finalizeStreamed()
 		prefix := fmt.Sprintf("  %s ", glyph)
 		prefixW := ansi.StringWidth(prefix)
-		avail := m.width - prefixW
+		avail := (m.width - 1) - prefixW
 		if avail < 10 {
 			avail = 10
 		}
@@ -3349,14 +3349,30 @@ func wrapForViewport(text string, width int, fg cliColor) string {
 
 // renderUserBubble renders the just-submitted prompt as a transcript line. Keep
 // it visually lighter than the real bottom composer so a fresh session does not
-// look like it has a second input box in the transcript.
+// look like it has a second input box in the transcript. Long lines are
+// word-wrapped to fit width, and continuation lines align under the "›" prefix.
 func renderUserBubble(line string, width int) string {
 	line = displayLineForImageRefs(line)
-	prefix := "› "
 	if !colorEnabled {
-		return "│ " + prefix + line
+		lines := strings.Split(line, "\n")
+		if len(lines) == 1 {
+			return "│ › " + line
+		}
+		var sb strings.Builder
+		sb.WriteString("│ › " + lines[0])
+		indent := "    "
+		for _, ln := range lines[1:] {
+			sb.WriteString("\n" + indent + ln)
+		}
+		return sb.String()
 	}
-	return "  " + accent(prefix+line)
+	// Available width for content: reserve 4 cols for "  › " + 1 for scrollbar.
+	avail := width - 1 - 4
+	if avail < 1 {
+		avail = 1
+	}
+	wrapped := ansi.Hardwrap(line, avail, true)
+	return userBlock(wrapped)
 }
 
 var cliImageRefRe = regexp.MustCompile(`(?:^|\s)@\.reasonix/attachments/clipboard-\d{8}-\d{6}\.\d+(?:-(?:\d{6}|[a-f0-9]{8}))?\.(?:png|jpg|jpeg|gif|webp)`)
