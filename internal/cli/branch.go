@@ -18,7 +18,7 @@ func (m *chatTUI) showBranchTree() {
 	}
 	current := agent.BranchID(m.ctrl.SessionPath())
 	tree := renderBranchTree(control.FormatBranchTree(branches, current))
-	m.commitLine(ansi.Hardwrap(tree, max(m.width, 20), false))
+	m.commitLine(ansi.Hardwrap(tree, max(m.width, 20), true))
 }
 
 func renderBranchTree(tree string) string {

@@ -1,8 +1,8 @@
 package openai
 
 import (
-	"log"
 	"strings"
+	"unicode/utf8"
 )
 
 const (
@@ -36,11 +36,6 @@ var thinkingOpeners = []string{
 	"i'll look", "i'll see", "i'll think",
 	"i need to check", "i need to look", "i need to verify",
 	"let me verify", "let me confirm", "let me understand",
-	// Chinese — self-talk, not user-facing
-	"让我先", "让我看看", "让我想", "让我分析",
-	"让我查", "让我确认", "让我验证",
-	"我先看", "我先检查", "我先分析", "我先确认",
-	"需要先看看", "需要先检查", "需要先确认",
 }
 
 // thinkSplitter peels a leading <think>...</think> block out of the content
@@ -140,14 +135,16 @@ func (t *thinkSplitter) scanTextClose(s string) (reasoning, text string) {
 		if allow < 0 {
 			allow = 0
 		}
+		// Ensure we don't cut in the middle of a multi-byte UTF-8 character
+		for allow > 0 && !utf8.RuneStart(s[allow]) {
+			allow--
+		}
 		r := t.buf + s[:allow]
 		rest := s[allow:]
-		log.Printf("scanTextClose truncation: buf=%q, allow=%d, reasoning=%q, rest=%q", t.buf, allow, r, rest)
 		t.buf = ""
 		t.state = thinkPassthrough
 		return r, rest
 	}
-	log.Printf("scanTextClose accumulate: buf=%q, add=%q", t.buf, s)
 	t.buf += s
 	return "", "" // accumulate; flush() returns everything
 }

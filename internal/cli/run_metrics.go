@@ -37,14 +37,7 @@ func (s *metricsSink) Emit(e event.Event) {
 		s.m.CacheMissTokens += u.CacheMissTokens
 		s.m.Steps++
 		if p := e.Pricing; p != nil {
-			cwPrice := p.CacheWrite
-			if cwPrice == 0 {
-				cwPrice = p.Input
-			}
-			s.m.Cost += (float64(u.CacheHitTokens)*p.CacheHit +
-				float64(u.CacheMissTokens)*p.Input +
-				float64(u.CacheWriteTokens)*cwPrice +
-				float64(u.CompletionTokens)*p.Output) / 1e6
+			s.m.Cost += p.Cost(u)
 			s.m.Currency = p.Currency
 		}
 	}

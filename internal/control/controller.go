@@ -1191,6 +1191,10 @@ func (c *Controller) Resume(s *agent.Session, path string) {
 		if cost, currency := readSessionCost(path); cost > 0 {
 			c.executor.SetSessionCost(cost, currency)
 		}
+		// Restore cumulative cache/token stats from sidecar file, if one exists.
+		if hit, miss, prompt, total := readSessionCache(path); hit > 0 || miss > 0 {
+			c.executor.SetSessionCache(hit, miss, prompt, total)
+		}
 	}
 	c.mu.Lock()
 	c.sessionPath = path
@@ -1236,6 +1240,51 @@ func writeSessionCost(path string, cost float64, currency string) error {
 		return err
 	}
 	return os.WriteFile(sessionCostSidecar(path), b, 0o600)
+}
+
+// sessionCacheSidecar is the path convention for cache/token metadata alongside
+// a session JSONL file.
+func sessionCacheSidecar(sessionPath string) string {
+	return sessionPath + ".cache"
+}
+
+// readSessionCache reads the cache sidecar written by snapshot. Missing or
+// unparseable files are silently treated as zeros so resume never breaks.
+func readSessionCache(path string) (hit, miss, prompt, total int64) {
+	b, err := os.ReadFile(sessionCacheSidecar(path))
+	if err != nil {
+		return 0, 0, 0, 0
+	}
+	var v struct {
+		Hit    int64 `json:"cacheHit"`
+		Miss   int64 `json:"cacheMiss"`
+		Prompt int64 `json:"promptTokens"`
+		Total  int64 `json:"totalTokens"`
+	}
+	if json.Unmarshal(b, &v) != nil {
+		return 0, 0, 0, 0
+	}
+	return v.Hit, v.Miss, v.Prompt, v.Total
+}
+
+// writeSessionCache persists the cumulative cache/token stats alongside a
+// session JSONL.
+func writeSessionCache(path string, hit, miss, prompt, total int64) error {
+	if hit == 0 && miss == 0 && prompt == 0 && total == 0 {
+		os.Remove(sessionCacheSidecar(path))
+		return nil
+	}
+	v := struct {
+		Hit    int64 `json:"cacheHit"`
+		Miss   int64 `json:"cacheMiss"`
+		Prompt int64 `json:"promptTokens"`
+		Total  int64 `json:"totalTokens"`
+	}{Hit: hit, Miss: miss, Prompt: prompt, Total: total}
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(sessionCacheSidecar(path), b, 0o600)
 }
 
 func mergeResumedSession(systemPrompt string, loaded *agent.Session) *agent.Session {
@@ -1291,6 +1340,14 @@ func (c *Controller) snapshot(markActivity bool) error {
 	if cost, currency := c.executor.SessionCost(); cost > 0 && currency != "" {
 		if err := writeSessionCost(path, cost, currency); err != nil {
 			slog.Warn("controller: write session cost sidecar", "err", err)
+		}
+	}
+	// Persist cumulative cache/token stats alongside the session so resume
+	// restores them (P2b). Always writes when any counter is non-zero.
+	if hit, miss := c.executor.SessionCache(); hit > 0 || miss > 0 {
+		prompt, total := c.executor.SessionTokens()
+		if err := writeSessionCache(path, int64(hit), int64(miss), prompt, total); err != nil {
+			slog.Warn("controller: write session cache sidecar", "err", err)
 		}
 	}
 	if markActivity {

@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
 	"log/slog"
 	"strings"
 	"sync"
@@ -178,6 +177,7 @@ type Agent struct {
 	sessCacheHit  atomic.Int64
 	sessCacheMiss atomic.Int64
 	sessCostInfo  atomic.Value // stores sessionCostInfo{cost, currency}
+	sessCostMu    sync.Mutex   // guards sessCostInfo Load-Modify-Store sequences
 	sessPromptTokens  atomic.Int64 // cumulative prompt tokens across all API calls
 	sessTotalTokens   atomic.Int64 // cumulative total tokens across all API calls
 
@@ -322,6 +322,12 @@ func (a *Agent) SessionCache() (hit, miss int) {
 	return int(a.sessCacheHit.Load()), int(a.sessCacheMiss.Load())
 }
 
+// SessionTokens returns the cumulative prompt and total tokens across every API
+// call this session. Used by the controller to persist and restore session stats.
+func (a *Agent) SessionTokens() (prompt, total int64) {
+	return a.sessPromptTokens.Load(), a.sessTotalTokens.Load()
+}
+
 // SessionCost returns the cumulative conversation cost and its currency symbol.
 func (a *Agent) SessionCost() (cost float64, currency string) {
 	if v := a.sessCostInfo.Load(); v != nil {
@@ -337,11 +343,42 @@ func (a *Agent) SessionCost() (cost float64, currency string) {
 // ResetSessionCost zeros the cumulative cost — used on /new session rotation.
 func (a *Agent) ResetSessionCost() {
 	a.sessCostInfo.Store(sessionCostInfo{})
+	a.sessCacheHit.Store(0)
+	a.sessCacheMiss.Store(0)
+	a.sessPromptTokens.Store(0)
+	a.sessTotalTokens.Store(0)
+}
+
+// addSessionCost atomically adds cost to the cumulative session cost. The mutex
+// protects against concurrent Load-Modify-Store from AddSessionUsage and the
+// stream loop's ChunkUsage handler.
+func (a *Agent) addSessionCost(cost float64, currency string) {
+	a.sessCostMu.Lock()
+	defer a.sessCostMu.Unlock()
+	prev := a.sessCostInfo.Load()
+	var info sessionCostInfo
+	if prev != nil {
+		info, _ = prev.(sessionCostInfo)
+	}
+	info.cost += cost
+	if info.currency == "" {
+		info.currency = currency
+	}
+	a.sessCostInfo.Store(info)
 }
 
 // SetSessionCost restores cumulative cost from a loaded session sidecar.
 func (a *Agent) SetSessionCost(cost float64, currency string) {
 	a.sessCostInfo.Store(sessionCostInfo{cost: cost, currency: currency})
+}
+
+// SetSessionCache restores cumulative cache/token statistics from a loaded
+// session sidecar. This is the counterpart of SetSessionCost for cache stats.
+func (a *Agent) SetSessionCache(hit, miss, prompt, total int64) {
+	a.sessCacheHit.Store(hit)
+	a.sessCacheMiss.Store(miss)
+	a.sessPromptTokens.Store(prompt)
+	a.sessTotalTokens.Store(total)
 }
 
 // AddSessionUsage merges a sub-agent's accumulated cache/cost counters into
@@ -352,16 +389,7 @@ func (a *Agent) AddSessionUsage(hit, miss, prompt, total int64, cost float64, cu
 	a.sessPromptTokens.Add(prompt)
 	a.sessTotalTokens.Add(total)
 	if cost > 0 || currency != "" {
-		prev := a.sessCostInfo.Load()
-		var info sessionCostInfo
-		if prev != nil {
-			info, _ = prev.(sessionCostInfo)
-		}
-		info.cost += cost
-		if info.currency == "" {
-			info.currency = currency
-		}
-		a.sessCostInfo.Store(info)
+		a.addSessionCost(cost, currency)
 	}
 }
 
@@ -826,7 +854,6 @@ func (a *Agent) stream(ctx context.Context, turn int) (string, string, string, [
 			}
 		case provider.ChunkText:
 			text.WriteString(chunk.Text)
-			log.Printf("agent emit text event: %q", chunk.Text)
 			a.sink.Emit(event.Event{Kind: event.Text, Text: chunk.Text})
 		case provider.ChunkToolCallStart:
 			partialToolStarted = true
@@ -850,16 +877,7 @@ func (a *Agent) stream(ctx context.Context, turn int) (string, string, string, [
 			a.sessPromptTokens.Add(int64(chunk.Usage.PromptTokens))
 			a.sessTotalTokens.Add(int64(chunk.Usage.TotalTokens))
 			if a.pricing != nil {
-				prev := a.sessCostInfo.Load()
-				var info sessionCostInfo
-				if prev != nil {
-					info, _ = prev.(sessionCostInfo) // zero-value on type mismatch is safe here
-				}
-				info.cost += a.pricing.Cost(chunk.Usage)
-				if info.currency == "" {
-					info.currency = a.pricing.Symbol()
-				}
-				a.sessCostInfo.Store(info)
+				a.addSessionCost(a.pricing.Cost(chunk.Usage), a.pricing.Symbol())
 			}
 		case provider.ChunkError:
 			if provider.IsStreamInterrupted(chunk.Err) {

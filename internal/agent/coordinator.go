@@ -3,7 +3,6 @@ package agent
 import (
 	"context"
 	"fmt"
-	"log"
 	"strings"
 
 	"reasonix/internal/event"
@@ -135,7 +134,6 @@ func (c *Coordinator) plan(ctx context.Context, input string) (string, error) {
 		switch chunk.Type {
 		case provider.ChunkText:
 			text.WriteString(chunk.Text)
-			log.Printf("agent emit text event: %q", chunk.Text)
 			c.sink.Emit(event.Event{Kind: event.Text, Text: chunk.Text})
 		case provider.ChunkUsage:
 			usage = chunk.Usage

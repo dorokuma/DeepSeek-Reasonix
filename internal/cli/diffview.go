@@ -136,23 +136,57 @@ func diffBar(sign byte, code, path string, width int, bg, signFg string, lineNo,
 	if barW < 4 {
 		barW = 4
 	}
-	code = clampPlain(code, barW-2)
+	codeW := barW - 2
+	if codeW < 4 {
+		codeW = 4
+	}
+	wrapped := ansi.Hardwrap(expandTabs(code), codeW, true)
 	if !colorEnabled {
-		return "  " + gutter + " " + string(sign) + " " + code
+		lines := strings.Split(wrapped, "\n")
+		parts := make([]string, len(lines))
+		for i, ln := range lines {
+			if i == 0 {
+				parts[i] = "  " + gutter + " " + string(sign) + " " + ln
+			} else {
+				parts[i] = "  " + strings.Repeat(" ", gw+1) + " " + ln
+			}
+		}
+		return strings.Join(parts, "\n")
 	}
-	hl := reapplyBG(highlightCode(path, code), bg)
-	pad := barW - 2 - visibleWidth(code)
-	if pad < 0 {
-		pad = 0
+
+	lines := strings.Split(wrapped, "\n")
+	parts := make([]string, len(lines))
+	for i, ln := range lines {
+		hl := reapplyBG(highlightCode(path, ln), bg)
+		pad := codeW - ansi.StringWidth(ln)
+		if pad < 0 {
+			pad = 0
+		}
+		if i == 0 {
+			parts[i] = "  " + gutter + " " + bg + signFg + string(sign) + ansiReset + bg + " " + hl + strings.Repeat(" ", pad) + ansiReset
+		} else {
+			gutterPad := strings.Repeat(" ", gw+1)
+			parts[i] = "  " + gutterPad + bg + " " + hl + strings.Repeat(" ", pad) + ansiReset
+		}
 	}
-	return "  " + gutter + " " + bg + signFg + string(sign) + ansiReset + bg + " " + hl + strings.Repeat(" ", pad) + ansiReset
+	return strings.Join(parts, "\n")
 }
 
 // diffContext draws an unchanged line: the gutter, no background, code aligned
 // under the +/- rows' code column.
 func diffContext(code, path string, width, lineNo, gw int) string {
 	gutter := dim(lpad(strconv.Itoa(lineNo), gw))
-	return "  " + gutter + "   " + highlightClamped(code, path, width-4-gw)
+	wrapped := highlightClamped(code, path, width-4-gw)
+	lines := strings.Split(wrapped, "\n")
+	parts := make([]string, len(lines))
+	for i, ln := range lines {
+		if i == 0 {
+			parts[i] = "  " + gutter + "   " + ln
+		} else {
+			parts[i] = "  " + strings.Repeat(" ", gw) + "    " + ln
+		}
+	}
+	return strings.Join(parts, "\n")
 }
 
 func gutterWidth(lines []string) int {
@@ -204,7 +238,7 @@ func clampPlain(s string, w int) string {
 	if w < 1 {
 		w = 1
 	}
-	return ansi.Truncate(expandTabs(s), w, "")
+	return ansi.Hardwrap(expandTabs(s), w, true)
 }
 
 // expandTabs replaces tabs with spaces to the next tabWidth stop. A literal tab
