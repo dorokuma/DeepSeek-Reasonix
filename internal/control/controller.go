@@ -1931,6 +1931,13 @@ func (g gateApprover) Approve(ctx context.Context, tool, subject string, args js
 	return g.c.requestApproval(ctx, tool, subject)
 }
 
+// SubAgentApprover returns an Approver suitable for the sub-agent
+// dangerous-command gate. It uses the same interactive approval flow as
+// the main agent's permission gate (gateApprover).
+func (c *Controller) SubAgentApprover() permission.Approver {
+	return gateApprover{c}
+}
+
 
 // requestApproval emits an ApprovalRequest and blocks until Approve(ID, …)
 // answers or ctx is cancelled. A prior tool-wide session grant short-circuits.
