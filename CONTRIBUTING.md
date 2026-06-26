@@ -35,6 +35,8 @@ go test ./...              # runs the full test suite
 | `internal/hook` | Shell hooks (PreToolUse, …) |
 | `internal/memory` | REASONIX.md hierarchy + auto-memory |
 | `internal/skill` | Skill discovery from Markdown |
+| `internal/sandbox` | OS-level sandboxing |
+| `internal/serve` | HTTP/SSE server frontend |
 | `internal/checkpoint` | Snapshot-based rewind |
 | `desktop/` | Wails-based desktop app (separate Go module) |
 | `docs/` | Engineering spec, migration guide |
