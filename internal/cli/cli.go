@@ -1912,15 +1912,124 @@ func configCommand(args []string) int {
 		configUsage()
 		return 2
 	}
-	switch args[0] {
+
+	subcmd := args[0]
+	rest := args[1:]
+
+	// Parse optional --local flag between subcommand and value.
+	local := false
+	if len(rest) > 0 && rest[0] == "--local" {
+		local = true
+		rest = rest[1:]
+	}
+
+	switch subcmd {
+	case "auto-plan":
+		return configAutoPlan(rest, local)
+	case "reasoning-language":
+		return configReasoningLanguage(rest, local)
 	default:
 		configUsage()
 		return 2
 	}
 }
 
+func configAutoPlan(args []string, local bool) int {
+	if local {
+		fmt.Fprintln(os.Stderr, "--local is not supported for auto-plan; use 'reasonix config auto-plan on|off' to set user default")
+		return 2
+	}
+	if len(args) != 1 {
+		configUsage()
+		return 2
+	}
+
+	mode := args[0]
+	path := config.UserConfigPath()
+	if path == "" {
+		fmt.Fprintln(os.Stderr, "cannot resolve user config path")
+		return 1
+	}
+
+	cfg := config.LoadForEdit(path)
+	if err := cfg.SetAutoPlan(mode); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 2
+	}
+	if err := cfg.SaveTo(path); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+
+	fmt.Printf(`auto_plan = "%s"`+"\n", cfg.Agent.AutoPlan)
+	return 0
+}
+
+func configReasoningLanguage(args []string, local bool) int {
+	if len(args) != 1 {
+		configUsage()
+		return 2
+	}
+
+	raw := args[0]
+	lang := strings.ToLower(strings.TrimSpace(raw))
+
+	var validLang string
+	switch lang {
+	case "", "auto":
+		validLang = ""
+	case "en":
+		validLang = "en"
+	case "zh":
+		validLang = "zh"
+	default:
+		fmt.Fprintf(os.Stderr, "reasoning-language %q: must be auto|zh|en\n", raw)
+		return 2
+	}
+
+	if local {
+		// Write a minimal project override that only pins reasoning_language.
+		path := "reasonix.toml"
+		body := fmt.Sprintf(`# Reasonix project configuration.
+# Project-local overrides are merged over the user config.
+
+[agent]
+reasoning_language = %q
+`, validLang)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return 1
+		}
+		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return 1
+		}
+		fmt.Printf(`reasoning_language = "%s"`+"\n", validLang)
+		return 0
+	}
+
+	// Write to user config.
+	path := config.UserConfigPath()
+	if path == "" {
+		fmt.Fprintln(os.Stderr, "cannot resolve user config path")
+		return 1
+	}
+
+	cfg := config.LoadForEdit(path)
+	cfg.Agent.ReasoningLanguage = validLang
+	if err := cfg.SaveTo(path); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+
+	fmt.Printf(`reasoning_language = "%s"`+"\n", validLang)
+	return 0
+}
+
 func configUsage() {
 	fmt.Print(`Usage:
-  reasonix config — no subcommands available
+  reasonix config auto-plan on|off                set user default for auto plan mode
+  reasonix config reasoning-language auto|zh|en    set reasoning language (user default)
+  reasonix config reasoning-language --local auto|zh|en   set reasoning language (project override)
 `)
 }
