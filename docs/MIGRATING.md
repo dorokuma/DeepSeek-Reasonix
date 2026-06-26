@@ -106,7 +106,9 @@ and DeepSeek prefix-cache–oriented design.
   unsafe bash commands still remain blocked. An MCP/plugin tool whose read-only
   status comes from the server's untrusted `readOnlyHint` is confirmed the first
   time an interactive plan-mode run needs it; choose the persistent option to
-  write the plugin-level `trusted_read_only_tools` raw-name list. Non-interactive
+  write the plugin-level `trusted_read_only_tools` raw-name list. Auto/YOLO tool
+  approval does not answer this trust prompt, although a session or persistent
+  trust choice prevents repeat prompts for the same MCP tool. Non-interactive
   runs still fail closed, so pre-seed `trusted_read_only_tools` or declare a
   concrete `mcp__<server>__<tool>` when no user can approve. In the desktop MCP
   panel, expand a server and use **Pre-trust read-only** for currently listed

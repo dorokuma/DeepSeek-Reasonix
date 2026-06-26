@@ -169,6 +169,7 @@ type pendingApproval struct {
 	tool      string
 	subject   string
 	reason    string
+	fresh     bool
 	autoDrain bool
 	reply     chan approvalReply
 }
@@ -2939,7 +2940,7 @@ func (p planModeReadOnlyTrustApprover) CheckPlanModeReadOnlyTrust(ctx context.Co
 	}
 	subject := fmt.Sprintf("MCP %s/%s as read-only for planning and research", server, rawTool)
 	reason := "This MCP tool reports read-only, but external read-only hints need your confirmation before plan mode can use them. Choose always allow to remember this trust for future planning and read-only research."
-	reply, err := p.c.requestApprovalDecision(ctx, req.ToolName, subject, req.Args, reason)
+	reply, err := p.c.requestFreshApprovalDecision(ctx, req.ToolName, subject, req.Args, reason)
 	if err != nil {
 		return false, "approval aborted", err
 	}
@@ -3359,10 +3360,25 @@ func (c *Controller) requestApprovalWithReason(ctx context.Context, tool, subjec
 }
 
 func (c *Controller) requestApprovalDecision(ctx context.Context, tool, subject string, args json.RawMessage, reason string) (approvalReply, error) {
+	return c.requestApprovalDecisionWithOptions(ctx, tool, subject, args, reason, approvalDecisionOptions{})
+}
+
+func (c *Controller) requestFreshApprovalDecision(ctx context.Context, tool, subject string, args json.RawMessage, reason string) (approvalReply, error) {
+	return c.requestApprovalDecisionWithOptions(ctx, tool, subject, args, reason, approvalDecisionOptions{fresh: true})
+}
+
+type approvalDecisionOptions struct {
+	// fresh marks a user trust/business decision rather than an ordinary tool
+	// permission. It may reuse an explicit session grant, but YOLO/auto approval
+	// must not answer or drain the prompt.
+	fresh bool
+}
+
+func (c *Controller) requestApprovalDecisionWithOptions(ctx context.Context, tool, subject string, args json.RawMessage, reason string, opts approvalDecisionOptions) (approvalReply, error) {
 	// YOLO/full access and the just-approved-plan execution window auto-allow
 	// approval-gated tools without prompting. Plan approval is a user decision,
 	// not a tool permission, so it deliberately stays interactive.
-	if c.approval.preApproved(tool, subject) {
+	if c.approval.preApprovedForDecision(tool, subject, opts.fresh) {
 		return approvalReply{allow: true}, nil
 	}
 
@@ -3371,10 +3387,16 @@ func (c *Controller) requestApprovalDecision(ctx context.Context, tool, subject 
 
 	// Re-check: a session grant may have landed while we queued behind another
 	// prompt for the same subject.
-	if c.approval.preApproved(tool, subject) {
+	if c.approval.preApprovedForDecision(tool, subject, opts.fresh) {
 		return approvalReply{allow: true}, nil
 	}
-	id, reply := c.approval.register(tool, subject, reason)
+	var id string
+	var reply chan approvalReply
+	if opts.fresh {
+		id, reply = c.approval.registerDecision(tool, subject, reason, true)
+	} else {
+		id, reply = c.approval.register(tool, subject, reason)
+	}
 
 	c.sink.Emit(event.Event{Kind: event.ApprovalRequest, Approval: event.Approval{ID: id, Tool: tool, Subject: subject, Reason: reason}})
 	if hookSubject, hookArgs, ok := permissionRequestHookPayload(tool, subject, args); ok {

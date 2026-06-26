@@ -293,8 +293,11 @@ func (p Policy) Decide(toolName string, readOnly bool, args json.RawMessage) Dec
   instead come from the server's self-reported `readOnlyHint`, which plan mode
   treats as untrusted (`tool.PlanModeUntrustedReadOnly`): interactive
   controllers may ask once before executing it and may remember a persistent
-  approval as `trusted_read_only_tools`; non-interactive sessions and declined
-  approvals remain fail-closed. Writers, installers, memory mutation, process
+  approval as `trusted_read_only_tools`. This trust prompt is a fresh user
+  decision: `auto`, `yolo`, and the approved-plan execution window do not answer
+  it, but an explicit session grant still prevents repeat prompts for the same
+  tool. Non-interactive sessions and declined approvals remain fail-closed.
+  Writers, installers, memory mutation, process
   control, and `complete_step` (read-only yet post-approval only, so it
   self-reports plan-unsafe) are refused; the enforced invariant is
   PlanSafe ⇒ ReadOnly. An untrusted read-only MCP/plugin tool is therefore
@@ -314,8 +317,8 @@ func (p Policy) Decide(toolName string, readOnly bool, args json.RawMessage) Dec
   `yolo` ("Yolo批准"). `auto` lets the permission policy auto-approve the writer
   fallback while preserving explicit ask/deny rules; `yolo` skips all tool
   permission approvals for approval-gated tools such as writers and Bash.
-  Neither posture answers `ask` questions or approves `exit_plan_mode` plans for
-  the user.
+  Neither posture answers `ask` questions, approves `exit_plan_mode` plans, or
+  confirms MCP read-only trust prompts for the user.
   Auto-plan is also a separate feature flag: when enabled, a complex task may
   still enter plan mode in any tool approval posture. After a user approves a
   plan, the controller opens a short `approvedPlanAutoApproveTools` execution
@@ -350,12 +353,12 @@ func (p Policy) Decide(toolName string, readOnly bool, args json.RawMessage) Dec
   desktop UI so the collaboration mode remains one of the three choices, while
   the underlying tool approval posture is preserved.
 
-| Tool approval posture | Tool approvals | Plan approval | `ask` questions |
-| --- | --- | --- | --- |
-| Need approval / `ask` | Follow permission policy (`Ask` prompts interactively) | Waits for user | Waits for user |
-| Auto approve / `auto` | Writer fallback auto-allowed; explicit ask/deny rules still apply | Waits for user | Waits for user |
-| YOLO approval / `yolo` | Approval prompts auto-allowed unless denied | Waits for user | Waits for user |
-| Approved-plan execution window | Approved plan's tool calls auto-allowed unless denied | Future plans still wait | Waits for user |
+| Tool approval posture | Tool approvals | Plan approval | MCP read-only trust | `ask` questions |
+| --- | --- | --- | --- | --- |
+| Need approval / `ask` | Follow permission policy (`Ask` prompts interactively) | Waits for user | Waits for user unless session-granted | Waits for user |
+| Auto approve / `auto` | Writer fallback auto-allowed; explicit ask/deny rules still apply | Waits for user | Waits for user unless session-granted | Waits for user |
+| YOLO approval / `yolo` | Approval prompts auto-allowed unless denied | Waits for user | Waits for user unless session-granted | Waits for user |
+| Approved-plan execution window | Approved plan's tool calls auto-allowed unless denied | Future plans still wait | Waits for user unless session-granted | Waits for user |
 
 Out of the box (`mode = "ask"`, no rules) `reasonix run` behaves exactly as before
 (writers resolve `Ask`→allow with no TTY), while `reasonix` now prompts before

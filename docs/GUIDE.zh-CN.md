@@ -241,7 +241,7 @@ Goal、由 `todo_write` 工具驱动的实时 Todo 面板，以及已配置 prov
 | --- | --- |
 | Ask | writer 兜底审批时询问。 |
 | Auto | 自动放行兜底审批；显式 `ask` / `deny` 规则仍生效。 |
-| YOLO | 跳过普通工具审批；`deny`、用户 `ask` 问题、计划批准提示仍会等待。 |
+| YOLO | 跳过普通工具审批；`deny`、用户 `ask` 问题、计划批准提示、MCP 只读信任提示仍会等待。 |
 | Plan | 下一轮保持只读规划，直到计划被批准或关闭 Plan。 |
 | Goal | 持续追一个已保存目标，直到完成、阻塞或清除。 |
 
@@ -270,6 +270,8 @@ Reasonix 是一个 MCP 客户端。`[[plugins]]` 的 `type` 选择传输：`stdi
 `mcp__<server>__<tool>` 暴露给模型，与 Claude Code 一致；声明 MCP `readOnlyHint: true`
 的工具会参与并行调度并命中权限层的只读默认放行，但 planner / read-only research 会先确认第三方
 自报只读。交互式会话里，第一次需要时允许即可；选择持久允许会把 raw MCP tool name 记住。
+这个信任提示属于用户决策，Auto/YOLO 工具审批不会代答；选择本会话允许或持久允许后，同一个 MCP
+工具不会在本会话里重复弹。
 高级用户也可以在 plugin 上预置审过的第三方读工具：
 
 ```toml

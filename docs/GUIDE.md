@@ -264,7 +264,7 @@ Mode meanings:
 | --- | --- |
 | Ask | Prompts for fallback writer approvals. |
 | Auto | Auto-allows fallback approvals; explicit `ask` / `deny` rules still apply. |
-| YOLO | Skips ordinary tool approval prompts; `deny`, user `ask` questions, and plan approval prompts still wait. |
+| YOLO | Skips ordinary tool approval prompts; `deny`, user `ask` questions, plan approval prompts, and MCP read-only trust prompts still wait. |
 | Plan | Keeps the next work read-only until a plan is approved or Plan is turned off. |
 | Goal | Pursues a saved objective until complete, blocked, or cleared. |
 
@@ -301,6 +301,9 @@ declaring MCP's `readOnlyHint: true` joins parallel dispatch and the permission
 reader-default, but planner / read-only research confirms third-party read-only
 hints before relying on them. In interactive sessions, approve the first trust
 prompt once, or choose the persistent option to remember the raw MCP tool name.
+This trust prompt is a user decision, so Auto/YOLO tool approval does not answer
+it; allowing for the session or persisting trust prevents repeat prompts for the
+same MCP tool.
 Advanced users can also pre-seed audited third-party readers on the plugin:
 
 ```toml

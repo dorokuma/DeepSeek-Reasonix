@@ -285,5 +285,6 @@ connect a server live.
 
 MCP tools that report readOnlyHint are confirmed on first plan-mode use. Choose
 "always allow" in the approval prompt to remember that read-only trust; advanced
-users may pre-seed trusted_read_only_tools in config.`)
+users may pre-seed trusted_read_only_tools in config. Auto/YOLO tool approval
+does not answer this trust prompt.`)
 }
