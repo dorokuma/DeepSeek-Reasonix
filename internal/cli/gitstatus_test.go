@@ -98,7 +98,7 @@ func TestLoadGitStatus(t *testing.T) {
 	runGitForTest(t, root, "config", "user.name", "Reasonix Test")
 	writeFileForTest(t, filepath.Join(root, "tracked.txt"), "one\ntwo\n")
 	runGitForTest(t, root, "add", "tracked.txt")
-	runGitForTest(t, root, "commit", "-m", "initial")
+	runGitForTest(t, root, "commit", "--no-verify", "-m", "initial")
 	runGitForTest(t, root, "branch", "-M", "main")
 
 	writeFileForTest(t, filepath.Join(root, "tracked.txt"), "one\nchanged\nthree\n")
