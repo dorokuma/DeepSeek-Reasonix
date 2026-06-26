@@ -188,6 +188,8 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	// outlive a turn and are cancelled by Controller.Close.
 	sink := event.Sync(opts.Sink)
 
+	agent.SessionEncryptionEnabled = cfg.Agent.EncryptSessions
+
 	if migErr != nil {
 		sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelWarn, Text: "config migration from ~/.reasonix failed: " + migErr.Error()})
 	} else if migrated != nil {
@@ -219,8 +221,6 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	if err != nil {
 		return nil, err
 	}
-
-	agent.SessionEncryptionEnabled = cfg.Agent.EncryptSessions
 
 	execProv, err := NewProviderWithProxy(entry, proxySpec)
 	if err != nil {
@@ -448,9 +448,10 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	}
 	taskModel := firstNonEmpty(cfg.Agent.SubagentModels["task"], cfg.Agent.SubagentModel)
 	taskEffort := firstNonEmpty(cfg.Agent.SubagentEfforts["task"], cfg.Agent.SubagentEffort)
+	subAgentGate := permission.DangerousGate(cfg.DangerousCommands.Patterns)
 	reg.Add(agent.NewTaskTool(execProv, entry.Price, reg, maxSteps, cfg.Agent.MaxSubagentSteps,
 		entry.ContextWindow, cfg.Agent.SoftCompactRatio, cfg.Agent.CompactRatio, cfg.Agent.CompactForceRatio,
-		cfg.Agent.Temperature, config.ArchiveDir(), "", nil,
+		cfg.Agent.Temperature, config.ArchiveDir(), "", subAgentGate,
 		taskModel, taskEffort, resolveSubagentProvider))
 
 	// Session history tools let the AI discover and read past conversations.
