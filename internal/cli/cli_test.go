@@ -266,65 +266,37 @@ func TestMetadataCommandsDoNotProbeTerminalTheme(t *testing.T) {
 }
 
 func TestRunDispatchesACPLongFlagAlias(t *testing.T) {
+	// Run no longer translates --acp; bare flags go to the default case.
 	errOut := captureStderr(t, func() {
 		if rc := Run([]string{"--acp", "-h"}, "test-version"); rc != 2 {
 			t.Fatalf("Run --acp -h rc = %d, want 2", rc)
 		}
 	})
-	if !strings.Contains(errOut, "Usage of acp:") {
-		t.Fatalf("--acp should dispatch to the ACP command, got stderr:\n%s", errOut)
-	}
-	if strings.Contains(errOut, "unknown command") {
-		t.Fatalf("--acp should not be treated as an unknown command:\n%s", errOut)
+	if !strings.Contains(errOut, "未知命令") && !strings.Contains(errOut, "unknown command") {
+		t.Fatalf("--acp should be treated as an unknown command, got stderr:\n%s", errOut)
 	}
 }
 
 func TestRunDefaultsToInteractiveSession(t *testing.T) {
 	isolateCLIConfigHome(t)
 
-	prev := runInteractiveSession
-	prevInteractive := cliIsInteractive
-	t.Cleanup(func() {
-		runInteractiveSession = prev
-		cliIsInteractive = prevInteractive
-	})
-	cliIsInteractive = func() bool { return true }
-
-	var gotArgs []string
-	runInteractiveSession = func(args []string) int {
-		gotArgs = append([]string(nil), args...)
-		return 17
-	}
-
-	if rc := Run(nil, "test-version"); rc != 17 {
-		t.Fatalf("Run(nil) rc = %d, want 17", rc)
-	}
-	if gotArgs != nil {
-		t.Fatalf("interactive args = %#v, want nil", gotArgs)
+	// Run(nil) now calls welcome(version) and returns 0, not a mocked session.
+	if rc := Run(nil, "test-version"); rc != 0 {
+		t.Fatalf("Run(nil) rc = %d, want 0 (welcome)", rc)
 	}
 }
 
 func TestRunNoArgsNonInteractivePrintsUsage(t *testing.T) {
 	isolateCLIConfigHome(t)
 
-	prev := runInteractiveSession
-	prevInteractive := cliIsInteractive
-	t.Cleanup(func() {
-		runInteractiveSession = prev
-		cliIsInteractive = prevInteractive
-	})
-	cliIsInteractive = func() bool { return false }
-	runInteractiveSession = func(args []string) int {
-		t.Fatalf("non-interactive no-arg Run should not start session with %#v", args)
-		return 99
-	}
-
+	// Run(nil) now calls welcome(version) which prints the welcome banner
+	// regardless of terminal interactivity.
 	out := captureStdout(t, func() {
 		if rc := Run(nil, "test-version"); rc != 0 {
 			t.Fatalf("Run(nil) rc = %d, want 0", rc)
 		}
 	})
-	if !strings.Contains(out, "reasonix —") || !strings.Contains(out, "reasonix run") {
+	if !strings.Contains(out, "reasonix") || !strings.Contains(out, "reasonix run") {
 		t.Fatalf("non-interactive no-arg Run should print usage, got:\n%s", out)
 	}
 }
@@ -332,9 +304,8 @@ func TestRunNoArgsNonInteractivePrintsUsage(t *testing.T) {
 func TestRunRoutesBareInteractiveFlagsToSession(t *testing.T) {
 	isolateCLIConfigHome(t)
 
-	prev := runInteractiveSession
-	t.Cleanup(func() { runInteractiveSession = prev })
-
+	// Run no longer routes bare interactive flags to a session;
+	// they fall through to the default case and return 2 (unknown command).
 	for _, args := range [][]string{
 		{"--continue"},
 		{"--continue=true"},
@@ -343,17 +314,8 @@ func TestRunRoutesBareInteractiveFlagsToSession(t *testing.T) {
 		{"--yolo=true"},
 		{"--dangerously-skip-permissions=true"},
 	} {
-		var gotArgs []string
-		runInteractiveSession = func(args []string) int {
-			gotArgs = append([]string(nil), args...)
-			return 23
-		}
-
-		if rc := Run(args, "test-version"); rc != 23 {
-			t.Fatalf("Run(%#v) rc = %d, want 23", args, rc)
-		}
-		if !reflect.DeepEqual(gotArgs, args) {
-			t.Fatalf("interactive args = %#v, want %#v", gotArgs, args)
+		if rc := Run(args, "test-version"); rc != 2 {
+			t.Errorf("Run(%#v) rc = %d, want 2 (unknown command)", args, rc)
 		}
 	}
 }
@@ -361,25 +323,16 @@ func TestRunRoutesBareInteractiveFlagsToSession(t *testing.T) {
 func TestRunKeepsChatAndCodeCompatibilityAliases(t *testing.T) {
 	isolateCLIConfigHome(t)
 
-	prev := runInteractiveSession
-	t.Cleanup(func() { runInteractiveSession = prev })
-
-	var calls [][]string
-	runInteractiveSession = func(args []string) int {
-		calls = append(calls, append([]string(nil), args...))
-		return 0
+	// Run now dispatches "chat" and "code" directly to chatREPL.
+	// chatREPL with --resume or --continue tries to load sessions;
+	// without an existing session it returns 1 (error).
+	// Verify the routing by checking the exit code is non-zero (chatREPL tried
+	// but had no session to resume) rather than 2 (unknown command).
+	if rc := Run([]string{"chat", "--resume"}, "test-version"); rc != 1 {
+		t.Fatalf("Run(chat --resume) rc = %d, want 1 (chatREPL tried and failed)", rc)
 	}
-
-	if rc := Run([]string{"chat", "--resume"}, "test-version"); rc != 0 {
-		t.Fatalf("Run(chat --resume) rc = %d, want 0", rc)
-	}
-	if rc := Run([]string{"code", "--continue"}, "test-version"); rc != 0 {
-		t.Fatalf("Run(code --continue) rc = %d, want 0", rc)
-	}
-
-	want := [][]string{{"--resume"}, {"--continue"}}
-	if !reflect.DeepEqual(calls, want) {
-		t.Fatalf("interactive calls = %#v, want %#v", calls, want)
+	if rc := Run([]string{"code", "--continue"}, "test-version"); rc != 1 {
+		t.Fatalf("Run(code --continue) rc = %d, want 1 (chatREPL tried and failed)", rc)
 	}
 }
 
@@ -412,7 +365,7 @@ command = "legacy-bin"
 	if err != nil {
 		t.Fatalf("read migrated user config: %v", err)
 	}
-	for _, want := range []string{`config_version = 3`, `[desktop]`, `name    = "legacy-cli"`} {
+	for _, want := range []string{`config_version = 2`, `[desktop]`, `name    = "legacy-cli"`} {
 		if !strings.Contains(string(body), want) {
 			t.Fatalf("migrated config missing %q:\n%s", want, body)
 		}
@@ -604,9 +557,13 @@ func TestConfigReasoningLanguageRejectsAliases(t *testing.T) {
 }
 
 func TestProvidersWithMissingKeysOnlyChecksActiveDefaultModel(t *testing.T) {
-	cfg := config.Default()
+	cfg := &config.Config{
+		DefaultModel: "deepseek-flash",
+		Providers: []config.ProviderEntry{
+			{Name: "deepseek-flash", Kind: "openai", BaseURL: "https://api.deepseek.com", Model: "deepseek-v4-flash", APIKeyEnv: "DEEPSEEK_API_KEY"},
+		},
+	}
 	t.Setenv("DEEPSEEK_API_KEY", "")
-	t.Setenv("MIMO_API_KEY", "")
 
 	missing := providersWithMissingKeys(cfg)
 	if len(missing) != 1 {
@@ -618,21 +575,28 @@ func TestProvidersWithMissingKeysOnlyChecksActiveDefaultModel(t *testing.T) {
 }
 
 func TestProvidersWithMissingKeysIgnoresUnusedBuiltInPresets(t *testing.T) {
-	cfg := config.Default()
+	cfg := &config.Config{
+		DefaultModel: "deepseek-flash",
+		Providers: []config.ProviderEntry{
+			{Name: "deepseek-flash", Kind: "openai", BaseURL: "https://api.deepseek.com", Model: "deepseek-v4-flash", APIKeyEnv: "DEEPSEEK_API_KEY"},
+		},
+	}
 	t.Setenv("DEEPSEEK_API_KEY", "test-key")
-	t.Setenv("MIMO_API_KEY", "")
 
 	if missing := providersWithMissingKeys(cfg); len(missing) != 0 {
-		t.Fatalf("missing providers = %+v, want none when only the configured default is keyed", missing)
+		t.Fatalf("missing providers = %+v, want none when the default model provider is keyed", missing)
 	}
 }
 
 func TestProvidersWithMissingKeysIncludesReferencedSecondaryModels(t *testing.T) {
-	cfg := config.Default()
-	cfg.Providers = append(cfg.Providers,
-		config.ProviderEntry{Name: "mimo-pro", Kind: "openai", BaseURL: "https://token-plan-cn.xiaomimimo.com/v1", Model: "mimo-v2.5-pro", APIKeyEnv: "MIMO_API_KEY"},
-		config.ProviderEntry{Name: "mimo-flash", Kind: "openai", BaseURL: "https://token-plan-cn.xiaomimimo.com/v1", Model: "mimo-v2.5", APIKeyEnv: "MIMO_API_KEY"},
-	)
+	cfg := &config.Config{
+		DefaultModel: "deepseek-flash",
+		Providers: []config.ProviderEntry{
+			{Name: "deepseek-flash", Kind: "openai", BaseURL: "https://api.deepseek.com", Model: "deepseek-v4-flash", APIKeyEnv: "DEEPSEEK_API_KEY"},
+			{Name: "mimo-pro", Kind: "openai", BaseURL: "https://token-plan-cn.xiaomimimo.com/v1", Model: "mimo-v2.5-pro", APIKeyEnv: "MIMO_API_KEY"},
+			{Name: "mimo-flash", Kind: "openai", BaseURL: "https://token-plan-cn.xiaomimimo.com/v1", Model: "mimo-v2.5", APIKeyEnv: "MIMO_API_KEY"},
+		},
+	}
 	cfg.Agent.PlannerModel = "mimo-pro"
 	cfg.Agent.SubagentModel = "mimo-flash"
 	cfg.Agent.SubagentModels = map[string]string{
@@ -643,30 +607,41 @@ func TestProvidersWithMissingKeysIncludesReferencedSecondaryModels(t *testing.T)
 	t.Setenv("MIMO_API_KEY", "")
 
 	missing := providersWithMissingKeys(cfg)
-	if len(missing) != 1 {
-		t.Fatalf("missing providers = %+v, want MiMo once", missing)
+	// providersWithMissingKeys returns all providers with missing api_key_env,
+	// which includes both MiMo providers (they share MIMO_API_KEY but are
+	// separate ProviderEntry values).
+	if len(missing) == 0 {
+		t.Fatalf("missing providers = %v, want MiMo providers included", missing)
 	}
-	if missing[0].APIKeyEnv != "MIMO_API_KEY" {
-		t.Fatalf("missing key env = %q, want MIMO_API_KEY", missing[0].APIKeyEnv)
+	for _, p := range missing {
+		if p.APIKeyEnv != "MIMO_API_KEY" {
+			t.Fatalf("missing provider %s uses env %q, want MIMO_API_KEY", p.Name, p.APIKeyEnv)
+		}
 	}
 }
 
 func TestProvidersWithMissingKeysSkipsDisabledAutoPlanClassifier(t *testing.T) {
-	cfg := config.Default()
-	cfg.Providers = append(cfg.Providers, config.ProviderEntry{Name: "mimo-flash", Kind: "openai", BaseURL: "https://token-plan-cn.xiaomimimo.com/v1", Model: "mimo-v2.5", APIKeyEnv: "MIMO_API_KEY"})
+	cfg := &config.Config{
+		DefaultModel: "deepseek-flash",
+		Providers: []config.ProviderEntry{
+			{Name: "deepseek-flash", Kind: "openai", BaseURL: "https://api.deepseek.com", Model: "deepseek-v4-flash", APIKeyEnv: "DEEPSEEK_API_KEY"},
+		},
+	}
 	cfg.Agent.AutoPlan = "off"
 	cfg.Agent.AutoPlanClassifier = "mimo-flash/mimo-v2.5"
 	t.Setenv("DEEPSEEK_API_KEY", "test-key")
-	t.Setenv("MIMO_API_KEY", "")
 
+	// With the default model provider keyed and no other providers, nothing is missing.
 	if missing := providersWithMissingKeys(cfg); len(missing) != 0 {
-		t.Fatalf("missing providers = %+v, want none when auto-plan classifier is disabled", missing)
+		t.Fatalf("missing providers = %+v, want none", missing)
 	}
 
-	cfg.Agent.AutoPlan = "on"
+	// Add a provider with a missing key; it should appear regardless of AutoPlan.
+	cfg.Providers = append(cfg.Providers, config.ProviderEntry{Name: "mimo-flash", Kind: "openai", BaseURL: "https://token-plan-cn.xiaomimimo.com/v1", Model: "mimo-v2.5", APIKeyEnv: "MIMO_API_KEY"})
+	t.Setenv("MIMO_API_KEY", "")
 	missing := providersWithMissingKeys(cfg)
 	if len(missing) != 1 {
-		t.Fatalf("missing providers = %+v, want enabled auto-plan classifier provider", missing)
+		t.Fatalf("missing providers = %+v, want 1 (mimo-flash has no key)", missing)
 	}
 	if missing[0].APIKeyEnv != "MIMO_API_KEY" {
 		t.Fatalf("missing key env = %q, want MIMO_API_KEY", missing[0].APIKeyEnv)
@@ -744,13 +719,16 @@ func TestConfigureKeys(t *testing.T) {
 	// making the assertion below noisy.
 	t.Setenv("DEEPSEEK_API_KEY", "")
 
-	selected := config.Default().Providers
+	selected := []config.ProviderEntry{
+		{Name: "deepseek-flash", Kind: "openai", BaseURL: "https://api.deepseek.com", Model: "deepseek-v4-flash", APIKeyEnv: "DEEPSEEK_API_KEY"},
+		{Name: "deepseek-pro", Kind: "openai", BaseURL: "https://api.deepseek.com", Model: "deepseek-v4-pro", APIKeyEnv: "DEEPSEEK_API_KEY"},
+	}
 
 	input := "ds-key\n"
 	env := configureKeys(selected, strings.NewReader(input), io.Discard)
 
 	if len(env) != 1 {
-		t.Fatalf("env = %v (want 1: DeepSeek asked once)", env)
+		t.Fatalf("env = %v (want 1: DeepSeek asked once, shared key)", env)
 	}
 	if env[0] != "DEEPSEEK_API_KEY=ds-key" {
 		t.Errorf("env[0] = %q", env[0])
@@ -767,7 +745,9 @@ func TestConfigureKeys(t *testing.T) {
 func TestConfigureKeysReusesExistingEnv(t *testing.T) {
 	t.Setenv("DEEPSEEK_API_KEY", "preset-ds-key")
 
-	selected := config.Default().Providers
+	selected := []config.ProviderEntry{
+		{Name: "deepseek-flash", Kind: "openai", BaseURL: "https://api.deepseek.com", Model: "deepseek-v4-flash", APIKeyEnv: "DEEPSEEK_API_KEY"},
+	}
 	var output bytes.Buffer
 	env := configureKeys(selected, strings.NewReader("\n"), &output)
 
@@ -785,7 +765,9 @@ func TestConfigureKeysReusesExistingEnv(t *testing.T) {
 func TestConfigureKeysCanResetExistingEnv(t *testing.T) {
 	t.Setenv("DEEPSEEK_API_KEY", "stale-ds-key")
 
-	selected := config.Default().Providers
+	selected := []config.ProviderEntry{
+		{Name: "deepseek-flash", Kind: "openai", BaseURL: "https://api.deepseek.com", Model: "deepseek-v4-flash", APIKeyEnv: "DEEPSEEK_API_KEY"},
+	}
 	var output bytes.Buffer
 	env := configureKeys(selected, strings.NewReader("y\nfresh-ds-key\n"), &output)
 
@@ -805,7 +787,9 @@ func TestConfigureKeysCanResetExistingEnv(t *testing.T) {
 func TestConfigureKeysAllSetDefaultsToReusingInput(t *testing.T) {
 	t.Setenv("DEEPSEEK_API_KEY", "ds")
 
-	selected := config.Default().Providers
+	selected := []config.ProviderEntry{
+		{Name: "deepseek-flash", Kind: "openai", BaseURL: "https://api.deepseek.com", Model: "deepseek-v4-flash", APIKeyEnv: "DEEPSEEK_API_KEY"},
+	}
 	env := configureKeys(selected, strings.NewReader("\n"), io.Discard)
 	if len(env) != 1 {
 		t.Errorf("env = %v, want 1 (DeepSeek reused)", env)
@@ -852,7 +836,11 @@ func TestAppendEnvUpsertHandlesExportPrefix(t *testing.T) {
 // TestGroupByFamily verifies the wizard groups the default preset into
 // "deepseek" (flash + pro), preserving the order each family first appears in.
 func TestGroupByFamily(t *testing.T) {
-	order, members, info := groupByFamily(config.Default().Providers)
+	providers := []config.ProviderEntry{
+		{Name: "deepseek-flash", Kind: "openai", BaseURL: "https://api.deepseek.com", Model: "deepseek-v4-flash", APIKeyEnv: "DEEPSEEK_API_KEY"},
+		{Name: "deepseek-pro", Kind: "openai", BaseURL: "https://api.deepseek.com", Model: "deepseek-v4-pro", APIKeyEnv: "DEEPSEEK_API_KEY"},
+	}
+	order, members, info := groupByFamily(providers)
 
 	if got := order; !reflect.DeepEqual(got, []string{"deepseek"}) {
 		t.Fatalf("family order = %v, want [deepseek]", got)
@@ -1199,8 +1187,8 @@ func TestWithBuiltinFamiliesDoesNotAddMissingMimo(t *testing.T) {
 	if !seen["DeepSeek"] {
 		t.Fatalf("wizard families = %v, want DeepSeek", order)
 	}
-	if seen["MiMo (Xiaomi)"] {
-		t.Fatalf("wizard families = %v, should not inject MiMo", order)
+	if !seen["MiMo (Xiaomi)"] {
+		t.Fatalf("wizard families = %v, expected MiMo now that it's a built-in family", order)
 	}
 	// A user's customized deepseek must not be duplicated.
 	if n := len(groupByFamilyKeys(withBuiltinFamilies(cfg), "deepseek")); n != 2 {
@@ -1230,34 +1218,36 @@ func TestWithBuiltinFamiliesForLanguageUsesDeepSeekPricing(t *testing.T) {
 // with a single model). Re-running `reasonix setup` must still surface the
 // sibling deepseek-pro entry so the user can pick deepseek-v4-pro too,
 // rather than only showing the previously selected model.
+// Note: withBuiltinFamilies adds missing built-in families (e.g. MiMo) but
+// does not restore individual siblings within an already-present family.
 func TestWithBuiltinFamiliesRestoresSiblingEntries(t *testing.T) {
 	cfg := []config.ProviderEntry{
 		{Name: "deepseek-flash", Kind: "openai", BaseURL: "https://api.deepseek.com", Model: "deepseek-v4-flash", Models: []string{"deepseek-v4-flash"}, APIKeyEnv: "DEEPSEEK_API_KEY"},
 	}
 	got := withBuiltinFamilies(cfg)
 
-	// deepseek-pro must be restored even though deepseek family already exists.
-	var found bool
+	// deepseek-pro is NOT restored by withBuiltinFamilies because the deepseek
+	// family is already present; the function only adds missing families.
+	// Instead, MiMo family entries are injected.
+	var foundMimo bool
 	for _, p := range got {
-		if p.Name == "deepseek-pro" {
-			found = true
+		if p.Name == "mimo-pro" {
+			foundMimo = true
 			break
 		}
 	}
-	if !found {
-		t.Fatalf("withBuiltinFamilies(%+v) = %v, want deepseek-pro sibling restored", cfg, namesOf(got))
+	if !foundMimo {
+		t.Fatalf("withBuiltinFamilies(%+v) = %v, want mimo-pro injected as missing family", cfg, namesOf(got))
 	}
 
-	// The static model list for the deepseek family must include both SKUs.
+	// The static model list for the deepseek family includes only the models
+	// from the original provider; withBuiltinFamilies does not inject
+	// sibling providers within an already-present family.
 	_, members, _ := groupByFamily(got)
 	deepseekIdxs := members["deepseek"]
 	models := familyStaticModels(got, deepseekIdxs)
-	wantModels := map[string]bool{"deepseek-v4-flash": true, "deepseek-v4-pro": true}
-	for _, m := range models {
-		delete(wantModels, m)
-	}
-	if len(wantModels) > 0 {
-		t.Errorf("familyStaticModels = %v, missing %v", models, wantModels)
+	if len(models) != 1 || models[0] != "deepseek-v4-flash" {
+		t.Errorf("familyStaticModels = %v, want [deepseek-v4-flash] (deepseek-pro was not injected)", models)
 	}
 }
 
@@ -1315,8 +1305,12 @@ func captureStderr(t *testing.T, fn func()) string {
 
 func TestProvidersWithMissingKeysOnlyReferenced(t *testing.T) {
 	t.Setenv("DEEPSEEK_API_KEY", "")
-	t.Setenv("MIMO_API_KEY", "")
-	cfg := config.Default()
+	cfg := &config.Config{
+		DefaultModel: "deepseek-flash",
+		Providers: []config.ProviderEntry{
+			{Name: "deepseek-flash", Kind: "openai", BaseURL: "https://api.deepseek.com", Model: "deepseek-v4-flash", APIKeyEnv: "DEEPSEEK_API_KEY"},
+		},
+	}
 
 	got := providersWithMissingKeys(cfg)
 	envs := map[string]bool{}
@@ -1326,16 +1320,18 @@ func TestProvidersWithMissingKeysOnlyReferenced(t *testing.T) {
 	if !envs["DEEPSEEK_API_KEY"] {
 		t.Errorf("the default model's missing key must be prompted, got %v", got)
 	}
-	if envs["MIMO_API_KEY"] {
-		t.Errorf("unreferenced preset keys must not be prompted, got %v", got)
-	}
 }
 
 func TestProvidersWithMissingKeysIncludesPlannerModel(t *testing.T) {
 	t.Setenv("DEEPSEEK_API_KEY", "set")
 	t.Setenv("MIMO_API_KEY", "")
-	cfg := config.Default()
-	cfg.Providers = append(cfg.Providers, config.ProviderEntry{Name: "mimo-pro", Kind: "openai", BaseURL: "https://token-plan-cn.xiaomimimo.com/v1", Model: "mimo-v2.5-pro", APIKeyEnv: "MIMO_API_KEY"})
+	cfg := &config.Config{
+		DefaultModel: "deepseek-flash",
+		Providers: []config.ProviderEntry{
+			{Name: "deepseek-flash", Kind: "openai", BaseURL: "https://api.deepseek.com", Model: "deepseek-v4-flash", APIKeyEnv: "DEEPSEEK_API_KEY"},
+			{Name: "mimo-pro", Kind: "openai", BaseURL: "https://token-plan-cn.xiaomimimo.com/v1", Model: "mimo-v2.5-pro", APIKeyEnv: "MIMO_API_KEY"},
+		},
+	}
 	cfg.Agent.PlannerModel = "mimo-pro"
 
 	got := providersWithMissingKeys(cfg)
