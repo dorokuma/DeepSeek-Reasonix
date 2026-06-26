@@ -460,6 +460,7 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 				fmt.Fprintf(w, "id: %d\n", ev.Seq)
 			}
 			fmt.Fprintf(w, "data: %s\n\n", data)
+			log.Printf("SSE text event sending(%d bytes): %q", len(data), data)
 			flusher.Flush()
 		case <-keepalive.C:
 			// SSE comment lines start with `:` and are ignored by the

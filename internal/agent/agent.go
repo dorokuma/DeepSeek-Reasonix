@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"log/slog"
 	"strings"
 	"sync"
@@ -35,23 +36,6 @@ const maxFinalReadinessBlocks = 3
 const maxEmptyFinalBlocks = 3
 const maxStreamRecoveries = 1
 const maxExecutorHandoffNudges = 1
-
-// DefaultMainAgentAllowed is the minimal default whitelist for the root
-// (depth-0) agent. It covers the "project lead" workflow: communicate with
-// the user, delegate work to sub-agents, load SOPs, and perform audits.
-// Configure permissions.main_agent_allowed in reasonix.toml to override.
-var DefaultMainAgentAllowed = map[string]bool{
-	"task":          true,
-	"ask":           true,
-	"note":          true,
-	"audit_finish":  true,
-	"read_skill":    true,
-	"run_skill":     true,
-	"slash_command": true,
-	"wait":          true,
-	"bash_output":   true,
-	"kill_shell":    true,
-}
 
 // Renderer redraws the assistant's final-answer text as styled output. It is
 // applied only after a turn's text stream completes, so the user sees raw
@@ -465,8 +449,8 @@ type Options struct {
 	MaxNestingDepth int
 
 	// MainAgentAllowed is the whitelist of tools the root (depth-0) agent may
-	// invoke. When nil, DefaultMainAgentAllowed (a minimal set) is used. Set a
-	// custom map to further restrict or expand.
+	// invoke. When nil, no restriction is applied — all registered tools are
+	// available. Set a custom map to restrict which tools the root agent sees.
 	MainAgentAllowed map[string]bool
 
 	// MaxMainAgentReadonlyCalls limits the maximum number of readonly tool calls
@@ -842,6 +826,7 @@ func (a *Agent) stream(ctx context.Context, turn int) (string, string, string, [
 			}
 		case provider.ChunkText:
 			text.WriteString(chunk.Text)
+			log.Printf("agent emit text event: %q", chunk.Text)
 			a.sink.Emit(event.Event{Kind: event.Text, Text: chunk.Text})
 		case provider.ChunkToolCallStart:
 			partialToolStarted = true

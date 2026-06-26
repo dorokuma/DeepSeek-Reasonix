@@ -456,8 +456,6 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 		for _, name := range cfg.Permissions.MainAgentAllowed {
 			mainAgentAllowed[name] = true
 		}
-	} else {
-		mainAgentAllowed = agent.DefaultMainAgentAllowed
 	}
 
 	agentOpts := agent.Options{

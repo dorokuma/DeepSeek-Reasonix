@@ -9,6 +9,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"net/url"
 	"sort"
@@ -461,6 +462,7 @@ func (c *client) readStream(ctx context.Context, resp *http.Response, out chan<-
 			}
 		}
 		if delta.Content != "" {
+			log.Printf("LLM delta: %q", delta.Content)
 			// When the model correctly uses reasoning_content, content is always
 			// normal text. When it doesn't (no reasoning_content seen), enable
 			// text-based thinking detection in the splitter.
