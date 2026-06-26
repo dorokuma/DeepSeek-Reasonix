@@ -10,7 +10,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"net/url"
 	"sort"
@@ -465,7 +464,6 @@ func (c *client) readStream(ctx context.Context, resp *http.Response, out chan<-
 			}
 		}
 		if delta.Content != "" {
-			log.Printf("LLM delta: %q", delta.Content)
 			// When the model correctly uses reasoning_content, content is always
 			// normal text. When it doesn't (no reasoning_content seen), enable
 			// text-based thinking detection in the splitter.
@@ -571,6 +569,7 @@ func normaliseUsage(u *wireUsage) *provider.Usage {
 	miss := u.PromptCacheMissTokens
 	if hit == 0 && u.PromptTokensDetails != nil {
 		hit = u.PromptTokensDetails.CachedTokens
+		miss = 0 // 使用嵌套字段时，强制 miss 从同一来源推导
 	}
 	if miss == 0 && hit > 0 && u.PromptTokens > hit {
 		miss = u.PromptTokens - hit

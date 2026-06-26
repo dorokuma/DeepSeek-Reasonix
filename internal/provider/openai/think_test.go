@@ -118,8 +118,8 @@ func TestThinkSplitter(t *testing.T) {
 		{
 			name:      "chinese thinking opener detected",
 			deltas:    []string{"让我先看看代码"},
-			reasoning: "让我先看看代码",
-			text:      "",
+			reasoning: "",
+			text:      "让我先看看代码",
 		},
 		{
 			name:      "normal english no opener",

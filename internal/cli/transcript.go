@@ -15,11 +15,46 @@ import (
 // break open at the line end (e.g. a wrapped dim link tail), which bleeds the
 // attribute into the padding and the next row on stricter terminals (Warp).
 // lipgloss closes the active style at each line end and reopens it at the next.
+//
+// We process line-by-line instead of using a blanket Width or MaxWidth:
+//   - Table rows (those containing "│") are already correctly wrapped by
+//     the markdown renderer — wrapping them again would misalign columns, so
+//     they are passed through unchanged.  If one nonetheless exceeds the
+//     viewport the excess is truncated (the renderer should never let this
+//     happen).
+//   - Every other line that exceeds width is word-wrapped with ansi.Wrap,
+//     which handles ANSI SGR and wide characters correctly.
 func wrapTranscript(s string, width int) string {
 	if width <= 0 {
 		return s
 	}
-	return lipgloss.NewStyle().Width(width).Render(s)
+	lines := strings.Split(s, "\n")
+	out := make([]string, 0, len(lines))
+	for _, line := range lines {
+		if ansi.StringWidth(line) <= width {
+			out = append(out, line)
+		} else if strings.Count(line, "│") >= 2 && (strings.HasPrefix(strings.TrimSpace(line), "│") || strings.Contains(line, " │ ")) {
+			// Table row — already correctly wrapped by the markdown renderer.
+			// If it still exceeds width the excess is truncated (shouldn't
+			// happen, but guard against visual overflow).
+			out = append(out, ansi.Truncate(line, width, ""))
+		} else {
+			wrapped := ansi.Wrap(line, width, "")
+			wrappedLines := strings.Split(wrapped, "\n")
+			for i, wl := range wrappedLines {
+				// Close any open SGR at line ends to prevent style bleeding
+				// into viewport padding on strict terminals (e.g. Warp).
+				// ansi.Wrap does not insert SGR resets at wrap points, so
+				// a wrapped line ending mid-style (e.g. a dim link tail)
+				// would leak the attribute into the padded blank area.
+				if ansi.Strip(wl) != wl {
+					wrappedLines[i] = wl + "\033[0m"
+				}
+			}
+			out = append(out, wrappedLines...)
+		}
+	}
+	return strings.Join(out, "\n")
 }
 
 // clipboardWriteAll is the platform clipboard writer; a var so tests can force

@@ -284,12 +284,27 @@ func (r *mdRenderer) renderList(buf *strings.Builder, n *ast.List, src []byte, i
 
 func (r *mdRenderer) renderFenced(buf *strings.Builder, n ast.Node, src []byte, indent int) {
 	prefix := strings.Repeat(" ", indent) + dim("│ ")
+	innerW := r.width - ansi.StringWidth(prefix)
+	if innerW < 4 {
+		innerW = 4
+	}
 	for i := 0; i < n.Lines().Len(); i++ {
 		l := n.Lines().At(i)
 		line := strings.TrimRight(string(l.Value(src)), "\n")
-		buf.WriteString(prefix)
-		buf.WriteString(accent(line))
-		buf.WriteString("\n")
+		if line == "" {
+			buf.WriteString(strings.TrimRight(prefix, " "))
+			buf.WriteString("\n")
+			continue
+		}
+		wrapped := ansi.Hardwrap(accent(line), innerW, true)
+		for _, wl := range strings.Split(wrapped, "\n") {
+			buf.WriteString(prefix)
+			buf.WriteString(wl)
+			if strings.Contains(wl, "\033[") {
+				buf.WriteString("\033[0m")
+			}
+			buf.WriteString("\n")
+		}
 	}
 	buf.WriteString("\n")
 }
@@ -417,19 +432,48 @@ func (r *mdRenderer) renderTable(buf *strings.Builder, n *extast.Table, src []by
 	// proportionally to the natural widths so columns with rich content
 	// keep more space than narrow ones.
 	available := r.width - indent - 3*(cols-1)
-	if available < cols*3 {
-		available = cols * 3
+	if available < cols*4 {
+		available = cols * 4
 	}
 	total := 0
 	for _, w := range widths {
 		total += w
 	}
 	if total > available {
+		// Proportional shrink towards the available budget.
 		for i := range widths {
 			widths[i] = widths[i] * available / total
-			if widths[i] < 3 {
-				widths[i] = 3
+		}
+		// Enforce a sane minimum that matches wrapAnsi's floor.
+		const minColW = 4
+		for i := range widths {
+			if widths[i] < minColW {
+				widths[i] = minColW
 			}
+		}
+		// The clamp above may have pushed the sum over available.
+		// Trim the excess from the widest columns first until we fit.
+		for {
+			cur := 0
+			for _, w := range widths {
+				cur += w
+			}
+			if cur <= available {
+				break
+			}
+			// Find the widest column that can be narrowed further.
+			fatIdx := -1
+			fatW := 0
+			for i, w := range widths {
+				if w > minColW && w > fatW {
+					fatIdx = i
+					fatW = w
+				}
+			}
+			if fatIdx < 0 {
+				break // all columns at minimum — can't reduce further
+			}
+			widths[fatIdx]--
 		}
 	}
 
