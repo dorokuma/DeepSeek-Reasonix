@@ -54,6 +54,7 @@ type Config struct {
 	Skills        SkillsConfig        `toml:"skills"`
 	Statusline    StatuslineConfig    `toml:"statusline"`
 	LSP           LSPConfig           `toml:"lsp"`
+	Codegraph     CodegraphConfig      `toml:"codegraph"`
 	Serve         ServeConfig          `toml:"serve"`
 	// UsdCnyRate is the exchange rate used to convert OpenCode Go USD pricing
 	// to CNY for display and cost calculation. 0 means use the built-in default
@@ -201,6 +202,13 @@ func (c *Config) UICloseBehavior() string {
 type LSPConfig struct {
 	Enabled bool                 `toml:"enabled"`
 	Servers map[string]LSPServer `toml:"servers"`
+}
+
+// CodegraphConfig controls the built-in code intelligence MCP server.
+type CodegraphConfig struct {
+	Enabled bool   `toml:"enabled"`
+	Path    string `toml:"path"`
+	Tier    string `toml:"tier"`
 }
 
 // LSPServer overrides a built-in language's server or, when keyed by a new
@@ -842,6 +850,21 @@ func LoadForRoot(root string) (*Config, error) {
 	normalizeLegacyMCPTiers(cfg)
 	normalizeEffortConfig(cfg)
 	backfillDeepSeekPro(cfg)
+
+	// auto_plan is a user preference; user config takes precedence over project config.
+	if uc := userConfigPath(); uc != "" {
+		if data, err := os.ReadFile(uc); err == nil {
+			var ucCfg struct {
+				Agent struct {
+					AutoPlan string `toml:"auto_plan"`
+				} `toml:"agent"`
+			}
+			if _, err := toml.Decode(string(data), &ucCfg); err == nil && ucCfg.Agent.AutoPlan != "" {
+				cfg.Agent.AutoPlan = ucCfg.Agent.AutoPlan
+			}
+		}
+	}
+
 	return cfg, nil
 }
 

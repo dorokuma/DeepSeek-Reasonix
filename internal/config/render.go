@@ -156,6 +156,11 @@ func RenderTOMLForScope(c *Config, scope RenderScope) string {
 		autoPlan = "off"
 	}
 	fmt.Fprintf(&b, "auto_plan   = %q   # off|on; off keeps plan mode manual\n", autoPlan)
+	if c.Agent.ReasoningLanguage != "" {
+		fmt.Fprintf(&b, "reasoning_language = %q   # auto|zh|en; model chain-of-thought language\n", c.Agent.ReasoningLanguage)
+	} else {
+		b.WriteString("# reasoning_language = \"zh\"   # auto|zh|en; model chain-of-thought language\n")
+	}
 	if c.Agent.AutoPlanClassifier != "" {
 		fmt.Fprintf(&b, "auto_plan_classifier = %q   # optional provider/model for borderline auto-plan decisions\n", c.Agent.AutoPlanClassifier)
 	} else {

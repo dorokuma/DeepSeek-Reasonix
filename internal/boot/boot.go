@@ -15,6 +15,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -272,6 +273,26 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	searchSpec := builtin.ResolveSearch(cfg.Tools.Search.Engine, cfg.Tools.Search.RgPath, stderr)
 	bashTimeout := time.Duration(cfg.BashTimeoutSeconds()) * time.Second
 	addBuiltins(reg, cfg.Tools.Enabled, cfg.WriteRootsForRoot(root), bashTimeout, searchSpec, stderr, root)
+
+	// Built-in codegraph MCP server: when enabled, initialises the .codegraph
+	// directory and registers the server as a background plugin so it warms up
+	// without blocking session start.
+	if cfg.Codegraph.Enabled && cfg.Codegraph.Path != "" {
+		sink.Emit(event.Event{Kind: event.Notice, Text: "preparing code-intelligence tools in the background"})
+		if err := exec.Command(cfg.Codegraph.Path, "init", root).Run(); err != nil {
+			slog.Warn("codegraph: init failed", "error", err)
+		}
+		tier := cfg.Codegraph.Tier
+		if tier == "" {
+			tier = "background"
+		}
+		cfg.Plugins = append([]config.PluginEntry{{
+			Name:    "codegraph",
+			Command: cfg.Codegraph.Path,
+			Tier:    tier,
+		}}, cfg.Plugins...)
+	}
+
 	// Always construct a host, even with no plugins configured, so the controller's
 	// host pointer is stable for the session and `/mcp add` can hot-add into it.
 	pluginHost := plugin.NewHost()

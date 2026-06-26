@@ -14,7 +14,6 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -25,32 +24,25 @@ import (
 	"reasonix/internal/config"
 	"reasonix/internal/control"
 	"reasonix/internal/event"
-	"reasonix/internal/nilutil"
-	"reasonix/internal/provider"
 )
 
 // Server wires a controller to its HTTP surface. The Broadcaster must be the
 // same sink the controller was constructed with, so events reach SSE clients.
 type Server struct {
-	mu        sync.RWMutex // guards ctrl, which switchModel swaps at runtime
-	ctrl      *control.Controller
-	bc        *Broadcaster
-	titleProv provider.Provider // lightweight flash provider for session titles
-	titles    *titleCache
-	auth      *authGate // nil when auth is disabled
+	mu   sync.RWMutex // guards ctrl, which switchModel swaps at runtime
+	ctrl *control.Controller
+	bc   *Broadcaster
+	auth *authGate // nil when auth is disabled
 }
 
 // New builds a Server. bc must be the controller's event sink.
 // serveCfg controls authentication (none, token, or password).
 func New(ctrl *control.Controller, bc *Broadcaster, serveCfg config.ServeConfig) *Server {
-	s := &Server{
-		ctrl:   ctrl,
-		bc:     bc,
-		titles: newTitleCache(ctrl.SessionDir()),
-		auth:   newAuthGate(serveCfg),
+	return &Server{
+		ctrl: ctrl,
+		bc:   bc,
+		auth: newAuthGate(serveCfg),
 	}
-	s.initTitleProvider()
-	return s
 }
 
 // ctl returns the current controller. Handlers must read it through here, never
@@ -82,30 +74,7 @@ func (s *Server) AuthMode() string {
 	return s.auth.Mode()
 }
 
-// initTitleProvider builds a lightweight flash-model provider used solely to
-// generate short session titles. Errors are silently swallowed — title
-// generation is best-effort, and the server works fine without it.
-func (s *Server) initTitleProvider() {
-	cfg, err := config.Load()
-	if err != nil {
-		return
-	}
-	entry, ok := cfg.ResolveModel("deepseek-flash")
-	if !ok {
-		return
-	}
-	prov, err := provider.New(entry.Kind, provider.Config{
-		Name:    entry.Name,
-		BaseURL: entry.BaseURL,
-		Model:   entry.Model,
-		APIKey:  entry.APIKey(),
-		Extra:   map[string]any{"effort": "off"},
-	})
-	if err != nil {
-		return
-	}
-	s.titleProv = prov
-}
+
 
 // switchModel rebuilds the controller with a new model, carrying over the
 // conversation history. This replicates the TUI/desktop model-switch path.
@@ -240,28 +209,13 @@ func writeTimeoutMiddleware(next http.Handler, timeout time.Duration) http.Handl
 
 func (s *Server) handler() http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /", s.index)
 	mux.HandleFunc("GET /events", s.events)
-	mux.HandleFunc("GET /history", s.history)
 	mux.HandleFunc("GET /context", s.context)
+	mux.HandleFunc("GET /status", s.status)
 	mux.HandleFunc("POST /submit", s.submit)
 	mux.HandleFunc("POST /cancel", s.cancel)
 	mux.HandleFunc("POST /approve", s.approve)
-	mux.HandleFunc("POST /compact", s.compact)
-	mux.HandleFunc("POST /new", s.newSession)
-	mux.HandleFunc("POST /rewind", s.rewind)
-	mux.HandleFunc("POST /fork", s.fork)
-	mux.HandleFunc("POST /summarize", s.summarize)
 	mux.HandleFunc("POST /answer", s.answer)
-	mux.HandleFunc("POST /resume", s.resume)
-	mux.HandleFunc("POST /forget", s.forget)
-	mux.HandleFunc("GET /checkpoints", s.checkpoints)
-	mux.HandleFunc("GET /branches", s.branches)
-	mux.HandleFunc("GET /status", s.status)
-	mux.HandleFunc("GET /sessions", s.sessions)
-	mux.HandleFunc("GET /skills", s.skills)
-	mux.HandleFunc("POST /delete-session", s.deleteSession)
-	mux.HandleFunc("POST /plan", s.plan)
 	return logMiddleware(securityHeadersMiddleware(s.auth.middleware(csrfGuard(writeTimeoutMiddleware(mux, 60*time.Second)))))
 }
 
@@ -380,18 +334,6 @@ func (s *Server) RunGraceful(ctx context.Context, addr string) error {
 	}
 }
 
-func (s *Server) index(w http.ResponseWriter, _ *http.Request) {
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_, _ = w.Write([]byte("<html><body><h1>Reasonix Bridge</h1><p>Use /events for SSE stream, /submit for prompts, etc.</p></body></html>"))
-}
-
-// sseKeepaliveInterval is how often the /events handler emits a `: ping`
-// SSE comment. Most reverse proxies (nginx, ALB, Cloudflare) close idle
-// upstream connections after 30–60 s; a long quiet turn (the agent
-// thinking, the model generating a single long response) easily hits
-// that window. The comment is one byte on the wire and is dropped by
-// the EventSource client, so it's a no-op for the consumer while it
-// keeps the TCP socket warm for the proxy.
 const sseKeepaliveInterval = 15 * time.Second
 
 // events streams the controller's event flow as SSE until the client
@@ -526,85 +468,6 @@ func (s *Server) approve(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func (s *Server) plan(w http.ResponseWriter, r *http.Request) {
-	var body struct {
-		On bool `json:"on"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		http.Error(w, "invalid JSON", http.StatusBadRequest)
-		return
-	}
-	s.ctl().SetPlanMode(body.On)
-	w.WriteHeader(http.StatusNoContent)
-}
-
-func (s *Server) compact(w http.ResponseWriter, r *http.Request) {
-	if err := s.ctl().Compact(r.Context(), ""); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	// Persist the compacted session to disk — ctrl.Compact() only mutates in-memory.
-	if err := s.ctl().Snapshot(); err != nil {
-		slog.Warn("serve: snapshot after compact", "err", err)
-	}
-	w.WriteHeader(http.StatusNoContent)
-}
-
-func (s *Server) newSession(w http.ResponseWriter, _ *http.Request) {
-	if err := s.ctl().NewSession(); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	w.WriteHeader(http.StatusNoContent)
-}
-
-type historyToolCall struct {
-	ID        string `json:"id"`
-	Name      string `json:"name"`
-	Arguments string `json:"arguments"`
-}
-
-type historyMessage struct {
-	Role       string            `json:"role"`
-	Content    string            `json:"content"`
-	Reasoning  string            `json:"reasoning,omitempty"`
-	ToolCalls  []historyToolCall `json:"toolCalls,omitempty"`
-	ToolCallID string            `json:"toolCallId,omitempty"`
-	ToolName   string            `json:"toolName,omitempty"`
-}
-
-func historyMessages(msgs []provider.Message) []historyMessage {
-	out := make([]historyMessage, 0, len(msgs))
-	for _, m := range msgs {
-		hm := historyMessage{Role: string(m.Role), Content: m.Content}
-		if m.Role == provider.RoleAssistant {
-			hm.Reasoning = m.ReasoningContent
-			if len(m.ToolCalls) > 0 {
-				hm.ToolCalls = make([]historyToolCall, len(m.ToolCalls))
-				for i, tc := range m.ToolCalls {
-					hm.ToolCalls[i] = historyToolCall{ID: tc.ID, Name: tc.Name, Arguments: tc.Arguments}
-				}
-			}
-		}
-		if m.Role == provider.RoleTool {
-			hm.ToolCallID = m.ToolCallID
-			hm.ToolName = m.Name
-		}
-		out = append(out, hm)
-	}
-	return out
-}
-
-// history returns the session's message log so a reconnecting client can
-// repopulate its transcript, including historical tool cards. Supports ETag caching:
-// if the client sends If-None-Match with the current ETag, the server returns
-// 304 Not Modified with no body, saving bandwidth on reconnects.
-func (s *Server) history(w http.ResponseWriter, r *http.Request) {
-	writeJSONCached(w, r, historyMessages(s.ctl().History()))
-}
-
-// context returns the prompt-vs-window gauge numbers. Supports ETag caching
-// so reconnecting clients avoid re-fetching unchanged context data.
 func (s *Server) context(w http.ResponseWriter, r *http.Request) {
 	used, window := s.ctl().ContextSnapshot()
 	writeJSONCached(w, r, map[string]int{"used": used, "window": window})
@@ -673,75 +536,6 @@ func (rw *responseWriter) Flush() {
 	}
 }
 
-// rewind rewinds the session to a checkpoint.
-func (s *Server) rewind(w http.ResponseWriter, r *http.Request) {
-	var body struct {
-		Turn  int    `json:"turn"`
-		Scope string `json:"scope"` // "code", "conversation", "both"
-	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Turn < 0 {
-		http.Error(w, "missing turn", http.StatusBadRequest)
-		return
-	}
-	scope := control.RewindBoth
-	switch body.Scope {
-	case "code":
-		scope = control.RewindCode
-	case "conversation":
-		scope = control.RewindConversation
-	}
-	if err := s.ctl().Rewind(body.Turn, scope); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	w.WriteHeader(http.StatusNoContent)
-}
-
-// fork creates a new branch at a checkpoint.
-func (s *Server) fork(w http.ResponseWriter, r *http.Request) {
-	var body struct {
-		Turn int    `json:"turn"`
-		Name string `json:"name"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Turn < 0 {
-		http.Error(w, "missing turn", http.StatusBadRequest)
-		return
-	}
-	path, err := s.ctl().ForkNamed(body.Turn, body.Name)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	writeJSON(w, map[string]string{"path": path})
-}
-
-// summarize runs summarize-from or summarize-up-to on a turn.
-func (s *Server) summarize(w http.ResponseWriter, r *http.Request) {
-	var body struct {
-		Turn int    `json:"turn"`
-		Mode string `json:"mode"` // "from" or "upto"
-	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Turn < 0 {
-		http.Error(w, "missing turn", http.StatusBadRequest)
-		return
-	}
-	var err error
-	switch body.Mode {
-	case "from":
-		err = s.ctl().SummarizeFrom(r.Context(), body.Turn)
-	case "upto":
-		err = s.ctl().SummarizeUpTo(r.Context(), body.Turn)
-	default:
-		http.Error(w, "mode must be 'from' or 'upto'", http.StatusBadRequest)
-		return
-	}
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	w.WriteHeader(http.StatusNoContent)
-}
-
 // answer responds to an ask_request.
 func (s *Server) answer(w http.ResponseWriter, r *http.Request) {
 	var body struct {
@@ -756,92 +550,6 @@ func (s *Server) answer(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// resume loads a previous session from a JSONL file.
-func (s *Server) resume(w http.ResponseWriter, r *http.Request) {
-	var body struct {
-		Path string `json:"path"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Path == "" {
-		http.Error(w, "missing path", http.StatusBadRequest)
-		return
-	}
-	// Path traversal guard: ensure the path stays within the session directory.
-	dir := s.ctl().SessionDir()
-	if dir == "" {
-		http.Error(w, "sessions disabled", http.StatusBadRequest)
-		return
-	}
-	abs, err := filepath.Abs(body.Path)
-	if err != nil {
-		http.Error(w, "invalid session path", http.StatusBadRequest)
-		return
-	}
-	absDir, err := filepath.Abs(dir)
-	if err != nil {
-		http.Error(w, "invalid session dir", http.StatusBadRequest)
-		return
-	}
-	rel, err := filepath.Rel(absDir, abs)
-	if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
-		http.Error(w, "path outside session dir", http.StatusForbidden)
-		return
-	}
-	// Snapshot the current session before switching away.
-	if err := s.ctl().Snapshot(); err != nil {
-		slog.Warn("serve: snapshot before resume", "err", err)
-	}
-	loaded, err := agent.LoadSession(abs)
-	if err != nil {
-		http.Error(w, "load session: "+err.Error(), http.StatusBadRequest)
-		return
-	}
-	s.ctl().Resume(loaded, abs)
-	w.WriteHeader(http.StatusNoContent)
-}
-
-// forget deletes a saved memory by name.
-func (s *Server) forget(w http.ResponseWriter, r *http.Request) {
-	var body struct {
-		Name string `json:"name"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Name == "" {
-		http.Error(w, "missing name", http.StatusBadRequest)
-		return
-	}
-	if err := s.ctl().ForgetMemory(body.Name); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	w.WriteHeader(http.StatusNoContent)
-}
-
-// checkpoints returns the session's checkpoint list for the rewind picker.
-func (s *Server) checkpoints(w http.ResponseWriter, _ *http.Request) {
-	type cp struct {
-		Turn   int    `json:"turn"`
-		Prompt string `json:"prompt"`
-		Files  int    `json:"files"`
-	}
-	raw := s.ctl().Checkpoints()
-	out := make([]cp, len(raw))
-	for i, c := range raw {
-		out[i] = cp{Turn: c.Turn, Prompt: c.Prompt, Files: len(c.Paths)}
-	}
-	writeJSON(w, out)
-}
-
-// branches returns the branch list and tree text.
-func (s *Server) branches(w http.ResponseWriter, _ *http.Request) {
-	branches, err := s.ctl().Branches()
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	tree := s.ctl().BranchTreeText()
-	writeJSON(w, map[string]any{"branches": branches, "tree": tree})
-}
-
-// status returns a combined status snapshot.
 func (s *Server) status(w http.ResponseWriter, r *http.Request) {
 	used, window := s.ctl().ContextSnapshot()
 	hit, miss := s.ctl().SessionCache()
@@ -864,212 +572,4 @@ func (s *Server) status(w http.ResponseWriter, r *http.Request) {
 		sess["jobs"] = j
 	}
 	writeJSON(w, sess)
-}
-
-const titlePrompt = `Generate a very short title (3-5 words max) for this conversation based on the user's first message. Reply with ONLY the title, no quotes, no punctuation at the end.`
-
-// generateTitle calls a lightweight LLM to produce a short session title.
-// Returns empty string on any error — callers should fall back to a preview.
-func (s *Server) generateTitle(ctx context.Context, firstMsg string) string {
-	if nilutil.IsNil(s.titleProv) || strings.TrimSpace(firstMsg) == "" {
-		return ""
-	}
-	if r := []rune(firstMsg); len(r) > 300 {
-		firstMsg = string(r[:300]) + "..."
-	}
-	ch, err := s.titleProv.Stream(ctx, provider.Request{
-		Messages: []provider.Message{
-			{Role: provider.RoleSystem, Content: titlePrompt},
-			{Role: provider.RoleUser, Content: firstMsg},
-		},
-		Temperature: 0,
-		MaxTokens:   20,
-	})
-	if err != nil {
-		return ""
-	}
-	var text strings.Builder
-	for chunk := range ch {
-		switch chunk.Type {
-		case provider.ChunkText:
-			text.WriteString(chunk.Text)
-		case provider.ChunkError:
-			return ""
-		}
-	}
-	title := strings.TrimSpace(text.String())
-	if len(title) >= 2 && ((title[0] == '"' && title[len(title)-1] == '"') || (title[0] == '\'' && title[len(title)-1] == '\'')) {
-		title = title[1 : len(title)-1]
-	}
-	return strings.TrimSpace(title)
-}
-
-// sessions lists saved session files from the session directory, enriched with
-// LLM-generated titles and turn counts.
-func (s *Server) sessions(w http.ResponseWriter, r *http.Request) {
-	dir := s.ctl().SessionDir()
-	if dir == "" {
-		writeJSON(w, []any{})
-		return
-	}
-	type sessionEntry struct {
-		Name    string `json:"name"`
-		Path    string `json:"path"`
-		Title   string `json:"title,omitempty"`
-		Turns   int    `json:"turns,omitempty"`
-		Current bool   `json:"current,omitempty"`
-	}
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		writeJSON(w, []any{})
-		return
-	}
-	current := filepath.Clean(s.ctl().SessionPath())
-	var out []sessionEntry
-	for _, e := range entries {
-		if e.IsDir() || !strings.HasSuffix(e.Name(), ".jsonl") {
-			continue
-		}
-		path := filepath.Join(dir, e.Name())
-		name := strings.TrimSuffix(e.Name(), ".jsonl")
-		entry := sessionEntry{Name: name, Path: path, Current: filepath.Clean(path) == current}
-		if first, turns := previewSessionFile(path); turns > 0 {
-			entry.Turns = turns
-			entry.Title = s.sessionTitle(r.Context(), e.Name(), first, fileModNano(e))
-		}
-		out = append(out, entry)
-	}
-	// reverse so newest first
-	for i, j := 0, len(out)-1; i < j; i, j = i+1, j-1 {
-		out[i], out[j] = out[j], out[i]
-	}
-	if out == nil {
-		out = []sessionEntry{}
-	}
-	writeJSON(w, out)
-}
-
-// deleteSession removes a saved session by the session name returned from /sessions.
-func (s *Server) deleteSession(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		Name string `json:"name"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "bad request", http.StatusBadRequest)
-		return
-	}
-	name := strings.TrimSpace(req.Name)
-	if name == "" {
-		http.Error(w, "name required", http.StatusBadRequest)
-		return
-	}
-	if name == "." || name == ".." || strings.ContainsAny(name, `/\`) {
-		http.Error(w, "invalid session name", http.StatusBadRequest)
-		return
-	}
-	dir := s.ctl().SessionDir()
-	if dir == "" {
-		http.Error(w, "sessions disabled", http.StatusBadRequest)
-		return
-	}
-	target := filepath.Join(dir, name+".jsonl")
-	abs, err := filepath.Abs(target)
-	if err != nil {
-		http.Error(w, "invalid session path", http.StatusBadRequest)
-		return
-	}
-	absDir, err := filepath.Abs(dir)
-	if err != nil {
-		http.Error(w, "invalid session dir", http.StatusBadRequest)
-		return
-	}
-	rel, err := filepath.Rel(absDir, abs)
-	if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
-		http.Error(w, "path outside session dir", http.StatusForbidden)
-		return
-	}
-	if filepath.Clean(abs) == filepath.Clean(s.ctl().SessionPath()) {
-		http.Error(w, "cannot delete active session", http.StatusConflict)
-		return
-	}
-	if err := os.Remove(abs); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	// Clean up cost sidecar if one exists.
-	os.Remove(abs + ".cost")
-	w.WriteHeader(http.StatusNoContent)
-}
-
-// sessionTitle returns a title for a session: the cached flash-generated title
-// when it matches the file's mtime, otherwise a freshly generated one (cached
-// for next time), falling back to a truncated preview when generation is off.
-func (s *Server) sessionTitle(ctx context.Context, name, first string, mod int64) string {
-	if cached, ok := s.titles.get(name, mod); ok {
-		return cached
-	}
-	if title := s.generateTitle(ctx, first); title != "" {
-		s.titles.put(name, title, mod)
-		return title
-	}
-	return previewTitle(first)
-}
-
-func previewTitle(first string) string {
-	if r := []rune(first); len(r) > 50 {
-		return string(r[:47]) + "..."
-	}
-	return first
-}
-
-func fileModNano(e os.DirEntry) int64 {
-	info, err := e.Info()
-	if err != nil {
-		return 0
-	}
-	return info.ModTime().UnixNano()
-}
-
-// previewSessionFile reads the first user message and turn count from a JSONL session file.
-func previewSessionFile(path string) (string, int) {
-	f, err := os.Open(path)
-	if err != nil {
-		return "", 0
-	}
-	defer f.Close()
-	dec := json.NewDecoder(f)
-	first := ""
-	turns := 0
-	for {
-		var m struct {
-			Role    string `json:"role"`
-			Content string `json:"content"`
-		}
-		if err := dec.Decode(&m); err != nil {
-			break
-		}
-		if m.Role == "user" {
-			turns++
-			if first == "" {
-				first = strings.TrimSpace(m.Content)
-			}
-		}
-	}
-	return first, turns
-}
-
-// skills lists discoverable skills.
-func (s *Server) skills(w http.ResponseWriter, _ *http.Request) {
-	type skillEntry struct {
-		Name        string `json:"name"`
-		Scope       string `json:"scope"`
-		Subagent    bool   `json:"subagent"`
-		Description string `json:"description"`
-	}
-	raw := s.ctl().Skills()
-	out := make([]skillEntry, len(raw))
-	for i, sk := range raw {
-		out[i] = skillEntry{Name: sk.Name, Scope: string(sk.Scope), Subagent: sk.RunAs == "subagent", Description: sk.Description}
-	}
-	writeJSON(w, out)
 }
