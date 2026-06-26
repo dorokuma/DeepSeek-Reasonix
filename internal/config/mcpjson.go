@@ -19,8 +19,9 @@ import (
 const mcpJSONFile = ".mcp.json"
 
 // mcpServerSpec mirrors one entry of Claude Code's "mcpServers" map. The field
-// names and semantics match PluginEntry (and Claude): command/args/env describe
-// a local stdio server; type/url/headers describe a remote one.
+// names and semantics match PluginEntry: command/args/env describe a local
+// stdio server; type/url/headers describe a remote one. Reasonix also accepts
+// call_timeout_seconds as a stdio-specific extension.
 type mcpServerSpec struct {
 	Type                 string            `json:"type"`
 	Command              string            `json:"command"`
@@ -28,6 +29,7 @@ type mcpServerSpec struct {
 	Env                  map[string]string `json:"env"`
 	URL                  string            `json:"url"`
 	Headers              map[string]string `json:"headers"`
+	CallTimeoutSeconds   int               `json:"call_timeout_seconds"`
 	TrustedReadOnlyTools []string          `json:"trusted_read_only_tools"`
 	AutoStart            *bool             `json:"auto_start"`
 }
@@ -194,6 +196,7 @@ func pluginEntryFromMCPSpec(name string, s mcpServerSpec) PluginEntry {
 		Env:                  s.Env,
 		URL:                  s.URL,
 		Headers:              s.Headers,
+		CallTimeoutSeconds:   s.CallTimeoutSeconds,
 		TrustedReadOnlyTools: s.TrustedReadOnlyTools,
 		AutoStart:            s.AutoStart,
 	}
@@ -312,6 +315,7 @@ func applyPluginEntryToMCPJSONServer(server map[string]json.RawMessage, entry Pl
 		delete(server, "command")
 		delete(server, "args")
 	}
+	setMCPJSONInt(server, "call_timeout_seconds", entry.CallTimeoutSeconds)
 	setMCPJSONStringArray(server, "trusted_read_only_tools", entry.TrustedReadOnlyTools)
 	setMCPJSONBool(server, "auto_start", entry.AutoStart)
 }
@@ -414,6 +418,18 @@ func setMCPJSONStringArray(server map[string]json.RawMessage, key string, values
 	raw, err := json.Marshal(values)
 	if err != nil {
 		delete(server, key)
+		return
+	}
+	server[key] = raw
+}
+
+func setMCPJSONInt(server map[string]json.RawMessage, key string, value int) {
+	if value <= 0 {
+		delete(server, key)
+		return
+	}
+	raw, err := json.Marshal(value)
+	if err != nil {
 		return
 	}
 	server[key] = raw

@@ -328,6 +328,7 @@ resource) you can copy.
 [[plugins]]                       # local stdio server
 name    = "example"
 command = "reasonix-plugin-example"
+# call_timeout_seconds = 600       # optional for long-running stdio MCP tools
 
 [[plugins]]                       # remote server over Streamable HTTP
 name    = "stripe"

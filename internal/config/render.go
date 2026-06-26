@@ -505,6 +505,7 @@ func RenderTOMLForScope(c *Config, scope RenderScope) string {
 		b.WriteString("# [[plugins]]\n")
 		b.WriteString("# name    = \"example\"\n")
 		b.WriteString("# command = \"reasonix-plugin-example\"\n")
+		b.WriteString("# call_timeout_seconds = 600   # optional per-call timeout for stdio MCP tools; 0 = built-in default\n")
 		b.WriteString("# trusted_read_only_tools = [\"search\"]   # raw MCP tool names trusted for planner/read-only research\n")
 		b.WriteString("# [[plugins]]                                  # a remote server over Streamable HTTP\n")
 		b.WriteString("# name    = \"stripe\"\n")
@@ -532,6 +533,10 @@ func RenderTOMLForScope(c *Config, scope RenderScope) string {
 			}
 			if len(pl.Env) > 0 {
 				fmt.Fprintf(&b, "env     = %s\n", renderStringMap(pl.Env))
+			}
+			if pl.CallTimeoutSeconds > 0 {
+				b.WriteString("# Per-call timeout for stdio MCP tools; 0 keeps the built-in default.\n")
+				fmt.Fprintf(&b, "call_timeout_seconds = %d\n", pl.CallTimeoutSeconds)
 			}
 			if len(pl.TrustedReadOnlyTools) > 0 {
 				b.WriteString("# raw MCP tool names trusted for planner/read-only research\n")
@@ -899,6 +904,10 @@ func RenderTOMLProjectDelta(c *Config) string {
 		}
 		if len(pl.Env) > 0 {
 			fmt.Fprintf(&b, "env     = %s\n", renderStringMap(pl.Env))
+		}
+		if pl.CallTimeoutSeconds > 0 {
+			b.WriteString("# Per-call timeout for stdio MCP tools; 0 keeps the built-in default.\n")
+			fmt.Fprintf(&b, "call_timeout_seconds = %d\n", pl.CallTimeoutSeconds)
 		}
 		if len(pl.TrustedReadOnlyTools) > 0 {
 			b.WriteString("# raw MCP tool names trusted for planner/read-only research\n")

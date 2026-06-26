@@ -2431,6 +2431,20 @@ func TestPluginSpecsTrustConfiguredReadOnlyTools(t *testing.T) {
 	}
 }
 
+func TestPluginSpecsMapConfiguredCallTimeout(t *testing.T) {
+	specs := PluginSpecs([]config.PluginEntry{{
+		Name:               "maker",
+		Command:            "maker-mcp",
+		CallTimeoutSeconds: 600,
+	}})
+	if len(specs) != 1 {
+		t.Fatalf("PluginSpecs returned %d specs, want 1", len(specs))
+	}
+	if specs[0].CallTimeout != 10*time.Minute {
+		t.Fatalf("CallTimeout = %v, want 10m", specs[0].CallTimeout)
+	}
+}
+
 func TestPluginSpecsTrustPlanModeAllowedMCPTools(t *testing.T) {
 	specs := PluginSpecsForRootWithPlanModeAllowedTools(
 		[]config.PluginEntry{{Name: "github"}, {Name: "linear"}},

@@ -2,6 +2,7 @@ package plugin
 
 import (
 	"context"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -67,6 +68,23 @@ func TestStdioCallTimesOutWithoutDeadline(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("stdio call did not return within 2s")
+	}
+}
+
+func TestNewStdioTransportUsesSpecCallTimeout(t *testing.T) {
+	tr, err := newStdioTransport(context.Background(), Spec{
+		Name:        "server",
+		Command:     os.Args[0],
+		Args:        []string{"-test.run=TestHelperProcess", "--"},
+		Env:         map[string]string{"GO_WANT_HELPER_PROCESS": "1"},
+		CallTimeout: 2 * time.Minute,
+	})
+	if err != nil {
+		t.Fatalf("newStdioTransport: %v", err)
+	}
+	defer tr.close()
+	if tr.callTimeout != 2*time.Minute {
+		t.Fatalf("callTimeout = %v, want 2m", tr.callTimeout)
 	}
 }
 

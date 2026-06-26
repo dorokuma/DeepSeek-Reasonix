@@ -115,6 +115,7 @@ func newStdioTransport(ctx context.Context, s Spec) (*stdioTransport, error) {
 		stdin:       stdin,
 		stdout:      bufio.NewReader(stdout),
 		stderr:      stderr,
+		callTimeout: s.CallTimeout,
 		pending:     map[int]chan rpcResponse{},
 		releaseSlot: releaseSlot,
 	}

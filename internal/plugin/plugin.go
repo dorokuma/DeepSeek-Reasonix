@@ -38,6 +38,9 @@ type Spec struct {
 	Env     map[string]string
 	URL     string
 	Headers map[string]string
+	// CallTimeout overrides the per-call deadline applied by stdio transports
+	// when the caller's context has no deadline. Zero keeps the built-in default.
+	CallTimeout time.Duration
 	// Dir, when set, is the working directory of a stdio subprocess. Empty means
 	// inherit reasonix's cwd (the default for user-configured plugins). It exists
 	// for cwd-aware servers like CodeGraph, which detect the project from the

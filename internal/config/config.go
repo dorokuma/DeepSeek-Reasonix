@@ -1143,6 +1143,10 @@ type PluginEntry struct {
 	Env     map[string]string `toml:"env"`
 	URL     string            `toml:"url"`
 	Headers map[string]string `toml:"headers"`
+	// CallTimeoutSeconds overrides the per-call deadline for stdio MCP tools.
+	// Zero keeps the built-in default. HTTP/SSE transports use the caller's
+	// context directly and ignore this field.
+	CallTimeoutSeconds int `toml:"call_timeout_seconds"`
 	// TrustedReadOnlyTools names raw MCP tool names that Reasonix should treat as
 	// trusted read-only for planner / plan-mode / read-only research surfaces.
 	// Use this only for tools whose semantics are known to be side-effect free.

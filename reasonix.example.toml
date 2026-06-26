@@ -138,6 +138,8 @@ stalled_warning_seconds = 900   # warn once per background job after this many q
 # [[plugins]]
 # name    = "example"
 # command = "reasonix-plugin-example"
+# # Per-call timeout for stdio MCP tools; 0 keeps the built-in default.
+# # call_timeout_seconds = 600
 # # Raw MCP tool names that Reasonix may trust as read-only for planner / plan mode.
 # # Use for audited third-party readers whose readOnlyHint is otherwise untrusted.
 # # trusted_read_only_tools = ["search"]

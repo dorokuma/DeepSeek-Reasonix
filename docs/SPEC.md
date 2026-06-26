@@ -542,6 +542,7 @@ name    = "example"            # type defaults to "stdio"
 command = "reasonix-plugin-example"
 args    = []
 # env   = { FOO = "bar" }
+# call_timeout_seconds = 600            # stdio tool-call timeout override; 0 = built-in default
 # trusted_read_only_tools = ["search"]   # raw MCP tool names trusted for planner/read-only research
 
 # [[plugins]]                   # a remote MCP server over Streamable HTTP

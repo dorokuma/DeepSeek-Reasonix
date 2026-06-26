@@ -428,6 +428,31 @@ func TestRenderTOMLDocumentsPluginTrustedReadOnlyTools(t *testing.T) {
 	}
 }
 
+func TestRenderTOMLPreservesPluginCallTimeoutSeconds(t *testing.T) {
+	cfg := Default()
+	cfg.Plugins = []PluginEntry{{
+		Name:               "maker",
+		Command:            "maker-mcp",
+		CallTimeoutSeconds: 600,
+	}}
+
+	rendered := RenderTOML(cfg)
+	if !strings.Contains(rendered, "call_timeout_seconds = 600") {
+		t.Fatalf("rendered config should preserve call_timeout_seconds:\n%s", rendered)
+	}
+	if !strings.Contains(rendered, "Per-call timeout for stdio MCP tools") {
+		t.Fatalf("rendered config should document call_timeout_seconds:\n%s", rendered)
+	}
+
+	var got Config
+	if _, err := toml.Decode(rendered, &got); err != nil {
+		t.Fatalf("rendered TOML does not parse: %v\n%s", err, rendered)
+	}
+	if got.Plugins[0].CallTimeoutSeconds != 600 {
+		t.Fatalf("CallTimeoutSeconds round trip = %d, want 600", got.Plugins[0].CallTimeoutSeconds)
+	}
+}
+
 func TestRenderTOMLCreationLayoutStyle(t *testing.T) {
 	c := Default()
 	if err := c.SetDesktopLayoutStyle("creation"); err != nil {

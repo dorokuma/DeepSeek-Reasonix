@@ -1414,6 +1414,7 @@ func pluginSpecFromEntry(e config.PluginEntry, workspaceRoot string) plugin.Spec
 		Env:               e.Env,
 		URL:               e.URL,
 		Headers:           e.Headers,
+		CallTimeout:       time.Duration(e.CallTimeoutSeconds) * time.Second,
 		ReadOnlyToolNames: trustedRawReadOnlyToolNames(e.TrustedReadOnlyTools),
 	}, workspaceRoot)
 }

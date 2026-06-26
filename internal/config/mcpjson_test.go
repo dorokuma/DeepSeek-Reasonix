@@ -71,6 +71,28 @@ func TestMCPJSONTrustedReadOnlyToolsRoundTrip(t *testing.T) {
 	}
 }
 
+func TestMCPJSONCallTimeoutSecondsRoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, mcpJSONFile)
+	if _, err := UpsertMCPJSONPlugin(path, PluginEntry{
+		Name:               "maker",
+		Command:            "maker-mcp",
+		CallTimeoutSeconds: 600,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := loadMCPJSON(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("entries = %+v, want one maker entry", got)
+	}
+	if got[0].CallTimeoutSeconds != 600 {
+		t.Fatalf("call_timeout_seconds = %d, want 600", got[0].CallTimeoutSeconds)
+	}
+}
+
 func TestNormalizePluginCommandLine(t *testing.T) {
 	cases := []struct {
 		name        string

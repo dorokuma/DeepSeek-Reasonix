@@ -295,6 +295,7 @@ stdio 参考实现（`echo`、`wordcount`、一个 `review` prompt、一个 styl
 [[plugins]]                       # 本地 stdio 服务器
 name    = "example"
 command = "reasonix-plugin-example"
+# call_timeout_seconds = 600       # 长耗时 stdio MCP 工具可选
 
 [[plugins]]                       # 远程 Streamable HTTP 服务器
 name    = "stripe"
