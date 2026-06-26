@@ -1,6 +1,9 @@
 package openai
 
-import "strings"
+import (
+	"log"
+	"strings"
+)
 
 const (
 	thinkOpen            = "<think>"
@@ -139,10 +142,12 @@ func (t *thinkSplitter) scanTextClose(s string) (reasoning, text string) {
 		}
 		r := t.buf + s[:allow]
 		rest := s[allow:]
+		log.Printf("scanTextClose truncation: buf=%q, allow=%d, reasoning=%q, rest=%q", t.buf, allow, r, rest)
 		t.buf = ""
 		t.state = thinkPassthrough
 		return r, rest
 	}
+	log.Printf("scanTextClose accumulate: buf=%q, add=%q", t.buf, s)
 	t.buf += s
 	return "", "" // accumulate; flush() returns everything
 }

@@ -50,6 +50,14 @@ func (m moveFile) Execute(ctx context.Context, args json.RawMessage) (string, er
 	}
 	src := resolveIn(m.workDir, p.SourcePath)
 	dst := resolveIn(m.workDir, p.DestinationPath)
+	if m.workDir != "" {
+		if !isWithin(m.workDir, src) {
+			return "", fmt.Errorf("source %s is outside the allowed workspace", src)
+		}
+		if !isWithin(m.workDir, dst) {
+			return "", fmt.Errorf("destination %s is outside the allowed workspace", dst)
+		}
+	}
 	info, err := os.Stat(src)
 	if err != nil {
 		return "", fmt.Errorf("stat %s: %w", src, err)
@@ -171,4 +179,20 @@ func copyRegularFileAndRemoveSource(src, dst string, info os.FileInfo) error {
 	}
 	removeDst = false
 	return nil
+}
+
+// isWithin reports whether child path p resides inside the parent directory
+// root after cleaning both. Both must be absolute or both relative for a
+// meaningful result.
+func isWithin(root, p string) bool {
+	root = filepath.Clean(root)
+	p = filepath.Clean(p)
+	if root == p {
+		return true
+	}
+	rel, err := filepath.Rel(root, p)
+	if err != nil {
+		return false
+	}
+	return !strings.Contains(rel, "..") && !filepath.IsAbs(rel)
 }
