@@ -49,6 +49,24 @@ func assistantBlock(rendered string) string {
 	return out
 }
 
+// userBlock wraps rendered user input with a user prefix ("›") on the
+// first line and indents continuation lines to align under it. This
+// distinguishes user messages from assistant replies (which use "▸") and
+// tool cards (which use "●") in the transcript.
+func userBlock(rendered string) string {
+	lines := strings.Split(rendered, "\n")
+	if len(lines) < 2 {
+		return accent("  › ") + rendered
+	}
+	prefix := accent("  › ") // visible width: 4 cols
+	indent := "    "         // 4 spaces — aligns content under the "›"
+	out := prefix + lines[0]
+	for _, ln := range lines[1:] {
+		out += "\n" + indent + ln
+	}
+	return out
+}
+
 // toolVerb maps a tool's snake_case id to the verb shown in its card.
 var toolVerb = map[string]string{
 	"bash":          "Bash",
