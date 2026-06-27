@@ -2007,13 +2007,36 @@ export default function App() {
     setComposerInsertRequest({ id: Date.now(), text });
   }, []);
 
+  // Coalesce tab-bar switches through the same last-click-wins scheduler that
+  // openTopic/blank/resume navigation uses, so rapidly clicking between two
+  // running sessions can't run two switchTab() calls concurrently. Concurrent
+  // switches race on the backend SetActiveTab/confirmBackendActiveTab ordering,
+  // which lands events + hydration on the wrong session (#5352). switchTab's own
+  // loadSessionDataForTab is already seq-guarded; this serializes the backend
+  // activation around it.
+  const tabSwitchSeqRef = useRef(0);
+  const tabSwitchRunningRef = useRef(false);
+  const tabSwitchPendingRef = useRef<PendingNavigationRequest<{ tabId: string; optimisticTab?: TabMeta }> | null>(null);
+  const enqueueTabSwitch = useCallback(
+    (tabId: string, optimisticTab?: TabMeta): Promise<void> =>
+      enqueueNavigationRequest(
+        { seqRef: tabSwitchSeqRef, runningRef: tabSwitchRunningRef, pendingRef: tabSwitchPendingRef },
+        { tabId, optimisticTab },
+        async (request) => {
+          await switchTab(request.tabId, request.optimisticTab);
+          await refreshTabMetas();
+        },
+      ),
+    [switchTab, refreshTabMetas],
+  );
+
   const handleTabChange = useCallback((id: string) => {
     closeTransientOverlays();
     const selected = tabMetas.find((tab) => tab.id === id);
     setTabMetas((current) => current.map((tab) => ({ ...tab, active: tab.id === id })));
-    void switchTab(id, selected).then(() => refreshTabMetas());
+    void enqueueTabSwitch(id, selected);
     setTabRevealSignal((signal) => signal + 1);
-  }, [closeTransientOverlays, refreshTabMetas, switchTab, tabMetas]);
+  }, [closeTransientOverlays, enqueueTabSwitch, tabMetas]);
 
   const handleTabClose = useCallback(async (id: string) => {
     closeTransientOverlays();
@@ -2050,11 +2073,11 @@ export default function App() {
     if (nextActiveTabId && currentIds.includes(nextActiveTabId)) {
       const selected = tabMetas.find((tab) => tab.id === nextActiveTabId);
       setTabMetas((current) => current.map((tab) => ({ ...tab, active: tab.id === nextActiveTabId })));
-      void switchTab(nextActiveTabId, selected);
+      void enqueueTabSwitch(nextActiveTabId, selected);
     }
     await refreshTabMetas();
     setTabRevealSignal((signal) => signal + 1);
-  }, [closeTab, closeTransientOverlays, refreshTabMetas, switchTab, tabMetas]);
+  }, [closeTab, closeTransientOverlays, enqueueTabSwitch, refreshTabMetas, tabMetas]);
 
   const handleTabsReorder = useCallback(async (ids: string[]) => {
     setTabOrderIds(ids);

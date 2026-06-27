@@ -3,7 +3,7 @@
 import { JSDOM } from "jsdom";
 import React, { act, useCallback, useRef } from "react";
 import { createRoot } from "react-dom/client";
-import { enqueueOpenTopicRequest, type PendingOpenTopicRequest } from "../lib/openTopicCoalescing";
+import { enqueueNavigationRequest, enqueueOpenTopicRequest, type PendingOpenTopicRequest } from "../lib/openTopicCoalescing";
 
 let passed = 0;
 let failed = 0;
@@ -183,6 +183,45 @@ await act(async () => {
   root.unmount();
 });
 dom.window.close();
+
+// Tab-bar switches (App.handleTabChange) route through the same scheduler so
+// rapidly clicking between two running sessions can't run switchTab()
+// concurrently — concurrent switches race the backend SetActiveTab ordering and
+// land events on the wrong session (#5352). This guards serialization (no two
+// run()s overlap) + last-click-wins.
+{
+  const refs = { seqRef: { current: 0 }, runningRef: { current: false }, pendingRef: { current: null as any } };
+  let active = 0;
+  let maxConcurrent = 0;
+  const ran: string[] = [];
+  const gates = new Map<string, ReturnType<typeof deferred<void>>>();
+  const gate = (id: string) => {
+    if (!gates.has(id)) gates.set(id, deferred<void>());
+    return gates.get(id)!;
+  };
+  const switchTab = (req: { tabId: string }) =>
+    enqueueNavigationRequest(refs, { tabId: req.tabId }, async (r) => {
+      active += 1;
+      maxConcurrent = Math.max(maxConcurrent, active);
+      await gate(r.tabId).promise;
+      ran.push(r.tabId);
+      active -= 1;
+    });
+
+  const pA = switchTab({ tabId: "A" }); // starts running
+  const pB = switchTab({ tabId: "B" }); // coalesced away (superseded while A runs)
+  const pC = switchTab({ tabId: "C" }); // latest pending
+  gate("A").resolve();
+  await pA;
+  await flushPromises();
+  gate("C").resolve();
+  await pC;
+  await pB;
+  await flushPromises();
+
+  eq(ran.join(","), "A,C", "tab switches serialize: only the running + latest run, middle coalesces");
+  eq(maxConcurrent, 1, "no two tab switches run concurrently (no backend SetActiveTab race)");
+}
 
 console.log(`\n${passed} passed, ${failed} failed, ${passed + failed} total`);
 if (failed > 0) process.exit(1);
