@@ -62,6 +62,41 @@ func TestUserConfigPathHonorsReasonixHome(t *testing.T) {
 	}
 }
 
+func TestLoadForRootUsesWindowsHomeFallbackWhenConfigDirUnavailable(t *testing.T) {
+	home := t.TempDir()
+	project := t.TempDir()
+
+	oldGOOS := runtimeGOOS
+	oldConfigDir := osUserConfigDir
+	oldHomeDir := osUserHomeDir
+	runtimeGOOS = "windows"
+	osUserConfigDir = func() string { return "" }
+	osUserHomeDir = func() (string, error) { return home, nil }
+	t.Cleanup(func() {
+		runtimeGOOS = oldGOOS
+		osUserConfigDir = oldConfigDir
+		osUserHomeDir = oldHomeDir
+	})
+
+	t.Setenv("REASONIX_HOME", "")
+
+	configPath := filepath.Join(home, "AppData", "Roaming", "reasonix", "config.toml")
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(configPath, []byte("default_model = \"custom/from-home\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := LoadForRoot(project)
+	if err != nil {
+		t.Fatalf("LoadForRoot() error = %v", err)
+	}
+	if cfg.DefaultModel != "custom/from-home" {
+		t.Fatalf("DefaultModel = %q, want %q", cfg.DefaultModel, "custom/from-home")
+	}
+}
+
 func TestRenderTOMLHeaderShowsResolvedConfigPath(t *testing.T) {
 	isolateUserConfigHome(t)
 	out := RenderTOML(Default())
