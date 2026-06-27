@@ -210,7 +210,8 @@ func (c *client) Stream(ctx context.Context, req provider.Request) (<-chan provi
 	}
 
 	out := make(chan provider.Chunk)
-	go c.streamWithReconnect(ctx, resp, newReq, out)
+	cr := provider.NewChunkRing(ctx, out, 256)
+	go c.streamWithReconnect(ctx, resp, newReq, cr)
 	return out, nil
 }
 
@@ -223,45 +224,31 @@ const maxStreamReconnects = 3
 // any model output has been forwarded, replays the request rather than failing
 // the turn. Once a token (reasoning/text/tool-call) has been emitted, a replay
 // would duplicate output, so the error is surfaced instead.
-func (c *client) streamWithReconnect(ctx context.Context, resp *http.Response, newReq func(context.Context) (*http.Request, error), out chan<- provider.Chunk) {
-	defer close(out)
+func (c *client) streamWithReconnect(ctx context.Context, resp *http.Response, newReq func(context.Context) (*http.Request, error), cr *provider.ChunkRing) {
+	defer cr.Close()
 	for attempt := 0; ; attempt++ {
-		emitted, err := c.readStream(ctx, resp, out)
+		emitted, err := c.readStream(ctx, resp, cr)
 		if err == nil {
 			return
 		}
 		if !provider.IsConnReset(err) {
-			sendChunk(ctx, out, provider.Chunk{Type: provider.ChunkError, Err: err})
+			cr.Send(ctx, provider.Chunk{Type: provider.ChunkError, Err: err})
 			return
 		}
 		if emitted {
-			sendChunk(ctx, out, provider.Chunk{Type: provider.ChunkError, Err: &provider.StreamInterruptedError{Err: err}})
+			cr.Send(ctx, provider.Chunk{Type: provider.ChunkError, Err: &provider.StreamInterruptedError{Err: err}})
 			return
 		}
 		if attempt >= maxStreamReconnects {
-			sendChunk(ctx, out, provider.Chunk{Type: provider.ChunkError, Err: err})
+			cr.Send(ctx, provider.Chunk{Type: provider.ChunkError, Err: err})
 			return
 		}
 		next, rerr := provider.SendWithRetry(ctx, c.http, c.name, c.keyEnv, c.apiKey, newReq)
 		if rerr != nil {
-			sendChunk(ctx, out, provider.Chunk{Type: provider.ChunkError, Err: rerr})
+			cr.Send(ctx, provider.Chunk{Type: provider.ChunkError, Err: rerr})
 			return
 		}
 		resp = next
-	}
-}
-
-func sendChunk(ctx context.Context, out chan<- provider.Chunk, chunk provider.Chunk) bool {
-	select {
-	case out <- chunk:
-		return true
-	default:
-	}
-	select {
-	case <-ctx.Done():
-		return false
-	case out <- chunk:
-		return true
 	}
 }
 
@@ -364,7 +351,7 @@ func (c *client) buildRequest(req provider.Request) chatRequest {
 // ChunkToolCallStart fires the moment a call's name is known. It returns whether
 // any model output was forwarded (so the caller can decide a replay is safe) and
 // the first fatal error — a nil error means the stream reached [DONE].
-func (c *client) readStream(ctx context.Context, resp *http.Response, out chan<- provider.Chunk) (emitted bool, _ error) {
+func (c *client) readStream(ctx context.Context, resp *http.Response, cr *provider.ChunkRing) (emitted bool, _ error) {
 	defer resp.Body.Close()
 
 	// Close the response body when the context is canceled (user interrupt) or the
@@ -411,8 +398,6 @@ func (c *client) readStream(ctx context.Context, resp *http.Response, out chan<-
 	started := map[int]bool{}
 	var order []int
 	var lastFinishReason string
-	var think thinkSplitter
-	var sawReasoningContent bool
 	var sawDone bool
 
 	scanner := bufio.NewScanner(resp.Body)
@@ -447,7 +432,7 @@ func (c *client) readStream(ctx context.Context, resp *http.Response, out chan<-
 			u := normaliseUsage(sr.Usage)
 			u.FinishReason = lastFinishReason
 			emitted = true
-			if !sendChunk(ctx, out, provider.Chunk{Type: provider.ChunkUsage, Usage: u}) {
+			if !cr.Send(ctx, provider.Chunk{Type: provider.ChunkUsage, Usage: u}) {
 				return emitted, ctx.Err()
 			}
 		}
@@ -457,33 +442,15 @@ func (c *client) readStream(ctx context.Context, resp *http.Response, out chan<-
 
 		delta := sr.Choices[0].Delta
 		if delta.ReasoningContent != "" {
-			sawReasoningContent = true
 			emitted = true
-			if !sendChunk(ctx, out, provider.Chunk{Type: provider.ChunkReasoning, Text: delta.ReasoningContent}) {
+			if !cr.Send(ctx, provider.Chunk{Type: provider.ChunkReasoning, Text: delta.ReasoningContent}) {
 				return emitted, ctx.Err()
 			}
 		}
 		if delta.Content != "" {
-			// When the model correctly uses reasoning_content, content is always
-			// normal text. When it doesn't (no reasoning_content seen), enable
-			// text-based thinking detection in the splitter.
-			if !sawReasoningContent && think.textOpeners == nil {
-				think.textOpeners = thinkingOpeners
-			} else if sawReasoningContent && think.textOpeners != nil {
-				think.textOpeners = nil
-			}
-			r, txt := think.push(delta.Content)
-			if r != "" {
-				emitted = true
-				if !sendChunk(ctx, out, provider.Chunk{Type: provider.ChunkReasoning, Text: r}) {
-					return emitted, ctx.Err()
-				}
-			}
-			if txt != "" {
-				emitted = true
-				if !sendChunk(ctx, out, provider.Chunk{Type: provider.ChunkText, Text: txt}) {
-					return emitted, ctx.Err()
-				}
+			emitted = true
+			if !cr.Send(ctx, provider.Chunk{Type: provider.ChunkText, Text: delta.Content}) {
+				return emitted, ctx.Err()
 			}
 		}
 		for _, tc := range delta.ToolCalls {
@@ -506,7 +473,7 @@ func (c *client) readStream(ctx context.Context, resp *http.Response, out chan<-
 			if !started[tc.Index] && cur.Name != "" {
 				started[tc.Index] = true
 				emitted = true
-				if !sendChunk(ctx, out, provider.Chunk{Type: provider.ChunkToolCallStart, ToolCall: &provider.ToolCall{ID: cur.ID, Name: cur.Name}}) {
+				if !cr.Send(ctx, provider.Chunk{Type: provider.ChunkToolCallStart, ToolCall: &provider.ToolCall{ID: cur.ID, Name: cur.Name}}) {
 					return emitted, ctx.Err()
 				}
 			}
@@ -527,18 +494,6 @@ func (c *client) readStream(ctx context.Context, resp *http.Response, out chan<-
 		return emitted, fmt.Errorf("%s: read stream: %w", c.name, err)
 	}
 
-	if r, txt := think.flush(); r != "" || txt != "" {
-		if r != "" {
-			if !sendChunk(ctx, out, provider.Chunk{Type: provider.ChunkReasoning, Text: r}) {
-				return emitted, ctx.Err()
-			}
-		}
-		if txt != "" {
-			if !sendChunk(ctx, out, provider.Chunk{Type: provider.ChunkText, Text: txt}) {
-				return emitted, ctx.Err()
-			}
-		}
-	}
 
 	sort.Ints(order)
 	for _, idx := range order {
@@ -549,11 +504,11 @@ func (c *client) readStream(ctx context.Context, resp *http.Response, out chan<-
 			// an empty tool_call_id collapses multi-tool turns downstream.
 			tc.ID = fmt.Sprintf("call_%d", idx)
 		}
-		if !sendChunk(ctx, out, provider.Chunk{Type: provider.ChunkToolCall, ToolCall: tc}) {
+		if !cr.Send(ctx, provider.Chunk{Type: provider.ChunkToolCall, ToolCall: tc}) {
 			return emitted, ctx.Err()
 		}
 	}
-	if !sendChunk(ctx, out, provider.Chunk{Type: provider.ChunkDone}) {
+	if !cr.Send(ctx, provider.Chunk{Type: provider.ChunkDone}) {
 		return emitted, ctx.Err()
 	}
 	return emitted, nil

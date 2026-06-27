@@ -15,19 +15,38 @@ import (
 // (prompt/stop events) fire hooks through, so neither has to know how hooks load
 // or run. A nil *Runner is a valid no-op (no hooks configured).
 type Runner struct {
-	hooks   []ResolvedHook
-	cwd     string
-	spawner Spawner
-	notify  func(string) // surface a non-blocking (warn/error) hook message; may be nil
+	hooks      []ResolvedHook
+	cwd        string
+	spawner    Spawner
+	notify     func(string) // surface a non-blocking (warn/error) hook message; may be nil
+	agentLayer AgentLayer
 	rtkRewriter interface {
 		PostToolRewrite(ctx context.Context, name string, args json.RawMessage, result string) string
 	}
 }
 
 // NewRunner builds a Runner. spawner nil uses DefaultSpawner; notify nil drops
-// non-blocking messages.
+// non-blocking messages. The runner defaults to AgentLayerMain; call
+// WithAgentLayer to change it for sub-agent runners.
 func NewRunner(hooks []ResolvedHook, cwd string, spawner Spawner, notify func(string)) *Runner {
-	return &Runner{hooks: hooks, cwd: cwd, spawner: spawner, notify: notify}
+	return &Runner{hooks: hooks, cwd: cwd, spawner: spawner, notify: notify, agentLayer: AgentLayerMain}
+}
+
+// WithAgentLayer returns a shallow copy of the Runner with a different agent
+// layer, so sub-agent runners can be derived from the main runner without
+// mutating it. A nil receiver returns nil.
+func (r *Runner) WithAgentLayer(al AgentLayer) *Runner {
+	if r == nil {
+		return nil
+	}
+	return &Runner{
+		hooks:       r.hooks,
+		cwd:         r.cwd,
+		spawner:     r.spawner,
+		notify:      r.notify,
+		agentLayer:  al,
+		rtkRewriter: r.rtkRewriter,
+	}
 }
 
 // Hooks returns the resolved hooks (for `/hooks` listing).
@@ -68,7 +87,7 @@ func (r *Runner) PreToolUse(ctx context.Context, name string, args json.RawMessa
 	if !r.Enabled() {
 		return false, "", nil
 	}
-	rep := Run(ctx, Payload{Event: PreToolUse, Cwd: r.cwd, ToolName: name, ToolArgs: args}, r.hooks, r.spawner)
+	rep := Run(ctx, Payload{Event: PreToolUse, Cwd: r.cwd, ToolName: name, ToolArgs: args}, r.hooks, r.spawner, r.agentLayer)
 	block, msg := r.handle(rep)
 	modified = rep.ModifiedArgs
 	if block {
@@ -86,7 +105,7 @@ func (r *Runner) PostToolUse(ctx context.Context, name string, args json.RawMess
 	if !r.Enabled() {
 		return
 	}
-	rep := Run(ctx, Payload{Event: PostToolUse, Cwd: r.cwd, ToolName: name, ToolArgs: args, ToolResult: result}, r.hooks, r.spawner)
+	rep := Run(ctx, Payload{Event: PostToolUse, Cwd: r.cwd, ToolName: name, ToolArgs: args, ToolResult: result}, r.hooks, r.spawner, r.agentLayer)
 	r.handle(rep)
 }
 
@@ -96,7 +115,7 @@ func (r *Runner) PromptSubmit(ctx context.Context, prompt string, turn int) (blo
 	if !r.Enabled() {
 		return false, ""
 	}
-	rep := Run(ctx, Payload{Event: UserPromptSubmit, Cwd: r.cwd, Prompt: prompt, Turn: turn}, r.hooks, r.spawner)
+	rep := Run(ctx, Payload{Event: UserPromptSubmit, Cwd: r.cwd, Prompt: prompt, Turn: turn}, r.hooks, r.spawner, r.agentLayer)
 	return r.handle(rep)
 }
 
@@ -105,7 +124,7 @@ func (r *Runner) Stop(ctx context.Context, lastAssistant string, turn int) {
 	if !r.Enabled() {
 		return
 	}
-	rep := Run(ctx, Payload{Event: Stop, Cwd: r.cwd, LastAssistant: lastAssistant, Turn: turn}, r.hooks, r.spawner)
+	rep := Run(ctx, Payload{Event: Stop, Cwd: r.cwd, LastAssistant: lastAssistant, Turn: turn}, r.hooks, r.spawner, r.agentLayer)
 	r.handle(rep)
 }
 
@@ -115,7 +134,7 @@ func (r *Runner) SessionStart(ctx context.Context) {
 	if !r.Enabled() {
 		return
 	}
-	r.handle(Run(ctx, Payload{Event: SessionStart, Cwd: r.cwd}, r.hooks, r.spawner))
+	r.handle(Run(ctx, Payload{Event: SessionStart, Cwd: r.cwd}, r.hooks, r.spawner, r.agentLayer))
 }
 
 // SessionEnd fires when a session is closed or rotated (/new). It can't block.
@@ -123,7 +142,7 @@ func (r *Runner) SessionEnd(ctx context.Context) {
 	if !r.Enabled() {
 		return
 	}
-	r.handle(Run(ctx, Payload{Event: SessionEnd, Cwd: r.cwd}, r.hooks, r.spawner))
+	r.handle(Run(ctx, Payload{Event: SessionEnd, Cwd: r.cwd}, r.hooks, r.spawner, r.agentLayer))
 }
 
 // SubagentStop fires when a `task` sub-agent finishes. It can't block; last is
@@ -132,7 +151,7 @@ func (r *Runner) SubagentStop(ctx context.Context, last string) {
 	if !r.Enabled() {
 		return
 	}
-	r.handle(Run(ctx, Payload{Event: SubagentStop, Cwd: r.cwd, LastAssistant: last}, r.hooks, r.spawner))
+	r.handle(Run(ctx, Payload{Event: SubagentStop, Cwd: r.cwd, LastAssistant: last}, r.hooks, r.spawner, r.agentLayer))
 }
 
 // Notification fires when the agent needs the user's attention (e.g. a pending
@@ -141,7 +160,7 @@ func (r *Runner) Notification(ctx context.Context, message string) {
 	if !r.Enabled() {
 		return
 	}
-	r.handle(Run(ctx, Payload{Event: Notification, Cwd: r.cwd, Message: message}, r.hooks, r.spawner))
+	r.handle(Run(ctx, Payload{Event: Notification, Cwd: r.cwd, Message: message}, r.hooks, r.spawner, r.agentLayer))
 }
 
 // PostLLMCall fires after every model turn completes but before the
@@ -153,7 +172,7 @@ func (r *Runner) PostLLMCall(ctx context.Context, reasoning string, turn int) st
 	if !r.Has(PostLLMCall) {
 		return reasoning
 	}
-	rep := Run(ctx, Payload{Event: PostLLMCall, Cwd: r.cwd, Reasoning: reasoning, Turn: turn}, r.hooks, r.spawner)
+	rep := Run(ctx, Payload{Event: PostLLMCall, Cwd: r.cwd, Reasoning: reasoning, Turn: turn}, r.hooks, r.spawner, r.agentLayer)
 	r.handle(rep)
 	for _, o := range rep.Outcomes {
 		if o.Decision == DecisionPass {
@@ -172,7 +191,7 @@ func (r *Runner) PreCompact(ctx context.Context, trigger string) string {
 	if !r.Enabled() {
 		return ""
 	}
-	rep := Run(ctx, Payload{Event: PreCompact, Cwd: r.cwd, Trigger: trigger}, r.hooks, r.spawner)
+	rep := Run(ctx, Payload{Event: PreCompact, Cwd: r.cwd, Trigger: trigger}, r.hooks, r.spawner, r.agentLayer)
 	r.handle(rep)
 	var b strings.Builder
 	for _, o := range rep.Outcomes {

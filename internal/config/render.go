@@ -148,23 +148,10 @@ func RenderTOMLForScope(c *Config, scope RenderScope) string {
 	fmt.Fprintf(&b, "max_steps         = %d   # executor tool-call rounds; 0 = no limit\n", c.Agent.MaxSteps)
 	fmt.Fprintf(&b, "planner_max_steps = %d   # planner read-only tool-call rounds; 0 = no limit\n", c.Agent.PlannerMaxSteps)
 	fmt.Fprintf(&b, "temperature       = %s\n", formatFloat(c.Agent.Temperature))
-	autoPlan := c.Agent.AutoPlan
-	switch strings.ToLower(strings.TrimSpace(autoPlan)) {
-	case "on", "ask":
-		autoPlan = "on"
-	default:
-		autoPlan = "off"
-	}
-	fmt.Fprintf(&b, "auto_plan   = %q   # off|on; off keeps plan mode manual\n", autoPlan)
 	if c.Agent.ReasoningLanguage != "" {
 		fmt.Fprintf(&b, "reasoning_language = %q   # auto|zh|en; model chain-of-thought language\n", c.Agent.ReasoningLanguage)
 	} else {
 		b.WriteString("# reasoning_language = \"zh\"   # auto|zh|en; model chain-of-thought language\n")
-	}
-	if c.Agent.AutoPlanClassifier != "" {
-		fmt.Fprintf(&b, "auto_plan_classifier = %q   # optional provider/model for borderline auto-plan decisions\n", c.Agent.AutoPlanClassifier)
-	} else {
-		b.WriteString("# auto_plan_classifier = \"deepseek-flash\"   # optional; only used for borderline tasks\n")
 	}
 	fmt.Fprintf(&b, "soft_compact_ratio  = %s   # notice only; keeps cache-first prefix intact\n", formatFloat(c.Agent.SoftCompactRatio))
 	fmt.Fprintf(&b, "compact_ratio       = %s   # try compacting when prompt reaches this fraction\n", formatFloat(c.Agent.CompactRatio))
@@ -304,7 +291,7 @@ func RenderTOMLForScope(c *Config, scope RenderScope) string {
 	if len(c.Permissions.MainAgentAllowed) > 0 {
 		fmt.Fprintf(&b, "main_agent_allowed = %s\n", renderStringArray(c.Permissions.MainAgentAllowed))
 	} else {
-		b.WriteString("# main_agent_allowed = [\"task\", \"ask\", \"note\", \"audit_finish\", \"read_skill\", \"run_skill\", \"slash_command\", \"bash_output\", \"wait\", \"kill_shell\"]\n")
+		b.WriteString("# main_agent_allowed = [\"task\", \"ask\", \"note\", \"audit_finish\", \"read_skill\", \"run_skill\", \"slash_command\", \"remember\", \"forget\", \"bash_output\", \"wait\", \"kill_shell\"]\n")
 	}
 	b.WriteString("\n")
 

@@ -154,7 +154,8 @@ func TestReadStream(t *testing.T) {
 	c := &client{name: "anthropic"}
 	resp := &http.Response{Body: io.NopCloser(strings.NewReader(sseFixture))}
 	ch := make(chan provider.Chunk)
-	go c.readStream(context.Background(), resp, ch)
+	cr := provider.NewChunkRing(context.Background(), ch, 256)
+	go c.readStream(context.Background(), resp, cr)
 
 	var text strings.Builder
 	var started, full *provider.ToolCall
@@ -209,7 +210,8 @@ func TestReadStreamError(t *testing.T) {
 	c := &client{name: "anthropic"}
 	resp := &http.Response{Body: io.NopCloser(strings.NewReader(sse))}
 	ch := make(chan provider.Chunk)
-	go c.readStream(context.Background(), resp, ch)
+	cr := provider.NewChunkRing(context.Background(), ch, 256)
+	go c.readStream(context.Background(), resp, cr)
 
 	var gotErr error
 	for ck := range ch {
@@ -302,7 +304,8 @@ func TestReadStreamThinking(t *testing.T) {
 	c := &client{name: "anthropic"}
 	resp := &http.Response{Body: io.NopCloser(strings.NewReader(sseThinking))}
 	ch := make(chan provider.Chunk)
-	go c.readStream(context.Background(), resp, ch)
+	cr := provider.NewChunkRing(context.Background(), ch, 256)
+	go c.readStream(context.Background(), resp, cr)
 
 	var reasoning, text strings.Builder
 	var sig string

@@ -45,9 +45,6 @@ reasoning_language = "auto"      # visible reasoning text: auto|zh|en
 # planner_model = "mimo-pro"          # optional low-frequency planner
 # subagent_model = "deepseek-pro"     # optional default for runAs=subagent skills
 # subagent_models = { review = "deepseek-pro", security_review = "deepseek-pro" }
-auto_plan = "off"                  # off|on; off keeps plan mode manual
-# auto_plan_classifier = "deepseek-flash"   # optional; only borderline tasks call it
-
 [[providers]]
 name        = "deepseek-flash"
 kind        = "openai"
@@ -84,17 +81,15 @@ For the full schema and every field's contract, see [`SPEC.md` §5](./SPEC.md#5-
 ## Mode shortcuts quick map
 
 Shortcuts are documented by client because users usually look for the keys that
-work in the surface they are using. The small rule is: `Shift+Tab` only controls
-Plan, `Ctrl/Cmd+Y` only controls YOLO, and paste stays on the platform paste key.
+work in the surface they are using. The small rule is: `Shift+Tab` controls the tool approval mode, `Ctrl/Cmd+Y` only controls YOLO, and paste stays on the platform paste key.
 
 ### Desktop GUI
 
 | Key or control | What it does | Notes |
 | --- | --- | --- |
-| `Shift+Tab` | Toggles Plan on/off | Composer shortcut. Plan is read-only planning and does not cycle Ask/Auto/YOLO. |
+| `Shift+Tab` | Toggles tool approval mode | Composer shortcut. Toggles between Ask/Auto and YOLO (bypass). |
 | `Ctrl+Y` / `Cmd+Y` | Toggles YOLO on/off | Composer shortcut. Turning YOLO off restores the previous Ask/Auto base when known. |
 | Ask / Auto / YOLO approval controls | Picks the tool approval posture directly | Clicking these controls is unchanged by the keyboard shortcuts. |
-| Plan control | Toggles Plan on/off | Same mode as `Shift+Tab`. |
 | Goal item in the collaboration menu | Starts, views, or clears Goal | Goal is not in any keyboard cycle. |
 | `Cmd+V` on macOS, `Ctrl+V` on Windows/Linux | Pastes clipboard content | Images can also be dropped into the composer. |
 
@@ -102,7 +97,7 @@ Plan, `Ctrl/Cmd+Y` only controls YOLO, and paste stays on the platform paste key
 
 | Key or command | What it does | Notes |
 | --- | --- | --- |
-| `Shift+Tab` | Toggles Plan on/off | Plan is read-only planning and does not cycle Ask/Auto/YOLO. |
+| `Shift+Tab` | Toggles tool approval mode | Toggles between Ask/Auto and YOLO (bypass). |
 | `Ctrl+Y` | Toggles YOLO on/off | Turning YOLO off restores the previous Ask/Auto base when known. Terminals that forward Command/Super may also send `Cmd+Y`, but `Ctrl+Y` is the reliable terminal shortcut. |
 | `--yolo`, `--dangerously-skip-permissions` | Starts chat in YOLO | Same runtime mode as `Ctrl+Y`. |
 | Ask / Auto | No keyboard cycle | Ask is the default interactive base. Auto is not entered through `Shift+Tab`; use clients or APIs that expose the tool approval posture directly. |
@@ -119,8 +114,7 @@ Mode meanings:
 | --- | --- |
 | Ask | Prompts for fallback writer approvals. |
 | Auto | Auto-allows fallback approvals; explicit `ask` / `deny` rules still apply. |
-| YOLO | Skips ordinary tool approval prompts; `deny`, user `ask` questions, and plan approval prompts still wait. |
-| Plan | Keeps the next work read-only until a plan is approved or Plan is turned off. |
+| YOLO | Skips ordinary tool approval prompts; `deny` and user `ask` questions still prompt. |
 | Goal | Pursues a saved objective until complete, blocked, or cleared. |
 
 ## Permissions & sandbox
@@ -202,7 +196,7 @@ convenient.
 
 In `reasonix chat`, built-in commands (`/compact`, `/new`, `/clear`, `/rewind`,
 `/tree`, `/branch`, `/switch`, `/todo`, `/model`, `/mcp`, `/skills`, `/hooks`,
-`/memory`, `/output-style`, `/sandbox`, `/language`, `/auto-plan`,
+`/memory`, `/output-style`, `/sandbox`, `/language`,
 `/reasoning-language`, `/help`) run
 locally — `/help` lists them all. `/new` starts a new session while saving the
 previous transcript for history/resume; `/clear` asks for confirmation, then
@@ -276,14 +270,7 @@ Subagent skills inherit the executor model by default. Set `subagent_model` to
 run them on another configured model, or use `subagent_models` to override only
 specific skills such as `review` or `security_review`.
 
-For interactive frontends, plan mode is manual by default. Set
-`agent.auto_plan = "on"` to make complex-looking tasks enter plan mode
-automatically: Reasonix first drafts a read-only plan, then waits for approval
-before editing or running side-effecting commands. `auto_plan_classifier` can
-name a cheap provider such as `deepseek-flash`; it is only called for borderline
-inputs and falls back to the heuristic if classification fails. Use
-`/auto-plan off|on` in `reasonix chat` to change the user-level setting, or
-`reasonix config auto-plan off|on` from a shell/script. The visible reasoning
+The visible reasoning
 language uses the same shape: `/reasoning-language auto|zh|en` in chat, or
 `reasonix config reasoning-language auto|zh|en` in a shell/script. Pass
 `--local` to the shell command only when you intentionally want a project-local

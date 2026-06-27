@@ -74,8 +74,6 @@ type Messages struct {
 	ChatStatusCycleHint    string // mode-cycle shortcut hint shown when no modal prompt owns the status row
 	ChatStatusCacheNowFmt  string // cache status tag, "%s" = latest-turn hit rate with percent sign
 	ChatStatusCacheAvgFmt  string // cache status tag, "%s" = session-average hit rate with percent sign
-	ChatStatusPlanApproval string // shortcuts hint while a plan is pending
-	PlanApprovalPrompt     string // one-line "plan above is ready" banner shown above the input
 	ChatStatusToolApproval string // shortcuts hint while a tool call awaits approval
 	ToolApprovalPromptFmt  string // approval banner — tool, subject suffix, and source/intent detail
 	ToolApprovalSourceFmt  string // "Source: %s" / "来源: %s"
@@ -155,7 +153,6 @@ type Messages struct {
 	CmdSkill        string // /skills
 	CmdVerbose      string // /verbose
 	CmdEffort       string // /effort
-	CmdAutoPlan     string // /auto-plan
 	CmdHelp         string // /help
 	CmdTodo         string // /todo
 	CmdQuit         string // /quit (also accepts /exit as hidden alias)

@@ -62,10 +62,11 @@ func TestReadStreamSendUnblocksOnContextCancel(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	resp := &http.Response{Body: io.NopCloser(strings.NewReader("data: {\"choices\":[{\"delta\":{\"content\":\"hi\"}}]}\n\n"))}
 	out := make(chan provider.Chunk)
+	cr := provider.NewChunkRing(ctx, out, 256)
 	done := make(chan struct{})
 
 	go func() {
-		_, _ = (&client{name: "openai"}).readStream(ctx, resp, out)
+		_, _ = (&client{name: "openai"}).readStream(ctx, resp, cr)
 		close(done)
 	}()
 

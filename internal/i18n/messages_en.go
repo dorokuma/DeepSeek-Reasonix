@@ -33,10 +33,8 @@ var English = Messages{
 	ChatStatusCacheNowFmt:     "cached %s",
 	ChatStatusCacheAvgFmt:     "avg %s",
 	ChatStatusIdle:           "ready",
-	ChatStatusYoloIdle:       "approvals skipped · shift+tab to cycle",
+	ChatStatusYoloIdle:       "approvals skipped",
 	ChatStatusCycleHint:      "shift+tab to cycle",
-	ChatStatusPlanApproval:   "Enter/y approve & execute · n/Esc continue planning · PgUp/PgDn scroll",
-	PlanApprovalPrompt:       "Plan is ready above — Enter/y to approve and execute, n/Esc to continue planning",
 	ChatStatusToolApproval:   "1 this turn · 2 this session · 3 always (save) · 4 reject · y/a/p/n compatible · Ctrl-C cancel turn",
 	ToolApprovalBuiltIn:      "built-in tool",
 	ToolApprovalImageUse:     "will read the provided image for image understanding.",
@@ -163,7 +161,6 @@ var English = Messages{
 	CmdSkill:        "manage skills",
 	CmdVerbose:      "toggle thinking text",
 	CmdEffort:       "set reasoning effort",
-	CmdAutoPlan:     "configure automatic plan mode",
 	CmdHelp:         "list commands",
 	CmdTodo:         "dismiss the task list",
 	CmdQuit:         "exit the session",
@@ -307,7 +304,6 @@ Usage:
   reasonix run  [--model NAME] [--max-steps N] [-c|--continue] [--resume PATH] <task>   run one task and exit
   reasonix serve [--model NAME] [--addr HOST:PORT]      serve the session over HTTP+SSE (browser client at /)
   reasonix setup [path]                                 interactive config wizard; writes reasonix.toml (+ .env)
-  reasonix config auto-plan [off|on]                    configure automatic plan mode
   reasonix mcp <add|remove|list>                        manage MCP servers in reasonix.toml
   reasonix doctor [--json]                              print redacted local diagnostics
   reasonix version

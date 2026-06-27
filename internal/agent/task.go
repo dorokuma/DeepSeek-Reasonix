@@ -10,6 +10,7 @@ import (
 
 	"reasonix/internal/ctxmode"
 	"reasonix/internal/event"
+	"reasonix/internal/hook"
 	"reasonix/internal/jobs"
 	"reasonix/internal/provider"
 	"reasonix/internal/tool"
@@ -69,6 +70,7 @@ type TaskTool struct {
 	subagentModel     string
 	subagentEffort    string
 	resolveProvider   func(modelRef, effort string) (provider.Provider, *provider.Pricing, int, error)
+	hooks             ToolHooks
 }
 
 // NewTaskTool wires a task tool to the parent agent's environment so its
@@ -76,10 +78,12 @@ type TaskTool struct {
 // prompt every sub-agent starts with; pass "" for DefaultTaskSystemPrompt. gate
 // is the permission gate sub-agents inherit — pass the headless variant so
 // deny rules still bite while autonomous sub-agents are never blocked on an
-// interactive prompt (there is no UI to answer one).
+// interactive prompt (there is no UI to answer one). hooks is the parent's hook
+// runner; the task tool derives a sub-agent copy from it.
 func NewTaskTool(prov provider.Provider, pricing *provider.Pricing, parentReg *tool.Registry,
 	maxSteps, maxSubagentSteps, contextWindow int, softCompactRatio, compactRatio, compactForceRatio, temperature float64, archiveDir, sysPrompt string, gate Gate,
-	subagentModel, subagentEffort string, resolveProvider func(string, string) (provider.Provider, *provider.Pricing, int, error)) *TaskTool {
+	subagentModel, subagentEffort string, resolveProvider func(string, string) (provider.Provider, *provider.Pricing, int, error),
+	hooks ToolHooks) *TaskTool {
 	if sysPrompt == "" {
 		sysPrompt = DefaultTaskSystemPrompt
 	}
@@ -100,6 +104,7 @@ func NewTaskTool(prov provider.Provider, pricing *provider.Pricing, parentReg *t
 		subagentModel:     subagentModel,
 		subagentEffort:    subagentEffort,
 		resolveProvider:   resolveProvider,
+		hooks:             hooks,
 	}
 }
 
@@ -343,11 +348,18 @@ func (t *TaskTool) runSub(ctx context.Context, prompt string, subReg *tool.Regis
 	if s, ok := ctxmode.FromContext(ctx); ok {
 		shared = s
 	}
+	// Derive sub-agent hooks with the subagent agent layer, so hooks scoped
+	// to "main" are skipped in sub-agents.
+	subHooks := t.hooks
+	if r, ok := t.hooks.(*hook.Runner); ok && r != nil {
+		subHooks = r.WithAgentLayer(hook.AgentLayerSubagent)
+	}
 	return RunSubAgent(ctx, prov, subReg, t.sysPrompt, prompt, Options{
 		MaxSteps:          maxSteps,
 		Temperature:       t.temperature,
 		Pricing:           pricing,
 		Gate:              t.gate,
+		Hooks:             subHooks,
 		ContextWindow:     ctxWin,
 		SoftCompactRatio:  t.softCompactRatio,
 		CompactRatio:      t.compactRatio,
