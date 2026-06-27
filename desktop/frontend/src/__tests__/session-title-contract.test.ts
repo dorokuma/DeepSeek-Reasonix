@@ -3,6 +3,7 @@
 import {
   historySessionDisplayTitle,
   paletteSessionDisplayTitle,
+  paletteSessionHint,
   paletteSessionKeywords,
 } from "../lib/session";
 import type { SessionMeta } from "../lib/types";
@@ -43,6 +44,7 @@ function session(overrides: Partial<SessionMeta> = {}): SessionMeta {
     modTime: 200,
     current: false,
     open: false,
+    workspaceRoot: "/work/project-alpha",
     topicId: "topic-1",
     topicTitle: "Shared topic",
     ...overrides,
@@ -62,6 +64,11 @@ console.log("\nsession title contracts");
     paletteSessionKeywords(item),
     ["Renamed saved session", "first saved prompt preview"],
     "Cmd+K still searches the session rename and preview text",
+  );
+  eq(
+    paletteSessionHint(item),
+    "Renamed saved session · /work/project-alpha",
+    "Cmd+K shows the session rename in the hint so hidden search hits are visible",
   );
 }
 
@@ -85,6 +92,20 @@ console.log("\nsession title contracts");
     paletteSessionKeywords(item),
     ["first saved prompt preview"],
     "Blank session titles are not added as Cmd+K keywords",
+  );
+  eq(
+    paletteSessionHint(item),
+    "first saved prompt preview · /work/project-alpha",
+    "Cmd+K falls back to preview text in the hint when there is no custom session title",
+  );
+}
+
+{
+  const item = session({ title: "Shared topic", preview: "first saved prompt preview" });
+  eq(
+    paletteSessionHint(item),
+    "first saved prompt preview · /work/project-alpha",
+    "Cmd+K skips duplicate title hints that repeat the visible topic title",
   );
 }
 
