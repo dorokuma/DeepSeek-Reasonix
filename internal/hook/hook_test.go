@@ -121,7 +121,7 @@ func TestRunStopsAtFirstBlock(t *testing.T) {
 		ran = append(ran, in.Command)
 		return SpawnResult{ExitCode: 2} // first blocks
 	}
-	rep := Run(context.Background(), Payload{Event: PreToolUse, ToolName: "bash"}, hooks, spawner)
+	rep := Run(context.Background(), Payload{Event: PreToolUse, ToolName: "bash"}, hooks, spawner, AgentLayerMain)
 	if !rep.Blocked {
 		t.Error("report should be blocked")
 	}
@@ -141,7 +141,7 @@ func TestRunFiltersByEventAndTool(t *testing.T) {
 		ran = append(ran, in.Command)
 		return SpawnResult{ExitCode: 0}
 	}
-	Run(context.Background(), Payload{Event: PreToolUse, ToolName: "bash"}, hooks, spawner)
+	Run(context.Background(), Payload{Event: PreToolUse, ToolName: "bash"}, hooks, spawner, AgentLayerMain)
 	if len(ran) != 1 || ran[0] != "a" {
 		t.Errorf("only the matching PreToolUse hook should run, got %v", ran)
 	}
@@ -214,7 +214,7 @@ func TestPreToolUseArgRewrite(t *testing.T) {
 	spawner := func(_ context.Context, in SpawnInput) SpawnResult {
 		return SpawnResult{ExitCode: 0, Stdout: `{"path":"foo.txt","limit":200}`}
 	}
-	rep := Run(context.Background(), Payload{Event: PreToolUse, ToolName: "read_file", ToolArgs: json.RawMessage(`{"path":"foo.txt"}`)}, hooks, spawner)
+	rep := Run(context.Background(), Payload{Event: PreToolUse, ToolName: "read_file", ToolArgs: json.RawMessage(`{"path":"foo.txt"}`)}, hooks, spawner, AgentLayerMain)
 	if rep.Blocked {
 		t.Fatal("exit 0 should not block")
 	}
@@ -251,7 +251,7 @@ func TestPreToolUseArgRewriteChaining(t *testing.T) {
 		}
 		return SpawnResult{ExitCode: 0}
 	}
-	rep := Run(context.Background(), Payload{Event: PreToolUse, ToolName: "read_file", ToolArgs: json.RawMessage(`{"path":"foo.txt"}`)}, hooks, spawner)
+	rep := Run(context.Background(), Payload{Event: PreToolUse, ToolName: "read_file", ToolArgs: json.RawMessage(`{"path":"foo.txt"}`)}, hooks, spawner, AgentLayerMain)
 	if rep.Blocked {
 		t.Fatal("exit 0 should not block")
 	}

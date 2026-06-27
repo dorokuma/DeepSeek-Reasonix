@@ -485,13 +485,6 @@ type AgentConfig struct {
 	// startup (a built-in like "explanatory"/"learning"/"concise", or a custom
 	// .reasonix/output-styles/<name>.md). Empty = the unmodified prompt.
 	OutputStyle string `toml:"output_style"`
-	// AutoPlan controls whether interactive turns that look multi-step start in
-	// plan mode automatically: "off" keeps plan mode manual, "on" enables the
-	// approval gate. Legacy "ask" is treated as "on".
-	AutoPlan string `toml:"auto_plan"`
-	// AutoPlanClassifier optionally names a provider/model used to classify
-	// borderline auto-plan decisions. Empty keeps the zero-cost heuristic path.
-	AutoPlanClassifier string `toml:"auto_plan_classifier"`
 	// Compaction window fractions: soft = notice only, compact = trigger, force = hard ceiling.
 	SoftCompactRatio  float64 `toml:"soft_compact_ratio"`
 	CompactRatio      float64 `toml:"compact_ratio"`
@@ -717,10 +710,7 @@ guessing; keep changes minimal and correct; briefly summarize what you did.
 When the request leaves a real choice to the user — which approach or library,
 the scope, or a consequential or ambiguous decision — call the ask tool to offer
 2-4 concrete options rather than guessing or burying the question in prose. Skip
-it when there's an obvious default; don't ask just to confirm.
-In plan mode the harness blocks writer tools: do read-only research, then write a
-concise plan as your reply and stop. The user is asked to approve before anything
-is changed; once approved, the plan is executed step by step.`
+it when there's an obvious default; don't ask just to confirm.`
 
 // LanguagePolicy is the auto fallback appended to the system prompt when no
 // concrete UI language is resolved. It is static English text, so it stays part
@@ -762,7 +752,6 @@ func Default() *Config {
 			// if you want a hard guard against runaway.
 			MaxSteps:          0,
 			PlannerMaxSteps:   12,
-			AutoPlan:          "off",
 			SoftCompactRatio:  0.5,
 			CompactRatio:      0.8,
 			CompactForceRatio: 0.9,
@@ -859,20 +848,6 @@ func LoadForRoot(root string) (*Config, error) {
 	normalizeLegacyMCPTiers(cfg)
 	normalizeEffortConfig(cfg)
 	backfillDeepSeekPro(cfg)
-
-	// auto_plan is a user preference; user config takes precedence over project config.
-	if uc := userConfigPath(); uc != "" {
-		if data, err := os.ReadFile(uc); err == nil {
-			var ucCfg struct {
-				Agent struct {
-					AutoPlan string `toml:"auto_plan"`
-				} `toml:"agent"`
-			}
-			if _, err := toml.Decode(string(data), &ucCfg); err == nil && ucCfg.Agent.AutoPlan != "" {
-				cfg.Agent.AutoPlan = ucCfg.Agent.AutoPlan
-			}
-		}
-	}
 
 	return cfg, nil
 }

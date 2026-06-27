@@ -68,10 +68,11 @@ func TestReadStreamSendUnblocksOnContextCancel(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	resp := &http.Response{Body: io.NopCloser(strings.NewReader("data: {\"type\":\"content_block_delta\",\"delta\":{\"type\":\"text_delta\",\"text\":\"hi\"}}\n\n"))}
 	out := make(chan provider.Chunk)
+	cr := provider.NewChunkRing(ctx, out, 256)
 	done := make(chan struct{})
 
 	go func() {
-		(&client{name: "anthropic"}).readStream(ctx, resp, out)
+		(&client{name: "anthropic"}).readStream(ctx, resp, cr)
 		close(done)
 	}()
 

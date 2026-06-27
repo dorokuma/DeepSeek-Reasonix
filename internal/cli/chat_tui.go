@@ -1067,6 +1067,12 @@ func (m chatTUI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			cmds = append(cmds, pasteClipboardImage())
 			return m, finalize(m, cmds)
+		case "shift+tab":
+			if m.state == tuiRunning {
+				return m, nil
+			}
+			m.ctrl.SetBypass(!m.ctrl.Bypass())
+			return m, nil
 		case "ctrl+o":
 			m.toggleVerboseReasoning(m.state != tuiRunning)
 			return m, finalize(m, cmds)
@@ -2000,7 +2006,7 @@ func (m chatTUI) View() tea.View {
 			Bold(true).
 			Padding(0, 1).
 			Render("Shell")
-	case m.ctrl.Bypass() || m.permMode == "allow":
+	case m.ctrl.Bypass():
 		modeTag = lipgloss.NewStyle().
 			Background(lipgloss.Color(statusYoloColor.hex)).
 			Foreground(lipgloss.Color("#ffffff")).
@@ -2063,7 +2069,7 @@ func (m chatTUI) View() tea.View {
 			status = "  " + modeTag + " · " + i18n.M.ChatStatusToolApproval
 		case shellMode:
 			status = "  " + modeTag + " · " + i18n.M.ShellModeHint
-		case m.ctrl.Bypass() || m.permMode == "allow":
+		case m.ctrl.Bypass():
 			status = "  " + modeTag + " · " + i18n.M.ChatStatusYoloIdle
 		default:
 			status = "  " + modeTag + " · " + i18n.M.ChatStatusIdle

@@ -45,12 +45,10 @@ var Chinese = Messages{
 	ChatToolWorkingFmt:     "%s 运行中 · %d 秒",
 	ChatStatusRetryingFmt:  "%s 正在重试 (%d/%d)… (Esc 取消)",
 	ChatStatusIdle:         "就绪",
-	ChatStatusYoloIdle:     "已跳过批准",
+	ChatStatusYoloIdle:     "已跳过审批",
 	ChatStatusCycleHint:    "shift+tab 循环切换",
 	ChatStatusCacheNowFmt:  "本次 %s",
 	ChatStatusCacheAvgFmt:  "平均 %s",
-	ChatStatusPlanApproval: "Enter/y 批准并执行 · n/Esc 继续规划 · PgUp/PgDn 滚动",
-	PlanApprovalPrompt:     "计划已生成（见上方）— Enter/y 批准执行,n/Esc 继续规划",
 	ChatStatusToolApproval: "1 本次允许 · 2 本会话允许 · 3 总是允许（保存） · 4 拒绝 · y/a/p/n 兼容 · Ctrl-C 取消本轮",
 	AskTypeSomething:       "自己输入",
 	AskTypingHint:          "输入后按 Enter 确认",
@@ -128,7 +126,6 @@ var Chinese = Messages{
 
 	CmdVerbose:	"/verbose — 切换详细输出",
 	CmdEffort:	"/effort — 设置推理力度",
-	CmdAutoPlan:	"/auto-plan — 自动计划",
 	CmdHelp:	"/help — 帮助",
 
 	CmdTodo:	"/todo — 任务列表",

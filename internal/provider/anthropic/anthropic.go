@@ -160,7 +160,8 @@ func (c *client) Stream(ctx context.Context, req provider.Request) (<-chan provi
 	}
 
 	out := make(chan provider.Chunk)
-	go c.readStream(ctx, resp, out)
+	cr := provider.NewChunkRing(ctx, out, 256)
+	go c.readStream(ctx, resp, cr)
 	return out, nil
 }
 
@@ -311,9 +312,9 @@ func (c *client) buildRequest(req provider.Request) anthRequest {
 // and a complete ChunkToolCall when the block closes; usage is assembled from
 // message_start (input/cache) + message_delta (output + stop_reason) and emitted
 // once before ChunkDone.
-func (c *client) readStream(ctx context.Context, resp *http.Response, out chan<- provider.Chunk) {
+func (c *client) readStream(ctx context.Context, resp *http.Response, cr *provider.ChunkRing) {
 	defer resp.Body.Close()
-	defer close(out)
+	defer cr.Close()
 
 	// Close the body if the stream stalls past c.idleTimeout so scanner.Scan()
 	// unblocks instead of hanging on a half-open connection. The watchdog owns the
@@ -354,7 +355,7 @@ func (c *client) readStream(ctx context.Context, resp *http.Response, out chan<-
 	}()
 
 	send := func(chunk provider.Chunk) bool {
-		return sendChunk(ctx, out, chunk)
+		return cr.Send(ctx, chunk)
 	}
 
 	tools := map[int]*provider.ToolCall{} // tool_use blocks, keyed by content index
@@ -484,20 +485,6 @@ func (c *client) readStream(ctx context.Context, resp *http.Response, out chan<-
 		}
 	}
 	send(provider.Chunk{Type: provider.ChunkDone})
-}
-
-func sendChunk(ctx context.Context, out chan<- provider.Chunk, chunk provider.Chunk) bool {
-	select {
-	case out <- chunk:
-		return true
-	default:
-	}
-	select {
-	case <-ctx.Done():
-		return false
-	case out <- chunk:
-		return true
-	}
 }
 
 // mapStopReason translates Anthropic stop reasons to the OpenAI-style finish

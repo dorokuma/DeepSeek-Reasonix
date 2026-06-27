@@ -680,7 +680,6 @@ func chatREPL(args []string) int {
 		m.permMode = strings.ToLower(strings.TrimSpace(cfg.Permissions.Mode))
 		m.cfg = cfg
 	}
-
 	// /model support: a pure builder the TUI calls to rebuild on a different
 	// model (carrying the conversation). It must NOT touch the running model —
 	// runModelSubcommand performs the swap on the live copy. The same stable sink
@@ -1929,45 +1928,12 @@ func configCommand(args []string) int {
 	}
 
 	switch subcmd {
-	case "auto-plan":
-		return configAutoPlan(rest, local)
 	case "reasoning-language":
 		return configReasoningLanguage(rest, local)
 	default:
 		configUsage()
 		return 2
 	}
-}
-
-func configAutoPlan(args []string, local bool) int {
-	if local {
-		fmt.Fprintln(os.Stderr, "--local is not supported for auto-plan; use 'reasonix config auto-plan on|off' to set user default")
-		return 2
-	}
-	if len(args) != 1 {
-		configUsage()
-		return 2
-	}
-
-	mode := args[0]
-	path := config.UserConfigPath()
-	if path == "" {
-		fmt.Fprintln(os.Stderr, "cannot resolve user config path")
-		return 1
-	}
-
-	cfg := config.LoadForEdit(path)
-	if err := cfg.SetAutoPlan(mode); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		return 2
-	}
-	if err := cfg.SaveTo(path); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		return 1
-	}
-
-	fmt.Printf(`auto_plan = "%s"`+"\n", cfg.Agent.AutoPlan)
-	return 0
 }
 
 func configReasoningLanguage(args []string, local bool) int {
@@ -2033,7 +1999,6 @@ reasoning_language = %q
 
 func configUsage() {
 	fmt.Print(`Usage:
-  reasonix config auto-plan on|off                set user default for auto plan mode
   reasonix config reasoning-language auto|zh|en    set reasoning language (user default)
   reasonix config reasoning-language --local auto|zh|en   set reasoning language (project override)
 `)

@@ -395,96 +395,6 @@ func TestRunMetadataCommandsDoNotMigrateLegacyConfig(t *testing.T) {
 	}
 }
 
-func TestConfigAutoPlanCommandWritesUserConfig(t *testing.T) {
-	isolateCLIConfigHome(t)
-
-	out := captureStdout(t, func() {
-		if rc := Run([]string{"config", "auto-plan", "on"}, "test-version"); rc != 0 {
-			t.Fatalf("config auto-plan rc = %d, want 0", rc)
-		}
-	})
-	if !strings.Contains(out, `auto_plan = "on"`) {
-		t.Fatalf("config auto-plan output = %q", out)
-	}
-	cfg := config.LoadForEdit(config.UserConfigPath())
-	if cfg.Agent.AutoPlan != "on" {
-		t.Fatalf("saved auto_plan = %q, want on", cfg.Agent.AutoPlan)
-	}
-}
-
-func TestConfigAutoPlanLocalIsRejected(t *testing.T) {
-	isolateCLIConfigHome(t)
-
-	userCfg := config.Default()
-	userCfg.DefaultModel = "mimo-pro"
-	if err := userCfg.SaveTo(config.UserConfigPath()); err != nil {
-		t.Fatalf("write user config: %v", err)
-	}
-
-	errOut := captureStderr(t, func() {
-		if rc := Run([]string{"config", "auto-plan", "--local", "on"}, "test-version"); rc != 2 {
-			t.Fatalf("config auto-plan --local rc = %d, want 2", rc)
-		}
-	})
-	if !strings.Contains(errOut, "--local is not supported") {
-		t.Fatalf("config auto-plan --local stderr = %q", errOut)
-	}
-	if _, err := os.Stat("reasonix.toml"); !os.IsNotExist(err) {
-		t.Fatalf("reasonix.toml should not be written, stat err=%v", err)
-	}
-
-	cfg, err := config.Load()
-	if err != nil {
-		t.Fatalf("load merged config: %v", err)
-	}
-	if cfg.DefaultModel != "mimo-pro" {
-		t.Fatalf("default_model = %q, want global mimo-pro", cfg.DefaultModel)
-	}
-	if cfg.Agent.AutoPlan != "off" {
-		t.Fatalf("auto_plan = %q, want global off", cfg.Agent.AutoPlan)
-	}
-}
-
-func TestConfigAutoPlanIgnoresProjectConfig(t *testing.T) {
-	isolateCLIConfigHome(t)
-
-	userCfg := config.Default()
-	if err := userCfg.SetAutoPlan("off"); err != nil {
-		t.Fatal(err)
-	}
-	if err := userCfg.SaveTo(config.UserConfigPath()); err != nil {
-		t.Fatalf("write user config: %v", err)
-	}
-	if err := os.WriteFile("reasonix.toml", []byte("[agent]\nauto_plan = \"on\"\n"), 0o644); err != nil {
-		t.Fatalf("write project config: %v", err)
-	}
-
-	cfg, err := config.Load()
-	if err != nil {
-		t.Fatalf("load config: %v", err)
-	}
-	if cfg.Agent.AutoPlan != "off" {
-		t.Fatalf("auto_plan = %q, want user-level off despite project on", cfg.Agent.AutoPlan)
-	}
-
-	if err := userCfg.SetAutoPlan("on"); err != nil {
-		t.Fatal(err)
-	}
-	if err := userCfg.SaveTo(config.UserConfigPath()); err != nil {
-		t.Fatalf("rewrite user config: %v", err)
-	}
-	if err := os.WriteFile("reasonix.toml", []byte("[agent]\nauto_plan = \"off\"\n"), 0o644); err != nil {
-		t.Fatalf("rewrite project config: %v", err)
-	}
-	cfg, err = config.Load()
-	if err != nil {
-		t.Fatalf("reload config: %v", err)
-	}
-	if cfg.Agent.AutoPlan != "on" {
-		t.Fatalf("auto_plan = %q, want user-level on despite project off", cfg.Agent.AutoPlan)
-	}
-}
-
 func TestConfigReasoningLanguageCommandWritesUserConfig(t *testing.T) {
 	isolateCLIConfigHome(t)
 
@@ -602,7 +512,6 @@ func TestProvidersWithMissingKeysIncludesReferencedSecondaryModels(t *testing.T)
 	cfg.Agent.SubagentModels = map[string]string{
 		"review": "mimo-pro/mimo-v2.5-pro",
 	}
-	cfg.Agent.AutoPlanClassifier = "mimo-flash/mimo-v2.5"
 	t.Setenv("DEEPSEEK_API_KEY", "test-key")
 	t.Setenv("MIMO_API_KEY", "")
 
@@ -617,34 +526,6 @@ func TestProvidersWithMissingKeysIncludesReferencedSecondaryModels(t *testing.T)
 		if p.APIKeyEnv != "MIMO_API_KEY" {
 			t.Fatalf("missing provider %s uses env %q, want MIMO_API_KEY", p.Name, p.APIKeyEnv)
 		}
-	}
-}
-
-func TestProvidersWithMissingKeysSkipsDisabledAutoPlanClassifier(t *testing.T) {
-	cfg := &config.Config{
-		DefaultModel: "deepseek-flash",
-		Providers: []config.ProviderEntry{
-			{Name: "deepseek-flash", Kind: "openai", BaseURL: "https://api.deepseek.com", Model: "deepseek-v4-flash", APIKeyEnv: "DEEPSEEK_API_KEY"},
-		},
-	}
-	cfg.Agent.AutoPlan = "off"
-	cfg.Agent.AutoPlanClassifier = "mimo-flash/mimo-v2.5"
-	t.Setenv("DEEPSEEK_API_KEY", "test-key")
-
-	// With the default model provider keyed and no other providers, nothing is missing.
-	if missing := providersWithMissingKeys(cfg); len(missing) != 0 {
-		t.Fatalf("missing providers = %+v, want none", missing)
-	}
-
-	// Add a provider with a missing key; it should appear regardless of AutoPlan.
-	cfg.Providers = append(cfg.Providers, config.ProviderEntry{Name: "mimo-flash", Kind: "openai", BaseURL: "https://token-plan-cn.xiaomimimo.com/v1", Model: "mimo-v2.5", APIKeyEnv: "MIMO_API_KEY"})
-	t.Setenv("MIMO_API_KEY", "")
-	missing := providersWithMissingKeys(cfg)
-	if len(missing) != 1 {
-		t.Fatalf("missing providers = %+v, want 1 (mimo-flash has no key)", missing)
-	}
-	if missing[0].APIKeyEnv != "MIMO_API_KEY" {
-		t.Fatalf("missing key env = %q, want MIMO_API_KEY", missing[0].APIKeyEnv)
 	}
 }
 

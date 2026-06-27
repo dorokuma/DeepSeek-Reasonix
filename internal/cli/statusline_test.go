@@ -134,6 +134,7 @@ func TestAllowConfigShowsYoloPill(t *testing.T) {
 	ctrl := control.New(control.Options{})
 	m := newChatTUI(ctrl, "", make(chan event.Event, 1), 80)
 	m.permMode = "allow"
+	ctrl.SetBypass(true)
 	next, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 	content := next.(chatTUI).View().Content
 	plain := bottomStatusPlain(content)
@@ -391,7 +392,7 @@ func TestNarrowYoloStatuslineOmitsHints(t *testing.T) {
 		t.Errorf("narrow yolo row 1 should not contain skipped text:\n%s", lines[0])
 	}
 	if strings.Contains(lines[0], "shift+tab") {
-		t.Errorf("narrow yolo row 1 should not contain cycle hint:\n%s", lines[0])
+		t.Errorf("narrow yolo row 1 should not contain toggle hint:\n%s", lines[0])
 	}
 }
 

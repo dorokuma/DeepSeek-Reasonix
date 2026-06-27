@@ -108,9 +108,6 @@ planner_max_steps = 12           # planner read-only tool-call rounds; 0 = no li
 # planner_model = "mimo-pro"          # optional low-frequency planner
 # subagent_model = "deepseek-pro"     # optional default for runAs=subagent skills
 # subagent_models = { review = "deepseek-pro", security_review = "deepseek-pro" }
-auto_plan = "off"                  # off|on; off keeps plan mode manual
-# auto_plan_classifier = "deepseek-flash"   # optional; only borderline tasks call it
-
 [[providers]]
 name        = "deepseek-flash"
 kind        = "openai"
@@ -270,16 +267,6 @@ Subagent skills inherit the executor model by default. Set `subagent_model` to
 run them on another configured model, or use `subagent_models` to override only
 specific skills such as `review` or `security_review`.
 
-For interactive frontends, plan mode is manual by default. Set
-`agent.auto_plan = "on"` to make complex-looking tasks enter plan mode
-automatically: Reasonix first drafts a read-only plan, then waits for approval
-before editing or running side-effecting commands. `auto_plan_classifier` can
-name a cheap provider such as `deepseek-flash`; it is only called for borderline
-inputs and falls back to the heuristic if classification fails. Use
-`/auto-plan off|on` in `reasonix chat` to change the user-level setting, or
-`reasonix config auto-plan off|on` from a shell/script. Pass `--local` to the
-shell command only when you intentionally want a project-local override.
-
 ## Architecture
 
 Three tiers of extensibility, all behind registries the core resolves by name:
@@ -300,7 +287,7 @@ calls (bounded retry on 429/5xx), built-in tools (read_file, write_file,
 edit_file, multi_edit, bash, ls, glob, grep, task, ask),
 TOML config, an interactive `reasonix setup` wizard, two-model collaboration
 (executor + planner in separate, cache-stable sessions), low-frequency context
-compaction, sub-agents (`task`), a bubbletea chat TUI (markdown, plan mode with
+compaction, sub-agents (`task`), a bubbletea chat TUI (markdown,
 controller-driven approval, live token/activity readout, pinned task list,
 `ask` question chooser, `/compact` `/new` `/tree` `/branch` `/switch` `/todo`), session persistence + resume,
 per-call **permissions** (allow/ask/deny rules; chat prompts before writers, deny

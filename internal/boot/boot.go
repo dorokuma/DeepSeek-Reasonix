@@ -238,6 +238,15 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 		sysPrompt = outputstyle.Apply(sysPrompt, st)
 	}
 	sysPrompt += "\n\n" + config.LanguagePolicy
+	// Wire reasoning_language config into the system prompt
+	if rl := cfg.ReasoningLanguage(); rl != "" {
+		switch rl {
+		case "zh":
+			sysPrompt += "\n\n请全程使用简体中文思考。"
+		case "en":
+			sysPrompt += "\n\nThink in English throughout."
+		}
+	}
 	sysPrompt += "\n\n" + config.VisibilityPolicy
 
 	// Persistent memory (REASONIX.md / AGENTS.md hierarchy + auto-memory index)
@@ -452,7 +461,7 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	reg.Add(agent.NewTaskTool(execProv, entry.Price, reg, maxSteps, cfg.Agent.MaxSubagentSteps,
 		entry.ContextWindow, cfg.Agent.SoftCompactRatio, cfg.Agent.CompactRatio, cfg.Agent.CompactForceRatio,
 		cfg.Agent.Temperature, config.ArchiveDir(), "", subAgentGate,
-		taskModel, taskEffort, resolveSubagentProvider))
+		taskModel, taskEffort, resolveSubagentProvider, hookRunner))
 
 	// Session history tools let the AI discover and read past conversations.
 	// `list_sessions` returns all saved session files; `read_session` loads one
@@ -530,6 +539,7 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 			Temperature:   cfg.Agent.Temperature,
 			Pricing:       price,
 			Gate:          nil,
+			Hooks:         hookRunner.WithAgentLayer(hook.AgentLayerSubagent),
 			ContextWindow: ctxWin,
 			ArchiveDir:    config.ArchiveDir(),
 		}, agent.NestedSink(subCtx, event.Discard))

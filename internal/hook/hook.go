@@ -86,6 +86,20 @@ const (
 	ScopeGlobal  Scope = "global"
 )
 
+// AgentLayer identifies which agent layer a hook applies to. Only
+// PreToolUse and PostToolUse hooks honour scope filtering; all other
+// events always fire regardless of the layer.
+type AgentLayer string
+
+const (
+	// AgentLayerMain fires only in the top-level agent (default).
+	AgentLayerMain AgentLayer = "main"
+	// AgentLayerSubagent fires only in sub-agents (task tool / subagent skills).
+	AgentLayerSubagent AgentLayer = "subagent"
+	// AgentLayerAll fires in every agent layer.
+	AgentLayerAll AgentLayer = "all"
+)
+
 // HookConfig is one hook as written in settings.json.
 type HookConfig struct {
 	// Match is an anchored regex selecting tools (Pre/PostToolUse only); "" or
@@ -99,6 +113,10 @@ type HookConfig struct {
 	Timeout int `json:"timeout,omitempty"`
 	// Cwd overrides the working directory (defaults to the payload's cwd).
 	Cwd string `json:"cwd,omitempty"`
+	// AgentLayer restricts the hook to a specific agent layer. "" or "main" =
+	// top-level agent only, "subagent" = sub-agents only, "all" = every layer.
+	// Only meaningful for PreToolUse / PostToolUse; other events ignore it.
+	AgentLayer AgentLayer `json:"scope,omitempty"`
 }
 
 // Settings is the shape of a settings.json (only hooks for now).
@@ -321,7 +339,10 @@ const outputCapBytes = 256 * 1024
 // When a PreToolUse hook exits 0 and writes valid JSON to stdout, that JSON
 // replaces payload.ToolArgs for subsequent hooks and is recorded as
 // report.ModifiedArgs — the caller uses it in place of the original tool args.
-func Run(ctx context.Context, payload Payload, hooks []ResolvedHook, spawner Spawner) Report {
+// agentLayer filters which hooks fire: hooks with no scope (or "main") fire for
+// the main agent; "subagent" fires for sub-agents; "all" fires everywhere.
+// Non-tool events (UserPromptSubmit, Stop, …) always fire regardless of scope.
+func Run(ctx context.Context, payload Payload, hooks []ResolvedHook, spawner Spawner, agentLayer AgentLayer) Report {
 	if spawner == nil {
 		spawner = DefaultSpawner
 	}
@@ -330,6 +351,16 @@ func Run(ctx context.Context, payload Payload, hooks []ResolvedHook, spawner Spa
 	for _, h := range hooks {
 		if h.Event != event || !MatchesTool(h, payload.ToolName) {
 			continue
+		}
+		// Scope filtering: apply only to tool events. Non-tool events always fire.
+		if h.Event == PreToolUse || h.Event == PostToolUse {
+			al := h.AgentLayer
+			if al == "" {
+				al = AgentLayerMain // empty/missing defaults to main
+			}
+			if al != agentLayer && al != AgentLayerAll {
+				continue
+			}
 		}
 		cwd := h.Cwd
 		if cwd == "" {

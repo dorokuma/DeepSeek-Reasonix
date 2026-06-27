@@ -23,7 +23,6 @@ func TestRenderTOMLRoundTrips(t *testing.T) {
 	orig.Notifications.TurnDone = true
 	orig.Notifications.ApprovalRequest = true
 	orig.Notifications.AskRequest = true
-	orig.Agent.AutoPlanClassifier = "deepseek-flash"
 	orig.Agent.SubagentModel = "mimo-pro"
 	orig.Agent.SubagentModels = map[string]string{"review": "deepseek-pro"}
 	orig.Tools.BashTimeoutSeconds = intPtr(900)
@@ -101,12 +100,6 @@ func TestRenderTOMLRoundTrips(t *testing.T) {
 	}
 	if got.Agent.Temperature != orig.Agent.Temperature {
 		t.Errorf("temperature = %v, want %v", got.Agent.Temperature, orig.Agent.Temperature)
-	}
-	if got.Agent.AutoPlan != "off" {
-		t.Errorf("auto_plan = %q, want off", got.Agent.AutoPlan)
-	}
-	if got.Agent.AutoPlanClassifier != "deepseek-flash" {
-		t.Errorf("auto_plan_classifier = %q, want deepseek-flash", got.Agent.AutoPlanClassifier)
 	}
 	if got.Agent.SoftCompactRatio != orig.Agent.SoftCompactRatio {
 		t.Errorf("soft_compact_ratio = %v, want %v", got.Agent.SoftCompactRatio, orig.Agent.SoftCompactRatio)
