@@ -368,6 +368,79 @@ func TestMCPEditConfigLaunchEditorWithArgs(t *testing.T) {
 	}
 }
 
+func TestMCPEditConfigLaunchEditorParsesShellStyleQuotes(t *testing.T) {
+	path := "/tmp/reasonix.toml"
+	cases := []struct {
+		name       string
+		editor     string
+		wantEditor string
+		wantArgs   []string
+	}{
+		{
+			name:       "empty fallback arg",
+			editor:     "emacsclient -c -a ''",
+			wantEditor: "emacsclient",
+			wantArgs:   []string{"emacsclient", "-c", "-a", "", path},
+		},
+		{
+			name:       "quoted editor path",
+			editor:     "'/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code' --wait",
+			wantEditor: "/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code",
+			wantArgs:   []string{"/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code", "--wait", path},
+		},
+		{
+			name:       "escaped whitespace",
+			editor:     `/opt/My\ Editor/bin/edit --flag`,
+			wantEditor: "/opt/My Editor/bin/edit",
+			wantArgs:   []string{"/opt/My Editor/bin/edit", "--flag", path},
+		},
+		{
+			name:       "quoted arg",
+			editor:     `nvim --cmd "set tabstop=2"`,
+			wantEditor: "nvim",
+			wantArgs:   []string{"nvim", "--cmd", "set tabstop=2", path},
+		},
+		{
+			name:       "double quoted literal backslashes",
+			editor:     `nvim "C:\tmp\file"`,
+			wantEditor: "nvim",
+			wantArgs:   []string{"nvim", `C:\tmp\file`, path},
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Setenv("VISUAL", c.editor)
+			t.Setenv("EDITOR", "")
+			launch, err := mcpEditConfigLaunchCommand(path, func(string) (string, error) {
+				t.Fatal("lookPath should not be called when VISUAL is set")
+				return "", errors.New("unexpected lookup")
+			})
+			if err != nil {
+				t.Fatalf("edit command: %v", err)
+			}
+			if launch.editor != c.wantEditor {
+				t.Fatalf("editor display name = %q, want %q", launch.editor, c.wantEditor)
+			}
+			if !reflect.DeepEqual(launch.cmd.Args, c.wantArgs) {
+				t.Fatalf("args = %#v, want %#v", launch.cmd.Args, c.wantArgs)
+			}
+		})
+	}
+}
+
+func TestMCPEditConfigLaunchEditorRejectsUnterminatedQuote(t *testing.T) {
+	t.Setenv("VISUAL", `code --wait "unterminated`)
+	t.Setenv("EDITOR", "")
+
+	_, err := mcpEditConfigLaunchCommand("/tmp/reasonix.toml", func(string) (string, error) {
+		t.Fatal("lookPath should not be called when VISUAL is set")
+		return "", errors.New("unexpected lookup")
+	})
+	if err == nil {
+		t.Fatal("expected unterminated quote error")
+	}
+}
+
 // TestMCPEditConfigLaunchEditorRejectsShellMetachars confirms that shell
 // metacharacters in EDITOR/VISUAL are treated as literal argv tokens and
 // never executed as a shell command — the previous sh -lc construction would

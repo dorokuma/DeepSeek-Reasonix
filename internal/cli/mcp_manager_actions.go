@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"runtime"
 	"strings"
+	"unicode"
 
 	tea "charm.land/bubbletea/v2"
 
@@ -362,8 +363,8 @@ func mcpEditConfigLaunchCommand(path string, lookPath func(string) (string, erro
 }
 
 func mcpEditorDisplayName(editor string) string {
-	fields := strings.Fields(os.ExpandEnv(editor))
-	if len(fields) == 0 {
+	fields, err := splitEditorCommand(os.ExpandEnv(editor))
+	if err != nil || len(fields) == 0 {
 		return ""
 	}
 	return fields[0]
@@ -430,32 +431,89 @@ func mcpConnected(ctrl control.Capabilities, name string) bool {
 // (e.g. "code --wait", "nvim -p") and shell variable / tilde references
 // (e.g. "$HOME/bin/myeditor", "~/bin/myeditor"); these are expanded without
 // invoking a shell, and the editor binary is resolved by the OS directly.
-// Shell metacharacters in the value cannot be executed — the entire value
-// is split into argv via strings.Fields after expansion, so a value like
-// "vim; rm -rf ~" becomes the literal argv ["vim;", "rm", "-rf", "<home>"]
-// and "vim;" is looked up as the program name (failing harmlessly) rather
-// than being interpreted by a shell.
+// Shell metacharacters in the value cannot be executed: the expanded value is
+// parsed only into argv words, so a value like "vim; rm -rf ~" becomes the
+// literal argv ["vim;", "rm", "-rf", "~/..."] and "vim;" is looked up as the
+// program name (failing harmlessly) rather than being interpreted by a shell.
 //
 // This matches the safe pattern already used by the terminal-editor
 // fallback (exec.Command(bin, path)) in the same function and avoids the
 // previous sh -lc construction that concatenated the raw editor value into
 // a shell command string.
 //
-// strings.Fields does not honor shell quoting, so an editor path containing
-// literal whitespace is unsupported — but that was already broken under the
-// prior sh -lc construction for any value not wrapped in single quotes, and
-// no common EDITOR/VISUAL value requires it. Tilde expansion only covers
-// the leading-token forms "~" and "~/..."; "~user" is not supported (and
-// was not reliably supported by the prior sh -lc path either, since $HOME
-// for another user is not available without getpwuid).
+// Quoting and backslash escaping are honored for word splitting only; shell
+// operators, globbing, command substitution, and redirection are not evaluated.
+// Tilde expansion only covers the leading-token forms "~" and "~/..."; "~user"
+// is not supported (and was not reliably supported by the prior sh -lc path
+// either, since $HOME for another user is not available without getpwuid).
 func editorLaunchCmd(editor, path string) (*exec.Cmd, error) {
 	expanded := os.ExpandEnv(editor)
-	args := strings.Fields(expanded)
+	args, err := splitEditorCommand(expanded)
+	if err != nil {
+		return nil, fmt.Errorf("invalid EDITOR/VISUAL value: %w", err)
+	}
 	if len(args) == 0 {
 		return nil, fmt.Errorf("invalid EDITOR/VISUAL value: %q", editor)
 	}
 	args[0] = expandLeadingTilde(args[0])
 	return exec.Command(args[0], append(args[1:], path)...), nil
+}
+
+func splitEditorCommand(s string) ([]string, error) {
+	var args []string
+	var b strings.Builder
+	var quote rune
+	escaped := false
+	escapedQuote := rune(0)
+	inWord := false
+
+	flush := func() {
+		if inWord {
+			args = append(args, b.String())
+			b.Reset()
+			inWord = false
+		}
+	}
+
+	for _, r := range s {
+		switch {
+		case escaped:
+			if escapedQuote == '"' && r != '$' && r != '`' && r != '"' && r != '\\' {
+				b.WriteRune('\\')
+			}
+			b.WriteRune(r)
+			inWord = true
+			escaped = false
+			escapedQuote = 0
+		case r == '\\' && quote != '\'':
+			inWord = true
+			escaped = true
+			escapedQuote = quote
+		case quote != 0:
+			if r == quote {
+				quote = 0
+			} else {
+				b.WriteRune(r)
+			}
+			inWord = true
+		case r == '\'' || r == '"':
+			quote = r
+			inWord = true
+		case unicode.IsSpace(r):
+			flush()
+		default:
+			b.WriteRune(r)
+			inWord = true
+		}
+	}
+	if escaped {
+		b.WriteRune('\\')
+	}
+	if quote != 0 {
+		return nil, fmt.Errorf("unterminated %q quote", quote)
+	}
+	flush()
+	return args, nil
 }
 
 // expandLeadingTilde replaces a leading "~" or "~/" prefix with the current
