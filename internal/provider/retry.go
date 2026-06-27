@@ -2,6 +2,7 @@ package provider
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -17,7 +18,7 @@ import (
 
 // MaxRetries is the number of times SendWithRetry re-attempts the connection +
 // header phase after the initial try (so up to MaxRetries+1 total attempts).
-const MaxRetries = 10
+const MaxRetries = 3
 
 const maxBackoff = 15 * time.Second
 
@@ -144,6 +145,42 @@ func parseRetryAfter(resp *http.Response) time.Duration {
 	return 0
 }
 
+// isQuotaExhausted reports whether a 429 response body indicates the upstream
+// considers this account's quota/balance exhausted — a permanent condition no
+// amount of retrying can fix. It checks the OpenAI/DeepSeek error format:
+//
+//	{"error":{"code":"insufficient_quota", "type":"insufficient_quota", "message":"..."}}
+func isQuotaExhausted(body string) bool {
+	if body == "" {
+		return false
+	}
+	var parsed struct {
+		Error struct {
+			Code    string `json:"code"`
+			Type    string `json:"type"`
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal([]byte(body), &parsed); err != nil {
+		return false
+	}
+	switch parsed.Error.Code {
+	case "insufficient_quota":
+		return true
+	}
+	switch parsed.Error.Type {
+	case "insufficient_quota":
+		return true
+	}
+	// Check message keywords for providers that don't use structured codes.
+	msg := strings.ToLower(parsed.Error.Message)
+	if strings.Contains(msg, "quota") || strings.Contains(msg, "billing") ||
+		strings.Contains(msg, "balance") || strings.Contains(msg, "insufficient") {
+		return true
+	}
+	return false
+}
+
 type KeyLeaseManager struct {
 	mu       sync.Mutex
 	rawKey   string
@@ -232,6 +269,7 @@ func SendWithRetry(ctx context.Context, httpClient *http.Client, provName, keyEn
 	notify := retryNotifyFromContext(ctx)
 	var lastErr error
 	var retryAfter time.Duration
+	var retryAfterUsed bool
 
 	lm := GetLeaseManager(keyEnv, rawKey)
 
@@ -281,6 +319,10 @@ func SendWithRetry(ctx context.Context, httpClient *http.Client, provName, keyEn
 			if lm != nil && usedKey != "" {
 				lm.CoolDown(usedKey, 15*time.Second)
 			}
+			// Permanent quota exhaustion: never retry.
+			if isQuotaExhausted(string(msg)) {
+				return nil, &APIError{Provider: provName, Status: resp.StatusCode, Body: strings.TrimSpace(string(msg))}
+			}
 		}
 
 		if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
@@ -289,6 +331,13 @@ func SendWithRetry(ctx context.Context, httpClient *http.Client, provName, keyEn
 		apiErr := &APIError{Provider: provName, Status: resp.StatusCode, Body: strings.TrimSpace(string(msg))}
 		if !RetryableStatus(resp.StatusCode) {
 			return nil, apiErr
+		}
+		// If this response had Retry-After and we already retried once, stop.
+		if retryAfterUsed {
+			return nil, fmt.Errorf("%s: retry limit exceeded: %w", provName, apiErr)
+		}
+		if retryAfter > 0 {
+			retryAfterUsed = true
 		}
 		lastErr = apiErr
 	}
