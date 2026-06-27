@@ -134,6 +134,31 @@ console.log("\nuse controller meta");
 }
 
 {
+  const restoredContext = reducer(initialState, {
+    type: "context",
+    context: {
+      used: 42,
+      window: 200,
+      sessionTokens: 120,
+      compactRatio: 0.5,
+      sessionCost: 0.012,
+      sessionCurrency: "$",
+      cacheHitTokens: 80,
+      cacheMissTokens: 20,
+    },
+  });
+  const reset = reducer(restoredContext, { type: "reset" });
+  eq(reset.context.used, 0, "reset clears context used tokens");
+  eq(reset.context.window, 200, "reset preserves context window");
+  eq(reset.context.sessionTokens, 0, "reset clears context session tokens");
+  eq(reset.context.cacheHitTokens, undefined, "reset clears restored cache hit tokens");
+  eq(reset.context.cacheMissTokens, undefined, "reset clears restored cache miss tokens");
+  eq(reset.context.sessionCost, undefined, "reset clears restored context session cost");
+  eq(reset.sessionCost, 0, "reset clears restored session cost state");
+  eq(reset.sessionCurrency, "¥", "reset restores default session currency");
+}
+
+{
   const idleExecutor = reducer(
     { ...initialState, context: { used: 0, window: 200, sessionTokens: 0 } },
     { type: "event", e: { kind: "usage", usage: usage("executor") } },
