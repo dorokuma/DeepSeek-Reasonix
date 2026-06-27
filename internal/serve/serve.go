@@ -24,7 +24,6 @@ import (
 	"reasonix/internal/config"
 	"reasonix/internal/control"
 	"reasonix/internal/event"
-	"reasonix/internal/permission"
 )
 
 // Server wires a controller to its HTTP surface. The Broadcaster must be the
@@ -284,9 +283,6 @@ func csrfGuard(next http.Handler) http.Handler {
 func (s *Server) RunGraceful(ctx context.Context, addr string) error {
 	ctrl := s.ctl()
 	ctrl.EnableInteractiveApproval()
-	// Register the controller's interactive approver so sub-agent
-	// dangerous-command gates can prompt the user for approval.
-	permission.SetSubAgentApprover(ctrl.SubAgentApprover())
 	srv := &http.Server{
 		Addr:              addr,
 		Handler:           s.Handler(),

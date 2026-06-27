@@ -50,10 +50,11 @@ import (
 // Controller drives one chat session. Construct with New; drive with the command
 // methods; observe through the Sink passed in Options.
 type Controller struct {
-	runner   agent.Runner
-	executor *agent.Agent
-	sink     event.Sink
-	policy   permission.Policy
+	runner        agent.Runner
+	executor     *agent.Agent
+	subAgentGate *permission.Gate
+	sink          event.Sink
+	policy        permission.Policy
 
 	label         string
 	systemPrompt  string
@@ -167,6 +168,7 @@ type Options struct {
 	Executor      *agent.Agent
 	Sink          event.Sink
 	Policy        permission.Policy
+	SubAgentGate *permission.Gate // 子代理门，EnableInteractiveApproval 时注入 Approver
 	Label         string
 	SystemPrompt  string
 	SessionDir    string
@@ -224,6 +226,7 @@ func New(opts Options) *Controller {
 		executor:      opts.Executor,
 		sink:          sink,
 		policy:        opts.Policy,
+		subAgentGate:  opts.SubAgentGate,
 		label:         opts.Label,
 		systemPrompt:  opts.SystemPrompt,
 		sessionDir:    opts.SessionDir,
@@ -734,6 +737,11 @@ func (c *Controller) EnableInteractiveApproval() {
 		gate.OnRemember = c.onRemember // wire "always allow" persistence callback
 		c.executor.SetGate(gate)
 		c.executor.SetAsker(c)
+	}
+	// 给子代理也注入交互式审批，让 ask 规则能弹窗
+	if c.subAgentGate != nil {
+		c.subAgentGate.SetApprover(gateApprover{c})
+		c.subAgentGate.OnRemember = c.onRemember
 	}
 }
 
@@ -1926,14 +1934,6 @@ func (g gateApprover) Approve(ctx context.Context, tool, subject string, args js
 	}
 	return g.c.requestApproval(ctx, tool, subject)
 }
-
-// SubAgentApprover returns an Approver suitable for the sub-agent
-// dangerous-command gate. It uses the same interactive approval flow as
-// the main agent's permission gate (gateApprover).
-func (c *Controller) SubAgentApprover() permission.Approver {
-	return gateApprover{c}
-}
-
 
 // requestApproval emits an ApprovalRequest and blocks until Approve(ID, …)
 // answers or ctx is cancelled. A prior tool-wide session grant short-circuits.

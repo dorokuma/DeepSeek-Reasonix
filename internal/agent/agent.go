@@ -13,6 +13,7 @@ import (
 	"unicode/utf8"
 
 	"reasonix/internal/ctxmode"
+	"reasonix/internal/diag"
 	"reasonix/internal/diff"
 	"reasonix/internal/event"
 	"reasonix/internal/evidence"
@@ -853,6 +854,7 @@ func (a *Agent) stream(ctx context.Context, turn int) (string, string, string, [
 				a.sink.Emit(event.Event{Kind: event.Reasoning, Text: chunk.Text})
 			}
 		case provider.ChunkText:
+			diag.LogHex("agent-chunk", chunk.Text)
 			text.WriteString(chunk.Text)
 			a.sink.Emit(event.Event{Kind: event.Text, Text: chunk.Text})
 		case provider.ChunkToolCallStart:

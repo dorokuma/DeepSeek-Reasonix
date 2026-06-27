@@ -5,6 +5,7 @@ import (
 	"os"
 
 	"reasonix/internal/cli"
+	"reasonix/internal/diag"
 
 	// Blank imports wire compile-time built-ins into their registries.
 	_ "reasonix/internal/provider/anthropic"
@@ -16,5 +17,7 @@ import (
 var version = "dev"
 
 func main() {
+	diag.Init()
+	defer diag.Close()
 	os.Exit(cli.Run(os.Args[1:], version))
 }

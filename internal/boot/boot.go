@@ -457,7 +457,7 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	}
 	taskModel := firstNonEmpty(cfg.Agent.SubagentModels["task"], cfg.Agent.SubagentModel)
 	taskEffort := firstNonEmpty(cfg.Agent.SubagentEfforts["task"], cfg.Agent.SubagentEffort)
-	subAgentGate := permission.DangerousGate(cfg.DangerousCommands.Patterns)
+	subAgentGate := permission.NewGate(policy, nil)
 	reg.Add(agent.NewTaskTool(execProv, entry.Price, reg, maxSteps, cfg.Agent.MaxSubagentSteps,
 		entry.ContextWindow, cfg.Agent.SoftCompactRatio, cfg.Agent.CompactRatio, cfg.Agent.CompactForceRatio,
 		cfg.Agent.Temperature, config.ArchiveDir(), "", subAgentGate,
@@ -688,6 +688,7 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 		Executor:      executor,
 		Sink:          sink,
 		Policy:        policy,
+		SubAgentGate:  subAgentGate,
 		Label:         label,
 		SystemPrompt:  sysPrompt,
 		SessionDir:    config.SessionDir(),
