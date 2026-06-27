@@ -26,6 +26,7 @@ import (
 	"reasonix/internal/command"
 	"reasonix/internal/config"
 	"reasonix/internal/control"
+	"reasonix/internal/diag"
 	"reasonix/internal/event"
 	"reasonix/internal/hook"
 	"reasonix/internal/i18n"
@@ -2862,6 +2863,7 @@ func (m *chatTUI) ingestEvent(e event.Event) {
 
 	case event.Text:
 		m.commitReasoning() // reasoning ends as the answer begins
+		diag.LogHex("tui-text", e.Text)
 		m.pending.WriteString(e.Text)
 		m.streamAnswer()
 

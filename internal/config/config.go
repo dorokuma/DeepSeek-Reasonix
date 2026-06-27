@@ -49,7 +49,6 @@ type Config struct {
 	Providers     []ProviderEntry     `toml:"providers"`
 	Tools         ToolsConfig         `toml:"tools"`
 	Permissions      PermissionsConfig       `toml:"permissions"`
-	DangerousCommands DangerousCommandsConfig `toml:"dangerous_commands"`
 	Network          NetworkConfig           `toml:"network"`
 	Plugins       []PluginEntry       `toml:"plugins"`
 	Skills        SkillsConfig        `toml:"skills"`
@@ -614,14 +613,6 @@ func (c *Config) BashTimeoutSeconds() int {
 type SearchConfig struct {
 	Engine string `toml:"engine"`
 	RgPath string `toml:"rg_path"`
-}
-
-// DangerousCommandsConfig defines patterns for commands that require approval.
-type DangerousCommandsConfig struct {
-	// Patterns is a list of glob patterns matching dangerous bash commands
-	// that must be approved by the user before execution by sub-agents.
-	// Examples: "systemctl *", "kill *", "reboot *"
-	Patterns []string `toml:"patterns"`
 }
 
 // PermissionsConfig declares the per-call permission policy (see

@@ -369,6 +369,12 @@ type Gate struct {
 // NewGate wires a Policy to an Approver (nil for non-interactive use).
 func NewGate(p Policy, a Approver) *Gate { return &Gate{Policy: p, Approver: a} }
 
+// SetApprover replaces the Approver on an existing Gate. Used to inject
+// interactive approval into sub-agent gates that were created headless.
+func (g *Gate) SetApprover(a Approver) {
+	g.Approver = a
+}
+
 // Check decides whether a tool call may run. It is the method the agent's Gate
 // interface expects. A denied or refused call returns allow=false with a short
 // reason the agent feeds back to the model.
