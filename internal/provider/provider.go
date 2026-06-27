@@ -225,6 +225,9 @@ func toolTurnWellFormed(calls []ToolCall, results []Message) bool {
 		if results[k].ToolCallID != tc.ID {
 			return false
 		}
+		if results[k].Name != tc.Name {
+			return false
+		}
 	}
 	return true
 }
