@@ -1200,15 +1200,6 @@ export default function App() {
     return currentTabTurns > 0 ? currentTabTurns : activeTopicTurns ?? 0;
   }, [activeTopicTurns, state.checkpoints.length, state.items]);
   const startupSplashHold = !activeTabId && state.meta?.ready !== true && !state.meta?.startupErr;
-  const hydrateStatusLabel = state.hydrating
-    ? state.hydrateReason === "switch-tab"
-      ? t("status.hydrateSwitch")
-      : state.hydrateReason === "resume-session"
-        ? t("status.hydrateResume")
-        : state.hydrateReason === "new-session"
-          ? t("status.hydrateNewSession")
-          : t("status.hydrateSync")
-    : undefined;
   const activeComposerProfile = activeTabId ? composerProfilesByTab[activeTabId] : undefined;
   const backendActiveComposerProfile = useMemo(() => {
     if (state.meta) {
@@ -3367,10 +3358,7 @@ export default function App() {
               context={state.context}
               usage={state.usage}
               balance={state.balance}
-              jobs={state.jobs}
               running={state.running || rewindCommitting}
-              collaborationMode={collaborationMode}
-              toolApprovalMode={toolApprovalMode}
               sessionTurns={sessionTurns}
               sessionTokens={state.sessionTokens}
               turnTokens={state.turnTotalTokens}
@@ -3383,7 +3371,6 @@ export default function App() {
               workspacePath={state.meta?.workspacePath || state.meta?.workspaceRoot || state.meta?.cwd}
               workspaceName={state.meta?.workspaceName}
               gitBranch={state.meta?.gitBranch}
-              hydrationLabel={hydrateStatusLabel}
             />
           </footer>
           )}

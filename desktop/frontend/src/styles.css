@@ -6058,23 +6058,6 @@ a[href] {
   background: var(--accent);
   animation: pulse 1.2s ease-in-out infinite;
 }
-.statusbar__group--hydrate {
-  max-width: 190px;
-  overflow: hidden;
-}
-.statusbar__hydrate {
-  color: var(--accent);
-  max-width: 190px;
-}
-.statusbar__hydrate svg {
-  flex: 0 0 auto;
-  animation: spin 1s linear infinite;
-}
-.statusbar__hydrate span {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
 @keyframes pulse {
   50% {
     opacity: 0.35;
@@ -6149,69 +6132,8 @@ a[href] {
 .statusbar__cost {
   justify-content: flex-start;
 }
-.stat--jobs,
-.statusbar__jobswrap {
-  flex: 0 0 auto;
-  justify-content: center;
-}
 .statusbar__balance {
   justify-content: flex-start;
-}
-.statusbar__jobswrap {
-  position: relative;
-  display: inline-flex;
-  align-items: center;
-}
-.statusbar__jobs {
-  --wails-draggable: no-drag;
-  background: none;
-  border: none;
-  padding: 0;
-  font: inherit;
-  font-family: inherit;
-  font-size: inherit;
-  color: var(--fg-dim);
-}
-.statusbar__jobs:hover {
-  color: var(--fg);
-}
-/* Jobs popover: reuses .modelsw__menu's elevated box; only the rows differ. */
-.jobsmenu {
-  min-width: 220px;
-}
-.jobsmenu__head {
-  padding: 2px 9px 6px;
-  font-size: var(--text-xs);
-  color: var(--fg-faint);
-}
-.jobsmenu__item {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-  padding: 4px 9px;
-  font-size: var(--font-control-small);
-}
-.jobsmenu__id {
-  color: var(--accent);
-  flex-shrink: 0;
-}
-.jobsmenu__label {
-  flex: 1;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  color: var(--fg-dim);
-}
-.jobsmenu__status {
-  color: var(--fg-faint);
-  flex-shrink: 0;
-}
-.statusbar__plan {
-  color: var(--accent);
-  letter-spacing: 0.6px;
-}
-.statusbar__yolo {
-  color: var(--mode-yolo-fg);
-  letter-spacing: 0.6px;
 }
 /* model switcher (bottom-of-window popover) */
 .modelsw {
@@ -20296,12 +20218,10 @@ a[href] {
 
 @media (max-width: 760px) {
   .statusbar__group--context,
-  .statusbar__group--jobs,
   .statusbar__item[data-statusbar-item="session_tokens"],
   .statusbar__item[data-statusbar-item="turn_tokens"],
   .statusbar__item[data-statusbar-item="session_turns"],
-  .statusbar__item[data-statusbar-item="context"],
-  .statusbar__jobswrap {
+  .statusbar__item[data-statusbar-item="context"] {
     display: none;
   }
 }
@@ -21182,8 +21102,7 @@ a[href] {
   box-shadow: 0 0 0 4px var(--accent-soft);
 }
 
-:root[data-theme-style] .statusbar__cache b,
-:root[data-theme-style] .statusbar__plan {
+:root[data-theme-style] .statusbar__cache b {
   color: var(--accent);
 }
 
