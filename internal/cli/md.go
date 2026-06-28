@@ -296,13 +296,19 @@ func (r *mdRenderer) renderFenced(buf *strings.Builder, n ast.Node, src []byte, 
 			buf.WriteString("\n")
 			continue
 		}
-		wrapped := ansi.Hardwrap(accent(line), innerW, true)
-		for _, wl := range strings.Split(wrapped, "\n") {
+		accentSGR := fgSGR(activeCLITheme.accent)
+		accented := accent(line)
+		wrapped := ansi.Hardwrap(accented, innerW, true)
+		wrappedLines := strings.Split(wrapped, "\n")
+		for i, wl := range wrappedLines {
+			// Continuation lines without any ANSI code lost the accent colour
+			// during hardwrap — reapply it so they don't revert to terminal white.
+			if i > 0 && !strings.HasPrefix(wl, "\033[") {
+				wl = accentSGR + wl
+			}
 			buf.WriteString(prefix)
 			buf.WriteString(wl)
-			if strings.Contains(wl, "\033[") {
-				buf.WriteString("\033[0m")
-			}
+			buf.WriteString(ansiReset)
 			buf.WriteString("\n")
 		}
 	}
