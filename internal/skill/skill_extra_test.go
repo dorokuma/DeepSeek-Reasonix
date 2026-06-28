@@ -73,48 +73,6 @@ func TestSplitFrontmatterQuotedValues(t *testing.T) {
 	}
 }
 
-// --- parseAllowedTools ---
-
-func TestParseAllowedToolsEmpty(t *testing.T) {
-	if got := parseAllowedTools(""); got != nil {
-		t.Errorf("empty = %v, want nil", got)
-	}
-	if got := parseAllowedTools("   "); got != nil {
-		t.Errorf("whitespace = %v, want nil", got)
-	}
-}
-
-func TestParseAllowedToolsSingle(t *testing.T) {
-	got := parseAllowedTools("bash")
-	if len(got) != 1 || got[0] != "bash" {
-		t.Errorf("single = %v", got)
-	}
-}
-
-func TestParseAllowedToolsMultiple(t *testing.T) {
-	got := parseAllowedTools("read_file, grep, bash")
-	if len(got) != 3 {
-		t.Errorf("count = %d, want 3", len(got))
-	}
-	if got[0] != "read_file" || got[1] != "grep" || got[2] != "bash" {
-		t.Errorf("tools = %v", got)
-	}
-}
-
-func TestParseAllowedToolsTrailingComma(t *testing.T) {
-	got := parseAllowedTools("bash,")
-	if len(got) != 1 || got[0] != "bash" {
-		t.Errorf("trailing comma = %v", got)
-	}
-}
-
-func TestParseAllowedToolsExtraSpaces(t *testing.T) {
-	got := parseAllowedTools("  bash  ,  grep  ")
-	if len(got) != 2 || got[0] != "bash" || got[1] != "grep" {
-		t.Errorf("extra spaces = %v", got)
-	}
-}
-
 // --- parseRunAs ---
 
 func TestParseRunAsExplicit(t *testing.T) {

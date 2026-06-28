@@ -9,12 +9,39 @@ import (
 	"math/rand"
 	"net"
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
 	"syscall"
 	"time"
 )
+
+// reAPIKey matches common API key patterns that providers might echo back in
+// error response bodies. Covers OpenAI-style sk-... keys and Bearer tokens.
+var reAPIKey = regexp.MustCompile(`(?:sk-[a-zA-Z0-9_-]{8,}|Bearer\s+[a-zA-Z0-9_-]{8,}|x-api-key:\s*[a-zA-Z0-9_-]{8,})`)
+
+// RedactKeys replaces known API key values and common key patterns in s with
+// "[REDACTED]". knownKeys should be the raw API key(s) used in the request
+// (comma-separated multi-key values are split automatically).
+func RedactKeys(s string, knownKeys ...string) string {
+	if s == "" {
+		return s
+	}
+	// 1. Exact-match known keys (e.g. from rawKey/apiKey parameter).
+	for _, k := range knownKeys {
+		for _, part := range strings.Split(k, ",") {
+			part = strings.TrimSpace(part)
+			if part == "" {
+				continue
+			}
+			s = strings.ReplaceAll(s, part, "[REDACTED]")
+		}
+	}
+	// 2. Pattern-match sk-... keys, Bearer tokens, x-api-key values.
+	s = reAPIKey.ReplaceAllString(s, "[REDACTED]")
+	return s
+}
 
 // MaxRetries is the number of times SendWithRetry re-attempts the connection +
 // header phase after the initial try (so up to MaxRetries+1 total attempts).
@@ -245,17 +272,25 @@ func (m *KeyLeaseManager) CoolDown(key string, d time.Duration) {
 	m.cooldown[key] = time.Now().Add(d)
 }
 
-func injectLeaseKey(req *http.Request, key string, rawKey string) {
+func injectLeaseKey(req *http.Request, key string, rawKey string) error {
+	if key == "" {
+		return errors.New("no available API key from lease")
+	}
+
+	// Handle Authorization: Bearer <token> — reconstruct the full value.
 	if auth := req.Header.Get("Authorization"); auth != "" {
-		if strings.Contains(auth, rawKey) {
-			req.Header.Set("Authorization", strings.Replace(auth, rawKey, key, 1))
+		if strings.HasPrefix(auth, "Bearer ") {
+			req.Header.Set("Authorization", "Bearer "+key)
 		}
+		// Non-Bearer Authorization schemes are left untouched.
 	}
+
+	// Handle x-api-key: <key> — replace the value wholesale.
 	if xkey := req.Header.Get("x-api-key"); xkey != "" {
-		if strings.Contains(xkey, rawKey) {
-			req.Header.Set("x-api-key", strings.Replace(xkey, rawKey, key, 1))
-		}
+		req.Header.Set("x-api-key", key)
 	}
+
+	return nil
 }
 
 // SendWithRetry POSTs a streaming request built by newReq and returns the OK
@@ -295,7 +330,9 @@ func SendWithRetry(ctx context.Context, httpClient *http.Client, provName, keyEn
 		var usedKey string
 		if lm != nil && len(lm.keys) > 0 {
 			usedKey = lm.Lease()
-			injectLeaseKey(req, usedKey, rawKey)
+			if err := injectLeaseKey(req, usedKey, rawKey); err != nil {
+				return nil, fmt.Errorf("%s: %w", provName, err)
+			}
 		}
 
 		resp, err := httpClient.Do(req)
@@ -311,6 +348,7 @@ func SendWithRetry(ctx context.Context, httpClient *http.Client, provName, keyEn
 		}
 
 		msg, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		redacted := RedactKeys(string(msg), rawKey)
 		retryAfter = parseRetryAfter(resp)
 		_, _ = io.Copy(io.Discard, resp.Body)
 		resp.Body.Close()
@@ -320,15 +358,15 @@ func SendWithRetry(ctx context.Context, httpClient *http.Client, provName, keyEn
 				lm.CoolDown(usedKey, 15*time.Second)
 			}
 			// Permanent quota exhaustion: never retry.
-			if isQuotaExhausted(string(msg)) {
-				return nil, &APIError{Provider: provName, Status: resp.StatusCode, Body: strings.TrimSpace(string(msg))}
+			if isQuotaExhausted(redacted) {
+				return nil, &APIError{Provider: provName, Status: resp.StatusCode, Body: strings.TrimSpace(redacted)}
 			}
 		}
 
 		if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
 			return nil, &AuthError{Provider: provName, KeyEnv: keyEnv, Status: resp.StatusCode}
 		}
-		apiErr := &APIError{Provider: provName, Status: resp.StatusCode, Body: strings.TrimSpace(string(msg))}
+		apiErr := &APIError{Provider: provName, Status: resp.StatusCode, Body: strings.TrimSpace(redacted)}
 		if !RetryableStatus(resp.StatusCode) {
 			return nil, apiErr
 		}

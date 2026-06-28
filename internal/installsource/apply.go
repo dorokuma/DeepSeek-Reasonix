@@ -140,7 +140,7 @@ func (t *installSourceTool) applyLinkSkill(req request, act *action) error {
 			return newErr(ErrAlreadyExists, "skill %q already exists at %s", act.skill.Name, conflict)
 		}
 	}
-	if !isLinkTargetSafe(act.skill.SourcePath, t.home, t.root) {
+	if !isLinkTargetSafe(act.skill.SourcePath, filepath.Dir(target), t.home, t.root) {
 		act.RiskLevel = RiskHigh
 		act.RiskReasons = append(act.RiskReasons, "link target is an absolute path outside the project or home root")
 		return newErr(ErrUnsafeLinkTarget, "skill %q source %s is outside %s and %s", act.skill.Name, act.skill.SourcePath, t.root, t.home)
@@ -156,22 +156,26 @@ func (t *installSourceTool) applyLinkSkill(req request, act *action) error {
 	return t.verifySkill(req.Scope, act.skill.Name, act)
 }
 
-// isLinkTargetSafe reports whether a symlink source is allowed. The link
-// target is safe when:
-//   - it is a relative path (we never follow the parent of a relative link),
-//   - or its absolute form is contained within the user's home or the
-//     project root.
-//
-// Absolute paths outside both scopes are rejected with ErrUnsafeLinkTarget
-// so a SKILL.md that points at /etc/passwd does not silently succeed.
-func isLinkTargetSafe(source, home, projectRoot string) bool {
+// isLinkTargetSafe reports whether a symlink source is allowed.
+// Absolute paths must be within the user's home or the project root.
+// Relative paths are resolved against symlinkDir (the directory that
+// will contain the symlink) and then checked the same way.  When
+// symlinkDir is empty and source is relative, the check is skipped
+// (preserving backward compatibility for callers that cannot provide
+// the symlink location at plan time).
+func isLinkTargetSafe(source, symlinkDir, home, projectRoot string) bool {
 	if source == "" {
 		return false
 	}
+	var clean string
 	if !filepath.IsAbs(source) {
-		return true
+		if symlinkDir == "" {
+			return true // cannot check; caller must resolve later
+		}
+		clean = filepath.Join(symlinkDir, source)
+	} else {
+		clean = filepath.Clean(source)
 	}
-	clean := filepath.Clean(source)
 	for _, root := range []string{home, projectRoot} {
 		if root == "" {
 			continue

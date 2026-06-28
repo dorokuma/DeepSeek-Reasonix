@@ -13,6 +13,7 @@ package skill
 import (
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sort"
@@ -57,9 +58,7 @@ type Skill struct {
 	Body        string // full markdown body (post-frontmatter), loaded eagerly
 	Scope       Scope  // where it came from
 	Path        string // absolute path to the SKILL.md / <name>.md, or "(builtin)"
-	// AllowedTools, when non-empty, scopes a subagent skill's tool registry to
-	// these literal tool names (from the `allowed-tools` frontmatter).
-	AllowedTools []string
+
 	RunAs        RunAs  // inline | subagent
 	Model        string // optional model override for runAs=subagent (frontmatter `model:`)
 	Effort       string // optional effort for runAs=subagent (frontmatter `effort:`)
@@ -425,7 +424,7 @@ func (s *Store) parse(path, stem string, scope Scope) (Skill, bool) {
 		Body:         loadBodyWithScripts(path, loadBodyWithReferences(path, strings.TrimSpace(body))),
 		Scope:        scope,
 		Path:         path,
-		AllowedTools: parseAllowedTools(fm["allowed-tools"]),
+
 		RunAs:        parseRunAs(fm["runas"], fm["context"], fm["agent"]),
 		Model:        strings.TrimSpace(fm["model"]),
 		Effort:       strings.TrimSpace(fm["effort"]),
@@ -505,8 +504,20 @@ func loadBodyWithReferences(skillPath, body string) string {
 	sort.Strings(names)
 	var b strings.Builder
 	b.WriteString(body)
+	skillDir := filepath.Dir(skillPath)
 	for _, n := range names {
-		content, err := os.ReadFile(filepath.Join(refsDir, n))
+		refPath := filepath.Join(refsDir, n)
+		resolved, err := filepath.EvalSymlinks(refPath)
+		if err != nil {
+			continue
+		}
+		rel, err := filepath.Rel(skillDir, resolved)
+		if err != nil || strings.HasPrefix(rel, "..") {
+			slog.Warn("skill reference symlink points outside skill directory, skipping",
+				"path", refPath, "resolved", resolved)
+			continue
+		}
+		content, err := os.ReadFile(refPath)
 		if err != nil {
 			continue
 		}
@@ -552,20 +563,7 @@ func loadBodyWithScripts(skillPath, body string) string {
 	return b.String()
 }
 
-// parseAllowedTools splits a comma-separated `allowed-tools` value into trimmed,
-// non-empty tool names; nil when absent.
-func parseAllowedTools(raw string) []string {
-	if strings.TrimSpace(raw) == "" {
-		return nil
-	}
-	var out []string
-	for _, p := range strings.Split(raw, ",") {
-		if t := strings.TrimSpace(p); t != "" {
-			out = append(out, t)
-		}
-	}
-	return out
-}
+
 
 // parseRunAs maps frontmatter to a run mode. An unknown value defaults to the
 // safe (non-spawning) inline mode; a `context: fork` or a non-empty `agent:`
@@ -593,7 +591,6 @@ Replace this body with the playbook the model should follow when this skill is i
 Tips:
 - Reference tools by name (bash, edit_file, grep, read_file, ...)
 - Add ` + "`runAs: subagent`" + ` to frontmatter to spawn an isolated subagent loop
-- Add ` + "`allowed-tools: read_file, grep`" + ` to scope a subagent's tools
 `
 }
 

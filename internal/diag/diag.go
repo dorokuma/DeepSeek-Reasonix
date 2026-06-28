@@ -15,9 +15,6 @@ var (
 )
 
 func Init() {
-	if os.Getenv("REASONIX_DIAG") == "" {
-		return
-	}
 	var err error
 	fname := fmt.Sprintf("/tmp/reasonix-diag-%d.log", os.Getpid())
 	f, err = os.Create(fname)
@@ -46,10 +43,21 @@ func LogHex(source, text string) {
 	defer mu.Unlock()
 	b := []byte(text)
 	preview := ""
-	if len(b) <= 80 {
+	if len(b) <= 200 {
 		preview = hex.EncodeToString(b)
 	} else {
-		preview = hex.EncodeToString(b[:40]) + "..." + hex.EncodeToString(b[len(b)-40:])
+		preview = hex.EncodeToString(b[:120]) + "..." + hex.EncodeToString(b[len(b)-40:])
 	}
 	fmt.Fprintf(f, "%s [%s] len=%d hex=%s\n", time.Now().Format("15:04:05.000000"), source, len(b), preview)
+}
+
+// LogFull records the full text without truncation, for large payloads like SSE JSON.
+func LogFull(source, text string) {
+	if !enabled {
+		return
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	b := []byte(text)
+	fmt.Fprintf(f, "%s [%s] len=%d hex=%s\n", time.Now().Format("15:04:05.000000"), source, len(b), hex.EncodeToString(b))
 }

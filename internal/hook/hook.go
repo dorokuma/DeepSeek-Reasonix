@@ -19,6 +19,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"log/slog"
 	"regexp"
 	"runtime"
 	"strings"
@@ -396,6 +397,12 @@ func Run(ctx context.Context, payload Payload, hooks []ResolvedHook, spawner Spa
 			if s := strings.TrimSpace(r.Stdout); s != "" && json.Valid([]byte(s)) {
 				payload.ToolArgs = json.RawMessage(s)
 				report.ModifiedArgs = json.RawMessage(s)
+				slog.Info("hook modified tool arguments",
+					"tool", payload.ToolName,
+					"original", trunc(string(payload.ToolArgs), 200),
+					"modified", trunc(s, 200),
+					"hook", h.Description,
+				)
 			}
 		}
 	}
@@ -415,6 +422,14 @@ func stderrFor(r SpawnResult, timeout time.Duration) string {
 		return fmt.Sprintf("hook timed out after %s", timeout)
 	}
 	return ""
+}
+
+// trunc truncates s to at most max bytes, appending "..." if truncated.
+func trunc(s string, max int) string {
+	if len(s) > max {
+		return s[:max] + "..."
+	}
+	return s
 }
 
 // DefaultSpawner runs the command through the platform shell with the payload on

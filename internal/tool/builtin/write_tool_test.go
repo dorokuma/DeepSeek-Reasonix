@@ -119,22 +119,27 @@ func TestMoveFileRejectsDestinationExists(t *testing.T) {
 	}
 }
 
-func TestMoveFileRejectsEscape(t *testing.T) {
+func TestMoveFileResolvesRelativePaths(t *testing.T) {
 	dir := t.TempDir()
-	outside := t.TempDir()
 	src := filepath.Join(dir, "a.md")
 	if err := os.WriteFile(src, []byte("hello"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
-	if _, err := (moveFile{workDir: dir}).Execute(context.Background(), argsJSON(t, map[string]any{
-		"source_path":      src,
-		"destination_path": filepath.Join(outside, "a.md"),
-	})); err == nil {
-		t.Fatal("expected error for destination outside workspace")
+	// Relative source resolves against workDir; absolute destination is passed
+	// through (workspace confinement is delegated to the permission system).
+	out, err := (moveFile{workDir: dir}).Execute(context.Background(), argsJSON(t, map[string]any{
+		"source_path":      "a.md",
+		"destination_path": filepath.Join(dir, "sub", "a.md"),
+	}))
+	if err != nil {
+		t.Fatalf("move inside workspace should succeed: %v", err)
 	}
-	if _, err := os.Stat(src); err != nil {
-		t.Fatalf("source should remain after refused move: %v", err)
+	if !strings.Contains(out, "moved") {
+		t.Fatalf("output = %q, want moved", out)
+	}
+	if _, err := os.Stat(src); !os.IsNotExist(err) {
+		t.Fatalf("source should be gone after successful move: %v", err)
 	}
 }
 

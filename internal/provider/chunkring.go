@@ -45,21 +45,11 @@ func NewChunkRing(ctx context.Context, out chan<- Chunk, cap int) *ChunkRing {
 	return cr
 }
 
-// Send attempts to send a chunk to the output channel without blocking.
-// If the channel is full the chunk is stored in a FIFO queue; if the queue
-// is full the oldest chunk is dropped. Returns false when ctx is cancelled
-// or the ring has been closed.
+// Send enqueues a chunk into the ring buffer. The chunk is later forwarded
+// to the output channel by the drain goroutine. Returns false when the ring
+// has been closed (stopCh). The ctx parameter is accepted for interface
+// compatibility but cancellation is handled via stopCh.
 func (cr *ChunkRing) Send(ctx context.Context, chunk Chunk) bool {
-	// Fast path: try non-blocking send.
-	select {
-	case cr.out <- chunk:
-		return true
-	default:
-	}
-
-	// Slow path: enqueue under lock. Re-check stopCh inside the lock
-	// to close the race where stopCh is closed after the select above
-	// but before the mutex is acquired.
 	cr.mu.Lock()
 	select {
 	case <-cr.stopCh:

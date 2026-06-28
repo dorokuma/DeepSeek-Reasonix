@@ -266,6 +266,7 @@ type Agent struct {
 	// stormSig: a model keeps doing the same successful write, so there is no
 	// error for the failure-only storm breaker to see.
 	repeatSuccessCounts map[string]int
+	repeatSuccessMu     sync.Mutex
 }
 
 // SetGate installs the per-call permission gate. Used by `reasonix chat` to swap the
@@ -846,6 +847,7 @@ func (a *Agent) stream(ctx context.Context, turn int) (string, string, string, [
 	for chunk := range ch {
 		switch chunk.Type {
 		case provider.ChunkReasoning:
+			diag.LogHex("agent-reason", chunk.Text)
 			reasoning.WriteString(chunk.Text)
 			if chunk.Signature != "" {
 				signature = chunk.Signature
@@ -976,7 +978,10 @@ func (a *Agent) executeBatch(ctx context.Context, calls []provider.ToolCall) []s
 
 	for _, batch := range partitionToolCalls(a.tools, calls) {
 		if batch.parallel && batch.end-batch.start > 1 {
-			runParallel(ctx, batch.start, batch.end, run)
+			runParallel(ctx, batch.start, batch.end, run, func(idx int, msg string) {
+				outcomes[idx] = toolOutcome{errMsg: msg, output: msg}
+				results[idx] = msg
+			})
 			continue
 		}
 		for i := batch.start; i < batch.end; i++ {
@@ -1037,7 +1042,7 @@ func parallelisable(r *tool.Registry, name string) bool {
 	return ok && t.ReadOnly()
 }
 
-func runParallel(ctx context.Context, start, end int, run func(int)) {
+func runParallel(ctx context.Context, start, end int, run func(int), onPanic func(int, string)) {
 	const maxParallel = 8
 	sem := make(chan struct{}, maxParallel)
 	var wg sync.WaitGroup
@@ -1055,6 +1060,17 @@ func runParallel(ctx context.Context, start, end int, run func(int)) {
 		go func() {
 			defer wg.Done()
 			defer func() { <-sem }()
+			defer func() {
+				if r := recover(); r != nil {
+					slog.Warn("tool goroutine panicked",
+						"index", i,
+						"panic", r,
+					)
+					if onPanic != nil {
+						onPanic(i, fmt.Sprintf("internal error: tool panicked: %v", r))
+					}
+				}
+			}()
 			run(i)
 		}()
 	}
@@ -1346,10 +1362,12 @@ func (a *Agent) executeOne(ctx context.Context, call provider.ToolCall) toolOutc
 
 func (a *Agent) repeatedSuccessBlock(call provider.ToolCall, t tool.Tool) (string, bool) {
 	sig, ok := repeatSuccessSignature(call, t)
-	if !ok || a.repeatSuccessCounts == nil {
+	if !ok {
 		return "", false
 	}
+	a.repeatSuccessMu.Lock()
 	count := a.repeatSuccessCounts[sig]
+	a.repeatSuccessMu.Unlock()
 	if count < repeatSuccessBreakThreshold {
 		return "", false
 	}
@@ -1363,10 +1381,12 @@ func (a *Agent) recordRepeatSuccess(call provider.ToolCall, t tool.Tool) {
 	if !ok {
 		return
 	}
+	a.repeatSuccessMu.Lock()
 	if a.repeatSuccessCounts == nil {
 		a.repeatSuccessCounts = make(map[string]int)
 	}
 	a.repeatSuccessCounts[sig]++
+	a.repeatSuccessMu.Unlock()
 }
 
 func repeatSuccessSignature(call provider.ToolCall, t tool.Tool) (string, bool) {

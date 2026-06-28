@@ -637,6 +637,7 @@ type PermissionsConfig struct {
 // reasonix.toml's [[plugins]] or a project-root .mcp.json (see loadMCPJSON).
 type PluginEntry struct {
 	Name    string            `toml:"name"`
+	Hash    string            `toml:"hash,omitempty"` // sha256:<hex> content integrity hash for remote sources
 	Type    string            `toml:"type"` // "stdio" (default) | "http" | "sse"
 	Command string            `toml:"command"`
 	Args    []string          `toml:"args"`

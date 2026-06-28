@@ -278,8 +278,17 @@ func runAgent(args []string) int {
 		return 2
 	}
 	// Reject cleanup-pending sessions before any provider setup.
-	if *resume != "" && agent.IsCleanupPending(*resume) {
-		fmt.Fprintf(os.Stderr, "session %s is pending cleanup\n", *resume)
+	var resumePath string
+	if *resume != "" {
+		var err error
+		resumePath, err = agent.SafeSessionPath(config.SessionDir(), *resume)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
+			return 1
+		}
+	}
+	if *resume != "" && agent.IsCleanupPending(resumePath) {
+		fmt.Fprintf(os.Stderr, "session %s is pending cleanup\n", resumePath)
 		return 1
 	}
 	if rc := chdirTo(*dir); rc != 0 {
@@ -332,12 +341,12 @@ func runAgent(args []string) int {
 	// precedence over --continue.
 	// --continue: resume the most recent saved session.
 	if *resume != "" {
-		loaded, err := agent.LoadSession(*resume)
+		loaded, err := agent.LoadSession(resumePath)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
 			return 1
 		}
-		ctrl.Resume(loaded, *resume)
+		ctrl.Resume(loaded, resumePath)
 	} else if *cont {
 		sessions, err := agent.ListSessions(config.SessionDir())
 		if err != nil {
@@ -382,18 +391,22 @@ func runAgent(args []string) int {
 // resumeOrPinSession loads an existing transcript or pins a fresh session to
 // path when the file does not exist yet (e.g. reasonix-telegram /new).
 func resumeOrPinSession(ctrl *control.Controller, path string) error {
-	loaded, err := agent.LoadSession(path)
+	safePath, err := agent.SafeSessionPath(ctrl.SessionDir(), path)
+	if err != nil {
+		return err
+	}
+	loaded, err := agent.LoadSession(safePath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			if err := os.MkdirAll(filepath.Dir(safePath), 0o755); err != nil {
 				return fmt.Errorf("create session dir: %w", err)
 			}
-			ctrl.SetSessionPath(path)
+			ctrl.SetSessionPath(safePath)
 			return nil
 		}
 		return err
 	}
-	ctrl.Resume(loaded, path)
+	ctrl.Resume(loaded, safePath)
 	return nil
 }
 
@@ -442,8 +455,17 @@ func runServe(args []string) int {
 		return 2
 	}
 	// Reject cleanup-pending sessions before any provider setup.
-	if *resume != "" && agent.IsCleanupPending(*resume) {
-		fmt.Fprintf(os.Stderr, "session %s is pending cleanup\n", *resume)
+	var resumePath string
+	if *resume != "" {
+		var err error
+		resumePath, err = agent.SafeSessionPath(config.SessionDir(), *resume)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
+			return 1
+		}
+	}
+	if *resume != "" && agent.IsCleanupPending(resumePath) {
+		fmt.Fprintf(os.Stderr, "session %s is pending cleanup\n", resumePath)
 		return 1
 	}
 
@@ -507,7 +529,7 @@ func runServe(args []string) int {
 
 	// Auto-save target: reuse the resumed file, else a fresh one — same as chat.
 	if *resume != "" {
-		if err := resumeOrPinSession(ctrl, *resume); err != nil {
+		if err := resumeOrPinSession(ctrl, resumePath); err != nil {
 			fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
 			return 1
 		}
@@ -525,7 +547,13 @@ func runServe(args []string) int {
 	fmt.Printf("reasonix serve — %s on http://%s\n", ctrl.Label(), *addr)
 	if srv.AuthMode() == "token" {
 		fmt.Printf("  auth: token\n")
-		fmt.Printf("  share: http://%s/?token=%s\n", *addr, srv.AuthToken())
+		tok := srv.AuthToken()
+		if len(tok) > 8 {
+			tok = tok[:4] + "****" + tok[len(tok)-4:]
+		} else {
+			tok = "****"
+		}
+		fmt.Printf("  share: http://%s/?token=%s\n", *addr, tok)
 	} else if srv.AuthMode() == "password" {
 		fmt.Printf("  auth: password (login at http://%s/login)\n", *addr)
 	}

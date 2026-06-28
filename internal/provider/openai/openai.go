@@ -414,7 +414,7 @@ func (c *client) readStream(ctx context.Context, resp *http.Response, cr *provid
 			continue
 		}
 		data := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
-		diag.LogHex("sse-raw", data)
+		diag.LogFull("sse-raw", data)
 		if data == "[DONE]" {
 			sawDone = true
 			break

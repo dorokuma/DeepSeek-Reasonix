@@ -76,14 +76,12 @@ func reviewCommand(args []string) int {
 		return 1
 	}
 
-	// 5. Build tool registry scoped to the review skill's allowed tools
-	// (read_file, ls, glob, grep, bash).
+	// 5. Build tool registry via FilterRegistry (allows all built-in tools minus meta-tools).
 	reg := tool.NewRegistry()
-	for _, name := range reviewSk.AllowedTools {
-		if tl, ok := tool.LookupBuiltin(name); ok {
-			reg.Add(tl)
-		}
+	for _, t := range tool.Builtins() {
+		reg.Add(t)
 	}
+	reg = agent.FilterRegistry(reg, nil, agent.SubagentMetaTools()...)
 
 	// 6. Prepare the review prompt.
 	task := buildReviewTask(diff, *instructions)

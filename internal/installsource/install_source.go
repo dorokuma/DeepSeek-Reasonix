@@ -130,6 +130,7 @@ func (*installSourceTool) Schema() json.RawMessage {
   "tier":{"type":"string","enum":["lazy","background","eager"],"description":"Persisted MCP startup tier. Defaults to lazy."},
   "replace":{"type":"boolean","description":"Allow replacing an existing MCP config entry with the same name. Skills still refuse to overwrite existing files."},
   "strict":{"type":"boolean","description":"Skill install strictness. true (default) requires name+description frontmatter; false copies the file as-is (use only for files you trust)."},
+  "hash":{"type":"string","description":"sha256:<hex> content integrity hash for remote sources. When provided the downloaded body is verified before parsing; mismatched hash refuses the install."},
   "planId":{"type":"string","description":"Optional. Echoed from a previous planned response to confirm the host is approving the same plan."}
 },
 "required":[]

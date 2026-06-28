@@ -197,6 +197,7 @@ func parseMCPJSON(b []byte) ([]config.PluginEntry, []string, error) {
 			Headers   map[string]string `json:"headers"`
 			AutoStart *bool             `json:"auto_start"`
 			Tier      string            `json:"tier"`
+			Hash      string            `json:"hash"`
 		} `json:"mcpServers"`
 	}
 	if err := json.Unmarshal(b, &raw); err != nil {
@@ -242,6 +243,7 @@ func parseMCPJSON(b []byte) ([]config.PluginEntry, []string, error) {
 			Headers:   cleanMap(s.Headers),
 			AutoStart: s.AutoStart,
 			Tier:      tier,
+			Hash:      strings.TrimSpace(s.Hash),
 		}
 		// An empty Type is the canonical "stdio" form; keep it that way so
 		// the rest of the config layer (UpsertPlugin / ShouldAutoStart)

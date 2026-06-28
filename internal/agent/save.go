@@ -83,6 +83,25 @@ func (s *Session) Save(path string) error {
 	return nil
 }
 
+// SafeSessionPath resolves a user-provided path against a session directory,
+// rejecting any path that would escape via ".." traversal. Returns the cleaned
+// path or an error if the path is unsafe. Modeled after checkpoint.safePath.
+func SafeSessionPath(sessionDir, userPath string) (string, error) {
+	abs := userPath
+	if !filepath.IsAbs(abs) {
+		abs = filepath.Join(sessionDir, userPath)
+	}
+	abs = filepath.Clean(abs)
+	if sessionDir != "" {
+		sDir := filepath.Clean(sessionDir)
+		rel, err := filepath.Rel(sDir, abs)
+		if err != nil || !filepath.IsLocal(rel) {
+			return "", fmt.Errorf("session path %q escapes session directory %q", userPath, sessionDir)
+		}
+	}
+	return abs, nil
+}
+
 // LoadSession reads a JSONL file written by Save into a fresh Session value.
 // Missing files surface as os.IsNotExist so callers can fall through to a
 // new session. It auto-detects encrypted files and decrypts transparently.

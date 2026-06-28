@@ -90,3 +90,20 @@ func TestBoxedEmpty(t *testing.T) {
 		t.Error("boxed empty should still produce a box")
 	}
 }
+
+func TestBoxedWrap(t *testing.T) {
+	// When running tests, width defaults to 80.
+	// inner = 78, contentW = 76.
+	// A line of 80 characters should be wrapped.
+	longLine := strings.Repeat("a", 80)
+	got := boxed([]string{longLine})
+	want1 := strings.Repeat("a", 76)
+	want2 := strings.Repeat("a", 4)
+	if !strings.Contains(got, want1) {
+		t.Errorf("boxed should contain wrapped line 1 %q", want1)
+	}
+	if !strings.Contains(got, want2) {
+		t.Errorf("boxed should contain wrapped line 2 %q", want2)
+	}
+}
+

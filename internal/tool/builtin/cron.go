@@ -7,10 +7,13 @@ import (
 	"io"
 	"log"
 	"os"
+	"path/filepath"
 	"strconv"
+	"strings"
 	"syscall"
 
 	"github.com/robfig/cron/v3"
+	"reasonix/internal/config"
 	"reasonix/internal/tool"
 )
 
@@ -30,10 +33,34 @@ type CronTask struct {
 
 func getCronTasksPath() (string, error) {
 	path := os.Getenv("REASONIX_CRON_TASKS_PATH")
-	if path == "" {
-		return "", fmt.Errorf("REASONIX_CRON_TASKS_PATH environment variable is not set")
+
+	// Default: store inside the user config directory
+	base := config.MemoryUserDir()
+	if base == "" {
+		return "", fmt.Errorf("cannot determine user config directory")
 	}
-	return path, nil
+
+	if path == "" {
+		return filepath.Join(base, "cron_tasks.json"), nil
+	}
+
+	// Clean and validate the user-supplied path
+	path = filepath.Clean(path)
+
+	// Reject absolute paths (they bypass the allowed base directory)
+	if filepath.IsAbs(path) {
+		return "", fmt.Errorf("REASONIX_CRON_TASKS_PATH must be a relative path, got absolute: %s", path)
+	}
+
+	fullPath := filepath.Join(base, path)
+
+	// Prevent directory traversal: verify the resolved path still lives under base
+	baseClean := filepath.Clean(base)
+	if !strings.HasPrefix(fullPath, baseClean+string(filepath.Separator)) && fullPath != baseClean {
+		return "", fmt.Errorf("REASONIX_CRON_TASKS_PATH escapes allowed directory")
+	}
+
+	return fullPath, nil
 }
 
 func getChatID() (int64, error) {
@@ -41,6 +68,22 @@ func getChatID() (int64, error) {
 	if cidStr == "" {
 		return 0, fmt.Errorf("REASONIX_CHAT_ID environment variable is not set")
 	}
+
+	// Length limit to prevent abuse
+	if len(cidStr) > 32 {
+		return 0, fmt.Errorf("REASONIX_CHAT_ID too long: %d characters (max 32)", len(cidStr))
+	}
+
+	// Character whitelist: only digits and optional leading minus sign
+	for i, c := range cidStr {
+		if i == 0 && c == '-' {
+			continue
+		}
+		if c < '0' || c > '9' {
+			return 0, fmt.Errorf("invalid REASONIX_CHAT_ID %q: only digits and optional leading minus allowed", cidStr)
+		}
+	}
+
 	cid, err := strconv.ParseInt(cidStr, 10, 64)
 	if err != nil {
 		return 0, fmt.Errorf("invalid REASONIX_CHAT_ID %q: %w", cidStr, err)

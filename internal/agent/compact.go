@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -279,7 +280,10 @@ func (a *Agent) SummarizeFrom(ctx context.Context, fromIdx int) error {
 	}
 	region := msgs[fromIdx:]
 	if a.archiveDir != "" {
-		_, _ = archiveMessages(a.archiveDir, region) // best-effort traceability
+		if _, err := archiveMessages(a.archiveDir, region); err != nil {
+			slog.Warn("failed to archive messages (SummarizeFrom), session history may be lost",
+				"fromIdx", fromIdx, "count", len(region), "error", err)
+		}
 	}
 	summary, err := a.summarize(ctx, region, "")
 	if err != nil {
@@ -311,7 +315,10 @@ func (a *Agent) SummarizeUpTo(ctx context.Context, toIdx int) error {
 	}
 	region := msgs[head:toIdx]
 	if a.archiveDir != "" {
-		_, _ = archiveMessages(a.archiveDir, region)
+		if _, err := archiveMessages(a.archiveDir, region); err != nil {
+			slog.Warn("failed to archive messages (SummarizeUpTo), session history may be lost",
+				"toIdx", toIdx, "count", len(region), "error", err)
+		}
 	}
 	summary, err := a.summarize(ctx, region, "")
 	if err != nil {
