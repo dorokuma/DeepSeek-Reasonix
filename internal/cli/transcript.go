@@ -41,14 +41,31 @@ func wrapTranscript(s string, width int) string {
 		} else {
 			wrapped := ansi.Wrap(line, width, "")
 			wrappedLines := strings.Split(wrapped, "\n")
+			// Extract line-level SGR sequences (those before the first visible
+			// character or reset) so we can reapply them on continuation lines
+			// after a wrap.  ansi.Wrap preserves ANSI sequences in place but
+			// does not replay them across wrap boundaries — a color/style code
+			// on the first sub-line is lost on subsequent ones.
+			prefix := leadingSGR(line)
 			for i, wl := range wrappedLines {
+				hasANSI := ansi.Strip(wl) != wl
+				// Continuation lines that lack the leading style need it
+				// reapplied so color/style carries across the wrap point,
+				// unless the line already starts with a reset (the style
+				// was intentionally ended before the wrap).
+				if i > 0 && prefix != "" && !strings.HasPrefix(wl, "\033[0m") && !strings.HasPrefix(wl, "\033[m") {
+					if !strings.HasPrefix(wl, prefix) {
+						wl = prefix + wl
+						hasANSI = true
+					}
+				}
 				// Close any open SGR at line ends to prevent style bleeding
 				// into viewport padding on strict terminals (e.g. Warp).
 				// ansi.Wrap does not insert SGR resets at wrap points, so
 				// a wrapped line ending mid-style (e.g. a dim link tail)
 				// would leak the attribute into the padded blank area.
-				if ansi.Strip(wl) != wl {
-					wrappedLines[i] = wl + "\033[0m"
+				if hasANSI {
+					wrappedLines[i] = wl + ansiReset
 				}
 			}
 			out = append(out, wrappedLines...)
@@ -60,6 +77,38 @@ func wrapTranscript(s string, width int) string {
 		out[i] = padRight(ln, width)
 	}
 	return strings.Join(out, "\n")
+}
+
+// leadingSGR extracts SGR sequences that appear before the first visible
+// character (or before the first reset) in a string. These are the "line-level"
+// styles that should be reapplied on continuation lines after wrapping.
+func leadingSGR(s string) string {
+	var out strings.Builder
+	for i := 0; i < len(s); {
+		if s[i] == '\033' && i+1 < len(s) && s[i+1] == '[' {
+			j := strings.IndexByte(s[i+2:], 'm')
+			if j < 0 {
+				break
+			}
+			end := i + 2 + j + 1
+			seq := s[i:end]
+			if seq == "\033[0m" || seq == "\033[m" {
+				// Reset: skip it, don't break — there may be subsequent SGR
+				// sequences (e.g. accent colour after the reset) that should
+				// still be collected as leading style.
+				i = end
+				continue
+			}
+			out.WriteString(seq)
+			i = end
+		} else if s[i] == ' ' || s[i] == '\t' || s[i] < 32 || s[i] == 127 {
+			// Skip whitespace and control characters in the prefix
+			i++
+		} else {
+			break
+		}
+	}
+	return out.String()
 }
 
 // clipboardWriteAll is the platform clipboard writer; a var so tests can force
