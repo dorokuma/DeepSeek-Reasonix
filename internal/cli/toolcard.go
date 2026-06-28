@@ -22,10 +22,10 @@ func connectorBlock(lines []string) string {
 	if len(lines) == 0 {
 		return ""
 	}
-	indent := strings.Repeat(" ", len([]rune(connector)))
+	indent := strings.Repeat(" ", ansi.StringWidth(connector))
 	out := dim(connector) + lines[0]
 	for _, ln := range lines[1:] {
-		out += "\n" + indent + ln
+		out += "\n" + dim(indent) + ln
 	}
 	return out
 }

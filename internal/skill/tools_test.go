@@ -195,8 +195,8 @@ func TestInstallSkill(t *testing.T) {
 	if !ok {
 		t.Fatal("installed skill not readable")
 	}
-	if sk.RunAs != RunSubagent || sk.Model != "deepseek-pro" || sk.Effort != "max" || len(sk.AllowedTools) != 2 {
-		t.Errorf("frontmatter not round-tripped: runAs=%s model=%q effort=%q tools=%v", sk.RunAs, sk.Model, sk.Effort, sk.AllowedTools)
+	if sk.RunAs != RunSubagent || sk.Model != "deepseek-pro" || sk.Effort != "max" {
+		t.Errorf("frontmatter not round-tripped: runAs=%s model=%q effort=%q", sk.RunAs, sk.Model, sk.Effort)
 	}
 	// Refuses overwrite.
 	if _, err := tl.Execute(context.Background(), json.RawMessage(

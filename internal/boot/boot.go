@@ -494,7 +494,7 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 		MaxSubagentSteps:          cfg.Agent.MaxSubagentSteps,
 		Temperature:               cfg.Agent.Temperature,
 		Pricing:                   entry.Price,
-		Gate:                      nil,
+		Gate:                      subAgentGate,
 		Hooks:                     hookRunner,
 		Jobs:                      jm,
 		ProjectChecks:             projectChecks,
@@ -524,7 +524,7 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 			}
 			prov, price, ctxWin = p, pr, cw
 		}
-		subReg := agent.FilterRegistry(reg, sk.AllowedTools, agent.SubagentMetaTools()...)
+		subReg := agent.FilterRegistry(reg, nil, agent.SubagentMetaTools()...)
 		steps := maxSteps
 		if agentOpts.MaxSubagentSteps > 0 {
 			steps = agentOpts.MaxSubagentSteps
@@ -538,7 +538,7 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 			MaxSteps:      steps,
 			Temperature:   cfg.Agent.Temperature,
 			Pricing:       price,
-			Gate:          nil,
+			Gate:          subAgentGate,
 			Hooks:         hookRunner.WithAgentLayer(hook.AgentLayerSubagent),
 			ContextWindow: ctxWin,
 			ArchiveDir:    config.ArchiveDir(),

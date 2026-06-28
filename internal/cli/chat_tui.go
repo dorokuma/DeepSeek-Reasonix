@@ -1597,7 +1597,8 @@ func (m *chatTUI) streamReasoning(chunk string) {
 // positive maxLines keeps only the trailing visual lines (the live view); 0
 // renders all (verbose collapse).
 func reasoningBlock(raw string, width, maxLines int) string {
-	w := width - len([]rune(connector))
+	// Reserve 1 column for the scrollbar so the block fits inside the viewport.
+	w := (width - 1) - ansi.StringWidth(connector)
 	if w < 8 {
 		w = 8
 	}
@@ -1664,7 +1665,7 @@ func (m *chatTUI) streamToolOutput(id, chunk string) {
 	}
 	lines := make([]string, len(vis))
 	for i, ln := range vis {
-		lines[i] = dim(clampPlain(ln, m.width-len([]rune(connector))))
+		lines[i] = dim(clampPlain(ln, (m.width-1)-ansi.StringWidth(connector)))
 	}
 	m.transcript[m.toolStreamIdx] = connectorBlock(lines)
 	m.transcriptDirty = true
@@ -1707,14 +1708,14 @@ func (m *chatTUI) collapseToolOutput(id string) {
 		if total > shellPreviewLines {
 			preview := make([]string, shellPreviewLines+1)
 			for i := 0; i < shellPreviewLines; i++ {
-				preview[i] = dim(clampPlain(lines[i], m.width-len([]rune(connector))))
+				preview[i] = dim(clampPlain(lines[i], (m.width-1)-ansi.StringWidth(connector)))
 			}
 			preview[shellPreviewLines] = dim(fmt.Sprintf("… %d more lines (click/Ctrl+B)", total-shellPreviewLines))
 			m.transcript[m.toolStreamIdx] = connectorBlock(preview)
 		} else {
 			rendered := make([]string, total)
 			for i, ln := range lines {
-				rendered[i] = dim(clampPlain(ln, m.width-len([]rune(connector))))
+				rendered[i] = dim(clampPlain(ln, (m.width-1)-ansi.StringWidth(connector)))
 			}
 			m.transcript[m.toolStreamIdx] = connectorBlock(rendered)
 		}
@@ -1752,7 +1753,7 @@ func (m *chatTUI) toggleShellOutput() {
 	}
 	lines := strings.Split(strings.TrimRight(full, "\n"), "\n")
 	total := len(lines)
-	innerW := m.width - len([]rune(connector))
+	innerW := (m.width - 1) - ansi.StringWidth(connector)
 	if innerW < 10 {
 		innerW = 80
 	}
@@ -2816,6 +2817,8 @@ func (m *chatTUI) ingestEvent(e event.Event) {
 	if e.Kind == event.Retrying {
 		m.retryAttempt = e.RetryAttempt
 		m.retryMax = e.RetryMax
+		m.pending.Reset()
+		m.answerFlushed = 0
 		return
 	}
 	// Any other event means the connection got past the retry window (or the turn
@@ -2839,6 +2842,7 @@ func (m *chatTUI) ingestEvent(e event.Event) {
 	}
 	switch e.Kind {
 	case event.Reasoning:
+		diag.LogHex("tui-reason", e.Text)
 		if m.nativeScrollback {
 			if !m.reasoningNative {
 				m.thinkStart = time.Now()

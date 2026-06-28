@@ -46,9 +46,17 @@ func (t *installSourceTool) skillAction(req request, cand skillCandidate, mode s
 		skill:         cand,
 	}
 	a.RiskLevel, a.RiskReasons = skillActionRisk(mode, cand)
-	if mode == "link" && !isLinkTargetSafe(cand.SourcePath, t.home, t.root) {
-		a.RiskLevel = RiskHigh
-		a.RiskReasons = append(a.RiskReasons, "link target is an absolute path outside the project or home root")
+	if mode == "link" {
+		// Determine the directory that will contain the symlink so
+		// relative-source escape checks can resolve the target.
+		symlinkDir := filepath.Dir(canonical)
+		if cand.IsDir {
+			symlinkDir = filepath.Dir(filepath.Dir(canonical))
+		}
+		if !isLinkTargetSafe(cand.SourcePath, symlinkDir, t.home, t.root) {
+			a.RiskLevel = RiskHigh
+			a.RiskReasons = append(a.RiskReasons, "link target is an absolute path outside the project or home root")
+		}
 	}
 	return a
 }
@@ -195,6 +203,7 @@ func parseSkillContent(content, fallbackName, source string, strict bool) (skill
 	if !config.IsValidSkillName(name) {
 		return skillCandidate{}, newErr(ErrInvalidManifest, "skill %q at %s has an invalid name", name, source)
 	}
+	hash := collapseSpaces(fm["hash"])
 	desc := collapseSpaces(fm["description"])
 	if strict {
 		if desc == "" {
@@ -204,7 +213,7 @@ func parseSkillContent(content, fallbackName, source string, strict bool) (skill
 			return skillCandidate{}, newErr(ErrInvalidManifest, "skill %q at %s has an empty body", name, source)
 		}
 	}
-	return skillCandidate{Name: name, Description: desc, SourcePath: source, Content: content}, nil
+	return skillCandidate{Name: name, Description: desc, SourcePath: source, Content: content, Hash: hash}, nil
 }
 
 // scanSkillRoot enumerates skills under a directory with bounded recursion:

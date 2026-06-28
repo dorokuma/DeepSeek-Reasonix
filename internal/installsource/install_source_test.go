@@ -323,14 +323,22 @@ func TestApplyLinkSkillRejectsEscape(t *testing.T) {
 
 	// Synthesize a candidate that points at /etc/passwd by calling the
 	// private helper directly. The link check runs before any disk write.
-	if isLinkTargetSafe("/etc/passwd", home, project) {
+	if isLinkTargetSafe("/etc/passwd", "", home, project) {
 		t.Fatal("/etc/passwd should be considered unsafe")
 	}
-	if !isLinkTargetSafe("./local-skill.md", home, project) {
-		t.Fatal("relative link target should be safe")
+	// Relative path inside the project root should be safe when resolved
+	// against a symlink directory under the project.
+	if !isLinkTargetSafe("./local-skill.md", project, home, project) {
+		t.Fatal("relative link target inside project root should be safe")
 	}
-	if !isLinkTargetSafe(filepath.Join(project, "skills/x.md"), home, project) {
+	if !isLinkTargetSafe(filepath.Join(project, "skills/x.md"), "", home, project) {
 		t.Fatal("link under project root should be safe")
+	}
+
+	// Relative path that escapes the project root via ".." must be rejected.
+	skillDir := filepath.Join(project, ".reasonix", "skills", "foo")
+	if isLinkTargetSafe("../../../../etc/passwd", skillDir, home, project) {
+		t.Fatal("relative path escape via '..' should be considered unsafe")
 	}
 
 	src := filepath.Join(t.TempDir(), "escape.md")

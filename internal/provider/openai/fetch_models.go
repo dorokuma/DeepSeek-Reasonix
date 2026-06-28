@@ -9,12 +9,19 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"reasonix/internal/netclient"
+	"reasonix/internal/provider"
 )
 
 // FetchModels calls the OpenAI-compatible GET /models endpoint and returns the
 // available model IDs.
 func FetchModels(ctx context.Context, baseURL, apiKey string) ([]string, error) {
-	cli := &http.Client{Timeout: 10 * time.Second}
+	cli, err := netclient.NewHTTPClient(netclient.ProxySpec{Mode: netclient.ModeOff}, netclient.TransportOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("fetch models: create client: %w", err)
+	}
+	cli.Timeout = 10 * time.Second
 	url := strings.TrimRight(baseURL, "/")
 	if !strings.HasSuffix(url, "/models") {
 		url += "/models"
@@ -39,7 +46,8 @@ func FetchModels(ctx context.Context, baseURL, apiKey string) ([]string, error) 
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("fetch models: status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+		bodyStr := provider.RedactKeys(strings.TrimSpace(string(body)), apiKey)
+		return nil, fmt.Errorf("fetch models: status %d: %s", resp.StatusCode, bodyStr)
 	}
 
 	var result struct {

@@ -1,9 +1,11 @@
 package cli
 
 import (
+	"os"
 	"strings"
 
 	"github.com/charmbracelet/x/ansi"
+	"golang.org/x/term"
 )
 
 // visibleWidth returns the printable column width of s: ANSI SGR codes are
@@ -31,19 +33,33 @@ func padRight(s string, w int) string {
 // auto-fits the longest line plus one column of padding on each side. The
 // result always ends with a trailing newline so callers can Print it directly.
 func boxed(lines []string) string {
-	inner := 0
+	width, _, err := term.GetSize(int(os.Stdout.Fd()))
+	if err != nil || width <= 0 {
+		width = 80
+	}
+	inner := width - 2
+	if inner < 8 {
+		inner = 8
+	}
+	contentW := inner - 2
+
+	var renderLines []string
 	for _, l := range lines {
-		if w := visibleWidth(l); w > inner {
-			inner = w
+		if visibleWidth(l) > contentW {
+			wrapped := ansi.Wrap(l, contentW, "")
+			subLines := strings.Split(wrapped, "\n")
+			renderLines = append(renderLines, subLines...)
+		} else {
+			renderLines = append(renderLines, l)
 		}
 	}
-	inner += 2 // one space of padding on each side
+
 	bar := strings.Repeat("─", inner)
 
 	var b strings.Builder
 	b.WriteString(accent("╭" + bar + "╮"))
 	b.WriteByte('\n')
-	for _, l := range lines {
+	for _, l := range renderLines {
 		gap := inner - visibleWidth(l) - 2
 		if gap < 0 {
 			gap = 0

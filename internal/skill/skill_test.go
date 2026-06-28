@@ -199,9 +199,6 @@ func TestFrontmatterFields(t *testing.T) {
 	if sub.RunAs != RunSubagent {
 		t.Error("runAs: subagent not parsed")
 	}
-	if len(sub.AllowedTools) != 2 || sub.AllowedTools[0] != "read_file" || sub.AllowedTools[1] != "grep" {
-		t.Errorf("allowed-tools mis-parsed: %v", sub.AllowedTools)
-	}
 	if sub.Model != "deepseek-pro" {
 		t.Errorf("model mis-parsed: %q", sub.Model)
 	}
@@ -299,33 +296,6 @@ func TestBuiltinInitIsInlineSkill(t *testing.T) {
 	}
 	if _, listed := find(st.List(), "init"); !listed {
 		t.Error("init should appear in List() so it reaches the slash menu")
-	}
-}
-
-func TestBuiltinSubagentSkillsDeclareAllowedTools(t *testing.T) {
-	st := New(Options{HomeDir: t.TempDir()})
-	cases := map[string][]string{
-		"explore":         {"read_file", "ls", "glob", "grep", "ctx_read", "ctx_search", "ctx_run"},
-		"research":        {"read_file", "ls", "glob", "grep", "ctx_read", "ctx_search", "ctx_run", "mcp_jina_read_url", "mcp_jina_search_web"},
-		"review":          {"read_file", "ls", "glob", "grep", "ctx_read", "ctx_search", "ctx_run", "bash"},
-		"security-review": {"read_file", "ls", "glob", "grep", "ctx_read", "ctx_search", "ctx_run", "bash"},
-	}
-	for name, want := range cases {
-		sk, ok := st.Read(name)
-		if !ok {
-			t.Fatalf("built-in %s skill not found", name)
-		}
-		if sk.RunAs != RunSubagent {
-			t.Fatalf("%s RunAs = %s, want subagent", name, sk.RunAs)
-		}
-		if !sameStrings(sk.AllowedTools, want) {
-			t.Errorf("%s AllowedTools = %v, want %v", name, sk.AllowedTools, want)
-		}
-		for _, meta := range []string{"task", "run_skill", "install_skill", "install_source", "explore", "research", "review", "security_review"} {
-			if containsString(sk.AllowedTools, meta) {
-				t.Errorf("%s AllowedTools should not include meta-tool %q: %v", name, meta, sk.AllowedTools)
-			}
-		}
 	}
 }
 

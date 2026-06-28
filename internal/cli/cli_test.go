@@ -88,20 +88,24 @@ func TestModelForResumePathUsesStoredModelWhenAvailable(t *testing.T) {
 }
 
 func TestLoadResumableSessionRejectsCleanupPending(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "pending.jsonl")
+	home := isolateCLIConfigHome(t)
+
+	path := filepath.Join(config.SessionDir(), "pending.jsonl")
+	os.MkdirAll(filepath.Dir(path), 0o755)
 	saveTestSession(t, path, "pending prompt")
 	agent.MarkCleanupPending(path, "delete")
 
 	if _, err := loadResumableSession(path); err == nil || !strings.Contains(err.Error(), "pending cleanup") {
 		t.Fatalf("loadResumableSession cleanup-pending error = %v, want pending cleanup", err)
 	}
+	_ = home
 }
 
 func TestRunResumeRejectsCleanupPending(t *testing.T) {
-	isolateCLIConfigHome(t)
+	home := isolateCLIConfigHome(t)
 
-	path := filepath.Join(t.TempDir(), "pending-run.jsonl")
+	path := filepath.Join(config.SessionDir(), "pending-run.jsonl")
+	os.MkdirAll(filepath.Dir(path), 0o755)
 	saveTestSession(t, path, "pending prompt")
 	agent.MarkCleanupPending(path, "delete")
 
@@ -113,12 +117,14 @@ func TestRunResumeRejectsCleanupPending(t *testing.T) {
 	if !strings.Contains(errOut, "pending cleanup") {
 		t.Fatalf("run --resume cleanup-pending stderr = %q, want pending cleanup", errOut)
 	}
+	_ = home
 }
 
 func TestServeResumeRejectsCleanupPending(t *testing.T) {
 	isolateCLIConfigHome(t)
 
-	path := filepath.Join(t.TempDir(), "pending-serve.jsonl")
+	path := filepath.Join(config.SessionDir(), "pending-serve.jsonl")
+	os.MkdirAll(filepath.Dir(path), 0o755)
 	saveTestSession(t, path, "pending prompt")
 	agent.MarkCleanupPending(path, "delete")
 

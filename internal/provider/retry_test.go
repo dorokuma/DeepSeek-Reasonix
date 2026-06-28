@@ -147,3 +147,89 @@ func TestSendWithRetryRecoversAndNotifies(t *testing.T) {
 		t.Fatalf("retry notify = %#v, want one Attempt 1/%d", infos, MaxRetries)
 	}
 }
+
+func TestInjectLeaseKey(t *testing.T) {
+	t.Run("authorization bearer", func(t *testing.T) {
+		req, _ := http.NewRequest("GET", "http://x", nil)
+		req.Header.Set("Authorization", "Bearer sk-old-key")
+		if err := injectLeaseKey(req, "sk-new-key", "sk-old-key"); err != nil {
+			t.Fatal(err)
+		}
+		if got := req.Header.Get("Authorization"); got != "Bearer sk-new-key" {
+			t.Errorf("Authorization = %q, want %q", got, "Bearer sk-new-key")
+		}
+	})
+
+	t.Run("x-api-key", func(t *testing.T) {
+		req, _ := http.NewRequest("GET", "http://x", nil)
+		req.Header.Set("x-api-key", "sk-ant-old")
+		if err := injectLeaseKey(req, "sk-ant-new", "sk-ant-old"); err != nil {
+			t.Fatal(err)
+		}
+		if got := req.Header.Get("x-api-key"); got != "sk-ant-new" {
+			t.Errorf("x-api-key = %q, want %q", got, "sk-ant-new")
+		}
+	})
+
+	t.Run("both headers", func(t *testing.T) {
+		req, _ := http.NewRequest("GET", "http://x", nil)
+		req.Header.Set("Authorization", "Bearer sk-old")
+		req.Header.Set("x-api-key", "sk-ant-old")
+		if err := injectLeaseKey(req, "sk-new", "sk-old"); err != nil {
+			t.Fatal(err)
+		}
+		if got := req.Header.Get("Authorization"); got != "Bearer sk-new" {
+			t.Errorf("Authorization = %q, want %q", got, "Bearer sk-new")
+		}
+		if got := req.Header.Get("x-api-key"); got != "sk-new" {
+			t.Errorf("x-api-key = %q, want %q", got, "sk-new")
+		}
+	})
+
+	t.Run("empty key returns error", func(t *testing.T) {
+		req, _ := http.NewRequest("GET", "http://x", nil)
+		req.Header.Set("Authorization", "Bearer sk-old")
+		err := injectLeaseKey(req, "", "sk-old")
+		if err == nil {
+			t.Fatal("expected error for empty leased key, got nil")
+		}
+		if req.Header.Get("Authorization") != "Bearer sk-old" {
+			t.Errorf("header should remain unchanged on error, got %q", req.Header.Get("Authorization"))
+		}
+	})
+
+	t.Run("substring safety", func(t *testing.T) {
+		// rawKey = "sk-short" must not match "sk-short-extended"
+		req, _ := http.NewRequest("GET", "http://x", nil)
+		req.Header.Set("Authorization", "Bearer sk-short-extended")
+		if err := injectLeaseKey(req, "sk-new", "sk-short"); err != nil {
+			t.Fatal(err)
+		}
+		// The header value is "Bearer sk-short-extended". The rawKey is
+		// "sk-short", a substring. The new code only touches Bearer headers;
+		// the value after "Bearer " is "sk-short-extended", not "sk-short".
+		// Since we reconstruct the full value from the prefix + leased key,
+		// the header is correctly replaced with "Bearer sk-new".
+		if got := req.Header.Get("Authorization"); got != "Bearer sk-new" {
+			t.Errorf("Authorization = %q, want %q", got, "Bearer sk-new")
+		}
+	})
+
+	t.Run("no auth header", func(t *testing.T) {
+		req, _ := http.NewRequest("GET", "http://x", nil)
+		if err := injectLeaseKey(req, "sk-new", "sk-old"); err != nil {
+			t.Fatal(err)
+		}
+	})
+
+	t.Run("non-bearer authorization untouched", func(t *testing.T) {
+		req, _ := http.NewRequest("GET", "http://x", nil)
+		req.Header.Set("Authorization", "Basic dXNlcjpwYXNz")
+		if err := injectLeaseKey(req, "sk-new", "dXNlcjpwYXNz"); err != nil {
+			t.Fatal(err)
+		}
+		if got := req.Header.Get("Authorization"); got != "Basic dXNlcjpwYXNz" {
+			t.Errorf("non-Bearer header should be untouched, got %q", got)
+		}
+	})
+}

@@ -54,6 +54,11 @@ func wrapTranscript(s string, width int) string {
 			out = append(out, wrappedLines...)
 		}
 	}
+	// Pad every line to exactly width so that renderTranscript's scrollbar
+	// stays at the rightmost column instead of shifting with short content.
+	for i, ln := range out {
+		out[i] = padRight(ln, width)
+	}
 	return strings.Join(out, "\n")
 }
 
@@ -148,7 +153,7 @@ func (m chatTUI) renderTranscript() string {
 		idx := yoff + r
 		line := blank // off-content rows fill to width
 		if idx >= 0 && idx < total {
-			line = lines[idx] // already cw-wide from wrapTranscript
+			line = padRight(ansi.Truncate(lines[idx], cw, ""), cw)
 		}
 		if m.sel.active && !m.sel.empty() {
 			if lo, hi, ok := selSpan(idx, start, end, cw); ok {

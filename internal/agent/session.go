@@ -109,18 +109,42 @@ var fragmentRegex = regexp.MustCompile(`(?s)<fragment\s+id="([^"]+)"\s+type="([^
 
 // fragmentReplaceCache caches compiled replacement regexps keyed by fragment ID,
 // avoiding regexp.MustCompile on every iteration of CalculateDiffAndFilter.
-// NOTE: unbounded; a production implementation should add an eviction strategy.
-var fragmentReplaceCache sync.Map
+// A sync.RWMutex guards the map; when the cache exceeds maxFragReplaceEntries
+// the map is cleared entirely — simple, correct, and avoids unbounded growth.
+const maxFragReplaceEntries = 256
+
+var (
+	fragmentReplaceCache   = make(map[string]*regexp.Regexp, 64)
+	fragmentReplaceCacheMu sync.RWMutex
+)
 
 // fragmentReplacePattern returns a compiled regex for replacing a specific
 // fragment tag. The pattern matches the full <fragment ...>...</fragment>
 // block for the given ID.
 func fragmentReplacePattern(fragID string) *regexp.Regexp {
-	if cached, ok := fragmentReplaceCache.Load(fragID); ok {
-		return cached.(*regexp.Regexp)
+	fragmentReplaceCacheMu.RLock()
+	cached, ok := fragmentReplaceCache[fragID]
+	fragmentReplaceCacheMu.RUnlock()
+	if ok {
+		return cached
 	}
+
 	re := regexp.MustCompile(fmt.Sprintf(`(?s)<fragment\s+id="%s"\s+type="[^"]+">(.*?)</fragment>`, regexp.QuoteMeta(fragID)))
-	fragmentReplaceCache.Store(fragID, re)
+
+	fragmentReplaceCacheMu.Lock()
+	// Double-check after acquiring write lock.
+	if cached, ok := fragmentReplaceCache[fragID]; ok {
+		fragmentReplaceCacheMu.Unlock()
+		return cached
+	}
+	if len(fragmentReplaceCache) >= maxFragReplaceEntries {
+		// Evict all to keep memory bounded. The next call to CalculateDiffAndFilter
+		// will repopulate the cache with whatever fragment IDs appear in the
+		// current message snapshot.
+		fragmentReplaceCache = make(map[string]*regexp.Regexp, 64)
+	}
+	fragmentReplaceCache[fragID] = re
+	fragmentReplaceCacheMu.Unlock()
 	return re
 }
 

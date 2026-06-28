@@ -64,12 +64,26 @@ func (t *installSourceTool) planDownloadedURL(ctx context.Context, req request, 
 	if err != nil {
 		return nil, nil, err
 	}
+	// Verify content integrity if a hash was provided in the request.
+	if err := verifyContent(body, req.Hash); err != nil {
+		return nil, nil, err
+	}
+	isRemote := isURL(sourceURL)
 	if req.Kind == "auto" || req.Kind == "mcp" {
 		entries, warnings, err := parseMCPJSON([]byte(body))
 		if err == nil && len(entries) > 0 {
 			actions := make([]action, 0, len(entries))
 			for _, e := range entries {
 				actions = append(actions, t.mcpEntryAction(req, e, sourceURL))
+			}
+			// Elevate risk when no integrity hash is available for remote sources.
+			if isRemote {
+				for i := range actions {
+					if !hashAvailable(req, &actions[i]) {
+						actions[i].RiskLevel = RiskHigh
+						actions[i].RiskReasons = append(actions[i].RiskReasons, "此安装源未提供完整性校验哈希，无法验证下载内容未被篡改")
+					}
+				}
 			}
 			return actions, warnings, nil
 		}
@@ -81,11 +95,32 @@ func (t *installSourceTool) planDownloadedURL(ctx context.Context, req request, 
 		}
 		cand, err := parseSkillContent(body, name, sourceURL, req.strict())
 		if err == nil {
-			return []action{t.skillAction(req, cand, "copy")}, nil, nil
+			act := t.skillAction(req, cand, "copy")
+			// Elevate risk when no integrity hash is available for remote sources.
+			if isRemote && !hashAvailable(req, &act) {
+				act.RiskLevel = RiskHigh
+				act.RiskReasons = append(act.RiskReasons, "此安装源未提供完整性校验哈希，无法验证下载内容未被篡改")
+			}
+			return []action{act}, nil, nil
 		}
 		return nil, nil, err
 	}
 	return nil, nil, newErr(ErrUnsupportedKind, "downloaded URL did not contain a requested %s install source", req.Kind)
+}
+
+// hashAvailable returns true when a content integrity hash is present either
+// on the request or on the parsed action (skillCandidate.Hash or entry.Hash).
+func hashAvailable(req request, a *action) bool {
+	if req.Hash != "" {
+		return true
+	}
+	switch a.Kind {
+	case "skill":
+		return a.skill.Hash != ""
+	case "mcp":
+		return a.entry.Hash != ""
+	}
+	return false
 }
 
 func (t *installSourceTool) tryGitHubRepo(ctx context.Context, req request) ([]action, []string) {

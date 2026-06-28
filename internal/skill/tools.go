@@ -329,14 +329,13 @@ func (*installSkillTool) Schema() json.RawMessage {
 
 func (t *installSkillTool) Execute(_ context.Context, args json.RawMessage) (string, error) {
 	var p struct {
-		Name         string   `json:"name"`
-		Description  string   `json:"description"`
-		Body         string   `json:"body"`
-		Scope        string   `json:"scope"`
-		RunAs        string   `json:"runAs"`
-		Model        string   `json:"model"`
-		Effort       string   `json:"effort"`
-		AllowedTools []string `json:"allowedTools"`
+		Name        string `json:"name"`
+		Description string `json:"description"`
+		Body        string `json:"body"`
+		Scope       string `json:"scope"`
+		RunAs       string `json:"runAs"`
+		Model       string `json:"model"`
+		Effort      string `json:"effort"`
 	}
 	if err := json.Unmarshal(args, &p); err != nil {
 		return "", fmt.Errorf("invalid args: %w", err)
@@ -373,7 +372,7 @@ func (t *installSkillTool) Execute(_ context.Context, args json.RawMessage) (str
 		runAs = RunSubagent
 	}
 
-	content := renderSkillFile(name, desc, p.Body, runAs, strings.TrimSpace(p.Model), strings.TrimSpace(p.Effort), p.AllowedTools)
+	content := renderSkillFile(name, desc, p.Body, runAs, strings.TrimSpace(p.Model), strings.TrimSpace(p.Effort))
 	path, err := t.store.CreateWithContent(name, scope, content)
 	if err != nil {
 		return "", err
@@ -393,8 +392,8 @@ func (t *installSkillTool) Execute(_ context.Context, args json.RawMessage) (str
 }
 
 // renderSkillFile assembles a skill file's frontmatter + body. Subagent-only
-// fields (model, allowed-tools) are emitted only when relevant.
-func renderSkillFile(name, desc, body string, runAs RunAs, model, effort string, allowedTools []string) string {
+// fields (model) are emitted only when relevant.
+func renderSkillFile(name, desc, body string, runAs RunAs, model, effort string) string {
 	var fm strings.Builder
 	fm.WriteString("---\nname: " + name + "\ndescription: " + desc + "\n")
 	if runAs == RunSubagent {
@@ -404,15 +403,6 @@ func renderSkillFile(name, desc, body string, runAs RunAs, model, effort string,
 		}
 		if effort != "" {
 			fm.WriteString("effort: " + effort + "\n")
-		}
-		var tools []string
-		for _, t := range allowedTools {
-			if t = strings.TrimSpace(t); t != "" {
-				tools = append(tools, t)
-			}
-		}
-		if len(tools) > 0 {
-			fm.WriteString("allowed-tools: " + strings.Join(tools, ", ") + "\n")
 		}
 	}
 	fm.WriteString("---\n\n")

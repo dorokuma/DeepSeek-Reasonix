@@ -731,7 +731,7 @@ func readPDFRef(path string, size int64) string {
 func extractPDFTextDefault(path string) (pdfExtractResult, error) {
 	var firstErr error
 	if pdftotext, err := exec.LookPath("pdftotext"); err == nil {
-		if text, truncated, err := runPDFTextCommand(pdftotext, []string{"-enc", "UTF-8", "-layout", path, "-"}); err == nil {
+		if text, truncated, err := runPDFTextCommand(pdftotext, []string{"-enc", "UTF-8", "-layout", "--", path, "-"}); err == nil {
 			return pdfExtractResult{text: text, tool: "pdftotext", truncated: truncated}, nil
 		} else {
 			firstErr = err
@@ -744,7 +744,7 @@ func extractPDFTextDefault(path string) (pdfExtractResult, error) {
 		}
 		return pdfExtractResult{}, fmt.Errorf("pdftotext and Python PDF libraries are not available")
 	}
-	text, truncated, err := runPDFTextCommand(python, []string{"-c", pythonPDFExtractScript, path})
+	text, truncated, err := runPDFTextCommand(python, []string{"-c", pythonPDFExtractScript, "--", path})
 	if err != nil {
 		if firstErr != nil {
 			return pdfExtractResult{}, fmt.Errorf("pdftotext failed (%v), Python PDF extraction failed (%w)", firstErr, err)

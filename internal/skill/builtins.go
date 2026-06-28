@@ -178,20 +178,11 @@ Rules:
 - Don't fabricate conventions the code doesn't demonstrate.
 - After writing, summarize in one or two lines what you captured and tell the user to review and edit it.`
 
-// extraReadTools holds additional tool names injected at
-// boot time so subagent skills can use them without hardcoding MCP-prefixed names.
-var extraReadTools []string
 
-// SetExtraReadTools registers additional read-only tool names that subagent
-// skills (explore, research, review, security-review) are allowed to use. Call
-// from boot after plugin tools are registered.
-func SetExtraReadTools(names []string) { extraReadTools = names }
 
 // builtinSkills returns the shipped skills. A fresh slice each call so callers
 // can't mutate the shared set.
 func builtinSkills() []Skill {
-	readCodeTools := append([]string{"read_file", "ls", "glob", "grep", "ctx_read", "ctx_search", "ctx_run"}, extraReadTools...)
-	reviewTools := append(append([]string(nil), readCodeTools...), "bash")
 	return []Skill{
 		{
 			Name:        "init",
@@ -204,20 +195,18 @@ func builtinSkills() []Skill {
 		{
 			Name:         "explore",
 			Description:  "Explore the codebase in an isolated subagent — wide-net read-only investigation that returns one distilled answer. Best for: 'find all places that...', 'how does X work across the project', 'survey the code for Y'.",
-			Body:         builtinExploreBody,
-			Scope:        ScopeBuiltin,
-			Path:         "(builtin)",
-			RunAs:        RunSubagent,
-			AllowedTools: append([]string(nil), readCodeTools...),
+			Body:        builtinExploreBody,
+			Scope:       ScopeBuiltin,
+			Path:        "(builtin)",
+			RunAs:       RunSubagent,
 		},
 		{
 			Name:         "research",
 			Description:  "Research a question by combining web search/read (via Jina MCP) + code reading in an isolated subagent. Best for: 'is X supported by lib Y', 'what's the canonical way to do Z', 'compare our impl against the spec'.",
-			Body:         builtinResearchBody,
-			Scope:        ScopeBuiltin,
-			Path:         "(builtin)",
-			RunAs:        RunSubagent,
-			AllowedTools: append(append([]string(nil), readCodeTools...), "mcp_jina_read_url", "mcp_jina_search_web"),
+			Body:        builtinResearchBody,
+			Scope:       ScopeBuiltin,
+			Path:        "(builtin)",
+			RunAs:       RunSubagent,
 		},
 		{
 			Name:        "install-capability",
@@ -228,22 +217,20 @@ func builtinSkills() []Skill {
 			RunAs:       RunInline,
 		},
 		{
-			Name:         "review",
-			Description:  "Review the pending changes (current branch diff by default) in an isolated subagent — flags correctness, security, missing tests, hidden behavior changes; reports a verdict + per-issue file:line. Read-only.",
-			Body:         builtinReviewBody,
-			Scope:        ScopeBuiltin,
-			Path:         "(builtin)",
-			RunAs:        RunSubagent,
-			AllowedTools: append([]string(nil), reviewTools...),
+			Name:        "review",
+			Description: "Review the pending changes (current branch diff by default) in an isolated subagent — flags correctness, security, missing tests, hidden behavior changes; reports a verdict + per-issue file:line. Read-only.",
+			Body:        builtinReviewBody,
+			Scope:       ScopeBuiltin,
+			Path:        "(builtin)",
+			RunAs:       RunSubagent,
 		},
 		{
-			Name:         "security-review",
-			Description:  "Security-focused review of the current branch diff in an isolated subagent — flags injection/authz/secrets/deserialization/path-traversal/crypto issues, severity-tagged. Read-only.",
-			Body:         builtinSecurityReviewBody,
-			Scope:        ScopeBuiltin,
-			Path:         "(builtin)",
-			RunAs:        RunSubagent,
-			AllowedTools: append([]string(nil), reviewTools...),
+			Name:        "security-review",
+			Description: "Security-focused review of the current branch diff in an isolated subagent — flags injection/authz/secrets/deserialization/path-traversal/crypto issues, severity-tagged. Read-only.",
+			Body:        builtinSecurityReviewBody,
+			Scope:       ScopeBuiltin,
+			Path:        "(builtin)",
+			RunAs:       RunSubagent,
 		},
 		{
 			Name:        "test",

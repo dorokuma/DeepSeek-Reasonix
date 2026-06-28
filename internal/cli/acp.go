@@ -198,6 +198,7 @@ func (f *acpFactory) NewSession(ctx context.Context, p acp.SessionParams) (*cont
 		Executor:     executor,
 		Sink:         p.Sink,
 		Policy:       policy,
+		SubAgentGate: headlessGate,
 		Label:        label,
 		SystemPrompt: sysPrompt,
 		SessionDir:   config.SessionDir(),

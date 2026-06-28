@@ -2,8 +2,12 @@ package installsource
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -52,4 +56,31 @@ func (t *installSourceTool) fetchText(ctx context.Context, sourceURL string) (st
 		return "", newErr(ErrSourceUnreadable, "%s: read body: %v", sourceURL, err)
 	}
 	return string(body), nil
+}
+
+// verifyContent checks that body matches the expected sha256 hash.
+// expectedHash must be in "sha256:<hex>" format. An empty expectedHash
+// skips verification (no-op). Returns nil on match, error on mismatch
+// or bad format.
+func verifyContent(body string, expectedHash string) error {
+	if expectedHash == "" {
+		return nil
+	}
+	const prefix = "sha256:"
+	if !strings.HasPrefix(expectedHash, prefix) {
+		return fmt.Errorf("invalid hash format %q: must be sha256:<hex>", expectedHash)
+	}
+	expected, err := hex.DecodeString(expectedHash[len(prefix):])
+	if err != nil {
+		return fmt.Errorf("invalid hash hex in %q: %v", expectedHash, err)
+	}
+	if len(expected) != sha256.Size {
+		return fmt.Errorf("invalid hash length in %q: got %d bytes, want %d", expectedHash, len(expected), sha256.Size)
+	}
+	h := sha256.Sum256([]byte(body))
+	got := hex.EncodeToString(h[:])
+	if got != hex.EncodeToString(expected) {
+		return newErr(ErrInvalidManifest, "content hash mismatch: expected %s, got sha256:%s", expectedHash, got)
+	}
+	return nil
 }
