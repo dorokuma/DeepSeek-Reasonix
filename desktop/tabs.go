@@ -1260,6 +1260,20 @@ func (a *App) openTopicTabWithActivation(scope, workspaceRoot, topicID, sessionP
 
 	tabID := a.newUniqueTabIDLocked()
 	topicTitle := topicTitleForTab(scope, workspaceRoot, topicID)
+
+	// Fallback: if the topic-title file has no entry for this topic, try to
+	// extract a title from the first session found in the session directory.
+	// This covers edge cases where the topic title source was saved under a
+	// different workspace root normalization, such as when switching between
+	// projects in single-surface (creation/workbench) mode.
+	if topicTitle == defaultTopicTitle && sessionPath != "" {
+		if t := topicTitleFromSession(sessionPath); t != "" {
+			topicTitle = t
+			// Persist it back so the topic-titles file is consistent.
+			_ = setTopicTitleWithSource(workspaceRoot, topicID, t, topicTitleSourceAuto)
+		}
+	}
+
 	if sessionPath == "" {
 		var err error
 		sessionPath, err = createEmptySessionFile(desktopSessionDir(actualRoot), "")
