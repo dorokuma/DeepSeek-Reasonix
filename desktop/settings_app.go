@@ -1744,12 +1744,19 @@ func (a *App) SetBotSettings(b BotSettingsView) error {
 // mode without restarting the bot gateway. Only the connection's mode field is
 // persisted; existing sessions on the running gateway are updated in-place.
 func (a *App) SetBotConnectionToolApprovalMode(connID, mode string) error {
+	connID = strings.TrimSpace(connID)
 	mode = normalizeBotConnectionToolApprovalMode(mode)
+	runtimeConnID := connID
 	err := a.applyConfigOnly(func(c *config.Config) error {
 		for i := range c.Bot.Connections {
-			if c.Bot.Connections[i].ID == connID || botruntime.ConnectionRuntimeID(c.Bot.Connections[i]) == connID {
+			candidateRuntimeID := botruntime.ConnectionRuntimeID(c.Bot.Connections[i])
+			if candidateRuntimeID == "" {
+				candidateRuntimeID = strings.TrimSpace(c.Bot.Connections[i].ID)
+			}
+			if c.Bot.Connections[i].ID == connID || candidateRuntimeID == connID {
 				c.Bot.Connections[i].ToolApprovalMode = mode
 				c.Bot.Connections[i].UpdatedAt = time.Now().UTC().Format(time.RFC3339)
+				runtimeConnID = candidateRuntimeID
 				return nil
 			}
 		}
@@ -1758,8 +1765,8 @@ func (a *App) SetBotConnectionToolApprovalMode(connID, mode string) error {
 	if err != nil {
 		return err
 	}
-	if a.botRuntime != nil && mode != "" {
-		a.botRuntime.updateConnectionToolApprovalMode(connID, mode)
+	if a.botRuntime != nil {
+		a.botRuntime.updateConnectionToolApprovalMode(runtimeConnID, mode)
 	}
 	return nil
 }

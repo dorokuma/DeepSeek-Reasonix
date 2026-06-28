@@ -247,6 +247,8 @@ func (r *desktopBotRuntime) snapshot() BotRuntimeStatusView {
 // on the running gateway without restarting. Returns true if updated, false if
 // the gateway is not running or the connection is unknown.
 func (r *desktopBotRuntime) updateConnectionToolApprovalMode(connID, mode string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	if r.gw == nil {
 		return false
 	}
@@ -256,4 +258,3 @@ func (r *desktopBotRuntime) updateConnectionToolApprovalMode(connID, mode string
 	r.gw.UpdateConnectionToolApprovalMode(connID, mode)
 	return true
 }
-
