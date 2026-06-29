@@ -267,6 +267,15 @@ type Agent struct {
 	// error for the failure-only storm breaker to see.
 	repeatSuccessCounts map[string]int
 	repeatSuccessMu     sync.Mutex
+
+	// steerCh receives external user messages injected via Steer() while Run()
+	// is executing. Buffered 8; drops when full.
+	steerCh chan string
+
+	// activeChild points to the currently running foreground sub-agent, if any.
+	// Steer() forwards incoming messages to this child instead of processing
+	// them itself, so the user can "talk through" to a nested sub-agent.
+	activeChild atomic.Pointer[Agent]
 }
 
 // SetGate installs the per-call permission gate. Used by `reasonix chat` to swap the
@@ -567,6 +576,9 @@ func New(prov provider.Provider, tools *tool.Registry, session *Session, opts Op
 // a round count. A positive maxSteps imposes an optional hard guard, surfaced as
 // a resumable notice when hit.
 func (a *Agent) Run(ctx context.Context, input string) error {
+	if a.steerCh == nil {
+		a.steerCh = make(chan string, 8)
+	}
 	a.repeatSuccessCounts = nil
 	a.sink.Emit(event.Event{Kind: event.TurnStarted})
 	// Parse multimodal data URLs embedded in the input text (e.g.
@@ -585,6 +597,7 @@ func (a *Agent) Run(ctx context.Context, input string) error {
 	streamRecoveries := 0
 	executorHandoff := a.executorHandoffGuard && strings.Contains(input, executorHandoffMarker)
 	for step := 0; a.maxSteps <= 0 || step < a.maxSteps; step++ {
+		a.drainSteer()
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
@@ -709,6 +722,47 @@ func (a *Agent) Run(ctx context.Context, input string) error {
 	return fmt.Errorf("paused after %d tool-call rounds (%s) — the work so far is saved; send another message to continue, or set %s higher or to 0 for no limit", a.maxSteps, a.maxStepsKey, a.maxStepsKey)
 }
 
+// setActiveChild sets the current active sub-agent for steer forwarding.
+func (a *Agent) setActiveChild(child *Agent) {
+	a.activeChild.Store(child)
+}
+
+// clearActiveChild clears the active sub-agent reference.
+func (a *Agent) clearActiveChild() {
+	a.activeChild.Store(nil)
+}
+
+// Steer injects a user message into the running agent's message loop.
+// If a foreground sub-agent is active, the message is forwarded to it.
+// Non-blocking: silently drops when the buffer is full.
+func (a *Agent) Steer(input string) {
+	if a.steerCh == nil {
+		return
+	}
+	// Forward to the active foreground sub-agent if one is running.
+	if child := a.activeChild.Load(); child != nil {
+		child.Steer(input)
+		return
+	}
+	select {
+	case a.steerCh <- input:
+	default:
+	}
+}
+
+// drainSteer drains all pending steer messages and appends each as a
+// new user message to the session. Safe to call from the run-loop goroutine.
+func (a *Agent) drainSteer() {
+	for {
+		select {
+		case msg := <-a.steerCh:
+			a.session.Add(provider.Message{Role: provider.RoleUser, Content: msg})
+		default:
+			return
+		}
+	}
+}
+
 type finalReadinessCheck struct {
 	applies              bool
 	reason               string
@@ -800,6 +854,9 @@ func streamRecoveryMessage(hasPartialText, hadPartialTool bool) string {
 // accumulated text and reasoning are also returned so the caller can round-trip
 // reasoning on the next turn.
 func (a *Agent) stream(ctx context.Context, turn int) (string, string, string, []provider.ToolCall, *provider.Usage, bool, bool, error) {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
 	ctx = provider.WithRetryNotify(ctx, func(info provider.RetryInfo) {
 		a.sink.Emit(event.Event{Kind: event.Retrying, RetryAttempt: info.Attempt, RetryMax: info.Max})
 	})
@@ -844,7 +901,34 @@ func (a *Agent) stream(ctx context.Context, turn int) (string, string, string, [
 		}
 		return stored, display
 	}
-	for chunk := range ch {
+	for {
+		var chunk provider.Chunk
+		select {
+		case <-ctx.Done():
+			stored, _ := finishReasoning()
+			return text.String(), stored, signature, calls, usage, false, partialToolStarted, ctx.Err()
+		case c, ok := <-ch:
+			if !ok {
+				// With a PostLLMCall hook, the live stream was suppressed above; transform the
+				// full reasoning now and emit it once so the sink never sees the untranslated
+				// text. Without a hook this is skipped — the chunk-by-chunk events already fired.
+				stored, display := finishReasoning()
+				// Store the transformed reasoning — except when a provider signature pins it to
+				// the original text (Anthropic extended thinking). That signed thinking block is
+				// replayed verbatim on the next tool-call turn; re-uploading transformed text
+				// under the original signature is rejected, so keep the original for storage
+				// while the user still sees the transformed version live. finishReasoning did
+				// that choice above.
+				// Close the text stream: a sink may re-render the streamed raw text as
+				// styled markdown now that it is complete. Reasoning rides along so the sink
+				// has the full chain if it wants it.
+				if text.Len() > 0 || display != "" {
+					a.sink.Emit(event.Event{Kind: event.Message, Text: text.String(), Reasoning: display})
+				}
+				return text.String(), stored, signature, calls, usage, false, false, nil
+			}
+			chunk = c
+		}
 		switch chunk.Type {
 		case provider.ChunkReasoning:
 			diag.LogHex("agent-reason", chunk.Text)
@@ -891,23 +975,6 @@ func (a *Agent) stream(ctx context.Context, turn int) (string, string, string, [
 			return "", "", "", nil, nil, false, false, chunk.Err
 		}
 	}
-	// With a PostLLMCall hook, the live stream was suppressed above; transform the
-	// full reasoning now and emit it once so the sink never sees the untranslated
-	// text. Without a hook this is skipped — the chunk-by-chunk events already fired.
-	stored, display := finishReasoning()
-	// Store the transformed reasoning — except when a provider signature pins it to
-	// the original text (Anthropic extended thinking). That signed thinking block is
-	// replayed verbatim on the next tool-call turn; re-uploading transformed text
-	// under the original signature is rejected, so keep the original for storage
-	// while the user still sees the transformed version live. finishReasoning did
-	// that choice above.
-	// Close the text stream: a sink may re-render the streamed raw text as
-	// styled markdown now that it is complete. Reasoning rides along so the sink
-	// has the full chain if it wants it.
-	if text.Len() > 0 || display != "" {
-		a.sink.Emit(event.Event{Kind: event.Message, Text: text.String(), Reasoning: display})
-	}
-	return text.String(), stored, signature, calls, usage, false, false, nil
 }
 
 func (a *Agent) capturePrefixShape(schemas []provider.ToolSchema) PrefixShape {

@@ -1093,8 +1093,8 @@ func (m chatTUI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.queueEditCursor = -1
 					m.queueEditDraft = ""
 				} else {
-					m.pendingInterject = append(m.pendingInterject, line)
-					m.notice("feedback queued — will send when the current turn finishes")
+					m.ctrl.Steer(line)
+					m.notice("steered")
 					m.queueEditCursor = -1
 					m.queueEditDraft = ""
 				}

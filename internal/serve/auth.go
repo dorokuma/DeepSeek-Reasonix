@@ -78,6 +78,7 @@ func NormalizeAuthMode(mode string) (string, error) {
 type rateLimit struct {
 	mu       sync.Mutex
 	attempts map[string]*rateWindow
+	stopCh   chan struct{}
 }
 
 type rateWindow struct {
@@ -91,25 +92,37 @@ const (
 )
 
 func newRateLimit() *rateLimit {
-	rl := &rateLimit{attempts: make(map[string]*rateWindow)}
+	rl := &rateLimit{
+		attempts: make(map[string]*rateWindow),
+		stopCh:   make(chan struct{}),
+	}
 	go rl.cleanupLoop()
 	return rl
 }
 
 // cleanupLoop periodically purges expired rate-limit windows so the map does not
 // grow without bound over the lifetime of a long-running server.
+func (rl *rateLimit) Close() {
+	close(rl.stopCh)
+}
+
 func (rl *rateLimit) cleanupLoop() {
 	ticker := time.NewTicker(2 * rateLimitWin)
 	defer ticker.Stop()
-	for range ticker.C {
-		rl.mu.Lock()
-		now := time.Now()
-		for ip, w := range rl.attempts {
-			if now.Sub(w.start) > rateLimitWin {
-				delete(rl.attempts, ip)
+	for {
+		select {
+		case <-ticker.C:
+			rl.mu.Lock()
+			now := time.Now()
+			for ip, w := range rl.attempts {
+				if now.Sub(w.start) > rateLimitWin {
+					delete(rl.attempts, ip)
+				}
 			}
+			rl.mu.Unlock()
+		case <-rl.stopCh:
+			return
 		}
-		rl.mu.Unlock()
 	}
 }
 

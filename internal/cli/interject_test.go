@@ -10,7 +10,10 @@ import (
 )
 
 func TestInterjectQueuesWhileRunningWithoutOverwrite(t *testing.T) {
+	r := &blockingTurnRunner{started: make(chan struct{})}
+	ctrl := control.New(control.Options{Runner: r, Sink: event.Discard, SessionDir: t.TempDir(), Label: "test"})
 	m := newTestChatTUI()
+	m.ctrl = ctrl
 	m.state = tuiRunning
 
 	m.input.SetValue("first")
@@ -25,12 +28,16 @@ func TestInterjectQueuesWhileRunningWithoutOverwrite(t *testing.T) {
 	m0, _ = m.update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = m0.(chatTUI)
 
-	if want := []string{"first", "second"}; len(m.pendingInterject) != len(want) ||
-		m.pendingInterject[0] != want[0] || m.pendingInterject[1] != want[1] {
-		t.Fatalf("pendingInterject = %v, want %v (second must not overwrite first; empty must not queue)", m.pendingInterject, want)
+	// Enter while running steers the input into the running turn; pendingInterject
+	// is unchanged.
+	if len(m.pendingInterject) != 0 {
+		t.Fatalf("pendingInterject should remain empty after steer, got %d items", len(m.pendingInterject))
 	}
 	if m.state != tuiRunning {
-		t.Fatalf("queuing input must not change state; got %v", m.state)
+		t.Fatalf("steering input must not change state; got %v", m.state)
+	}
+	if got := m.input.Value(); got != "" {
+		t.Fatalf("input should be reset after steer, got %q", got)
 	}
 }
 

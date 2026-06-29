@@ -264,7 +264,7 @@ func (r *Registry) Suggest(name string) (string, bool) {
 		"list": "ls", "dir": "ls",
 		"explore": "explore", "research": "research",
 		"install": "install_skill", "delete": "delete_range", "remove": "delete_range",
-		"remember": "remember", "forget": "forget",
+		"remember": "remember", "forget": "forget", "recall": "recall",
 	}
 
 	// Normalise: lowercase, collapse whitespace, replace non-alnum with underscores

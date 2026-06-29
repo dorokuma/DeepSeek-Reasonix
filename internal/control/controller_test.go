@@ -30,6 +30,8 @@ func (r appendingRunner) Run(_ context.Context, input string) error {
 	return nil
 }
 
+func (r appendingRunner) Steer(_ string) {}
+
 type fakeControlTool struct{ name string }
 
 func (t fakeControlTool) Name() string { return t.name }

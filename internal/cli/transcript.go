@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"fmt"
 	"strings"
 	"time"
 
@@ -47,18 +48,31 @@ func wrapTranscript(s string, width int) string {
 			// does not replay them across wrap boundaries — a color/style code
 			// on the first sub-line is lost on subsequent ones.
 			prefix := leadingSGR(line)
+			var bytePos int
 			for i, wl := range wrappedLines {
+				wlLen := len(wl) // original length before any prefix prepend
 				hasANSI := ansi.Strip(wl) != wl
 				// Continuation lines that lack the leading style need it
 				// reapplied so color/style carries across the wrap point,
 				// unless the line already starts with a reset (the style
 				// was intentionally ended before the wrap).
-				if i > 0 && prefix != "" && !strings.HasPrefix(wl, "\033[0m") && !strings.HasPrefix(wl, "\033[m") {
-					if !strings.HasPrefix(wl, prefix) {
+				if i > 0 && !strings.HasPrefix(wl, "\033[0m") && !strings.HasPrefix(wl, "\033[m") {
+					// Prefer exact SGR state active at the break point
+					// over the line-level prefix (which may be stale in
+					// the middle of a long coloured run).
+					active := activeSGRAtBreak(line, bytePos)
+					switch {
+					case strings.HasPrefix(wl, "\033["):
+						// Already has ANSI prefix, keep as-is
+					case active != "" && !strings.HasPrefix(wl, active):
+						wl = active + wl
+						hasANSI = true
+					case prefix != "" && !strings.HasPrefix(wl, prefix):
 						wl = prefix + wl
 						hasANSI = true
 					}
 				}
+				bytePos += wlLen
 				// Close any open SGR at line ends to prevent style bleeding
 				// into viewport padding on strict terminals (e.g. Warp).
 				// ansi.Wrap does not insert SGR resets at wrap points, so
@@ -109,6 +123,99 @@ func leadingSGR(s string) string {
 		}
 	}
 	return out.String()
+}
+
+// sgrEntry tracks a single ANSI SGR sequence encountered while scanning.
+type sgrEntry struct {
+	seq    string
+	params string
+}
+
+// activeSGRAtBreak extracts the effective ANSI SGR state at a given byte position
+// in an ANSI-encoded string. Tracks nesting via \033[...m sequences, handles
+// \033[0m as full reset. Returns the SGR prefix needed to restore the active
+// style on a continuation line starting at byte position `breakPos`.
+func activeSGRAtBreak(s string, breakPos int) string {
+	if breakPos <= 0 || breakPos >= len(s) {
+		return ""
+	}
+
+	var stack []sgrEntry
+	i := 0
+	for i < breakPos && i < len(s) {
+		if s[i] == '\033' && i+1 < len(s) && s[i+1] == '[' {
+			end := i + 2
+			for end < len(s) && s[end] != 'm' {
+				end++
+			}
+			if end >= len(s) {
+				break
+			}
+			seq := s[i : end+1]
+			params := s[i+2 : end]
+
+			if params == "0" || params == "" {
+				// Full reset: clear the stack
+				stack = stack[:0]
+			} else {
+				// Remove any previous entry with same parameter category
+				stack = removeOverlapping(stack, params)
+				stack = append(stack, sgrEntry{seq: seq, params: params})
+			}
+			i = end + 1
+			continue
+		}
+		i++
+	}
+
+	// Build the combined SGR sequence from the stack
+	if len(stack) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	for _, e := range stack {
+		b.WriteString(e.seq)
+	}
+	return b.String()
+}
+
+// removeOverlapping removes SGR entries whose parameter category conflicts with newParams.
+func removeOverlapping(stack []sgrEntry, newParams string) []sgrEntry {
+	cat := sgrCategory(newParams)
+	if cat == "" {
+		return stack
+	}
+	var filtered []sgrEntry
+	for _, e := range stack {
+		if sgrCategory(e.params) != cat {
+			filtered = append(filtered, e)
+		}
+	}
+	return filtered
+}
+
+func sgrCategory(params string) string {
+	if params == "" {
+		return ""
+	}
+	// Parse first number
+	n := 0
+	fmt.Sscanf(params, "%d", &n)
+	switch {
+	case n >= 1 && n <= 9:
+		return "attr"
+	case n >= 30 && n <= 39:
+		return "fg"
+	case n == 38 || n == 48:
+		return "ext" // extended color — simplified: treat as unique
+	case n >= 40 && n <= 49:
+		return "bg"
+	case n >= 90 && n <= 97:
+		return "fg"
+	case n >= 100 && n <= 107:
+		return "bg"
+	}
+	return ""
 }
 
 // clipboardWriteAll is the platform clipboard writer; a var so tests can force

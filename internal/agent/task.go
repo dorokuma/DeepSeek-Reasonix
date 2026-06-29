@@ -249,6 +249,7 @@ func (t *TaskTool) Execute(ctx context.Context, args json.RawMessage) (string, e
 
 	// Foreground: run synchronously, nesting events under this call.
 	subCtx := WithNestingDepth(ctx, depth+1)
+	subCtx = WithActiveChild(subCtx)
 	if opts := OptionsFromContext(ctx); opts != nil {
 		subCtx = WithOptions(subCtx, opts)
 	}
@@ -377,6 +378,16 @@ func (t *TaskTool) runSub(ctx context.Context, prompt string, subReg *tool.Regis
 func RunSubAgent(ctx context.Context, prov provider.Provider, reg *tool.Registry, sysPrompt, prompt string, opts Options, sink event.Sink) (string, error) {
 	sess := NewSession(sysPrompt)
 	sub := New(prov, reg, sess, opts, sink)
+
+	// Register as the parent's active child for steer forwarding when the
+	// context enables it (foreground task). This lets external user messages
+	// ("steer") reach the running sub-agent directly. Nested sub-agents work
+	// recursively: each sets itself as its parent's active child.
+	if parentAgent := AgentFromContext(ctx); parentAgent != nil && isActiveChild(ctx) {
+		parentAgent.setActiveChild(sub)
+		defer parentAgent.clearActiveChild()
+	}
+
 	// mergeSubUsage merges the sub-agent's accumulated cache/cost stats into
 	// the parent agent. Called on both success and failure paths so token
 	// consumption is never lost.

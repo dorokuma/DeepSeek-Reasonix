@@ -136,6 +136,22 @@ func (s Store) Delete(name string) error {
 	return s.flushIndex(s.indexLinesExcept(name))
 }
 
+// Read returns the raw content of a memory file by name.
+func (s Store) Read(name string) (string, error) {
+	if s.Dir == "" {
+		return "", fmt.Errorf("memory store unavailable (no user config dir)")
+	}
+	name = slug(name)
+	if name == "" {
+		return "", fmt.Errorf("memory needs a name")
+	}
+	data, err := os.ReadFile(filepath.Join(s.Dir, name+".md"))
+	if err != nil {
+		return "", fmt.Errorf("memory %q not found: %w", name, err)
+	}
+	return string(data), nil
+}
+
 // render serializes a memory to frontmatter + body. The frontmatter mirrors the
 // auto-memory shape (name / description / metadata.type) so the files are
 // interchangeable with that ecosystem and re-readable by loadMemory.

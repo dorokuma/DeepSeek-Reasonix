@@ -22,6 +22,8 @@ func (f *fakeTurnRunner) Run(ctx context.Context, input string) error {
 	return nil
 }
 
+func (f *fakeTurnRunner) Steer(input string) {}
+
 func TestCustomCommandLookup(t *testing.T) {
 	c := New(Options{Commands: []command.Command{{Name: "review"}, {Name: "git:commit"}}})
 

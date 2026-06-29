@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -167,7 +168,19 @@ func ListSessions(dir string) ([]SessionInfo, error) {
 	}
 	var out []SessionInfo
 	for _, e := range entries {
-		if e.IsDir() || filepath.Ext(e.Name()) != ".jsonl" {
+		if e.IsDir() {
+			continue
+		}
+		name := e.Name()
+		if !strings.HasSuffix(name, ".jsonl") && !strings.HasSuffix(name, ".jsonl.enc") {
+			continue
+		}
+		base := name
+		if strings.HasSuffix(base, ".enc") {
+			base = strings.TrimSuffix(base, ".enc")
+		}
+		base = strings.TrimSuffix(base, ".jsonl")
+		if _, err := strconv.ParseInt(base, 10, 64); err == nil {
 			continue
 		}
 		info, err := e.Info()
