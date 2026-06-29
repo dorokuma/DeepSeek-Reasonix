@@ -493,7 +493,7 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	reg.Add(agent.NewTaskTool(execProv, entry.Price, reg, maxSteps, cfg.Agent.MaxSubagentSteps,
 		entry.ContextWindow, cfg.Agent.SoftCompactRatio, cfg.Agent.CompactRatio, cfg.Agent.CompactForceRatio,
 		cfg.Agent.Temperature, config.ArchiveDir(), agent.DefaultTaskSystemPrompt+"\n\n"+extractSharedSections(), subAgentGate,
-		taskModel, taskEffort, resolveSubagentProvider, hookRunner))
+		taskModel, taskEffort, resolveSubagentProvider, hookRunner, cfg.Agent.TaskConfirmationCheck, cfg.Agent.TaskConfirmationKeywords, cfg.Agent.TaskConfirmationSemanticFallback))
 
 	// Session history tools let the AI discover and read past conversations.
 	// `list_sessions` returns all saved session files; `read_session` loads one
