@@ -455,12 +455,44 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 		}
 		return p, me.Price, me.ContextWindow, nil
 	}
+
+	// extractSharedSections reads the reasonix-system.md prompt and extracts
+	// sections marked with [≡ shared] for injection into sub-agent system prompts.
+	extractSharedSections := func() string {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return ""
+		}
+		data, err := os.ReadFile(filepath.Join(home, ".config", "reasonix", "prompts", "reasonix-system.md"))
+		if err != nil {
+			return ""
+		}
+		lines := strings.Split(string(data), "\n")
+		var out strings.Builder
+		inShared := false
+		for _, line := range lines {
+			if strings.HasPrefix(line, "#") && strings.Contains(line, "[≡ shared]") {
+				inShared = true
+				out.WriteString(line + "\n")
+				continue
+			}
+			if inShared {
+				if strings.HasPrefix(line, "#") {
+					inShared = false
+					continue
+				}
+				out.WriteString(line + "\n")
+			}
+		}
+		return out.String()
+	}
+
 	taskModel := firstNonEmpty(cfg.Agent.SubagentModels["task"], cfg.Agent.SubagentModel)
 	taskEffort := firstNonEmpty(cfg.Agent.SubagentEfforts["task"], cfg.Agent.SubagentEffort)
 	subAgentGate := permission.NewGate(policy, nil)
 	reg.Add(agent.NewTaskTool(execProv, entry.Price, reg, maxSteps, cfg.Agent.MaxSubagentSteps,
 		entry.ContextWindow, cfg.Agent.SoftCompactRatio, cfg.Agent.CompactRatio, cfg.Agent.CompactForceRatio,
-		cfg.Agent.Temperature, config.ArchiveDir(), "", subAgentGate,
+		cfg.Agent.Temperature, config.ArchiveDir(), agent.DefaultTaskSystemPrompt+"\n\n"+extractSharedSections(), subAgentGate,
 		taskModel, taskEffort, resolveSubagentProvider, hookRunner))
 
 	// Session history tools let the AI discover and read past conversations.
@@ -474,6 +506,7 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	// loads into the prefix on the next session.
 	reg.Add(memory.NewRememberTool(mem.Store))
 	reg.Add(memory.NewForgetTool(mem.Store))
+	reg.Add(memory.NewRecallTool(mem.Store))
 
 	// The `ask` tool puts structured multiple-choice questions to the user. It
 	// reaches them through the Asker on the call context, which interactive

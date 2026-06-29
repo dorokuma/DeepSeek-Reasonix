@@ -82,7 +82,7 @@ func (b *Broadcaster) Emit(e event.Event) {
 // injected so the client knows it missed some history. Remaining events that
 // are still in the ring are replayed normally.
 func (b *Broadcaster) Subscribe(afterSeq int64) (<-chan []byte, func()) {
-	ch := make(chan []byte, 64)
+	ch := make(chan []byte, ringSize)
 	b.mu.Lock()
 	// Emit a gap notification when the requested events have been overwritten.
 	if afterSeq >= 0 && afterSeq < b.minSeq {

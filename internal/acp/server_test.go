@@ -25,6 +25,8 @@ func (r *fakeRunner) Run(ctx context.Context, input string) error {
 	return r.behavior(ctx, r.sink, input)
 }
 
+func (r *fakeRunner) Steer(_ string) {}
+
 // fakeFactory builds a real control.Controller around the fake runner, so the
 // service exercises the actual controller surface (Run/Cancel/Close) it uses.
 type fakeFactory struct {

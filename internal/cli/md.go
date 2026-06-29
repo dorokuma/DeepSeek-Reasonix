@@ -572,5 +572,19 @@ func wrapAnsi(text string, width int) string {
 	if width < 4 {
 		width = 4
 	}
-	return ansi.Wrap(text, width, "")
+	// Hardwrap line-by-line so we can reapply the active SGR state on each
+	// continuation line. ansi.Wrap (soft-wrap) doesn't expose break points,
+	// making it impossible to fix color loss across wrapped lines.
+	wrapped := ansi.Hardwrap(text, width, true)
+	lines := strings.Split(wrapped, "\n")
+	bytePos := 0
+	for i, ln := range lines {
+		if i > 0 && !strings.HasPrefix(ln, "\033[") {
+			if active := activeSGRAtBreak(text, bytePos); active != "" {
+				lines[i] = active + ln
+			}
+		}
+		bytePos += len(ln)
+	}
+	return strings.Join(lines, "\n")
 }

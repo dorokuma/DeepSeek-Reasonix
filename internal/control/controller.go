@@ -149,6 +149,7 @@ type Controller struct {
 	autoReentryDepth int
 
 	pendingReentry bool
+	pendingInput   string
 
 	wg        sync.WaitGroup
 	closeOnce sync.Once
@@ -318,19 +319,19 @@ func (c *Controller) beginCheckpoint(input string) {
 // context, guarding against concurrent turns and emitting a TurnDone event when
 // it finishes (Err set on failure; nil also for a user Cancel). A no-op if a
 // turn is already in flight.
-func (c *Controller) runGuarded(body func(ctx context.Context) error) {
+func (c *Controller) runGuarded(input string, body func(ctx context.Context) error) {
 	c.mu.Lock()
 	if c.running {
 		c.pendingReentry = true
+		c.pendingInput = input
 		c.mu.Unlock()
 		return
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	c.cancel = cancel
 	c.running = true
-	c.mu.Unlock()
-
 	c.wg.Add(1)
+	c.mu.Unlock()
 	go func() {
 		defer c.wg.Done()
 		defer cancel()
@@ -343,7 +344,8 @@ func (c *Controller) runGuarded(body func(ctx context.Context) error) {
 		c.mu.Unlock()
 		c.sink.Emit(event.Event{Kind: event.TurnDone, Err: explainError(err)})
 		if shouldReenter {
-			c.Send("")
+			c.Send(c.pendingInput)
+			c.pendingInput = ""
 		}
 	}()
 }
@@ -359,7 +361,8 @@ func (c *Controller) autoReenter() {
 	}
 	c.autoReentryDepth++
 	c.mu.Unlock()
-	c.Send("")
+	c.Send(c.pendingInput)
+	c.pendingInput = ""
 }
 
 // Send starts a turn with an uncomposed message. The controller applies
@@ -372,7 +375,7 @@ func (c *Controller) Send(input string) {
 // SendWithRaw starts a turn with separate model input and raw prompt text.
 // The raw parameter is preserved for API compatibility.
 func (c *Controller) SendWithRaw(input, raw string) {
-	c.runGuarded(func(ctx context.Context) error { return c.runTurnWithRaw(ctx, input, raw) })
+	c.runGuarded(raw, func(ctx context.Context) error { return c.runTurnWithRaw(ctx, input, raw) })
 }
 
 // runTurn runs one model turn.
@@ -451,7 +454,7 @@ func (c *Controller) Submit(input string) {
 		if c.Running() {
 			c.Cancel()
 		}
-		c.runGuarded(func(ctx context.Context) error {
+		c.runGuarded(trimmed, func(ctx context.Context) error {
 			if err := c.Compact(ctx, focus); err != nil {
 				if errors.Is(err, context.Canceled) {
 					return nil
@@ -470,7 +473,7 @@ func (c *Controller) Submit(input string) {
 		if c.Running() {
 			c.Cancel()
 		}
-		c.runGuarded(func(ctx context.Context) error {
+		c.runGuarded(trimmed, func(ctx context.Context) error {
 			if err := c.NewSession(); err != nil {
 				if errors.Is(err, context.Canceled) {
 					return nil
@@ -481,7 +484,7 @@ func (c *Controller) Submit(input string) {
 			return nil
 		})
 	case strings.HasPrefix(trimmed, "/mcp_"):
-		c.runGuarded(func(ctx context.Context) error {
+		c.runGuarded(trimmed, func(ctx context.Context) error {
 			sent, found, err := c.MCPPrompt(ctx, trimmed)
 			if err != nil {
 				return err
@@ -543,13 +546,13 @@ func (c *Controller) Submit(input string) {
 		// A custom command wins over a skill of the same name; both resolve to a
 		// turn. (Built-in slash verbs like /compact are handled above.)
 		if sent, ok := c.CustomCommand(trimmed); ok {
-			c.runGuarded(func(ctx context.Context) error {
+			c.runGuarded(trimmed, func(ctx context.Context) error {
 				return c.runTurnWithRaw(ctx, sent, sent)
 			})
 			return
 		}
 		if sent, ok := c.RunSkill(trimmed); ok {
-			c.runGuarded(func(ctx context.Context) error {
+			c.runGuarded(trimmed, func(ctx context.Context) error {
 				return c.runTurnWithRaw(ctx, sent, sent)
 			})
 			return
@@ -588,7 +591,7 @@ func (c *Controller) RunShell(command string) {
 		c.notice(i18n.M.ShellExecEmpty)
 		return
 	}
-	c.runGuarded(func(ctx context.Context) error {
+	c.runGuarded(command, func(ctx context.Context) error {
 		sh := shell.ResolveShell()
 		argv := sh.Argv(command) // false = unsandboxed (user invoked)
 
@@ -653,7 +656,7 @@ func (c *Controller) RunShell(command string) {
 // runRefTurn resolves a line's @references into a context block and starts a
 // turn with it prepended (or the raw line when nothing resolved).
 func (c *Controller) runRefTurn(input string) {
-	c.runGuarded(func(ctx context.Context) error {
+	c.runGuarded(input, func(ctx context.Context) error {
 		block, errs := c.ResolveRefs(ctx, input)
 		for _, e := range errs {
 			c.notice(e)
@@ -686,6 +689,22 @@ func (c *Controller) Run(ctx context.Context, input string) error {
 		defer func() { c.hooks.Stop(context.Background(), lastAssistantText(c.History()), c.turn) }()
 	}
 	return c.runner.Run(ctx, input)
+}
+
+// Steer injects a user message into the current running turn.
+// If no turn is in flight, it falls back to Submit to start a new turn.
+func (c *Controller) Steer(input string) {
+	c.mu.Lock()
+	running := c.running
+	runner := c.runner
+	c.mu.Unlock()
+
+	if !running || runner == nil {
+		go c.Submit(input)
+		return
+	}
+
+	runner.Steer(input)
 }
 
 // Cancel aborts the in-flight turn. A goroutine blocked awaiting approval
@@ -1767,8 +1786,20 @@ func (c *Controller) WorkspaceRoot() string { return c.cpRoot }
 // started fires SessionEnd so a teardown hook runs.
 func (c *Controller) Close() {
 	c.closeOnce.Do(func() {
-		c.closeCancel()
-		c.wg.Wait()
+		// closeCancel is a no-op placeholder reserved for future use.
+		c.Cancel() // cancel the currently running turn so wg.Wait() unblocks
+
+		// wg.Wait with 30-second timeout to prevent hanging on shutdown.
+		done := make(chan struct{})
+		go func() {
+			c.wg.Wait()
+			close(done)
+		}()
+		select {
+		case <-done:
+		case <-time.After(30 * time.Second):
+			slog.Warn("controller: shutdown timed out waiting for goroutines")
+		}
 
 		c.mu.Lock()
 		started := c.startedOnce

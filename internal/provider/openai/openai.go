@@ -405,6 +405,11 @@ func (c *client) readStream(ctx context.Context, resp *http.Response, cr *provid
 	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 
 	for scanner.Scan() {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
 		select { // ping the idle watchdog; non-blocking so a full buffer is fine
 		case activity <- struct{}{}:
 		default:

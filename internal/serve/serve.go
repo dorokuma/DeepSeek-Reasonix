@@ -214,6 +214,7 @@ func (s *Server) handler() http.Handler {
 	mux.HandleFunc("GET /status", s.status)
 	mux.HandleFunc("POST /submit", s.submit)
 	mux.HandleFunc("POST /cancel", s.cancel)
+	mux.HandleFunc("POST /steer", s.steer)
 	mux.HandleFunc("POST /approve", s.approve)
 	mux.HandleFunc("POST /answer", s.answer)
 	return logMiddleware(securityHeadersMiddleware(s.auth.middleware(csrfGuard(writeTimeoutMiddleware(mux, 60*time.Second)))))
@@ -335,6 +336,11 @@ func (s *Server) RunGraceful(ctx context.Context, addr string) error {
 
 		// Step 4: close the broadcaster so SSE handlers exit cleanly.
 		s.bc.Close()
+
+		// Step 5: stop the rate-limit cleanup goroutine.
+		if s.auth != nil {
+			s.auth.rateLimit.Close()
+		}
 
 		return <-errCh
 	}
@@ -461,6 +467,22 @@ func (s *Server) submit(w http.ResponseWriter, r *http.Request) {
 func (s *Server) cancel(w http.ResponseWriter, _ *http.Request) {
 	s.ctl().Cancel()
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) steer(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Input string `json:"input"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, "invalid body", http.StatusBadRequest)
+		return
+	}
+	if body.Input == "" {
+		http.Error(w, "input must not be empty", http.StatusBadRequest)
+		return
+	}
+	s.ctl().Steer(body.Input)
+	w.WriteHeader(http.StatusAccepted)
 }
 
 func (s *Server) approve(w http.ResponseWriter, r *http.Request) {

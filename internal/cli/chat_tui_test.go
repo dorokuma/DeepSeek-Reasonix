@@ -39,6 +39,8 @@ func (r *blockingTurnRunner) Run(ctx context.Context, _ string) error {
 	return ctx.Err()
 }
 
+func (r *blockingTurnRunner) Steer(_ string) {}
+
 type recordingTurnRunner struct {
 	inputs []string
 }
@@ -47,6 +49,8 @@ func (r *recordingTurnRunner) Run(_ context.Context, input string) error {
 	r.inputs = append(r.inputs, input)
 	return nil
 }
+
+func (r *recordingTurnRunner) Steer(_ string) {}
 
 func waitForCLIEvent(t *testing.T, ch <-chan event.Event, kind event.Kind) {
 	t.Helper()
@@ -951,7 +955,10 @@ func TestQueueEditSavesOnEnter(t *testing.T) {
 }
 
 func TestQueueNewMessageOnEnterDuringRunning(t *testing.T) {
+	r := &blockingTurnRunner{started: make(chan struct{})}
+	ctrl := control.New(control.Options{Runner: r, Sink: event.Discard, SessionDir: t.TempDir(), Label: "test"})
 	m := newTestChatTUI()
+	m.ctrl = ctrl
 	m.state = tuiRunning
 	m.pendingInterject = []string{"existing"}
 
@@ -960,11 +967,12 @@ func TestQueueNewMessageOnEnterDuringRunning(t *testing.T) {
 	model, _ := m.Update(enter)
 	m = model.(chatTUI)
 
-	if len(m.pendingInterject) != 2 {
-		t.Fatalf("queue should have 2 items, got %d", len(m.pendingInterject))
+	// Enter while running steers the input into the running turn, not the queue.
+	if len(m.pendingInterject) != 1 {
+		t.Fatalf("pendingInterject should remain unchanged after steer, got %d items", len(m.pendingInterject))
 	}
-	if m.pendingInterject[1] != "new message" {
-		t.Fatalf("queue[1] should be %q, got %q", "new message", m.pendingInterject[1])
+	if got := m.input.Value(); got != "" {
+		t.Fatalf("input should be reset after steer, got %q", got)
 	}
 }
 

@@ -124,12 +124,12 @@ func (t *httpTransport) call(ctx context.Context, method string, params any) (js
 		return nil, fmt.Errorf("plugin %q: %s: %w", t.name, method, err)
 	}
 	slog.Debug("mcp http response", "name", t.name, "status", resp.StatusCode)
-	defer resp.Body.Close()
 	t.captureSession(resp)
 
 	if resp.StatusCode/100 != 2 {
 		b, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 		msg := strings.TrimSpace(string(b))
+		resp.Body.Close()
 		if isHTTPSessionExpiredResponse(resp.StatusCode, b) {
 			t.session = ""
 			return nil, fmt.Errorf("plugin %q: %s: %w", t.name, method, &httpSessionExpiredError{
@@ -141,8 +141,9 @@ func (t *httpTransport) call(ctx context.Context, method string, params any) (js
 	}
 
 	if strings.HasPrefix(resp.Header.Get("Content-Type"), "text/event-stream") {
-		return t.readSSEResponse(resp.Body, id)
+		return t.readSSEResponse(ctx, resp.Body, id)
 	}
+	defer resp.Body.Close()
 	return decodeRPCResult(resp.Body, t.name)
 }
 
@@ -225,9 +226,40 @@ func isHTTPSessionExpiredResponse(status int, body []byte) bool {
 // skipping server notifications and any other-id messages. Per the SSE spec,
 // consecutive data: lines within one event are joined with "\n" and an event is
 // dispatched on the blank line that terminates it.
-func (t *httpTransport) readSSEResponse(body io.Reader, id int) (json.RawMessage, error) {
-	sc := bufio.NewScanner(io.LimitReader(body, maxHTTPBody))
-	sc.Buffer(make([]byte, 0, 64*1024), maxHTTPBody)
+func (t *httpTransport) readSSEResponse(ctx context.Context, body io.ReadCloser, id int) (json.RawMessage, error) {
+	type scanEvent struct {
+		line string
+		err  error
+	}
+
+	lines := make(chan scanEvent, 4)
+
+	go func() {
+		defer close(lines)
+		sc := bufio.NewScanner(io.LimitReader(body, maxHTTPBody))
+		sc.Buffer(make([]byte, 0, 64*1024), maxHTTPBody)
+		for sc.Scan() {
+			select {
+			case lines <- scanEvent{line: sc.Text()}:
+			case <-ctx.Done():
+				return
+			}
+		}
+		if err := sc.Err(); err != nil {
+			select {
+			case lines <- scanEvent{err: err}:
+			case <-ctx.Done():
+			}
+		}
+	}()
+
+	go func() {
+		select {
+		case <-ctx.Done():
+		case <-t.done:
+		}
+		body.Close()
+	}()
 
 	var data strings.Builder
 	// match reports whether the accumulated event data is our response; it
@@ -251,29 +283,40 @@ func (t *httpTransport) readSSEResponse(body io.Reader, id int) (json.RawMessage
 		return resp.Result, true, nil
 	}
 
-	for sc.Scan() {
-		line := sc.Text()
-		if line == "" { // event boundary
-			if res, ok, err := match(); err != nil || ok {
-				return res, err
+	for {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case evt, ok := <-lines:
+			if !ok {
+				// Channel closed, scanning finished.
+				if ctx.Err() != nil {
+					return nil, ctx.Err()
+				}
+				if res, ok, err := match(); err != nil || ok { // stream ended on a final unterminated event
+					return res, err
+				}
+				return nil, fmt.Errorf("plugin %q: SSE stream ended without a response to id %d", t.name, id)
 			}
-			continue
-		}
-		if v, found := strings.CutPrefix(line, "data:"); found {
-			if data.Len() > 0 {
-				data.WriteByte('\n')
+			if evt.err != nil {
+				return nil, fmt.Errorf("plugin %q: read SSE: %w", t.name, evt.err)
 			}
-			data.WriteString(strings.TrimPrefix(v, " "))
+			line := evt.line
+			if line == "" { // event boundary
+				if res, ok, err := match(); err != nil || ok {
+					return res, err
+				}
+				continue
+			}
+			if v, found := strings.CutPrefix(line, "data:"); found {
+				if data.Len() > 0 {
+					data.WriteByte('\n')
+				}
+				data.WriteString(strings.TrimPrefix(v, " "))
+			}
+			// event:, id:, retry: and comments (":") are ignored
 		}
-		// event:, id:, retry: and comments (":") are ignored
 	}
-	if err := sc.Err(); err != nil {
-		return nil, fmt.Errorf("plugin %q: read SSE: %w", t.name, err)
-	}
-	if res, ok, err := match(); err != nil || ok { // stream ended on a final unterminated event
-		return res, err
-	}
-	return nil, fmt.Errorf("plugin %q: SSE stream ended without a response to id %d", t.name, id)
 }
 
 // decodeRPCResult parses a single application/json JSON-RPC response body.

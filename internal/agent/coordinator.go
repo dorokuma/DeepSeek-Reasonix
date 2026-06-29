@@ -15,6 +15,9 @@ import (
 // (two-model) satisfy it, so the CLI stays agnostic to which is in use.
 type Runner interface {
 	Run(ctx context.Context, input string) error
+	// Steer injects a user message into the running turn, if any.
+	// Non-blocking; silently drops when the runner is not in a running turn.
+	Steer(input string)
 }
 
 // DefaultPlannerPrompt steers the planner toward concise plans, not execution.
@@ -110,6 +113,14 @@ func (c *Coordinator) Run(ctx context.Context, input string) error {
 	}
 	c.sink.Emit(event.Event{Kind: event.Phase, Text: c.executor.prov.Name() + " · executing"})
 	return c.executor.Run(ctx, formatHandoff(input, plan))
+}
+
+// Steer injects a user message into the executor's message loop while a turn
+// is running; silently dropped when no turn is in flight.
+func (c *Coordinator) Steer(input string) {
+	if c.executor != nil {
+		c.executor.Steer(input)
+	}
 }
 
 // plan streams a plan from the planner and appends it to the planner session, so
