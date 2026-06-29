@@ -71,6 +71,9 @@ type TaskTool struct {
 	subagentEffort    string
 	resolveProvider   func(modelRef, effort string) (provider.Provider, *provider.Pricing, int, error)
 	hooks             ToolHooks
+	confirmationCheck            bool
+	confirmationKeywords         []string
+	confirmationSemanticFallback bool
 }
 
 // NewTaskTool wires a task tool to the parent agent's environment so its
@@ -83,7 +86,7 @@ type TaskTool struct {
 func NewTaskTool(prov provider.Provider, pricing *provider.Pricing, parentReg *tool.Registry,
 	maxSteps, maxSubagentSteps, contextWindow int, softCompactRatio, compactRatio, compactForceRatio, temperature float64, archiveDir, sysPrompt string, gate Gate,
 	subagentModel, subagentEffort string, resolveProvider func(string, string) (provider.Provider, *provider.Pricing, int, error),
-	hooks ToolHooks) *TaskTool {
+	hooks ToolHooks, confirmationCheck bool, confirmationKeywords []string, confirmationSemanticFallback bool) *TaskTool {
 	if sysPrompt == "" {
 		sysPrompt = DefaultTaskSystemPrompt
 	}
@@ -105,6 +108,9 @@ func NewTaskTool(prov provider.Provider, pricing *provider.Pricing, parentReg *t
 		subagentEffort:    subagentEffort,
 		resolveProvider:   resolveProvider,
 		hooks:             hooks,
+		confirmationCheck:            confirmationCheck,
+		confirmationKeywords:         confirmationKeywords,
+		confirmationSemanticFallback: confirmationSemanticFallback,
 	}
 }
 
@@ -162,6 +168,60 @@ func (t *TaskTool) effectiveProfile(model, effort string) (string, string) {
 	return model, effort
 }
 
+// checkUserConfirmation implements the task-confirmation hard-lock:
+// before spawning a sub-agent, verify the last user message expresses
+// explicit approval. When disabled via config, it's a no-op.
+func (t *TaskTool) checkUserConfirmation(ctx context.Context) error {
+	if !t.confirmationCheck {
+		return nil
+	}
+	parentAgent := AgentFromContext(ctx)
+	if parentAgent == nil {
+		return nil
+	}
+	msg := strings.TrimSpace(parentAgent.GetLastUserMessage())
+	if msg == "" {
+		return nil
+	}
+	// Keyword matching (case-insensitive substring).
+	msgLower := strings.ToLower(msg)
+	for _, kw := range t.confirmationKeywords {
+		if strings.Contains(msgLower, strings.ToLower(kw)) {
+			return nil
+		}
+	}
+	if !t.confirmationSemanticFallback {
+		return fmt.Errorf("Task 被拦截：上一轮用户消息未检测到显式确认。请先向用户确认意图后再委派 Task。")
+	}
+	// Semantic fallback: ask the model to classify the message.
+	classifyPrompt := fmt.Sprintf(`用户最后一条消息：%q
+这条消息是否表达了明确同意/批准/确认行动？
+只回答 YES 或 NO。`, msg)
+	req := provider.Request{
+		Messages:    []provider.Message{{Role: provider.RoleUser, Content: classifyPrompt}},
+		Temperature: 0,
+		MaxTokens:   5,
+	}
+	ch, err := t.prov.Stream(ctx, req)
+	if err != nil {
+		return fmt.Errorf("Task 被拦截：上一轮用户消息未检测到显式确认。请先向用户确认意图后再委派 Task。")
+	}
+	var result string
+	for chunk := range ch {
+		switch chunk.Type {
+		case provider.ChunkText:
+			result += chunk.Text
+		case provider.ChunkError:
+			return fmt.Errorf("Task 被拦截：上一轮用户消息未检测到显式确认。请先向用户确认意图后再委派 Task。")
+		}
+	}
+	result = strings.TrimSpace(strings.ToUpper(result))
+	if result == "YES" {
+		return nil
+	}
+	return fmt.Errorf("Task 被拦截：上一轮用户消息未检测到显式确认。请先向用户确认意图后再委派 Task。")
+}
+
 func (t *TaskTool) Execute(ctx context.Context, args json.RawMessage) (string, error) {
 	// Depth guard: enforce nesting limit from Agent Options.
 	depth := NestingDepthFrom(ctx)
@@ -187,6 +247,10 @@ func (t *TaskTool) Execute(ctx context.Context, args json.RawMessage) (string, e
 	}
 	if p.Prompt == "" {
 		return "", fmt.Errorf("prompt is required")
+	}
+
+	if err := t.checkUserConfirmation(ctx); err != nil {
+		return "", err
 	}
 
 	maxSteps := p.MaxSteps

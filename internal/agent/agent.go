@@ -321,6 +321,24 @@ func (a *Agent) SetSession(s *Session) {
 	a.session = s
 }
 
+// GetLastUserMessage returns the content of the last role=user message in the
+// session. Returns "" when the session is nil or no user message exists. Safe
+// for concurrent use with SetSession.
+func (a *Agent) GetLastUserMessage() string {
+	a.sessMu.Lock()
+	defer a.sessMu.Unlock()
+	if a.session == nil {
+		return ""
+	}
+	msgs := a.session.Messages
+	for i := len(msgs) - 1; i >= 0; i-- {
+		if msgs[i].Role == provider.RoleUser {
+			return msgs[i].Content
+		}
+	}
+	return ""
+}
+
 // LastUsage returns the most recent per-turn token telemetry the provider
 // reported (nil if no turn has run yet). The TUI uses it to show a context
 // gauge alongside the prompt; the actual cache decisions still live inside

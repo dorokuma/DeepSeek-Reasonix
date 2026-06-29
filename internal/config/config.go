@@ -496,6 +496,18 @@ type AgentConfig struct {
 	// ReasoningLanguage sets the language the model should use for chain-of-thought
 	// reasoning (e.g. "zh" for Chinese, "en" for English). Empty = no preference.
 	ReasoningLanguage string `toml:"reasoning_language"`
+	// TaskConfirmationCheck enables the hard-lock that requires explicit user
+	// confirmation before the main agent may spawn a sub-agent via the task tool.
+	// Default true.
+	TaskConfirmationCheck bool `toml:"task_confirmation_check"`
+	// TaskConfirmationKeywords are the case-insensitive substrings matched against
+	// the last user message to detect explicit confirmation. Default includes
+	// common Chinese and English confirmation phrases.
+	TaskConfirmationKeywords []string `toml:"task_confirmation_keywords"`
+	// TaskConfirmationSemanticFallback, when true, asks the model to classify the
+	// last user message as YES/NO when keyword matching does not find a match.
+	// Default true.
+	TaskConfirmationSemanticFallback bool `toml:"task_confirmation_semantic_fallback"`
 }
 
 // ProviderEntry declares a model provider instance. ContextWindow is the model's
@@ -748,6 +760,9 @@ func Default() *Config {
 			CompactRatio:      0.8,
 			CompactForceRatio: 0.9,
 			EncryptSessions:   true,
+			TaskConfirmationCheck:           true,
+			TaskConfirmationKeywords:        []string{"对", "可以", "确认", "继续", "好", "批准", "干吧", "是的", "go ahead", "ok", "yes", "proceed", "approved", "confirmed"},
+			TaskConfirmationSemanticFallback: true,
 		},
 		// Mode "ask" with no rules keeps `reasonix run` autonomous (no TTY → ask
 		// resolves to allow) while `reasonix chat` prompts before writers. Users add
