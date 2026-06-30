@@ -1,5 +1,6 @@
 export const STATUS_BAR_ITEM_IDS = [
   "model",
+  "autoresearch",
   "workspace",
   "git_branch",
   "cache",

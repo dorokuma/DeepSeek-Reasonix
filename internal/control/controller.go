@@ -22,6 +22,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -29,6 +30,7 @@ import (
 	"time"
 
 	"reasonix/internal/agent"
+	"reasonix/internal/autoresearch"
 	"reasonix/internal/billing"
 	"reasonix/internal/checkpoint"
 	"reasonix/internal/command"
@@ -121,7 +123,8 @@ type Controller struct {
 	// goals owns the active goal's FSM (status, intercepts, idle/turn counters)
 	// and its persistence, behind its own mutex so a per-turn goal save never
 	// stalls an approval or status poll on c.mu. See goal.go.
-	goals goalMachine
+	goals        goalMachine
+	autoResearch *autoresearch.Store
 
 	// workspaceRoot is the workspace root: the base for resolving @-refs and slash
 	// path refs, the working directory for user "!" shell commands and custom
@@ -188,6 +191,16 @@ type pendingApproval struct {
 type pendingAsk struct {
 	questions []event.AskQuestion
 	reply     chan []event.AskAnswer
+}
+
+type AutoResearchEvidenceInput struct {
+	ID       string
+	Kind     string
+	Summary  string
+	Source   string
+	Command  string
+	Paths    []string
+	Accepted bool
 }
 
 type plannerSessionResetter interface {
@@ -362,6 +375,10 @@ func New(opts Options) *Controller {
 		externalFolderToolRefs:     opts.ExternalFolderToolRefs,
 		approval:                   newApprovalManager(opts.Policy, ToolApprovalAsk, opts.ApprovalTimeout),
 	}
+	if strings.TrimSpace(opts.WorkspaceRoot) != "" {
+		c.autoResearch = autoresearch.NewStore(opts.WorkspaceRoot)
+	}
+	c.registerAutoResearchTools(opts.Registry)
 	// Checkpoints: bind a store to the session and route writer pre-edits into it.
 	c.rebindCheckpoints(opts.SessionPath)
 	c.setActiveJobSession(opts.SessionPath)
@@ -1477,8 +1494,278 @@ func (c *Controller) SetGoal(goal string) {
 }
 
 func (c *Controller) SetGoalWithResearchMode(goal string, researchMode GoalResearchMode) {
-	path, data, ok := c.goals.set(goal, researchMode, c.goalTodos())
+	taskID, blockReason := c.ensureAutoResearchTask(goal, researchMode)
+	path, data, ok := c.goals.set(goal, researchMode, taskID, c.goalTodos())
 	c.persistGoalState(path, data, ok)
+	if blockReason != "" {
+		path, data, ok := c.goals.stop(GoalStatusBlocked, c.goalTodos())
+		c.persistGoalState(path, data, ok)
+		c.notice("autoresearch resume failed: " + blockReason)
+	}
+}
+
+func (c *Controller) ensureAutoResearchTask(goal string, researchMode GoalResearchMode) (string, string) {
+	goal = strings.TrimSpace(goal)
+	if goal == "" || c.autoResearch == nil || !shouldUseAutoResearch(goal, researchMode) {
+		return "", ""
+	}
+	if task, ok, err := c.autoResearch.ResumeFromGoalText(goal); err != nil {
+		slog.Warn("controller: resume autoresearch task", "err", err)
+		if ok {
+			return "", err.Error()
+		}
+	} else if ok {
+		c.notice("autoresearch task resumed: " + task.ID)
+		return task.ID, ""
+	}
+	task, err := c.autoResearch.CreateTask(goal, autoresearch.CreateOptions{
+		AllowedOperations: autoresearch.AllowedOperations{
+			Write:   true,
+			Network: false,
+			Publish: false,
+		},
+	})
+	if err != nil {
+		slog.Warn("controller: create autoresearch task", "err", err)
+		return "", ""
+	}
+	c.notice("autoresearch task created: " + task.ID)
+	return task.ID, ""
+}
+
+func (c *Controller) appendAutoResearchHeartbeat(taskID, status, message string) {
+	if c.autoResearch == nil || strings.TrimSpace(taskID) == "" {
+		return
+	}
+	iteration := 0
+	if summary, err := c.autoResearch.Summary(taskID); err == nil {
+		iteration = summary.Iteration
+	}
+	if err := c.autoResearch.AppendHeartbeat(taskID, autoresearch.Heartbeat{
+		Status:    status,
+		Iteration: iteration,
+		Message:   message,
+		CreatedAt: time.Now().UTC(),
+	}); err != nil {
+		slog.Warn("controller: append autoresearch heartbeat", "task_id", taskID, "status", status, "err", err)
+	}
+}
+
+func (c *Controller) autoResearchAcceptedEvidenceIDs(taskID string) map[string]bool {
+	if c.autoResearch == nil || strings.TrimSpace(taskID) == "" {
+		return nil
+	}
+	findings, err := c.autoResearch.Findings(taskID, 0)
+	if err != nil {
+		slog.Warn("controller: read autoresearch findings", "task_id", taskID, "err", err)
+		return nil
+	}
+	accepted := make(map[string]bool, len(findings))
+	for _, finding := range findings {
+		if finding.Accepted {
+			accepted[finding.ID] = true
+		}
+	}
+	return accepted
+}
+
+func (c *Controller) recordAutoResearchTurnProgress(taskID string, acceptedBefore map[string]bool) {
+	if c.autoResearch == nil || strings.TrimSpace(taskID) == "" {
+		return
+	}
+	acceptedAfter := c.autoResearchAcceptedEvidenceIDs(taskID)
+	newAccepted := make([]string, 0)
+	for id := range acceptedAfter {
+		if acceptedBefore == nil || !acceptedBefore[id] {
+			newAccepted = append(newAccepted, id)
+		}
+	}
+	sort.Strings(newAccepted)
+	summary := autoResearchDirectionSummary(lastAssistantText(c.History()))
+	if _, err := c.autoResearch.RecordDirection(taskID, autoresearch.Direction{
+		Summary:             summary,
+		AcceptedEvidenceIDs: newAccepted,
+		Now:                 time.Now().UTC(),
+	}); err != nil {
+		slog.Warn("controller: record autoresearch direction", "task_id", taskID, "err", err)
+	}
+}
+
+func autoResearchDirectionSummary(text string) string {
+	for _, line := range strings.Split(text, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(strings.ToLower(line), "[goal:") {
+			continue
+		}
+		if len(line) > 160 {
+			line = line[:160]
+		}
+		return line
+	}
+	return "turn completed"
+}
+
+func (c *Controller) autoResearchReadinessFailure() string {
+	taskID := c.goals.currentAutoResearchTaskID()
+	if c.autoResearch == nil || strings.TrimSpace(taskID) == "" {
+		return ""
+	}
+	report, err := c.autoResearch.Readiness(taskID)
+	if err != nil {
+		return "AutoResearch readiness check failed: " + err.Error()
+	}
+	if report.Ready {
+		return ""
+	}
+	var parts []string
+	if len(report.MissingCriteria) > 0 {
+		parts = append(parts, "missing criteria: "+strings.Join(report.MissingCriteria, ", "))
+	}
+	if report.BlockedReason != "" {
+		parts = append(parts, "blocked: "+report.BlockedReason)
+	}
+	if len(report.Errors) > 0 {
+		parts = append(parts, "state errors: "+strings.Join(report.Errors, "; "))
+	}
+	if len(parts) == 0 {
+		parts = append(parts, "task is not ready")
+	}
+	return "AutoResearch readiness check failed: " + strings.Join(parts, "; ")
+}
+
+func (c *Controller) AutoResearchSummary() (*autoresearch.Summary, bool) {
+	taskID := c.goals.currentAutoResearchTaskID()
+	if c.autoResearch == nil || strings.TrimSpace(taskID) == "" {
+		return nil, false
+	}
+	summary, err := c.autoResearch.Summary(taskID)
+	if err != nil {
+		return &autoresearch.Summary{
+			TaskID:  taskID,
+			Status:  autoresearch.StatusInvalid,
+			Blocker: err.Error(),
+		}, true
+	}
+	return summary, true
+}
+
+func (c *Controller) AutoResearchList() ([]autoresearch.Summary, bool) {
+	if c.autoResearch == nil {
+		return nil, false
+	}
+	summaries, err := c.autoResearch.ListSummaries()
+	if err != nil {
+		slog.Warn("controller: list autoresearch tasks", "err", err)
+		return nil, true
+	}
+	return summaries, true
+}
+
+func (c *Controller) AutoResearchFindings(limit int) ([]autoresearch.Finding, bool) {
+	taskID := c.goals.currentAutoResearchTaskID()
+	if c.autoResearch == nil || strings.TrimSpace(taskID) == "" {
+		return nil, false
+	}
+	findings, err := c.autoResearch.Findings(taskID, limit)
+	if err != nil {
+		return nil, true
+	}
+	return findings, true
+}
+
+func (c *Controller) RecordAutoResearchEvidence(criterionID string, input AutoResearchEvidenceInput) error {
+	taskID := c.goals.currentAutoResearchTaskID()
+	if c.autoResearch == nil || strings.TrimSpace(taskID) == "" {
+		return errors.New("autoresearch: no active task")
+	}
+	finding := autoresearch.Finding{
+		ID:        strings.TrimSpace(input.ID),
+		Kind:      strings.TrimSpace(input.Kind),
+		Summary:   strings.TrimSpace(input.Summary),
+		Source:    strings.TrimSpace(input.Source),
+		Command:   strings.TrimSpace(input.Command),
+		Paths:     append([]string(nil), input.Paths...),
+		Accepted:  input.Accepted,
+		CreatedAt: time.Now().UTC(),
+	}
+	return c.autoResearch.RecordEvidence(taskID, criterionID, finding)
+}
+
+func (c *Controller) registerAutoResearchTools(reg *tool.Registry) {
+	if reg == nil || c.autoResearch == nil {
+		return
+	}
+	reg.Add(autoResearchRecordEvidenceTool{controller: c})
+}
+
+type autoResearchRecordEvidenceTool struct {
+	controller *Controller
+}
+
+type autoResearchRecordEvidenceArgs struct {
+	CriterionID string   `json:"criterion_id"`
+	ID          string   `json:"id"`
+	Kind        string   `json:"kind"`
+	Summary     string   `json:"summary"`
+	Source      string   `json:"source"`
+	Command     string   `json:"command"`
+	Paths       []string `json:"paths"`
+	Accepted    bool     `json:"accepted"`
+}
+
+func (autoResearchRecordEvidenceTool) Name() string { return "autoresearch_record_evidence" }
+
+func (autoResearchRecordEvidenceTool) Description() string {
+	return "Record accepted or rejected AutoResearch evidence for the active research task using the host-managed task store."
+}
+
+func (autoResearchRecordEvidenceTool) Schema() json.RawMessage {
+	return json.RawMessage(`{
+		"type":"object",
+		"additionalProperties":false,
+		"properties":{
+			"criterion_id":{"type":"string","description":"Success criterion id this evidence supports."},
+			"id":{"type":"string","description":"Stable evidence id. Leave empty to let the host generate one."},
+			"kind":{"type":"string","enum":["command","file","test","benchmark","manual","review"],"description":"Evidence kind."},
+			"summary":{"type":"string","description":"Concise finding summary."},
+			"source":{"type":"string","enum":["command","file","manual"],"description":"Where the evidence came from."},
+			"command":{"type":"string","description":"Command that produced the evidence, when source is command."},
+			"paths":{"type":"array","items":{"type":"string"},"description":"Relevant workspace paths."},
+			"accepted":{"type":"boolean","description":"Whether this evidence should count toward readiness."}
+		},
+		"required":["criterion_id","kind","summary","source","accepted"]
+	}`)
+}
+
+func (autoResearchRecordEvidenceTool) ReadOnly() bool { return false }
+
+func (t autoResearchRecordEvidenceTool) Execute(_ context.Context, raw json.RawMessage) (string, error) {
+	if t.controller == nil {
+		return "", errors.New("autoresearch: controller unavailable")
+	}
+	var args autoResearchRecordEvidenceArgs
+	if err := json.Unmarshal(raw, &args); err != nil {
+		return "", fmt.Errorf("parse autoresearch evidence args: %w", err)
+	}
+	if strings.TrimSpace(args.CriterionID) == "" {
+		return "", errors.New("criterion_id is required")
+	}
+	if strings.TrimSpace(args.Summary) == "" {
+		return "", errors.New("summary is required")
+	}
+	err := t.controller.RecordAutoResearchEvidence(args.CriterionID, AutoResearchEvidenceInput{
+		ID:       args.ID,
+		Kind:     args.Kind,
+		Summary:  args.Summary,
+		Source:   args.Source,
+		Command:  args.Command,
+		Paths:    append([]string(nil), args.Paths...),
+		Accepted: args.Accepted,
+	})
+	if err != nil {
+		return "", err
+	}
+	return "recorded AutoResearch evidence for criterion " + strings.TrimSpace(args.CriterionID), nil
 }
 
 func (c *Controller) ClearGoal() {
@@ -2027,6 +2314,7 @@ func (c *Controller) Resume(s *agent.Session, path string) {
 	c.mu.Unlock()
 	c.setActiveJobSession(path)
 	c.rebindCheckpoints(path)
+	c.goals.restoreRunningFromState(path)
 	c.restoreTerminalGoalTodos(path)
 	c.loadGuardianSession()
 	c.recoverInterruptedTurn(path)

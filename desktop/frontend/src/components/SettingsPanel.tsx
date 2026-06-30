@@ -886,6 +886,8 @@ function statusBarItemLabel(id: StatusBarItemId, t: ReturnType<typeof useT>): st
   switch (id) {
     case "model":
       return t("settings.statusBarItem.model");
+    case "autoresearch":
+      return t("settings.statusBarItem.autoResearch");
     case "workspace":
       return t("settings.statusBarItem.workspace");
     case "git_branch":

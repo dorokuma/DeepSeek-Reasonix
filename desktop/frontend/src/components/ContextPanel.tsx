@@ -1,12 +1,13 @@
 // ContextPanel shows the active tab's context gauge and token usage.
 // All visible text is routed through the i18n dictionary.
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { FolderOpen } from "lucide-react";
 import { asArray } from "../lib/array";
 import { app } from "../lib/bridge";
 import { useI18n, type Locale, type Translator } from "../lib/i18n";
 import { formatMoneyLocalized } from "../lib/money";
 import type { DictKey } from "../locales/en";
-import type { BalanceInfo, ContextInfo, ContextPanelInfo, UsageSourceStats, WireUsage } from "../lib/types";
+import type { AutoResearchFindingView, AutoResearchStatusView, BalanceInfo, ContextInfo, ContextPanelInfo, UsageSourceStats, WireUsage } from "../lib/types";
 
 interface ContextPanelProps {
   tabId?: string;
@@ -261,27 +262,37 @@ export function ContextPanel({
 }: ContextPanelProps) {
   const { locale, t } = useI18n();
   const [info, setInfo] = useState<ContextPanelInfo | null>(null);
+  const [autoResearch, setAutoResearch] = useState<AutoResearchStatusView | null>(null);
+  const [autoResearchFindings, setAutoResearchFindings] = useState<AutoResearchFindingView[]>([]);
   const refreshSeq = useRef(0);
 
   const refresh = useCallback(async () => {
     if (!tabId) return;
     const seq = ++refreshSeq.current;
     try {
-      const next = await app.ContextPanel(tabId);
-      if (refreshSeq.current === seq) setInfo(next);
+      const [next, research] = await Promise.all([
+        app.ContextPanel(tabId),
+        app.AutoResearchStatus(tabId).catch(() => null),
+      ]);
+      let findings: AutoResearchFindingView[] = [];
+      if (research?.taskId) {
+        findings = await app.AutoResearchFindings(tabId, 3).catch(() => []);
+      }
+      if (refreshSeq.current === seq) {
+        setInfo(next);
+        setAutoResearch(research?.taskId ? research : null);
+        setAutoResearchFindings(findings);
+      }
     } catch {
       /* bridge unavailable */
     }
   }, [tabId]);
 
   useEffect(() => {
-    const id = window.setInterval(() => void refresh(), 2000);
-    return () => window.clearInterval(id);
-  }, [refresh]);
-
-  useEffect(() => {
     refreshSeq.current += 1;
     setInfo(null);
+    setAutoResearch(null);
+    setAutoResearchFindings([]);
     void refresh();
   }, [refresh, sessionGen]);
 
@@ -433,6 +444,14 @@ export function ContextPanel({
               <MetricCard label={t("context.compaction")} value={compactPct > 0 ? `${compactPct}%` : "-"} />
             </div>
           </section>
+          {autoResearch && (
+            <AutoResearchSection
+              autoResearch={autoResearch}
+              findings={autoResearchFindings}
+              t={t}
+              onOpenTask={tabId ? () => void app.AutoResearchOpenTask(tabId).catch(() => {}) : undefined}
+            />
+          )}
         </section>
       </div>
 
@@ -440,11 +459,91 @@ export function ContextPanel({
   );
 }
 
-function SectionHeading({ title, meta }: { title: string; meta?: string }) {
+export function AutoResearchSection({
+  autoResearch,
+  findings,
+  t,
+  onOpenTask,
+}: {
+  autoResearch: AutoResearchStatusView;
+  findings: AutoResearchFindingView[];
+  t: Translator;
+  onOpenTask?: () => void;
+}) {
+  return (
+    <section className="context-panel__section">
+      <SectionHeading title={t("context.autoResearch")} meta={autoResearch.taskId}>
+        {onOpenTask && (
+          <button className="context-panel__section-action" type="button" onClick={onOpenTask} aria-label={t("context.autoResearchOpenTask")}>
+            <FolderOpen size={13} />
+            <span>{t("context.autoResearchOpenTask")}</span>
+          </button>
+        )}
+      </SectionHeading>
+      <div className="context-panel__stats">
+        <MetricCard label={t("context.autoResearchStatus")} value={autoResearch.status} />
+        <MetricCard label={t("context.autoResearchIteration")} value={String(autoResearch.iteration)} />
+        <MetricCard label={t("context.autoResearchStale")} value={String(autoResearch.staleCount)} tone={autoResearch.pivotRequired ? "warn" : undefined} />
+        <MetricCard label={t("context.autoResearchOpenCriteria")} value={String(autoResearch.openCriteria.length)} />
+      </div>
+      {autoResearch.currentDirection && (
+        <div className="context-panel__source-list">
+          <div className="context-panel__source-row">
+            <span>{t("context.autoResearchDirection")}</span>
+            <strong>{autoResearch.currentDirection}</strong>
+          </div>
+          {autoResearch.lastHeartbeatAt && (
+            <div className="context-panel__source-row">
+              <span>{t("context.autoResearchLastHeartbeat")}</span>
+              <strong>{autoResearch.lastHeartbeatAt}</strong>
+            </div>
+          )}
+          {autoResearch.nextRequiredAction && (
+            <div className="context-panel__source-row">
+              <span>{t("context.autoResearchNextAction")}</span>
+              <strong>{autoResearch.nextRequiredAction}</strong>
+            </div>
+          )}
+          {autoResearch.blocker && (
+            <div className="context-panel__source-row">
+              <span>{t("context.autoResearchBlocker")}</span>
+              <strong>{autoResearch.blocker}</strong>
+            </div>
+          )}
+        </div>
+      )}
+      {autoResearch.openCriteria.length > 0 && (
+        <div className="context-panel__source-list" aria-label={t("context.autoResearchCriteria")}>
+          {autoResearch.openCriteria.map((criterion) => (
+            <div className="context-panel__source-row" key={criterion.id}>
+              <span>{criterion.required ? t("context.autoResearchRequired") : t("context.autoResearchOptional")}</span>
+              <strong>{criterion.description}</strong>
+              <em>{criterion.status} · {criterion.evidenceCount}</em>
+            </div>
+          ))}
+        </div>
+      )}
+      {findings.length > 0 && (
+        <div className="context-panel__source-list" aria-label={t("context.autoResearchFindings")}>
+          {findings.map((finding) => (
+            <div className="context-panel__source-row" key={finding.id}>
+              <span>{finding.kind}</span>
+              <strong>{finding.summary}</strong>
+              <em>{finding.source}</em>
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function SectionHeading({ title, meta, children }: { title: string; meta?: string; children?: ReactNode }) {
   return (
     <header className="context-panel__section-head">
       <h3>{title}</h3>
       {meta && <span>{meta}</span>}
+      {children}
     </header>
   );
 }

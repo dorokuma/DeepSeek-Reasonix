@@ -6396,6 +6396,24 @@ body > .mermaid-diagram--fullscreen {
 .statusbar__cache b {
   color: var(--accent-strong);
 }
+.statusbar__autoresearch-btn {
+  appearance: none;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+.statusbar__autoresearch-btn:hover b,
+.statusbar__autoresearch-btn:focus-visible b {
+  color: var(--accent-strong);
+}
+.statusbar__autoresearch-btn:focus-visible {
+  outline: 1px solid color-mix(in srgb, var(--accent) 72%, transparent);
+  outline-offset: 2px;
+  border-radius: 3px;
+}
 .statusbar .statusbar__cache b.stat__value--empty {
   color: var(--fg-faint);
 }
@@ -18889,6 +18907,29 @@ body > .mermaid-diagram--fullscreen {
   font-size: 13px;
   line-height: 1.2;
   font-weight: 670;
+}
+
+.context-panel__section-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 24px;
+  border: 1px solid color-mix(in srgb, var(--fg-faint) 24%, transparent);
+  border-radius: 6px;
+  padding: 2px 7px;
+  background: transparent;
+  color: var(--fg-dim);
+  font: inherit;
+  font-size: 11.5px;
+  line-height: 1.2;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.context-panel__section-action:hover,
+.context-panel__section-action:focus-visible {
+  border-color: color-mix(in srgb, var(--accent) 56%, transparent);
+  color: var(--accent-strong);
 }
 
 .context-panel__section-head span {

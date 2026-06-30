@@ -2,6 +2,7 @@ package control
 
 import (
 	"context"
+	"strconv"
 	"strings"
 	"unicode"
 
@@ -149,10 +150,14 @@ func (c *Controller) Compose(text string) string {
 	reasoningLanguage := c.reasoningLanguage
 	c.mu.Unlock()
 	notes := c.memory.drainPending()
-	goal, goalStatus, goalResearchMode := c.goals.snapshot()
+	goal, goalStatus, goalResearchMode, autoResearchTaskID := c.goals.snapshot()
 
 	if strings.TrimSpace(goal) != "" && goalStatus == GoalStatusRunning {
-		text = activeGoalBlock(goal, goalResearchMode) + "\n\n" + text
+		prefix := activeGoalBlock(goal, goalResearchMode)
+		if runtime := c.autoResearchRuntimeBlock(autoResearchTaskID); runtime != "" {
+			prefix += "\n\n" + runtime
+		}
+		text = prefix + "\n\n" + text
 	}
 	if plan {
 		text = PlanModeMarker + "\n\n" + text
@@ -184,6 +189,46 @@ func (c *Controller) Compose(text string) string {
 	}
 	return text
 }
+
+func (c *Controller) autoResearchRuntimeBlock(taskID string) string {
+	if c.autoResearch == nil || strings.TrimSpace(taskID) == "" {
+		return ""
+	}
+	summary, err := c.autoResearch.Summary(taskID)
+	if err != nil {
+		return "<autoresearch-runtime>\nstatus: invalid\nerror: " + strings.ReplaceAll(err.Error(), autoResearchRuntimeClose, "<\\/autoresearch-runtime>") + "\n</autoresearch-runtime>"
+	}
+	var b strings.Builder
+	b.WriteString("<autoresearch-runtime>\n")
+	b.WriteString("task_id: " + summary.TaskID + "\n")
+	b.WriteString("status: " + summary.Status + "\n")
+	b.WriteString("iteration: ")
+	b.WriteString(strconv.Itoa(summary.Iteration))
+	b.WriteString("\n")
+	b.WriteString("current_direction: " + summary.CurrentDirection + "\n")
+	b.WriteString("stale_count: ")
+	b.WriteString(strconv.Itoa(summary.StaleCount))
+	b.WriteString("\n")
+	b.WriteString("pivot_count: ")
+	b.WriteString(strconv.Itoa(summary.PivotCount))
+	b.WriteString("\n")
+	if summary.PivotRequired {
+		b.WriteString("pivot_required: true\n")
+	} else {
+		b.WriteString("pivot_required: false\n")
+	}
+	b.WriteString("open_success_criteria: ")
+	b.WriteString(strconv.Itoa(len(summary.OpenCriteria)))
+	b.WriteString("\n")
+	if summary.Blocker != "" {
+		b.WriteString("blocker: " + summary.Blocker + "\n")
+	}
+	b.WriteString("next_required_action: " + summary.NextRequiredAction + "\n")
+	b.WriteString("</autoresearch-runtime>")
+	return b.String()
+}
+
+const autoResearchRuntimeClose = "</autoresearch-runtime>"
 
 func reasoningLanguageBlock(lang string) string {
 	return agent.ReasoningLanguageBlock(lang)

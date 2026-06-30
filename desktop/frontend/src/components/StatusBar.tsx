@@ -1,10 +1,10 @@
 import { type ReactNode } from "react";
-import { Activity, CircleDollarSign, CircleGauge, Database, Folder, GitBranch, Layers, Percent, RefreshCw, Wallet, Zap } from "lucide-react";
+import { Activity, CircleDollarSign, CircleGauge, Database, Folder, GitBranch, Layers, Percent, RefreshCw, SearchCheck, Wallet, Zap } from "lucide-react";
 import { Tooltip } from "./Tooltip";
 import { useI18n, type Translator } from "../lib/i18n";
 import { formatMoneyLocalized } from "../lib/money";
 import { normalizeStatusBarItems, type StatusBarItemId } from "../lib/statusBarItems";
-import { type BalanceInfo, type ContextInfo, type WireUsage } from "../lib/types";
+import { type AutoResearchCompactView, type BalanceInfo, type ContextInfo, type WireUsage } from "../lib/types";
 
 type StatusBarLabelStyle = "icon" | "text";
 
@@ -93,6 +93,23 @@ function workspaceTooltip(t: Translator, displayPath: string, workspacePath?: st
   return `${t("status.workspaceTitle")}: ${workspace}`;
 }
 
+function autoResearchLabel(autoResearch: AutoResearchCompactView | undefined, t: Translator): string {
+  if (!autoResearch) return "";
+  if (autoResearch.status === "blocked") return t("status.autoResearchBlocked");
+  if (autoResearch.status === "complete") return t("status.autoResearchDone");
+  if (autoResearch.pivotRequired) return t("status.autoResearchPivot");
+  return t("status.autoResearchRunning", { iteration: autoResearch.iteration });
+}
+
+function autoResearchTooltip(autoResearch: AutoResearchCompactView): string {
+  return [
+    `Task: ${autoResearch.taskId}`,
+    `Status: ${autoResearch.status}`,
+    `Iteration: ${autoResearch.iteration}`,
+    `Stale: ${autoResearch.staleCount}`,
+  ].join("\n");
+}
+
 export function StatusBar({
   context,
   usage,
@@ -110,6 +127,8 @@ export function StatusBar({
   workspacePath,
   workspaceName,
   gitBranch,
+  autoResearch,
+  onAutoResearchClick,
 }: {
   context: ContextInfo;
   usage?: WireUsage;
@@ -127,6 +146,8 @@ export function StatusBar({
   workspacePath?: string;
   workspaceName?: string;
   gitBranch?: string;
+  autoResearch?: AutoResearchCompactView;
+  onAutoResearchClick?: () => void;
 }) {
   const { locale, t } = useI18n();
   const pct = context.window ? Math.min(100, Math.round((context.used / context.window) * 100)) : null;
@@ -145,6 +166,7 @@ export function StatusBar({
   const tokenLabel = formatTokenCount(sessionTokens);
   const turnTokenLabel = formatTokenCount(turnTokens);
   const balanceLabel = balance?.available && balance.display ? balance.display : "-";
+  const researchLabel = autoResearchLabel(autoResearch, t);
   const metricLabelStyle = labelStyle === "text" ? "text" : "icon";
   const visibleItems = normalizeStatusBarItems(items);
   const itemRenderers: Record<StatusBarItemId, ReactNode> = {
@@ -156,6 +178,21 @@ export function StatusBar({
         </span>
       </Tooltip>
     ),
+    autoresearch: autoResearch && researchLabel ? (
+      <Tooltip label={autoResearchTooltip(autoResearch)} className="statusbar__metric statusbar__metric--autoresearch">
+        {onAutoResearchClick ? (
+          <button className="stat statusbar__autoresearch statusbar__autoresearch-btn" type="button" onClick={onAutoResearchClick} aria-label={t("context.autoResearch")}>
+            <MetricLabel style={metricLabelStyle} icon={<SearchCheck size={12} />} label={t("status.autoResearchLabel")} />
+            <b>{researchLabel}</b>
+          </button>
+        ) : (
+          <span className="stat statusbar__autoresearch">
+            <MetricLabel style={metricLabelStyle} icon={<SearchCheck size={12} />} label={t("status.autoResearchLabel")} />
+            <b>{researchLabel}</b>
+          </span>
+        )}
+      </Tooltip>
+    ) : null,
     workspace: workspaceLabel ? (
       <Tooltip label={workspaceTitle} className="statusbar__metric statusbar__metric--workspace">
         <span className="stat statusbar__workspace">

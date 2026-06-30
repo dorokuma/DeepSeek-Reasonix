@@ -902,8 +902,10 @@ export default function App() {
   // workspace changes, git history, and session metadata after AI tool writes.
   useEffect(() => {
     const unsub = onEvent((e) => {
-      if (e.kind === "turn_done") {
+      if (e.kind === "turn_done" || (e.kind === "notice" && (e.text ?? "").startsWith("autoresearch "))) {
         setDockRefreshKey((v) => v + 1);
+      }
+      if (e.kind === "turn_done") {
         if (!e.err) playSuccessChime();
       }
     });
@@ -3373,10 +3375,12 @@ export default function App() {
               modelLabel={state.meta?.label}
               labelStyle={statusBarStyle}
               items={statusBarItems}
-              workspacePath={state.meta?.workspacePath || state.meta?.workspaceRoot || state.meta?.cwd}
-              workspaceName={state.meta?.workspaceName}
-              gitBranch={state.meta?.gitBranch}
-            />
+	              workspacePath={state.meta?.workspacePath || state.meta?.workspaceRoot || state.meta?.cwd}
+	              workspaceName={state.meta?.workspaceName}
+	              gitBranch={state.meta?.gitBranch}
+	              autoResearch={state.meta?.autoResearch}
+	              onAutoResearchClick={() => openRightDockMode("context")}
+	            />
           </footer>
           )}
           </>
