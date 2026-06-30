@@ -133,14 +133,17 @@ const tabD = tabMeta("tab-d");
 let backendActiveId = "tab-a";
 const historyB = deferred<HistoryMessage[]>();
 const historyD = deferred<HistoryMessage[]>();
+const contextDGate = deferred<ContextInfo>();
 const setActiveBGate = deferred<void>();
 const historyCalls: string[] = [];
+let contextDCalls = 0;
+let holdNextContextForD = false;
 let setActiveCalls = 0;
 let newSessionCalls = 0;
 const runningTabs = new Set<string>();
 const tabsById = new Map([tabA, tabB, tabC, tabD].map((tab) => [tab.id, tab]));
 const eventHandlers: Array<(e: WireEvent) => void> = [];
-const readyHandlers: Array<() => void> = [];
+const readyHandlers: Array<(tabId?: string) => void> = [];
 
 function currentTabs(): TabMeta[] {
   return [tabA, tabB, tabC, tabD].map((tab) => ({ ...tab, active: tab.id === backendActiveId, running: runningTabs.has(tab.id) }));
@@ -149,7 +152,7 @@ function currentTabs(): TabMeta[] {
 window.runtime = {
   EventsOn: (name: string, cb: (...data: unknown[]) => void) => {
     if (name === "agent:event") eventHandlers.push(cb as (e: WireEvent) => void);
-    if (name === "agent:ready") readyHandlers.push(cb as () => void);
+    if (name === "agent:ready") readyHandlers.push(cb as (tabId?: string) => void);
     return () => {};
   },
   BrowserOpenURL: () => {},
@@ -159,7 +162,15 @@ window.go = {
     App: {
       ListTabs: async () => currentTabs(),
       MetaForTab: async (tabID: string) => metaFor(tabsById.get(tabID) ?? tabA),
-      ContextUsageForTab: async () => context,
+      ContextUsageForTab: async (tabID: string) => {
+        if (tabID === "tab-d" && holdNextContextForD) {
+          contextDCalls += 1;
+          holdNextContextForD = false;
+          return contextDGate.promise;
+        }
+        if (tabID === "tab-d") contextDCalls += 1;
+        return context;
+      },
       EffortForTab: async () => effort,
       BalanceForTab: async () => balance,
       JobsForTab: async () => jobs,
@@ -294,6 +305,7 @@ eq(controller?.activeTabId, "tab-c", "switching to a cached running tab still up
 ok(controller?.state.items.some((item) => item.kind === "user" && item.text === "streaming C") ?? false, "cached running tab keeps its optimistic transcript");
 ok(!historyCalls.includes("tab-c"), "cached running tab skips history hydration");
 
+holdNextContextForD = true;
 await act(async () => {
   await controller?.openProjectTab(tabD.workspaceRoot, tabD.topicId || "");
   await flushPromises();
@@ -307,6 +319,25 @@ await act(async () => {
   await historyD.promise;
   await flushPromises();
 });
+eq(controller?.state.hydrating, false, "topic history clears visible hydration before ancillary phase 2 settles");
+await waitFor("open topic phase 2 started", () => contextDCalls === 1);
+const contextCallsBeforeReadyD = contextDCalls;
+const historyCallsBeforeReadyD = historyCalls.length;
+await act(async () => {
+  for (const handler of readyHandlers) {
+    handler("tab-b");
+    handler("tab-d");
+    handler();
+  }
+  await flushPromises();
+});
+eq(contextDCalls, contextCallsBeforeReadyD, "agent ready reuses in-flight open-topic hydration for the active tab");
+eq(historyCalls.length, historyCallsBeforeReadyD, "background ready events do not hydrate the active tab");
+await act(async () => {
+  contextDGate.resolve(context);
+  await contextDGate.promise;
+  await flushPromises();
+});
 ok(controller?.state.items.some((item) => item.kind === "user" && item.text === "history D") ?? false, "topic history replaces the hydration placeholder");
 eq(controller?.state.hydratePlaceholderItems?.length ?? 0, 0, "topic history clears the hydration placeholder");
 
@@ -318,6 +349,18 @@ await act(async () => {
 eq(controller?.activeTabId, "tab-d", "reopening an already hydrated topic keeps it active");
 ok(controller?.state.items.some((item) => item.kind === "user" && item.text === "history D") ?? false, "reopened cached topic keeps its transcript");
 eq(historyCalls.length, historyCallsBeforeReopenD, "reopening an already hydrated topic skips history hydration");
+
+const contextCallsBeforeInactiveD = contextDCalls;
+await act(async () => {
+  await controller?.openProjectTab(tabD.workspaceRoot, tabD.topicId || "");
+  await controller?.switchTab("tab-a", tabA);
+  await flushPromises();
+});
+await act(async () => {
+  await flushPromises();
+  await flushPromises();
+});
+eq(contextDCalls, contextCallsBeforeInactiveD, "inactive topic skips ancillary hydration after quick tab switch");
 
 tabsById.set("tab-d", { ...tabD, sessionPath: `${tabD.workspaceRoot}/sessions/next-tab-d.jsonl` });
 const historyCallsBeforeReboundD = historyCalls.length;

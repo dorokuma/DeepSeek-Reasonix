@@ -532,9 +532,9 @@ export function onFilesDropped(cb: (paths: string[]) => void): () => void {
 
 // onReady subscribes to the agent:ready event fired when boot.Build completes.
 // The frontend re-fetches Meta/Context/History when this lands.
-export function onReady(cb: () => void): () => void {
+export function onReady(cb: (tabId?: string) => void): () => void {
   if (realApp() && typeof window !== "undefined" && window.runtime) {
-    return window.runtime.EventsOn("agent:ready", () => cb());
+    return window.runtime.EventsOn("agent:ready", (tabId?: unknown) => cb(typeof tabId === "string" ? tabId : undefined));
   }
   // In dev mock, fire immediately since there's no real boot sequence.
   cb();

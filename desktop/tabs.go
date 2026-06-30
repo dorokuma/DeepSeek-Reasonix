@@ -841,7 +841,7 @@ func isBackgroundJobLifecycleNotice(e event.Event) bool {
 			strings.Contains(text, " killed: "))
 }
 
-func (a *App) emitReady(ctx context.Context) {
+func (a *App) emitReady(ctx context.Context, tabID ...string) {
 	a.mu.RLock()
 	hook := a.readyHook
 	a.mu.RUnlock()
@@ -850,6 +850,10 @@ func (a *App) emitReady(ctx context.Context) {
 		return
 	}
 	if ctx != nil {
+		if len(tabID) > 0 && strings.TrimSpace(tabID[0]) != "" {
+			runtime.EventsEmit(ctx, "agent:ready", strings.TrimSpace(tabID[0]))
+			return
+		}
 		runtime.EventsEmit(ctx, "agent:ready")
 	}
 }
@@ -2048,7 +2052,7 @@ func (a *App) buildTabControllerWithContext(tab *WorkspaceTab, loadedSession loa
 		tab.StartupErr = err.Error()
 		tab.Ready = true
 		a.mu.Unlock()
-		a.emitReady(wailsCtx)
+		a.emitReady(wailsCtx, tab.ID)
 		return
 	}
 
@@ -2156,7 +2160,7 @@ func (a *App) buildTabControllerWithContext(tab *WorkspaceTab, loadedSession loa
 		tab.Ready = true
 		a.releaseTabSharedHost(tab)
 		a.mu.Unlock()
-		a.emitReady(wailsCtx)
+		a.emitReady(wailsCtx, tab.ID)
 		return
 	}
 	if a.tabRemovedForBuild(tab) {
@@ -2229,7 +2233,7 @@ func (a *App) buildTabControllerWithContext(tab *WorkspaceTab, loadedSession loa
 			if a.attachExistingSessionRuntime(tab, path, wailsCtx) {
 				ctrl.Close()
 				a.releaseSharedHost(rootKey)
-				a.emitReady(wailsCtx)
+				a.emitReady(wailsCtx, tab.ID)
 				return
 			}
 		}
@@ -2248,7 +2252,7 @@ func (a *App) buildTabControllerWithContext(tab *WorkspaceTab, loadedSession loa
 	tab.StartupErr = ""
 	keepBuildContext = true
 	a.mu.Unlock()
-	a.emitReady(wailsCtx)
+	a.emitReady(wailsCtx, tab.ID)
 }
 
 func (a *App) reconcileTabWithPinnedSessionMeta(tab *WorkspaceTab) {
