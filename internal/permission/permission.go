@@ -8,6 +8,7 @@ package permission
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"strings"
 )
@@ -312,6 +313,83 @@ func Subjects(args json.RawMessage) []string {
 		}
 	}
 	return nil
+}
+
+// truncate returns s truncated to max runes, appending "..." if truncated.
+func truncate(s string, max int) string {
+	rs := []rune(s)
+	if len(rs) <= max {
+		return s
+	}
+	return string(rs[:max]) + "..."
+}
+
+// Preview generates a human-readable one-line summary of a tool call for
+// approval dialogs. Different tools use different fields; for unknown tools
+// it falls back to Subject(args).
+func Preview(tool string, args json.RawMessage) string {
+	if len(args) == 0 {
+		return tool + " 调用"
+	}
+	var m map[string]any
+	if err := json.Unmarshal(args, &m); err != nil {
+		return tool + " 调用"
+	}
+	switch tool {
+	case "bash":
+		if v, ok := m["command"]; ok {
+			if s, ok := v.(string); ok {
+				return truncate(s, 200)
+			}
+		}
+		return "bash 调用"
+	case "task":
+		if v, ok := m["description"]; ok {
+			if s, ok := v.(string); ok && s != "" {
+				return s // LLM gives 3-7 words, no truncation needed
+			}
+		}
+		if v, ok := m["prompt"]; ok {
+			if s, ok := v.(string); ok {
+				return "任务: " + truncate(s, 150)
+			}
+		}
+		return "task 调用"
+	case "write_file":
+		if v, ok := m["file_path"]; ok {
+			if s, ok := v.(string); ok && s != "" {
+				return "写入: " + s
+			}
+		}
+		return "write_file 调用"
+	case "edit_file":
+		if v, ok := m["file_path"]; ok {
+			if s, ok := v.(string); ok && s != "" {
+				return "编辑: " + s
+			}
+		}
+		return "edit_file 调用"
+	case "multi_edit":
+		if v, ok := m["edits"]; ok {
+			if edits, ok := v.([]any); ok && len(edits) > 0 {
+				if first, ok := edits[0].(map[string]any); ok {
+					if p, ok := first["file_path"]; ok {
+						if s, ok := p.(string); ok && s != "" {
+							return "批量编辑: " + s
+						}
+					}
+				}
+				return fmt.Sprintf("批量编辑 %d 处", len(edits))
+			}
+		}
+		return "multi_edit 调用"
+	default:
+		s := Subject(args)
+		if s != "" {
+			return s
+		}
+		return tool + " 调用"
+	}
 }
 
 // matchGlob reports whether name matches pattern, where '*' matches any run of

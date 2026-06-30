@@ -2414,13 +2414,13 @@ func (m chatTUI) renderApprovalBanner() string {
 	// Task-scope approval gets a simple two-button prompt.
 	if m.pendingApproval.Scope == "task" {
 		name, detail := approvalToolDetails(m.pendingApproval.Tool)
-		subj := strings.TrimSpace(m.pendingApproval.Subject)
+		preview := strings.TrimSpace(m.pendingApproval.Preview)
 		banner := "⏸ 子代理任务审批\n\n将委派子代理执行任务。"
 		if name != "" {
 			banner += "\n工具: " + name
 		}
-		if subj != "" {
-			banner += "\n" + subj
+		if preview != "" {
+			banner += "\n" + preview
 		}
 		if detail != "" {
 			banner += "\n" + detail
@@ -2430,10 +2430,15 @@ func (m chatTUI) renderApprovalBanner() string {
 	}
 	name, detail := approvalToolDetails(m.pendingApproval.Tool)
 	subj := strings.TrimSpace(m.pendingApproval.Subject)
-	if subj != "" {
-		subj = " " + truncateSubject(subj, w)
+	preview := strings.TrimSpace(m.pendingApproval.Preview)
+	// Show Preview when available, fall back to Subject.
+	var extra string
+	if preview != "" {
+		extra = " " + preview
+	} else if subj != "" {
+		extra = " " + truncateSubject(subj, w)
 	}
-	text := fmt.Sprintf(i18n.M.ToolApprovalPromptFmt, name, subj, detail)
+	text := fmt.Sprintf(i18n.M.ToolApprovalPromptFmt, name, extra, detail)
 	return approvalBannerStyle.Width(w).Render("⏸ " + text)
 }
 
