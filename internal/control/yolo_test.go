@@ -60,7 +60,7 @@ func TestRequestApprovalHonorsBypass(t *testing.T) {
 
 	done := make(chan bool, 1)
 	go func() {
-		allow, _, err := c.requestApproval(context.Background(), "write_file", "some/path")
+		allow, _, err := c.requestApproval(context.Background(), "write_file", "some/path", "gate")
 		if err != nil {
 			t.Errorf("requestApproval: %v", err)
 		}
@@ -90,7 +90,7 @@ func TestSetBypassAllowsNewApprovals(t *testing.T) {
 	// A new approval request should be auto-allowed without blocking.
 	done := make(chan bool, 1)
 	go func() {
-		allow, _, err := c.requestApproval(context.Background(), "multi_edit", "/tmp/file")
+		allow, _, err := c.requestApproval(context.Background(), "multi_edit", "/tmp/file", "gate")
 		if err != nil {
 			t.Errorf("requestApproval: %v", err)
 		}
