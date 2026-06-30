@@ -1963,7 +1963,11 @@ func (g gateApprover) Approve(ctx context.Context, tool, subject string, args js
 	if auto {
 		return true, false, nil
 	}
-	return g.c.requestApproval(ctx, tool, subject)
+	scope := "gate"
+	if tool == "task" {
+		scope = "task"
+	}
+	return g.c.requestApproval(ctx, tool, subject, scope)
 }
 
 // requestApproval emits an ApprovalRequest and blocks until Approve(ID, …)
@@ -2004,7 +2008,7 @@ func parseRewind(args string, cps []checkpoint.Meta) (int, RewindScope, error) {
 	return turn, scope, nil
 }
 
-func (c *Controller) requestApproval(ctx context.Context, tool, subject string) (bool, bool, error) {
+func (c *Controller) requestApproval(ctx context.Context, tool, subject, scope string) (bool, bool, error) {
 	// Session grants are tool-wide: "allow for this session" / "allow persistently"
 	// mean the user trusts this tool (write_file, bash, …), not just this one
 	// file/command, so a different subject for the same tool isn't re-prompted.
@@ -2036,7 +2040,7 @@ func (c *Controller) requestApproval(ctx context.Context, tool, subject string) 
 	c.approvals[id] = reply
 	c.mu.Unlock()
 
-	c.sink.Emit(event.Event{Kind: event.ApprovalRequest, Approval: event.Approval{ID: id, Tool: tool, Subject: subject}})
+	c.sink.Emit(event.Event{Kind: event.ApprovalRequest, Approval: event.Approval{ID: id, Tool: tool, Subject: subject, Scope: scope}})
 	// The agent now needs the user's attention; a Notification hook can ping an
 	// external channel (desktop notice, phone) while the run blocks on the reply.
 	if subject != "" {

@@ -139,6 +139,7 @@ type Approval struct {
 	ID      string
 	Tool    string
 	Subject string
+	Scope   string // "gate" for permission gate approvals (3-button), "task" for task tool approvals (2-button)
 }
 
 // AskOption is one choice the user can pick for an AskQuestion.

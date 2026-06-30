@@ -1945,11 +1945,26 @@ func flushableMarkdownPrefix(buf string) string {
 // listener. 1/y/Enter allows once, 2/a allows for the rest of the session,
 // 3/p writes an "always allow" rule to the config file, 4/n/Esc denies.
 // Ctrl-C cancels the whole turn via the run context.
+// When Scope == "task", only Enter (approve), Esc (deny), and Ctrl-C (cancel)
+// are accepted; the multi-button prompts are hidden.
 func (m chatTUI) handleApprovalKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	answer := func(allow, session, persist bool) (tea.Model, tea.Cmd) {
 		m.ctrl.Approve(m.pendingApproval.ID, allow, session, persist)
 		m.pendingApproval = nil
 		return m, nil // the next ApprovalRequest / event arrives on eventCh
+	}
+	// Task-scope approvals are a simple two-button gate: approve or deny.
+	if m.pendingApproval.Scope == "task" {
+		switch msg.String() {
+		case "ctrl+c":
+			m.ctrl.Cancel()
+			return answer(false, false, false)
+		case "enter":
+			return answer(true, false, false)
+		case "esc":
+			return answer(false, false, false)
+		}
+		return m, nil // ignore everything else
 	}
 	switch msg.String() {
 	case "ctrl+c":
@@ -2042,7 +2057,11 @@ func (m chatTUI) View() tea.View {
 		case m.chooser != nil:
 			status = "  " + modeTag + " · question"
 		case m.pendingApproval != nil:
-			status = "  " + modeTag + " · approve"
+			if m.pendingApproval.Scope == "task" {
+				status = "  " + modeTag + " · task approve"
+			} else {
+				status = "  " + modeTag + " · approve"
+			}
 		case shellMode:
 			status = "  " + modeTag + " · shell"
 		case m.state == tuiRunning:
@@ -2068,7 +2087,11 @@ func (m chatTUI) View() tea.View {
 		case m.chooser != nil:
 			status = "  " + modeTag + " · " + i18n.M.ChatStatusQuestion
 		case m.pendingApproval != nil:
-			status = "  " + modeTag + " · " + i18n.M.ChatStatusToolApproval
+			if m.pendingApproval.Scope == "task" {
+				status = "  " + modeTag + " · Task 审批中 · Enter 批准 · Esc 拒绝"
+			} else {
+				status = "  " + modeTag + " · " + i18n.M.ChatStatusToolApproval
+			}
 		case shellMode:
 			status = "  " + modeTag + " · " + i18n.M.ShellModeHint
 		case m.ctrl.Bypass():
@@ -2387,6 +2410,23 @@ func (m chatTUI) renderApprovalBanner() string {
 	}
 	if m.pendingApproval == nil {
 		return ""
+	}
+	// Task-scope approval gets a simple two-button prompt.
+	if m.pendingApproval.Scope == "task" {
+		name, detail := approvalToolDetails(m.pendingApproval.Tool)
+		subj := strings.TrimSpace(m.pendingApproval.Subject)
+		banner := "⏸ 子代理任务审批\n\n将委派子代理执行任务。"
+		if name != "" {
+			banner += "\n工具: " + name
+		}
+		if subj != "" {
+			banner += "\n" + subj
+		}
+		if detail != "" {
+			banner += "\n" + detail
+		}
+		banner += "\n\n[Enter] 批准  [Esc] 拒绝"
+		return approvalBannerStyle.Width(w).Render(banner)
 	}
 	name, detail := approvalToolDetails(m.pendingApproval.Tool)
 	subj := strings.TrimSpace(m.pendingApproval.Subject)
