@@ -57,8 +57,6 @@ type TaskTool struct {
 	prov              provider.Provider
 	pricing           *provider.Pricing
 	parentReg         *tool.Registry
-	maxSteps          int
-	maxSubagentSteps  int
 	contextWindow     int
 	softCompactRatio  float64
 	compactRatio      float64
@@ -81,7 +79,7 @@ type TaskTool struct {
 // interactive prompt (there is no UI to answer one). hooks is the parent's hook
 // runner; the task tool derives a sub-agent copy from it.
 func NewTaskTool(prov provider.Provider, pricing *provider.Pricing, parentReg *tool.Registry,
-	maxSteps, maxSubagentSteps, contextWindow int, softCompactRatio, compactRatio, compactForceRatio, temperature float64, archiveDir, sysPrompt string, gate Gate,
+	contextWindow int, softCompactRatio, compactRatio, compactForceRatio, temperature float64, archiveDir, sysPrompt string, gate Gate,
 	subagentModel, subagentEffort string, resolveProvider func(string, string) (provider.Provider, *provider.Pricing, int, error),
 	hooks ToolHooks) *TaskTool {
 	if sysPrompt == "" {
@@ -91,8 +89,6 @@ func NewTaskTool(prov provider.Provider, pricing *provider.Pricing, parentReg *t
 		prov:              prov,
 		pricing:           pricing,
 		parentReg:         parentReg,
-		maxSteps:          maxSteps,
-		maxSubagentSteps:  maxSubagentSteps,
 		contextWindow:     contextWindow,
 		softCompactRatio:  softCompactRatio,
 		compactRatio:      compactRatio,
@@ -120,7 +116,6 @@ func (t *TaskTool) Schema() json.RawMessage {
 "properties":{
   "prompt":{"type":"string","description":"What the sub-agent should accomplish. Be specific about the deliverable — the sub-agent does not see this conversation."},
   "description":{"type":"string","description":"Short label for the sub-task (3-7 words). Surfaced in the dispatch line so the user sees what's running."},
-  "max_steps":{"type":"integer","description":"Optional cap on tool-call rounds. Default is no limit (0); only set when necessary.","minimum":0},
   "run_in_background":{"type":"boolean","description":"Run the sub-agent asynchronously: returns a job id immediately and keeps working across turns. Collect its final answer with wait, and you'll be notified when it finishes. Use for long, independent sub-tasks you don't need to block on right now."},
   "model":{"type":"string","description":"Optional model override for the sub-agent (a configured provider/model name)."},
   "effort":{"type":"string","description":"Optional reasoning effort for the sub-agent (e.g. high, max)."}
@@ -177,7 +172,6 @@ func (t *TaskTool) Execute(ctx context.Context, args json.RawMessage) (string, e
 	var p struct {
 		Prompt          string   `json:"prompt"`
 		Description     string   `json:"description"`
-		MaxSteps        int      `json:"max_steps"`
 		RunInBackground bool     `json:"run_in_background"`
 		Model           string   `json:"model"`
 		Effort          string   `json:"effort"`
@@ -189,7 +183,7 @@ func (t *TaskTool) Execute(ctx context.Context, args json.RawMessage) (string, e
 		return "", fmt.Errorf("prompt is required")
 	}
 
-	maxSteps := p.MaxSteps
+	maxSteps := 0
 	// Default is no limit (0). Only capped when explicitly set by the caller.
 
 	// When the next depth level is still below the limit, allow recursive
