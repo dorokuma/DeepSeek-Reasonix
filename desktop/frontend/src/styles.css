@@ -5545,12 +5545,14 @@ body > .mermaid-diagram--fullscreen {
 }
 
 .composer-meta__control--model {
-  flex: 0 0 auto;
+  flex: 0 1 auto;
+  width: fit-content;
   max-width: min(380px, 50vw);
 }
 
 .composer-meta--has-intent-chip .composer-meta__control--model {
-  flex: 0 0 auto;
+  flex: 0 1 auto;
+  width: fit-content;
   max-width: min(320px, 50vw);
 }
 
@@ -5764,7 +5766,12 @@ body > .mermaid-diagram--fullscreen {
   transition: border-color 0.14s, background 0.14s, color 0.14s, transform 0.14s var(--ease-out);
 }
 
+.composer-meta__control--more .tooltip-trigger {
+  width: 100%;
+}
+
 .composer-more-trigger span {
+  flex: 1 1 auto;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -5773,6 +5780,17 @@ body > .mermaid-diagram--fullscreen {
 
 .composer-more-trigger svg {
   flex: 0 0 auto;
+}
+
+.composer-more-trigger--effort {
+  gap: 5px;
+  padding-inline: 7px;
+}
+
+.composer-more-trigger--explicit {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 32%, var(--border));
+  background: color-mix(in srgb, var(--accent) 8%, var(--surface-2));
 }
 
 .composer-more-trigger:hover:not(:disabled),
@@ -5956,13 +5974,15 @@ body > .mermaid-diagram--fullscreen {
   }
 
   .composer-meta__control--model {
-    flex: 1 1 160px;
-    max-width: min(320px, 50vw);
+    flex: 0 1 auto;
+    width: fit-content;
+    max-width: min(240px, 42vw);
   }
 
   .composer-meta--has-intent-chip .composer-meta__control--model {
-    flex: 1 1 160px;
-    max-width: min(320px, 50vw);
+    flex: 0 1 auto;
+    width: fit-content;
+    max-width: min(220px, 38vw);
   }
 
   .composer-meta__control--approval {
@@ -5988,9 +6008,9 @@ body > .mermaid-diagram--fullscreen {
 
   .composer-meta__control--more {
     display: inline-flex;
-    flex: 0 0 78px;
-    width: 78px;
-    max-width: 78px;
+    flex: 0 0 86px;
+    width: 86px;
+    max-width: 86px;
   }
 }
 
@@ -6000,15 +6020,25 @@ body > .mermaid-diagram--fullscreen {
     padding-inline: 8px;
   }
 
+  .composer-meta .composer-meta__params {
+    gap: 4px;
+  }
+
+  .app--creation .composer-meta .composer-meta__params,
+  :root[data-theme-style] .app--creation .composer-meta .composer-meta__params {
+    gap: 4px;
+  }
+
   .composer-meta__control--model {
-    flex: 0 0 auto;
-    max-width: 50vw;
+    flex: 1 1 50px;
+    min-width: 42px;
+    max-width: none;
   }
 
   .composer-meta__control--approval {
-    flex-basis: 148px;
-    min-width: 144px;
-    max-width: 148px;
+    flex-basis: 92px;
+    min-width: 86px;
+    max-width: 92px;
   }
 
   .composer-meta__control--effort {
@@ -6026,6 +6056,10 @@ body > .mermaid-diagram--fullscreen {
   }
 
   .composer-more-trigger span {
+    display: none;
+  }
+
+  .composer-more-trigger--effort svg:last-child {
     display: none;
   }
 
@@ -24165,6 +24199,7 @@ body > .mermaid-diagram--fullscreen {
 .app--creation .composer-meta__control--model,
 :root[data-theme-style] .app--creation .composer-meta__control--model {
   flex: 0 1 auto;
+  width: fit-content;
   margin-left: auto;
   max-width: min(280px, 34vw);
 }
@@ -26166,4 +26201,38 @@ body > .mermaid-diagram--fullscreen {
 :root[data-theme-style] .project-tree__topic-shortcut {
   background: color-mix(in srgb, var(--fg) 8%, var(--sidebar-bg, var(--bg)));
   color: var(--fg-faint);
+}
+
+@media (max-width: 820px) {
+  .app .layout,
+  :root[data-theme-style] .app .layout {
+    --chrome-left-toggle-offset: var(--chrome-left-safe-offset);
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+
+  .app--darwin .layout,
+  :root[data-theme-style] .app--darwin .layout {
+    --chrome-left-toggle-offset: 94px;
+  }
+
+  .app .sidebar,
+  :root[data-theme-style] .app .sidebar,
+  .app .sidebar-resizer,
+  :root[data-theme-style] .app .sidebar-resizer,
+  .app .workspace-panel-resizer,
+  :root[data-theme-style] .app .workspace-panel-resizer,
+  .app .context-inspector,
+  :root[data-theme-style] .app .context-inspector,
+  .app .workbench-dock,
+  :root[data-theme-style] .app .workbench-dock {
+    display: none !important;
+  }
+
+  .app .chat-pane,
+  :root[data-theme-style] .app .chat-pane,
+  .app .topicbar,
+  :root[data-theme-style] .app .topicbar {
+    grid-column: 1 !important;
+    min-width: 0;
+  }
 }
