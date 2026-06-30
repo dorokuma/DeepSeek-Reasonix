@@ -34,20 +34,21 @@
 | `run_in_background` 参数定义 | `internal/agent/task.go` | 109-118 |
 | `RunInBackground` 反序列化字段 | `internal/agent/task.go` | 141 |
 | 后台分支 `if p.RunInBackground` | `internal/agent/task.go` | 163-205 |
-| `runSub()` 方法和调用 | `internal/agent/task.go` | 208-313 |
+| 前台分支（task.go:207-213） | `internal/agent/task.go` | 207-213 |
 | `RunSubAgent()` 中的 activeChild 注册 | `internal/agent/task.go` | 343-345 |
 | `subSink(ctx)`（foreground 专用） | `internal/agent/task.go` | 428-433 |
-| `subSinkFor()`（background 专用，保留） | `internal/agent/task.go` | 436-451 |
 | `NestedSink()` | `internal/agent/task.go` | 412-418 |
 
 Task 工具 `Execute()` 直接走现有后台路径逻辑：创建 job → `jm.Start()` → 立即返回 `"Started task <job-id> (<description>)"`。
+
+> **关于 `runSub()`**：`runSub()` 保留不变，不删除。仅删除 `runSub()` 内部的前台分支（行 207-213，即 `if !p.RunInBackground` 条件块及其内部逻辑）。后台路径无条件执行。`subSinkFor()`（background 专用，行 436-451）同样保留，不删除。
 
 ### 1.2 activeChild 机制
 
 | 删除内容 | 文件 | 行 |
 |---|---|---|
 | `steerCh` 字段（Agent 保留该字段本身，见 §3.1） | — | — |
-| `activeChild atomic.Pointer[Agent]` | `internal/agent/agent.go` | 275-277 |
+| `activeChild atomic.Pointer[Agent]` | `internal/agent/agent.go` | 274-277 |
 | `setActiveChild()` | `internal/agent/agent.go` | 740-742 |
 | `clearActiveChild()` | `internal/agent/agent.go` | 744-747 |
 | `Steer()` 中 activeChild 转发逻辑 | `internal/agent/agent.go` | 753-765 |
@@ -122,11 +123,13 @@ type JobNotify struct {
 }
 ```
 
-`notifyCh` 缓冲 16，满则丢弃（非阻塞）。定义在 `Job` 结构体上：
+拆分三个通知通道，定义在 `Job` 结构体上：
 
 ```go
 // Job 新增字段
-notifyCh chan JobNotify   // 子代理 → 父代理通知通道
+ackCh    chan JobNotify   // ack 通道，缓冲 4，非阻塞（满丢）
+resultCh chan JobNotify   // result 通道，缓冲 1，阻塞发送
+notifyCh chan JobNotify   // progress 通道，缓冲 16，满丢（非阻塞）
 ```
 
 Manager 提供 `NotifyChan` 方法供父代理获取指定 job 的读端：
@@ -142,12 +145,14 @@ func (m *Manager) NotifyChan(jobID string) <-chan JobNotify
 
 子代理 `Run()` 循环中：
 
-| 时机 | Type | 数据 |
-|---|---|---|
-| `drainSteer()` 消费到消息后 | `ack` | `AckMsg: "received"` |
-| 每轮 `stream()` 结束后 | `progress` | `Step`, `LastTool` |
-| `Run()` 正常返回前 | `result` | `Output: 最终答案` |
-| `Run()` 因 cancel 返回 | `result` | `Output: ""`, 标记取消 |
+| 时机 | Type | 通道 | 数据 |
+|---|---|---|---|
+| `drainSteer()` 消费到消息后 | `ack` | `ackCh`（缓冲 4） | `AckMsg: "received"` |
+| 每轮 `stream()` 结束后 | `progress` | `notifyCh`（缓冲 16，满丢） | `Step`（从 `j.step` 原子读）, `LastTool` |
+| `Run()` 正常返回前 | `result` | `resultCh`（缓冲 1，阻塞） | `Output: 最终答案` |
+| `Run()` 因 cancel 返回 | `result` | `resultCh`（缓冲 1，阻塞） | `Output: ""`, 标记取消 |
+
+**Step 更新机制**：子代理 `Run()` 循环中维护 step 计数器，每轮 `stream()` 结束后执行 `atomic.StoreInt32(&j.step, step)`。`JobNotify.Step` 的值从 `j.step` 原子读取，确保主代理 peek-job 和 progress 通知中看到最新的 step。
 
 ### 3.3 消费端
 
@@ -157,22 +162,34 @@ func (m *Manager) NotifyChan(jobID string) <-chan JobNotify
 
 ```go
 func (a *Agent) drainNotify() {
-    // 遍历 a.taskResults（job-id → jobMeta），task tool Execute() 中填充
+    // 从 Controller.GetJobMeta(jobID) 获取 toolCallID
     // 对每个 job，通过 jm.NotifyChan(jobID) 获取读端，非阻塞读取
     // 找到 type=result 的，用 jobMeta.ToolCallID 追加为 tool message 到 session
     // 找到 type=progress/ack 的，不追加到 session（仅通过 steer-job/peek-job 工具返回值暴露）
 }
 ```
 
-**关键设计**：主代理的 `Agent` 结构体上新增 `taskResults map[string]jobMeta` 字段维护 `jobID → toolCallID` 映射。该字段由 task tool `Execute()` 在创建 job 时填充，由 `drainNotify()` 消费。`jobMeta` 记录创建该 job 时对应的 `toolCallID` 和 `step`，以便子代理 result 能正确追加为对应 tool call 的 tool role message。
+**关键设计**：`taskResults` 从 `Agent` 移入 `Controller`。`Controller` 新增 `taskResults map[string]jobMeta` 字段维护 `jobID → toolCallID` 映射。Agent 的 task tool `Execute()` 通过 `CallContext(ctx)` 拿到当前 `toolCallID`，然后调用 `Controller.RegisterJobMeta(jobID, toolCallID)`。`drainNotify()` 通过 `Controller.GetJobMeta(jobID)` 获取映射。
 
 ```go
-// Agent 新增字段
-taskResults map[string]jobMeta  // jobID → 创建时的 tool call 元信息
+// Controller 新增字段和方法
+type Controller struct {
+    // ... 现有字段
+    taskResults map[string]jobMeta  // jobID → 创建时的 tool call 元信息
+}
 
 type jobMeta struct {
     ToolCallID string
     StartStep  int
+}
+
+func (c *Controller) RegisterJobMeta(jobID string, meta jobMeta) {
+    c.taskResults[jobID] = meta
+}
+
+func (c *Controller) GetJobMeta(jobID string) (jobMeta, bool) {
+    meta, ok := c.taskResults[jobID]
+    return meta, ok
 }
 ```
 
@@ -194,15 +211,17 @@ type jobMeta struct {
 
 ### 4.2 新增 steer-job
 
+`Job` 结构体增加 `steerCh chan<- string`（写入端），子代理启动时注册。
+
 ```go
 type steerJob struct{}
 
 // Schema: {"job_id": "string (required)", "message": "string (required)"}
 // Execute:
 //   1. 从 context 获取 jobs.Manager
-//   2. jm.Steer(jobID, message) → 往子代理 steerCh 发消息
+//   2. jm.Steer(jobID, message) → 找到 Job，往 j.steerCh 写消息
 //   3. 返回当前状态: {"status": "queued", "job_step": N, "message": "queued at step N"}
-//   4. 不阻塞等 ack — ack 后续通过 notifyCh → 主代理 drain 自然感知
+//   4. 不阻塞等 ack — ack 后续通过 ackCh → 主代理 drain 自然感知
 ```
 
 ### 4.3 新增 cancel-job
@@ -247,9 +266,25 @@ type peekJob struct{}
 
 ### 5.2 新增
 
+`Job` 结构体新增 `steerCh` 字段，子代理启动时由 Manager 创建并注册：
+
+```go
+// Job 新增字段
+steerCh chan string  // 父代理 → 子代理 steer 消息通道
+```
+
+Manager 的 `Start()` 方法在创建 Job 时初始化 `steerCh`，并将写入端传给子代理。子代理的 `Run()` 循环通过 `drainSteer()` 消费该通道。
+
 ```go
 // Steer 往指定 job 的子代理 steerCh 发消息
-func (m *Manager) Steer(jobID string, message string) error
+func (m *Manager) Steer(jobID string, message string) error {
+    job, ok := m.jobs[jobID]
+    if !ok {
+        return ErrJobNotFound
+    }
+    job.steerCh <- message
+    return nil
+}
 
 // Peek 非阻塞查询 job 状态
 func (m *Manager) Peek(jobID string) (JobStatus, error)
@@ -267,7 +302,7 @@ type JobStatus struct {
 
 `SetOnCompletion` 回调保留，但触发后不再走 `DrainCompletedNote` 注入路径。改为：
 
-子代理完成时 → `jm` 把 `notifyCh` 中 result 排队到主代理可见的队列 → 主代理 `autoReenter` 触发新 turn → 主代理 `drainNotify()` 消费 result → 追加为 tool message → `stream()`。
+子代理完成时 → `jm` 把 `resultCh` 中 result 排队到主代理可见的队列 → 主代理 `autoReenter` 触发新 turn → 主代理 `drainNotify()` 消费 result → 追加为 tool message → `stream()`。
 
 ---
 
@@ -275,21 +310,61 @@ type JobStatus struct {
 
 文件：`internal/control/controller.go`
 
-### 6.1 保留 autoReenter
+### 6.1 保留 autoReenter（A 方案）
 
-`autoReenter()` 方法保留。子代理完成 → `SetOnCompletion` 回调 → `autoReenter()` → 直接调用 `Agent.drainNotify()` 将 result 追加到 session → 触发 `stream()`。不再走 `c.Send(c.pendingInput)` 路径，不产生空 user message。
+`autoReenter()` 方法保留。子代理完成 → `SetOnCompletion` 回调 → `autoReenter()` 调用 `c.Send("<tool-result-pending>")`。主代理 `Run()` 循环在下一次迭代中收到特殊标记 `<tool-result-pending>`，识别该标记后跳过 `session.Add(userMessage)`，直接进入 `drainNotify()` + `stream()`。不再产生空 user message。
+
+**Run() 循环中的特殊标记检测逻辑**：
+
+```go
+func (a *Agent) Run(ctx context.Context) {
+    for {
+        select {
+        case <-ctx.Done():
+            return
+        default:
+        }
+
+        userInput := a.drainSteer()
+
+        // 检测特殊标记，跳过 session 写入
+        if userInput == "<tool-result-pending>" {
+            a.drainNotify()  // 消费子代理 result
+            a.stream(ctx)    // 继续对话
+            continue
+        }
+
+        if userInput != "" {
+            a.session.Add(session.UserMessage(userInput))
+        }
+
+        a.drainNotify()  // 常规 drain（非阻塞检查已完成的 job）
+        a.stream(ctx)
+    }
+}
+```
 
 ### 6.2 删除 DrainCompletedNote 调用
 
 `runTurnWithRaw()` 中调用 `DrainCompletedNote()` 的行删除。`Compose()` 中不再注入 `<background-jobs>`。
 
+### 6.3 Run() 循环改造要点
+
+1. **特殊标记检测**：`Run()` 循环在 `drainSteer()` 之后检查返回值是否为 `"<tool-result-pending>"`，如果是则跳过 `session.Add(userMessage)`，直接进入 `drainNotify()` + `stream()`。
+2. **drainNotify 位置**：`drainNotify()` 在每次 `stream()` 之前调用，无论是普通用户消息路径还是 autoReenter 触发路径。
+3. **autoReenter 不再直接调用 drainNotify**：改为发送特殊标记，由 `Run()` 循环统一处理，避免并发写 session 的问题。
+
 ---
 
 ## §7 嵌套子代理
 
-子代理 A 调 task 启动孙代理 B → B 也是后台 job → B 完成 → B 的 notifyCh result 推给 A → A 的 drainNotify 消费 → A 拿到 tool result → A 继续运行 → A 完成 → A 的 result 推给主代理。
+子代理 A 调 task 启动孙代理 B → B 也是后台 job → B 完成 → B 的 `resultCh` result 推给 A → A 的 `drainNotify()` 消费 → 孙代理 result 进入 A 的 `taskResults`（由 A 的 Controller 管理）→ A 的 `drainNotify()` 消费后作为 tool result 写入 A 的 session → A 继续运行 → A 完成 → A 的 result 推给主代理。
 
-每层独立管理自己的 `jobID → toolCallID` 映射。notifyCh 只在父子之间通信，不跨级。
+**关键点**：
+- 子代理的 `Run()` 循环与主代理结构一致，包含 `drainSteer()` + `drainNotify()` + `stream()` 三阶段。子代理的 `Run()` 循环中也包含 `drainNotify()` 调用，用于消费孙代理的通知。
+- 孙代理的 result 通过 A 的 `drainNotify()` 写入 A 的 session（`RoleTool` message），供 A 的模型消费。
+- A 的 `taskResults` 由 A 的 Controller 管理，不跨级。
+- `ackCh` / `resultCh` / `notifyCh` 只在父子之间通信，祖父代理不感知孙代理的存在。
 
 ---
 
@@ -305,10 +380,10 @@ type JobStatus struct {
 7. 主代理 stream → 调 steer-job("task-1", "顺便也查一下 ZZZ")
    → 返回 "queued at step 3"
 8. 主代理 stream → "已告诉 task-1 加查 ZZZ"
-9. [task-1 drainSteer 消费 steer] → notifyCh 推 ack
+9. [task-1 drainSteer 消费 steer] → ackCh 推 ack
 10. 主代理 drainNotify → 消费 ack
 11. 主代理 stream → "task-1 已确认收到，正在加查 ZZZ"
-12. [task-2 完成] → notifyCh 推 result("YYY 的结果是...")
+12. [task-2 完成] → resultCh 推 result("YYY 的结果是...")
 13. 主代理 SetOnCompletion 触发 → autoReenter → drainNotify
     → 追加 tool message(toolCallID=task-2-call-id, content="YYY 的结果是...")
 14. 主代理 stream → "YYY 的结果出来了，是这样的..."
@@ -322,11 +397,11 @@ type JobStatus struct {
 
 | 文件 | 改动类型 | 内容 |
 |---|---|---|
-| `internal/agent/task.go` | 重写 | 删前台路径、runSub、activeChild、subSink（保留 subSinkFor）；新增 notifyCh 推送逻辑 |
+| `internal/agent/task.go` | 重写 | 删前台分支（runSub 内）、activeChild、subSink；保留 runSub() 和 subSinkFor()；新增 ackCh/resultCh/notifyCh 推送逻辑 |
 | `internal/agent/agent.go` | 删+增 | 删 activeChild/setActiveChild/clearActiveChild/SubagentStop 触发/isBackgroundTaskCall/SubagentStop 接口声明；新增 drainNotify、notifyCh 消费；保留 steerCh/drainSteer |
 | `internal/agent/context.go` | 删 | 删 WithActiveChild/isActiveChild/activeChildKey |
 | `internal/agent/coordinator.go` | 确认 | Steer 方法是否涉及 activeChild 转发 |
-| `internal/tool/builtin/bgjobs.go` | 删+增 | 删 wait；新增 steer-job/cancel-job/peek-job。**外部引用清理**（共 11 处 `"wait"` 工具名引用）：`internal/cli/toolcard.go:75/144/165`（映射表）、`internal/cli/toolcard_test.go:18`（测试）、`internal/cli/acp_test.go:34`（测试）、`internal/tool/builtin/workspace_test.go:118/119/129`（同一包测试）、`internal/agent/task.go:257`（工具限制列表）、`internal/hook/rtk_rewriter.go:48/80`（switch case）、`internal/boot/boot_test.go:187`（测试） |
+| `internal/tool/builtin/bgjobs.go` | 删+增 | 删 wait；新增 steer-job/cancel-job/peek-job。**外部引用清理**（共 11 处 `"wait"` 工具名引用）：`internal/cli/toolcard.go:75/144/165`（映射表，其中 165 行含特殊 "wait" 逻辑需清理）、`internal/cli/toolcard_test.go:18`（测试）、`internal/cli/acp_test.go:34`（测试）、`internal/tool/builtin/workspace_test.go:118/119/129`（同一包测试）、`internal/agent/task.go:257`（工具限制列表 `plannerNonResearchTools` 中的 "wait" 条目需清理）、`internal/hook/rtk_rewriter.go:48/80`（switch case）、`internal/boot/boot_test.go:187`（测试） |
 | `internal/jobs/jobs.go` | 删+增 | 删 DrainCompletedNote/completed/recordCompletion/Result 类型/Wait 方法；新增 Steer/Peek/NotifyChan 方法、notifyCh 支持 |
 | `internal/control/controller.go` | 删 | 删 DrainCompletedNote 调用；保留 autoReenter |
 | `internal/control/input.go` | 删 | 删 `<background-jobs>` 注入 |
