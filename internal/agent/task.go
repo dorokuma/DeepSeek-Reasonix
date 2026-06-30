@@ -216,7 +216,7 @@ func (t *TaskTool) checkUserConfirmation(ctx context.Context) error {
 		}
 	}
 	result = strings.TrimSpace(strings.ToUpper(result))
-	if result == "YES" {
+	if strings.HasPrefix(result, "YES") {
 		return nil
 	}
 	return fmt.Errorf("Task 被拦截：上一轮用户消息未检测到显式确认。请先向用户确认意图后再委派 Task。")

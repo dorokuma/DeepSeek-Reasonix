@@ -761,7 +761,7 @@ func Default() *Config {
 			CompactForceRatio: 0.9,
 			EncryptSessions:   true,
 			TaskConfirmationCheck:           true,
-			TaskConfirmationKeywords:        []string{"对", "可以", "确认", "继续", "好", "批准", "干吧", "是的", "go ahead", "ok", "yes", "proceed", "approved", "confirmed"},
+			TaskConfirmationKeywords:        nil,
 			TaskConfirmationSemanticFallback: true,
 		},
 		// Mode "ask" with no rules keeps `reasonix run` autonomous (no TTY → ask
