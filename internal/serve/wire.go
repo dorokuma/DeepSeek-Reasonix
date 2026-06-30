@@ -105,6 +105,7 @@ type wireApproval struct {
 	ID      string `json:"id"`
 	Tool    string `json:"tool"`
 	Subject string `json:"subject"`
+	Preview string `json:"preview,omitempty"`
 	Scope   string `json:"scope,omitempty"`
 }
 
@@ -184,7 +185,7 @@ func toWire(e event.Event) wireEvent {
 			}
 		}
 	case event.ApprovalRequest:
-		w.Approval = &wireApproval{ID: e.Approval.ID, Tool: e.Approval.Tool, Subject: e.Approval.Subject, Scope: e.Approval.Scope}
+		w.Approval = &wireApproval{ID: e.Approval.ID, Tool: e.Approval.Tool, Subject: e.Approval.Subject, Preview: e.Approval.Preview, Scope: e.Approval.Scope}
 	case event.AskRequest:
 		w.Ask = toWireAsk(e.Ask)
 	case event.CompactionStarted, event.CompactionDone:
