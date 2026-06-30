@@ -902,7 +902,7 @@ export default function App() {
   // workspace changes, git history, and session metadata after AI tool writes.
   useEffect(() => {
     const unsub = onEvent((e) => {
-      if (e.kind === "turn_done" || (e.kind === "notice" && (e.text ?? "").startsWith("autoresearch "))) {
+      if (e.kind === "turn_done") {
         setDockRefreshKey((v) => v + 1);
       }
       if (e.kind === "turn_done") {
@@ -3378,9 +3378,7 @@ export default function App() {
 	              workspacePath={state.meta?.workspacePath || state.meta?.workspaceRoot || state.meta?.cwd}
 	              workspaceName={state.meta?.workspaceName}
 	              gitBranch={state.meta?.gitBranch}
-	              autoResearch={state.meta?.autoResearch}
-	              onAutoResearchClick={() => openRightDockMode("context")}
-	            />
+            />
           </footer>
           )}
           </>

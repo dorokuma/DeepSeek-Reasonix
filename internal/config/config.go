@@ -295,7 +295,6 @@ func (c *Config) DesktopStatusBarStyle() string {
 
 var defaultDesktopStatusBarItems = []string{
 	"model",
-	"autoresearch",
 	"workspace",
 	"git_branch",
 	"cache",

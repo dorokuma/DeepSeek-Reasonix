@@ -1252,7 +1252,6 @@ export function useController() {
         textBatch.drain();
         dispatchTo(targetTabId, { type: "event", e });
       }
-      const isAutoResearchNotice = e.kind === "notice" && (e.text ?? "").startsWith("autoresearch ");
       if (e.kind === "turn_done") {
         if (!e.err) {
           app.HistoryCheckpointTurnsForTab(targetTabId)
@@ -1266,8 +1265,6 @@ export function useController() {
         app.BalanceForTab(targetTabId).then((balance) => dispatchTo(targetTabId, { type: "balance", balance })).catch(() => {});
         app.EffortForTab(targetTabId).then((effort) => dispatchTo(targetTabId, { type: "effort", effort })).catch(() => {});
         void refreshCheckpoints(targetTabId);
-      }
-      if (e.kind === "turn_done" || isAutoResearchNotice) {
         void refreshMetaForTab(targetTabId, dispatchTo);
       }
       if (e.kind === "turn_done" || e.kind === "notice") {

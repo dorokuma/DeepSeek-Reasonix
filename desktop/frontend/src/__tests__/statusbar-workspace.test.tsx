@@ -86,34 +86,7 @@ console.log("\nstatus bar workspace");
 
 {
   const defaultItems = DEFAULT_STATUS_BAR_ITEMS as readonly string[];
-  ok(defaultItems.includes("autoresearch"), "autoresearch is a default configurable status item");
-  const html = renderStatusBar({
-    items: ["autoresearch"],
-    autoResearch: { taskId: "task-1", status: "running", iteration: 4, staleCount: 0, pivotRequired: false },
-    onAutoResearchClick: () => {},
-  });
-  ok(html.includes("Research 4"), "autoresearch running chip shows iteration");
-  ok(html.includes("<button") && html.includes("AutoResearch"), "autoresearch chip opens the detail panel when clickable");
-}
-
-{
-  const pivot = renderStatusBar({
-    items: ["autoresearch"],
-    autoResearch: { taskId: "task-1", status: "running", iteration: 4, staleCount: 2, pivotRequired: true },
-  });
-  ok(pivot.includes("Pivot"), "autoresearch pivot chip shows pivot label");
-
-  const blocked = renderStatusBar({
-    items: ["autoresearch"],
-    autoResearch: { taskId: "task-1", status: "blocked", iteration: 4, staleCount: 4, pivotRequired: true },
-  });
-  ok(blocked.includes("Blocked"), "autoresearch blocked chip shows blocked label");
-
-  const complete = renderStatusBar({
-    items: ["autoresearch"],
-    autoResearch: { taskId: "task-1", status: "complete", iteration: 5, staleCount: 0, pivotRequired: false },
-  });
-  ok(complete.includes("Done"), "autoresearch complete chip shows done label");
+  ok(!defaultItems.includes("autoresearch"), "autoresearch is not a configurable status bar UI item");
 }
 
 console.log(`\n${passed} passed, ${failed} failed, ${passed + failed} total`);
