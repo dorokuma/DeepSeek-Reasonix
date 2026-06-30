@@ -1113,12 +1113,15 @@ export function Composer({
   const submit = async () => {
     if (disabled || submitDisabled || readOnly || submittingRef.current) return;
     const submitDraftKey = activeDraftKeyRef.current;
-    const trimmedText = text.trim();
+    const currentText = textRef.current;
+    const trimmedText = currentText.trim();
     if (pendingPaste > 0) return;
     if (!imageInputEnabled && hasImageAttachments(attachmentsRef.current)) {
       warnImageInputFallback();
     }
-    if (!trimmedText && attachments.length === 0 && workspaceRefs.length === 0) {
+    const currentAttachments = attachmentsRef.current;
+    const currentWorkspaceRefs = workspaceRefsRef.current;
+    if (!trimmedText && currentAttachments.length === 0 && currentWorkspaceRefs.length === 0) {
       if (goalModeOn && !activeGoal) {
         setComposerPrompt(t("composer.goalInputRequired"));
         requestAnimationFrame(() => taRef.current?.focus());
@@ -1129,13 +1132,13 @@ export function Composer({
     submittingRef.current = true;
     setSubmitting(true);
     try {
-      const orderedAttachments = sortComposerAttachments(attachments);
+      const orderedAttachments = sortComposerAttachments(currentAttachments);
       const refs = [
-        ...workspaceRefs.map((ref) => formatWorkspaceReference(ref.path, ref.isDir)),
+        ...currentWorkspaceRefs.map((ref) => formatWorkspaceReference(ref.path, ref.isDir)),
         ...orderedAttachments.map((a) => `@${a.path}`),
       ].join(" ");
       const displayRefs = [
-        ...workspaceRefs.map((ref) => formatWorkspaceReference(ref.displayPath || ref.path, ref.isDir)),
+        ...currentWorkspaceRefs.map((ref) => formatWorkspaceReference(ref.displayPath || ref.path, ref.isDir)),
         ...orderedAttachments.map(formatAttachmentDisplayReference),
       ].join(" ");
       const displayText = [trimmedText, displayRefs].filter(Boolean).join(trimmedText && displayRefs ? " " : "");
@@ -1143,7 +1146,8 @@ export function Composer({
       // to submitText only (displayText stays unchanged so the user still sees their
       // original prompt in the input preview). With no refs we keep the original
       // submitText verbatim — no header, no rewording, byte-identical to pre-PR-B.
-      const sessionContext = sessionRefs.length === 0 ? "" : await buildSessionContext(sessionRefs);
+      const currentSessionRefs = sessionRefsRef.current;
+      const sessionContext = currentSessionRefs.length === 0 ? "" : await buildSessionContext(currentSessionRefs);
       const baseSubmitText = [expandPastedBlocks(trimmedText), refs].filter(Boolean).join(trimmedText && refs ? " " : "");
       const submitText = sessionContext ? `${sessionContext}${baseSubmitText}` : baseSubmitText;
       await onSend(displayText, submitText);
@@ -1277,28 +1281,50 @@ export function Composer({
       void attachNativeClipboardImage(hasImageHint, activeDraftKeyRef.current);
       return;
     }
-    if (!shouldFoldPaste(pasted)) return;
 
+    // Always prevent the browser default paste so React's controlled-input
+    // reconciliation cannot race with the native DOM update and lose the
+    // pasted content (WebView2 / Windows). We insert the text manually below.
     e.preventDefault();
     const ta = e.currentTarget;
     const start = ta.selectionStart ?? text.length;
     const end = ta.selectionEnd ?? text.length;
-    const id = nextPasteId.current++;
-    const lines = lineCount(pasted);
-    const label = t("composer.pastedLabel", { id, lines });
-    const block: PastedBlock = { label, text: pasted };
-    const next = text.slice(0, start) + label + text.slice(end);
 
-    pastedBlocksRef.current = [...pastedBlocksRef.current, block];
-    setPastedBlocks((prev) => [...prev, block]);
-    setText(next);
-    requestAnimationFrame(() => {
-      const node = taRef.current;
-      if (!node) return;
-      const pos = start + label.length;
-      node.focus();
-      node.selectionStart = node.selectionEnd = pos;
-    });
+    // Normalize CRLF from Windows clipboard so caret offsets match the
+    // textarea's normalized value. The raw text (with CRLF) is preserved
+    // in the PastedBlock for long pastes so block content is lossless.
+    const normalizedPasted = pasted.replace(/\r\n/g, "\n");
+
+    if (shouldFoldPaste(pasted)) {
+      // Long paste: fold into a collapsible block so the composer stays compact.
+      const id = nextPasteId.current++;
+      const lines = lineCount(pasted);
+      const label = t("composer.pastedLabel", { id, lines });
+      const block: PastedBlock = { label, text: pasted }; // keep raw text (CRLF preserved)
+      const next = text.slice(0, start) + label + text.slice(end);
+      pastedBlocksRef.current = [...pastedBlocksRef.current, block];
+      setPastedBlocks((prev) => [...prev, block]);
+      setText(next);
+      requestAnimationFrame(() => {
+        const node = taRef.current;
+        if (!node) return;
+        const pos = start + label.length;
+        node.focus();
+        node.selectionStart = node.selectionEnd = pos;
+      });
+    } else {
+      // Short paste: insert the raw text directly into state.
+      resetPromptHistoryNavigation();
+      const next = text.slice(0, start) + normalizedPasted + text.slice(end);
+      setText(next);
+      requestAnimationFrame(() => {
+        const node = taRef.current;
+        if (!node) return;
+        const pos = start + normalizedPasted.length;
+        node.focus();
+        node.selectionStart = node.selectionEnd = pos;
+      });
+    }
   };
 
   const hasWorkspaceReferenceDrag = (dataTransfer: DataTransfer): boolean =>
