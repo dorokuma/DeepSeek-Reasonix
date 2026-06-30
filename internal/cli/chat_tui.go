@@ -1103,9 +1103,7 @@ func (m chatTUI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "ctrl+l":
 			if m.state != tuiRunning {
 				m.finalizeStreamed()
-				m.transcript = nil
-				m.wrappedLines = nil
-				m.viewport.SetContent("")
+				m.clearTranscriptDisplay()
 				m.commitLine(strings.TrimRight(
 					renderTUIBanner(m.label, "", transcriptContentWidth(m.width, m.nativeScrollback)), "\n"))
 				m.transcriptDirty = true
@@ -1453,6 +1451,24 @@ func finalize(m chatTUI, cmds []tea.Cmd) tea.Cmd {
 	}
 	*m.pendingCommit = (*m.pendingCommit)[:0]
 	return tea.Batch(cmds...)
+}
+
+func (m *chatTUI) clearTranscriptDisplay() {
+	if m.pendingCommit != nil {
+		*m.pendingCommit = (*m.pendingCommit)[:0]
+	}
+	m.transcript = nil
+	m.wrappedLines = nil
+	m.viewport.SetContent("")
+	m.shellOutputs = make(map[string]string)
+	m.shellExpanded = make(map[string]bool)
+	m.shellTranscriptIdx = make(map[string]int)
+	m.toolLineCountByID = make(map[string]int)
+	m.toolStreamID = ""
+	m.toolStreamIdx = -1
+	m.toolTail = nil
+	m.toolPartial = ""
+	m.toolLineCount = 0
 }
 
 // scrollChunkHeight is the largest block (in lines) finalize prints at once in
@@ -1955,9 +1971,9 @@ func (m *chatTUI) collapseShellSlot(id string, idx int, resultOutput string) {
 func (m *chatTUI) toggleShellOutput() {
 	// Find the most recent shell output that has a transcript entry.
 	var lastID string
-	var lastIdx int
+	lastIdx := -1
 	for id, idx := range m.shellTranscriptIdx {
-		if idx > lastIdx {
+		if idx >= 0 && idx < len(m.transcript) && idx > lastIdx {
 			lastID = id
 			lastIdx = idx
 		}
@@ -3325,9 +3341,7 @@ func (m *chatTUI) runSlashCommand(input string) tea.Cmd {
 	case "/cls":
 		m.echoLocalCommand(input)
 		m.finalizeStreamed()
-		m.transcript = nil
-		m.wrappedLines = nil
-		m.viewport.SetContent("")
+		m.clearTranscriptDisplay()
 		m.commitLine(strings.TrimRight(
 			renderTUIBanner(m.label, "", transcriptContentWidth(m.width, m.nativeScrollback)), "\n"))
 		m.transcriptDirty = true
