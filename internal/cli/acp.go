@@ -143,14 +143,13 @@ func (f *acpFactory) NewSession(ctx context.Context, p acp.SessionParams) (*cont
 	headlessGate := permission.NewGate(policy, nil)
 	taskModel, taskEffort := acpTaskProfileDefaults(cfg)
 	resolveSubagentProvider := newACPSubagentProviderResolver(cfg, entry, proxySpec)
-	reg.Add(agent.NewTaskTool(execProv, entry.Price, reg, maxSteps, cfg.Agent.MaxSubagentSteps,
+	reg.Add(agent.NewTaskTool(execProv, entry.Price, reg,
 		entry.ContextWindow, cfg.Agent.SoftCompactRatio, cfg.Agent.CompactRatio, cfg.Agent.CompactForceRatio,
 		cfg.Agent.Temperature, config.ArchiveDir(), "", headlessGate,
 		taskModel, taskEffort, resolveSubagentProvider, nil))
 
 	executor := agent.New(execProv, reg, agent.NewSession(sysPrompt), agent.Options{
 		MaxSteps:          maxSteps,
-		MaxSubagentSteps:  cfg.Agent.MaxSubagentSteps,
 		Temperature:       cfg.Agent.Temperature,
 		Pricing:           entry.Price,
 		Gate:              headlessGate,

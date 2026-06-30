@@ -490,7 +490,7 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	taskModel := firstNonEmpty(cfg.Agent.SubagentModels["task"], cfg.Agent.SubagentModel)
 	taskEffort := firstNonEmpty(cfg.Agent.SubagentEfforts["task"], cfg.Agent.SubagentEffort)
 	subAgentGate := permission.NewGate(policy, nil)
-	reg.Add(agent.NewTaskTool(execProv, entry.Price, reg, maxSteps, cfg.Agent.MaxSubagentSteps,
+	reg.Add(agent.NewTaskTool(execProv, entry.Price, reg,
 		entry.ContextWindow, cfg.Agent.SoftCompactRatio, cfg.Agent.CompactRatio, cfg.Agent.CompactForceRatio,
 		cfg.Agent.Temperature, config.ArchiveDir(), agent.DefaultTaskSystemPrompt+"\n\n"+extractSharedSections(), subAgentGate,
 		taskModel, taskEffort, resolveSubagentProvider, hookRunner))
@@ -524,7 +524,6 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 
 	agentOpts := agent.Options{
 		MaxSteps:                  maxSteps,
-		MaxSubagentSteps:          cfg.Agent.MaxSubagentSteps,
 		Temperature:               cfg.Agent.Temperature,
 		Pricing:                   entry.Price,
 		Gate:                      subAgentGate,
@@ -558,16 +557,9 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 			prov, price, ctxWin = p, pr, cw
 		}
 		subReg := agent.FilterRegistry(reg, nil, agent.SubagentMetaTools()...)
-		steps := maxSteps
-		if agentOpts.MaxSubagentSteps > 0 {
-			steps = agentOpts.MaxSubagentSteps
-		} else if steps > 0 {
-			if steps /= 2; steps < 5 {
-				steps = 5
-			}
-		}
+		steps := 0
 		subCtx := agent.WithNestingDepth(sctx, agent.NestingDepthFrom(sctx)+1)
-		return agent.RunSubAgent(subCtx, prov, subReg, sk.Body, task, agent.Options{
+		return agent.RunSubAgent(subCtx, prov, subReg, sk.Body+"\n\n"+extractSharedSections(), task, agent.Options{
 			MaxSteps:      steps,
 			Temperature:   cfg.Agent.Temperature,
 			Pricing:       price,
@@ -657,30 +649,6 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 		})
 	}
 	// /tools slash command: lists all registered tools with their descriptions.
-	slashEntries = append(slashEntries, command.SlashEntry{
-		Name:        "tools",
-		Description: "List all registered tools with their names and descriptions.",
-		Render: func(_ []string) string {
-			// Snapshot current registry state.
-			names := reg.Names()
-			var b strings.Builder
-			b.WriteString("Available tools:\n")
-			for _, n := range names {
-				t, ok := reg.Get(n)
-				if !ok {
-					continue
-				}
-				desc := t.Description()
-				// Truncate long descriptions for readability.
-				if len(desc) > 120 {
-					desc = desc[:117] + "..."
-				}
-				b.WriteString(fmt.Sprintf("- **%s**: %s\n", n, desc))
-			}
-			b.WriteString(fmt.Sprintf("\n*Total: %d tools*", len(names)))
-			return b.String()
-		},
-	})
 	reg.Add(command.NewSlashCommandTool(slashEntries))
 
 	var runner agent.Runner = executor

@@ -144,7 +144,6 @@ type Agent struct {
 	sessMu      sync.Mutex // guards the session pointer for external Session()/SetSession
 	maxSteps    int
 	maxStepsKey string
-	MaxSubagentSteps int
 	// mainAgentAllowed, when non-nil, is the whitelist of tools the root
 	// (depth-0) agent may invoke. nil means no restriction.
 	mainAgentAllowed map[string]bool
@@ -461,7 +460,6 @@ func (a *Agent) CompactNow(ctx context.Context, instructions string) error {
 // Options configures an Agent.
 type Options struct {
 	MaxSteps int
-	MaxSubagentSteps int
 	// MaxStepsKey names the configuration knob shown when the MaxSteps guard is
 	// hit. Empty defaults to agent.max_steps.
 	MaxStepsKey string
@@ -564,7 +562,6 @@ func New(prov provider.Provider, tools *tool.Registry, session *Session, opts Op
 		tools:                tools,
 		session:              session,
 		maxSteps:             opts.MaxSteps,
-		MaxSubagentSteps:     opts.MaxSubagentSteps,
 		maxStepsKey:          maxStepsKey,
 		temperature:          opts.Temperature,
 		pricing:              opts.Pricing,
