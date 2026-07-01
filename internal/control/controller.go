@@ -271,6 +271,9 @@ func New(opts Options) *Controller {
 	}
 	// Checkpoints: bind a store to the session and route writer pre-edits into it.
 	c.rebindCheckpoints(opts.SessionPath)
+	if c.runner == nil && c.executor != nil {
+		c.runner = c.executor
+	}
 	if c.executor != nil {
 		c.executor.SetPreEditHook(func(ch diff.Change) {
 			if c.cp != nil {

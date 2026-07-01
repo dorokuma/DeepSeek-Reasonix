@@ -434,6 +434,25 @@ func (m *Manager) Close() {
 	m.cancel()
 }
 
+
+
+// safeChanSend performs a non-blocking channel send. It recovers from send-on-
+// closed-channel panics so async job completion cannot crash the process when
+// channels race teardown.
+func safeChanSend[T any](ch chan T, v T) (sent bool) {
+	defer func() {
+		if recover() != nil {
+			sent = false
+		}
+	}()
+	select {
+	case ch <- v:
+		return true
+	default:
+		return false
+	}
+}
+
 func nowMs() int64 { return time.Now().UnixMilli() }
 
 func startedText(kind, id, label string) string {
