@@ -723,6 +723,13 @@ const VisibilityPolicy = `User visibility: The user sees only your assistant mes
 	`"都在上面", or "内容如上". When the user asks to see a file or rules, quote the full text ` +
 	`in your message.`
 
+// ToolUseEnforcementPolicy ensures every assistant turn delivers progress or a result.
+// Inspired by Hermes Agent's TOOL_USE_ENFORCEMENT_GUIDANCE — the model MUST either
+// invoke tools or hand off a concrete deliverable; pure status updates are forbidden.
+const ToolUseEnforcementPolicy = `CRITICAL: You MUST use your tools to take action — do not describe what ` +
+	`you would do without actually doing it. Every response should either (a) contain tool ` +
+	`calls that make progress, or (b) deliver a final result to the user.`
+
 // Default returns the built-in default configuration (DeepSeek + MiMo presets).
 func Default() *Config {
 	return &Config{

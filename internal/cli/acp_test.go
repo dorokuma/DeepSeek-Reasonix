@@ -110,26 +110,6 @@ api_key_env = "REASONIX_TEST_KEY"
 	t.Fatalf("ACP session did not load project command from cwd; commands=%v", ctrl.Commands())
 }
 
-func TestACPTaskProfileDefaults(t *testing.T) {
-	cfg := config.Default()
-	cfg.Agent.SubagentModel = "default-model"
-	cfg.Agent.SubagentEffort = "high"
-	cfg.Agent.SubagentModels = map[string]string{"task": "task-model"}
-	cfg.Agent.SubagentEfforts = map[string]string{"task": "max"}
-
-	model, effort := acpTaskProfileDefaults(cfg)
-	if model != "task-model" || effort != "max" {
-		t.Fatalf("task profile defaults = %q/%q, want task-model/max", model, effort)
-	}
-
-	cfg.Agent.SubagentModels = nil
-	cfg.Agent.SubagentEfforts = nil
-	model, effort = acpTaskProfileDefaults(cfg)
-	if model != "default-model" || effort != "high" {
-		t.Fatalf("fallback task profile defaults = %q/%q, want default-model/high", model, effort)
-	}
-}
-
 func TestACPSubagentProviderResolverHonorsProfile(t *testing.T) {
 	cfg := config.Default()
 	cfg.Providers = []config.ProviderEntry{

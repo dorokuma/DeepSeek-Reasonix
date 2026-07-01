@@ -248,6 +248,7 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 		}
 	}
 	sysPrompt += "\n\n" + config.VisibilityPolicy
+	sysPrompt += "\n\n" + config.ToolUseEnforcementPolicy
 
 	// Persistent memory (REASONIX.md / AGENTS.md hierarchy + auto-memory index)
 	// folds into the system prompt exactly here, once: it becomes part of the
@@ -487,13 +488,11 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 		return out.String()
 	}
 
-	taskModel := firstNonEmpty(cfg.Agent.SubagentModels["task"], cfg.Agent.SubagentModel)
-	taskEffort := firstNonEmpty(cfg.Agent.SubagentEfforts["task"], cfg.Agent.SubagentEffort)
 	subAgentGate := permission.NewGate(policy, nil)
 	reg.Add(agent.NewTaskTool(execProv, entry.Price, reg,
 		entry.ContextWindow, cfg.Agent.SoftCompactRatio, cfg.Agent.CompactRatio, cfg.Agent.CompactForceRatio,
 		cfg.Agent.Temperature, config.ArchiveDir(), agent.DefaultTaskSystemPrompt+"\n\n"+extractSharedSections(), subAgentGate,
-		taskModel, taskEffort, resolveSubagentProvider, hookRunner))
+		resolveSubagentProvider, hookRunner))
 
 	// Session history tools let the AI discover and read past conversations.
 	// `list_sessions` returns all saved session files; `read_session` loads one
@@ -548,13 +547,11 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	skillRunner := func(sctx context.Context, sk skill.Skill, task string) (string, error) {
 		prov, price, ctxWin := execProv, entry.Price, entry.ContextWindow
 		modelRef := subagentModelRef(cfg, sk)
-		effortRef := subagentEffortRef(cfg, sk)
-		if modelRef != "" || effortRef != "" {
-			p, pr, cw, err := resolveSubagentProvider(modelRef, effortRef)
-			if err != nil {
-				return "", fmt.Errorf("subagent skill %q profile: %w", sk.Name, err)
+		if modelRef != "" {
+			if p, pr, cw, err := resolveSubagentProvider(modelRef, "max"); err == nil {
+				prov, price, ctxWin = p, pr, cw
 			}
-			prov, price, ctxWin = p, pr, cw
+			// On error, keep using execProv — gracefully degrades
 		}
 		subReg := agent.FilterRegistry(reg, nil, agent.SubagentMetaTools()...)
 		steps := 0
@@ -570,11 +567,11 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 		}, agent.NestedSink(subCtx, event.Discard))
 	}
 	skillProfile := func(sk skill.Skill) *event.Profile {
-		model, effort := subagentModelRef(cfg, sk), subagentEffortRef(cfg, sk)
-		if model == "" && effort == "" {
+		model := subagentModelRef(cfg, sk)
+		if model == "" {
 			return nil
 		}
-		return &event.Profile{Model: model, Effort: effort}
+		return &event.Profile{Model: model, Effort: "max"}
 	}
 	reg.Add(skill.NewRunSkillTool(skillStore, skillRunner, skillProfile))
 	reg.Add(skill.NewReadSkillTool(skillStore))
