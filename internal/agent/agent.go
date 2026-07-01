@@ -1121,7 +1121,16 @@ func partitionToolCalls(r *tool.Registry, calls []provider.ToolCall) []toolCallB
 
 func parallelisable(r *tool.Registry, name string) bool {
 	t, ok := r.Get(name)
-	return ok && t.ReadOnly()
+	if !ok {
+		return false
+	}
+	if t.ReadOnly() {
+		return true
+	}
+	if c, ok := t.(tool.Concurrenter); ok {
+		return c.Concurrent()
+	}
+	return false
 }
 
 func runParallel(ctx context.Context, start, end int, run func(int), onPanic func(int, string)) {
