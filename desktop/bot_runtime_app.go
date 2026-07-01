@@ -287,6 +287,7 @@ func (r *desktopBotRuntime) ForwardTargets(cfg *config.Config) []botForwardTarge
 		return nil
 	}
 	var targets []botForwardTarget
+	seen := make(map[botForwardTarget]bool)
 	for _, conn := range cfg.Bot.Connections {
 		if !conn.Enabled {
 			continue
@@ -302,12 +303,17 @@ func (r *desktopBotRuntime) ForwardTargets(cfg *config.Config) []botForwardTarge
 			if sm.ChatType != "" {
 				chatType = bot.ChatType(sm.ChatType)
 			}
-			targets = append(targets, botForwardTarget{
+			target := botForwardTarget{
 				ConnID:   connID,
 				Domain:   domain,
 				ChatID:   remoteID,
 				ChatType: chatType,
-			})
+			}
+			if seen[target] {
+				continue
+			}
+			seen[target] = true
+			targets = append(targets, target)
 		}
 	}
 	return targets

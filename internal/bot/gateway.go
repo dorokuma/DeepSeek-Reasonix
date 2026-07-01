@@ -1146,13 +1146,20 @@ func (gw *BotGateway) UpdateConnectionToolApprovalMode(connID, mode string) {
 // SendToAdapter sends a message through the adapter identified by connID.
 // Returns an error if no matching adapter is found.
 func (gw *BotGateway) SendToAdapter(ctx context.Context, connID, domain string, msg OutboundMessage) (SendResult, error) {
+	connID = strings.TrimSpace(connID)
+	domain = strings.TrimSpace(domain)
+	var adapter Adapter
 	gw.mu.Lock()
-	defer gw.mu.Unlock()
 	for _, binding := range gw.adapters {
-		if strings.TrimSpace(binding.ID) == strings.TrimSpace(connID) &&
-			(domain == "" || strings.EqualFold(strings.TrimSpace(binding.Domain), strings.TrimSpace(domain))) {
-			return binding.Adapter.Send(ctx, msg)
+		if strings.TrimSpace(binding.ID) == connID &&
+			(domain == "" || strings.EqualFold(strings.TrimSpace(binding.Domain), domain)) {
+			adapter = binding.Adapter
+			break
 		}
+	}
+	gw.mu.Unlock()
+	if adapter != nil {
+		return adapter.Send(ctx, msg)
 	}
 	return SendResult{}, fmt.Errorf("SendToAdapter: no adapter found for connection %q (domain %q)", connID, domain)
 }

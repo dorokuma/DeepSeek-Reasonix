@@ -12,6 +12,7 @@ import (
 )
 
 const botForwardSendTimeout = 30 * time.Second
+const botForwardQueueSize = 64
 
 // ── Forward target ──────────────────────────────────────────────────────────
 
@@ -36,17 +37,24 @@ type botEventForwarder struct {
 	runtime *desktopBotRuntime
 	targets []botForwardTarget
 
-	mu  sync.Mutex
-	buf strings.Builder
+	mu        sync.Mutex
+	buf       strings.Builder
+	queueMu   sync.Mutex
+	queue     chan string
+	closed    bool
+	closeOnce sync.Once
 }
 
 // newBotEventForwarder creates a forwarder that sends to all given targets.
 // runtime may be nil — Emit calls are then no-ops.
 func newBotEventForwarder(runtime *desktopBotRuntime, targets []botForwardTarget) *botEventForwarder {
-	return &botEventForwarder{
+	f := &botEventForwarder{
 		runtime: runtime,
 		targets: targets,
+		queue:   make(chan string, botForwardQueueSize),
 	}
+	go f.run()
+	return f
 }
 
 // Emit implements event.Sink. It forwards text and lifecycle events to the
@@ -75,23 +83,25 @@ func (f *botEventForwarder) Emit(e event.Event) {
 
 	case event.TurnDone:
 		f.flush()
+		f.Close()
 
 	case event.ApprovalRequest:
-		// Forward approval requests so the remote user can approve inline.
-		text := "⚠️ 需要批准操作: " + e.Approval.Tool + " — " + e.Approval.Subject
-		text += "\nID: " + e.Approval.ID
+		// The heartbeat turn belongs to the desktop tab controller, not the bot
+		// gateway session, so remote /approve replies cannot satisfy this ID.
+		text := "⚠️ 需要在 Reasonix 桌面端批准操作: " + e.Approval.Tool + " — " + e.Approval.Subject
+		text += "\n请回到桌面窗口处理。"
 		f.sendToAll(text)
 
 	case event.AskRequest:
 		var qb strings.Builder
-		qb.WriteString("❓ 需要回答问题:\n")
+		qb.WriteString("❓ 需要在 Reasonix 桌面端回答问题:\n")
 		for i, q := range e.Ask.Questions {
 			if i > 0 {
 				qb.WriteString("\n")
 			}
 			qb.WriteString(q.Prompt)
 		}
-		qb.WriteString("\nID: " + e.Ask.ID)
+		qb.WriteString("\n请回到桌面窗口处理。")
 		f.sendToAll(qb.String())
 
 	case event.Notice:
@@ -121,19 +131,49 @@ func (f *botEventForwarder) flush() {
 // sendToAll dispatches text to every target channel. Errors are logged and
 // non-fatal; a failed target does not block other targets.
 func (f *botEventForwarder) sendToAll(text string) {
-	if f.runtime == nil || len(f.targets) == 0 || strings.TrimSpace(text) == "" {
+	text = strings.TrimSpace(text)
+	if f.runtime == nil || len(f.targets) == 0 || text == "" {
 		return
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), botForwardSendTimeout)
-	defer cancel()
+	f.queueMu.Lock()
+	defer f.queueMu.Unlock()
+	if f.closed {
+		return
+	}
+	select {
+	case f.queue <- text:
+	default:
+		log.Printf("[bot-forward] send queue full; dropping message for %d target(s)", len(f.targets))
+	}
+}
+
+func (f *botEventForwarder) run() {
+	for text := range f.queue {
+		f.sendToAllNow(text)
+	}
+}
+
+func (f *botEventForwarder) sendToAllNow(text string) {
 	for _, tgt := range f.targets {
+		ctx, cancel := context.WithTimeout(context.Background(), botForwardSendTimeout)
 		_, err := f.runtime.SendToAdapter(ctx, tgt.ConnID, tgt.Domain, bot.OutboundMessage{
 			ChatID:   tgt.ChatID,
 			ChatType: tgt.ChatType,
 			Text:     text,
 		})
+		cancel()
 		if err != nil {
-			log.Printf("[bot-forward] send to %s/%s failed: %v", tgt.ConnID, tgt.ChatID, err)
+			log.Printf("[bot-forward] send to %s/%s failed: %v", tgt.ConnID, tgt.ChatType, err)
 		}
 	}
+}
+
+func (f *botEventForwarder) Close() {
+	f.closeOnce.Do(func() {
+		f.flush()
+		f.queueMu.Lock()
+		f.closed = true
+		close(f.queue)
+		f.queueMu.Unlock()
+	})
 }

@@ -700,6 +700,10 @@ type tabEventSink struct {
 	botSink       event.Sink // optional: when set, events are also forwarded here
 }
 
+type closeableEventSink interface {
+	Close()
+}
+
 func (s *tabEventSink) Emit(e event.Event) {
 	if s.app != nil {
 		switch e.Kind {
@@ -761,8 +765,14 @@ func (s *tabEventSink) Emit(e event.Event) {
 // It is safe to call concurrently with Emit.
 func (s *tabEventSink) SetBotSink(sink event.Sink) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	old := s.botSink
 	s.botSink = sink
+	s.mu.Unlock()
+	if old != nil && old != sink {
+		if closer, ok := old.(closeableEventSink); ok {
+			closer.Close()
+		}
+	}
 }
 
 func (s *tabEventSink) setContext(ctx context.Context) {
