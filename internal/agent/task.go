@@ -163,8 +163,8 @@ func (t *TaskTool) Execute(ctx context.Context, args json.RawMessage) (string, e
 	if !ok {
 		return "", fmt.Errorf("background execution is not available in this context")
 	}
-	parentID, parent, _, _ := CallContext(ctx)
-	nested := subSinkFor(parentID, parent)
+	parentID, _, _, _ := CallContext(ctx)
+	nested := event.Discard
 	label := p.Description
 	if label == "" {
 		label = "task"
@@ -172,8 +172,10 @@ func (t *TaskTool) Execute(ctx context.Context, args json.RawMessage) (string, e
 	// Build the onComplete callback from the Controller (if available) so
 	// sub-agent completion triggers auto-reentry via pendingToolResult.
 	var onComplete func(string)
+	var provider OnCompleteProvider
 	if p, ok := OnCompleteProviderFrom(ctx); ok {
 		onComplete = p.MakeOnComplete()
+		provider = p
 	}
 	job, err := jm.Start(ctx, "task", label, func(jobCtx context.Context, _ io.Writer) (string, error) {
 		// Heartbeat: keep lastActive fresh so the stale monitor (30s timeout)
@@ -209,6 +211,9 @@ func (t *TaskTool) Execute(ctx context.Context, args json.RawMessage) (string, e
 	// drainNotify can correlate the result with the original tool call.
 	if ctrl, ok := CtrlFromContext(ctx); ok {
 		ctrl.RegisterJobMeta(job.ID, parentID)
+	}
+	if provider != nil {
+		job.SetOnMessage(provider.MakeOnMessage())
 	}
 	return fmt.Sprintf("Started task %s (%s)", job.ID, label), nil
 }

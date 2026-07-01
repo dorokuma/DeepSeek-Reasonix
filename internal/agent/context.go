@@ -8,6 +8,7 @@ import (
 // onComplete callbacks for background jobs spawned by the task tool.
 type OnCompleteProvider interface {
 	MakeOnComplete() func(jobID string)
+	MakeOnMessage() func(jobID string)
 }
 
 // onCompleteKey carries the OnCompleteProvider in the tool call context.

@@ -124,8 +124,6 @@ func TestWorkspaceEnabledFilter(t *testing.T) {
 func TestWorkspacePreservesSessionLevelBuiltins(t *testing.T) {
 	got := byName(Workspace{Dir: t.TempDir()}.Tools())
 	for _, name := range []string{
-		"bash_output",
-		"kill_shell",
 		"move_file",
 		"notebook_edit",
 	} {

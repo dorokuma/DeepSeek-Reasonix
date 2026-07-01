@@ -1001,6 +1001,10 @@ func (m chatTUI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.confirmBubbleSent()
 				}
 			default:
+				if m.ctrl.Running() {
+					m.ctrl.Cancel()
+					break
+				}
 				// Idle (any mode): a double-Esc on an empty composer opens the
 				// rewind picker (Claude Code's gesture); a first Esc just arms
 				// it. Non-empty input clears as before.
@@ -1110,6 +1114,17 @@ func (m chatTUI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if line == "" {
 				m.viewport.GotoBottom()
 				return m, nil
+			}
+
+			if m.queueEditCursor >= 0 && m.queueEditCursor < len(m.pendingInterject) {
+				// Save the edited text back to the queue slot.
+				m.pendingInterject[m.queueEditCursor] = line
+				m.notice(fmt.Sprintf("queue [%d] updated", m.queueEditCursor+1))
+				m.queueEditCursor = -1
+				m.queueEditDraft = ""
+				m.input.Reset()
+				m.pastedBlocks = nil
+				return m, finalize(m, cmds)
 			}
 			if line == "exit" || line == "quit" || line == ":q" {
 				_ = m.ctrl.Snapshot()
@@ -3077,6 +3092,7 @@ func (m *chatTUI) ingestEvent(e event.Event) {
 		// (turnDiscarded), so any turn reaching here keeps its bubble in scrollback;
 		// just clear the un-sendable flag.
 		m.confirmBubbleSent()
+		m.pendingApproval = nil // defensive: turn settled, drop stale approval banner
 		m.state = tuiIdle
 		m.queueEditCursor = -1
 		m.queueEditDraft = ""

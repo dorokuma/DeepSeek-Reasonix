@@ -159,6 +159,7 @@ type ControllerBridge interface {
 	// RegisterJobMeta stores the tool-call metadata for a background task job
 	// so TakeJobMeta can later correlate a completed job with its tool call.
 	RegisterJobMeta(jobID, toolCallID string)
+	MakeOnMessage() func(jobID string)
 }
 
 // subControllerBridge is a lightweight ControllerBridge implementation for
@@ -201,6 +202,12 @@ func (c *subControllerBridge) RegisterJobMeta(jobID string, toolCallID string) {
 // the pendingToolResult flag when a grandchild background job completes, so the
 // sub-agent's Run loop picks it up on the next iteration.
 func (c *subControllerBridge) MakeOnComplete() func(jobID string) {
+	return func(jobID string) {
+		c.pendingToolResult.Store(true)
+	}
+}
+
+func (c *subControllerBridge) MakeOnMessage() func(jobID string) {
 	return func(jobID string) {
 		c.pendingToolResult.Store(true)
 	}
@@ -874,12 +881,7 @@ func (a *Agent) drainNotify() bool {
 		// 非阻塞读取 resultCh
 		select {
 		case notify, ok := <-ch.Result:
-			if !ok {
-				// Channel closed — job goroutine has exited. Clean up.
-				jm.RemoveJob(jobID)
-				continue
-			}
-			if notify.Type == "result" {
+			if ok && notify.Type == "result" {
 				toolCallID, found := a.ctrl.TakeJobMeta(jobID)
 				if found {
 					// 追加为 tool message 到 session
@@ -894,7 +896,35 @@ func (a *Agent) drainNotify() bool {
 				consumed = true
 			}
 		default:
-			// 没有 result，跳过
+			if notify, ok := jm.CompletedResult(jobID); ok {
+				toolCallID, found := a.ctrl.TakeJobMeta(jobID)
+				if found {
+					a.session.Add(provider.Message{
+						Role:       provider.RoleTool,
+						Content:    notify.Output,
+						ToolCallID: toolCallID,
+					})
+				}
+				jm.RemoveJob(jobID)
+				consumed = true
+			}
+		}
+
+		// 非阻塞循环读取 Inbox，消费全部积压消息
+		for {
+			select {
+			case msg, ok := <-ch.Inbox:
+				if ok && msg != "" {
+					a.session.Add(provider.Message{
+						Role:    provider.RoleUser,
+						Content: fmt.Sprintf("[Subagent message]: %s", msg),
+					})
+					consumed = true
+					continue
+				}
+			default:
+			}
+			break
 		}
 	}
 	return consumed

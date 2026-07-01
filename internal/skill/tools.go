@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"regexp"
 	"strconv"
 	"strings"
@@ -27,22 +28,29 @@ type ProfileResolver func(sk Skill) *event.Profile
 // refresh UI (e.g. a skills sidebar) without a reload. nil is fine.
 type InstalledHook func(name, path string, scope Scope)
 
+// BackgroundRunner starts work in a background job and returns immediately with
+// the job ID. The work function runs in a goroutine; onComplete fires when it
+// finishes (may be nil). boot wires this over the agent's jobs manager so all
+// subagent skills run non-blocking, like `task`.
+type BackgroundRunner func(ctx context.Context, work func(context.Context, io.Writer) (string, error), label string, onComplete func(string)) (string, error)
+
 // --- run_skill ---
 
 type runSkillTool struct {
 	store           *Store
 	runner          SubagentRunner
+	bgRunner        BackgroundRunner
 	profileResolver ProfileResolver
 }
 
 // NewRunSkillTool builds the general skill-invocation tool. runner may be nil
 // (subagent skills then error).
-func NewRunSkillTool(store *Store, runner SubagentRunner, profileResolver ...ProfileResolver) tool.Tool {
+func NewRunSkillTool(store *Store, runner SubagentRunner, bgRunner BackgroundRunner, profileResolver ...ProfileResolver) tool.Tool {
 	var pr ProfileResolver
 	if len(profileResolver) > 0 {
 		pr = profileResolver[0]
 	}
-	return &runSkillTool{store: store, runner: runner, profileResolver: pr}
+	return &runSkillTool{store: store, runner: runner, bgRunner: bgRunner, profileResolver: pr}
 }
 
 func (*runSkillTool) Name() string { return "run_skill" }
@@ -86,11 +94,20 @@ func (t *runSkillTool) Execute(ctx context.Context, args json.RawMessage) (strin
 	rawArgs := strings.TrimSpace(p.Arguments)
 
 	if sk.RunAs == RunSubagent {
-		if t.runner == nil {
-			return "", fmt.Errorf("run_skill: skill %q is runAs=subagent but no subagent runner is configured in this session", name)
-		}
 		if rawArgs == "" {
 			return "", fmt.Errorf("run_skill: skill %q is a subagent and requires 'arguments' — the subagent has no other context, so describe the concrete task", name)
+		}
+		if t.bgRunner != nil {
+			jobID, err := t.bgRunner(ctx, func(jobCtx context.Context, _ io.Writer) (string, error) {
+				return t.runner(jobCtx, sk, rawArgs)
+			}, "run_skill:"+name, nil)
+			if err != nil {
+				return "", err
+			}
+			return fmt.Sprintf("Started task %s (run_skill:%s)", jobID, name), nil
+		}
+		if t.runner == nil {
+			return "", fmt.Errorf("run_skill: skill %q is runAs=subagent but no subagent runner is configured in this session", name)
 		}
 		return t.runner(ctx, sk, rawArgs)
 	}
@@ -170,12 +187,9 @@ func (t *readSkillTool) Execute(_ context.Context, args json.RawMessage) (string
 	if name == "" {
 		return "", fmt.Errorf("read_skill requires a 'name' argument (got %q, which is just a marker/tag)", p.Name)
 	}
-	sk, ok := t.store.Read(name)
+	sk, ok := t.store.ReadInline(name)
 	if !ok {
-		return "", fmt.Errorf("unknown skill %q — available: %s", name, availableNames(t.store))
-	}
-	if sk.RunAs == RunSubagent {
-		return "", fmt.Errorf("read_skill: skill %q is a subagent and must be executed, not read — use run_skill (or the dedicated %s tool)", name, name)
+		return "", fmt.Errorf("unknown skill %q — available: %s", name, availableInlineNames(t.store))
 	}
 	return renderInline(sk, strings.TrimSpace(p.Arguments)), nil
 }
@@ -189,6 +203,7 @@ type subagentSkillTool struct {
 	taskDesc    string
 	store       *Store
 	runner      SubagentRunner
+	bgRunner    BackgroundRunner
 	profile     ProfileResolver
 }
 
@@ -221,6 +236,15 @@ func (t *subagentSkillTool) Execute(ctx context.Context, args json.RawMessage) (
 	if sk.RunAs != RunSubagent {
 		return "", fmt.Errorf("%s: skill %q is overridden as inline; invoke it via run_skill instead", t.toolName, t.skillName)
 	}
+	if t.bgRunner != nil {
+		jobID, err := t.bgRunner(ctx, func(jobCtx context.Context, _ io.Writer) (string, error) {
+			return t.runner(jobCtx, sk, task)
+		}, t.toolName, nil)
+		if err != nil {
+			return "", err
+		}
+		return fmt.Sprintf("Started task %s (%s)", jobID, t.toolName), nil
+	}
 	if t.runner == nil {
 		return "", fmt.Errorf("%s: no subagent runner is configured in this session", t.toolName)
 	}
@@ -248,7 +272,7 @@ func (t *subagentSkillTool) ResolveProfile(json.RawMessage) *event.Profile {
 // skills, named after the verb so the model picks them naturally (affordance >
 // prompt rules). Each is skipped when its underlying skill isn't present (e.g. a
 // user disabled it), so the tool set never advertises a phantom skill.
-func BuiltinSubagentTools(store *Store, runner SubagentRunner, profileResolver ...ProfileResolver) []tool.Tool {
+func BuiltinSubagentTools(store *Store, runner SubagentRunner, bgRunner BackgroundRunner, profileResolver ...ProfileResolver) []tool.Tool {
 	var pr ProfileResolver
 	if len(profileResolver) > 0 {
 		pr = profileResolver[0]
@@ -281,6 +305,7 @@ func BuiltinSubagentTools(store *Store, runner SubagentRunner, profileResolver .
 			taskDesc:    s.taskDesc,
 			store:       store,
 			runner:      runner,
+			bgRunner:    bgRunner,
 			profile:     pr,
 		})
 	}
@@ -469,6 +494,23 @@ func availableNames(store *Store) string {
 	names := make([]string, len(skills))
 	for i, s := range skills {
 		names[i] = s.Name
+	}
+	return strings.Join(names, ", ")
+}
+
+func availableInlineNames(store *Store) string {
+	skills := store.List()
+	if len(skills) == 0 {
+		return "(none — no skills defined)"
+	}
+	var names []string
+	for _, s := range skills {
+		if s.RunAs != RunSubagent {
+			names = append(names, s.Name)
+		}
+	}
+	if len(names) == 0 {
+		return "(none — no inline skills)"
 	}
 	return strings.Join(names, ", ")
 }

@@ -279,11 +279,11 @@ func New(opts Options) *Controller {
 		})
 		c.executor.SetMemoryQueue(c)
 		c.executor.SetControllerBridge(c)
-	}
-	if c.jobs != nil {
-		c.jobs.SetOnCompletion(func(id string) {
-			c.autoReenter()
-		})
+}
+if c.jobs != nil {
+	c.jobs.SetOnCompletion(func(id string) {
+		c.autoReenter()
+	})
 	}
 	return c
 }
@@ -371,7 +371,12 @@ func (c *Controller) runGuarded(input string, body func(ctx context.Context) err
 func (c *Controller) MakeOnComplete() func(jobID string) {
 	return func(jobID string) {
 		c.pendingToolResult.Store(true)
-		c.Send("")
+	}
+}
+
+func (c *Controller) MakeOnMessage() func(jobID string) {
+	return func(jobID string) {
+		c.pendingToolResult.Store(true)
 	}
 }
 
@@ -382,6 +387,10 @@ func (c *Controller) autoReenter() {
 	if c.autoReentryDepth >= 2 {
 		c.mu.Unlock()
 		slog.Warn("auto-reentry depth cap reached; background completion pending user input")
+		return
+	}
+	if !c.pendingToolResult.Load() {
+		c.mu.Unlock()
 		return
 	}
 	c.autoReentryDepth++
@@ -437,6 +446,14 @@ func (c *Controller) Send(input string) {
 // SendWithRaw starts a turn with separate model input and raw prompt text.
 // The raw parameter is preserved for API compatibility.
 func (c *Controller) SendWithRaw(input, raw string) {
+	c.mu.Lock()
+	if c.running && raw != "" {
+		if c.cancel != nil {
+			c.cancel()
+		}
+	}
+	c.mu.Unlock()
+
 	c.runGuarded(raw, func(ctx context.Context) error { return c.runTurnWithRaw(ctx, input, raw) })
 }
 
