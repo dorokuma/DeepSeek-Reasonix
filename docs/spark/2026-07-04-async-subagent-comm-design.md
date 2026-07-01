@@ -98,7 +98,7 @@ Task 工具 `Execute()` 直接走现有后台路径逻辑：创建 job → `jm.S
 - `Controller.Steer()` — 保留
 - HTTP `POST /steer` — 保留
 - TUI `tuiRunning` 状态 Enter → `ctrl.Steer()` — 保留
-- `autoReenter` 中 `Send` 为非阻塞（select default）
+- `autoReenter` 中 `Send` 调用 `runGuarded`，如果当前 turn 未结束会排队，不会阻塞
 
 ### 2.2 语义变化
 
@@ -177,13 +177,14 @@ func (a *Agent) drainNotify() {
 }
 ```
 
-**关键设计**：`taskResults` 从 `Agent` 移入 `Controller`。`Controller` 新增 `taskResults map[string]jobMeta` 字段维护 `jobID → toolCallID` 映射。Agent 的 task tool `Execute()` 通过 `CallContext(ctx)` 拿到当前 `toolCallID`，然后调用 `Controller.RegisterJobMeta(jobID, toolCallID)`。`drainNotify()` 通过 `Controller.GetJobMeta(jobID)` 获取映射。消费 result 后从 `Controller.taskResults` 中删除该条目，避免内存泄漏。
+**关键设计**：`taskResults` 从 `Agent` 移入 `Controller`。`Controller` 新增 `taskResults map[string]jobMeta` 字段维护 `jobID → toolCallID` 映射，并新增 `taskResultsMu sync.Mutex` 保护并发访问。Agent 的 task tool `Execute()` 通过 `CallContext(ctx)` 拿到当前 `toolCallID`，然后调用 `Controller.RegisterJobMeta(jobID, toolCallID)`（加锁写入）。`drainNotify()` 通过 `Controller.GetJobMeta(jobID)` 获取映射（加锁读取）。消费 result 后从 `Controller.taskResults` 中删除该条目，避免内存泄漏。
 
 ```go
 // Controller 新增字段和方法
 type Controller struct {
     // ... 现有字段
-    taskResults map[string]jobMeta  // jobID → 创建时的 tool call 元信息
+    taskResults   map[string]jobMeta  // jobID → 创建时的 tool call 元信息
+    taskResultsMu sync.Mutex          // 保护 taskResults 并发访问
 }
 
 type jobMeta struct {
@@ -192,10 +193,14 @@ type jobMeta struct {
 }
 
 func (c *Controller) RegisterJobMeta(jobID string, meta jobMeta) {
+    c.taskResultsMu.Lock()
+    defer c.taskResultsMu.Unlock()
     c.taskResults[jobID] = meta
 }
 
 func (c *Controller) GetJobMeta(jobID string) (jobMeta, bool) {
+    c.taskResultsMu.Lock()
+    defer c.taskResultsMu.Unlock()
     meta, ok := c.taskResults[jobID]
     return meta, ok
 }
@@ -329,24 +334,25 @@ type JobChannels struct {
 
 ### 6.1 保留 autoReenter（A 方案）
 
-`autoReenter()` 方法保留。Controller 新增 `pendingToolResult bool` 字段。子代理完成 → `SetOnCompletion` 回调 → `autoReenter()` 设置 `c.pendingToolResult = true` 然后调用 `c.Send("")`（空字符串，仅触发 turn）。主代理 `Run()` 循环在下一次迭代中检测到 `c.pendingToolResult`，若为 true 则重置为 false，跳过 `session.Add(userMessage)`，直接进入 `drainNotify()` + `stream()`。不再产生空 user message。
+保留现有 `Run(ctx context.Context, input string) error` 签名，不改为无限循环。`autoReenter()` 方法保留，通过 `c.Send("")` 启动新 turn，与 `runGuarded` 兼容——如果当前 turn 未结束会排队，turn 结束后自动处理。
+
+Controller 新增 `pendingToolResult atomic.Bool` 字段（atomic 类型确保并发安全）。子代理完成 → `SetOnCompletion` 回调 → `autoReenter()` 调用 `c.pendingToolResult.Store(true)` 然后调用 `c.Send("")`（空字符串，仅触发 turn）。`Run()` 循环在下一次迭代中检测到 `c.pendingToolResult`，通过 `CompareAndSwap(true, false)` 原子地重置为 false，跳过 `session.Add(userMessage)`，直接进入 `drainNotify()` + `stream()`。不再产生空 user message。
 
 **Run() 循环中的特殊标记检测逻辑**：
 
 ```go
-func (a *Agent) Run(ctx context.Context) {
+func (a *Agent) Run(ctx context.Context, input string) error {
     for {
         select {
         case <-ctx.Done():
-            return
+            return ctx.Err()
         default:
         }
 
         userInput := a.drainSteer()
 
         // 检查 pendingToolResult 标记，跳过 session 写入
-        if a.ctrl.pendingToolResult {
-            a.ctrl.pendingToolResult = false
+        if a.ctrl.pendingToolResult.CompareAndSwap(true, false) {
             a.drainNotify()  // 消费子代理 result
             a.stream(ctx)    // 继续对话
             continue
@@ -362,15 +368,18 @@ func (a *Agent) Run(ctx context.Context) {
 }
 ```
 
+**兼容性说明**：`autoReenter` 与现有 `pendingReentry`/`pendingInput` 机制兼容——`c.Send("")` 走 `runGuarded`，如果当前 turn 未结束会排队，turn 结束后自动处理。`pendingToolResult` 标记确保队列中的空消息被识别为 reentry 触发，而非用户输入。
+
 ### 6.2 删除 DrainCompletedNote 调用
 
 `runTurnWithRaw()` 中调用 `DrainCompletedNote()` 的行删除。`Compose()` 中不再注入 `<background-jobs>`。
 
 ### 6.3 Run() 循环改造要点
 
-1. **pendingToolResult 标记检测**：`Run()` 循环在 `drainSteer()` 之后检查 `c.pendingToolResult`，若为 true 则重置为 false，跳过 `session.Add(userMessage)`，直接进入 `drainNotify()` + `stream()`。
-2. **drainNotify 位置**：`drainNotify()` 在每次 `stream()` 之前调用，无论是普通用户消息路径还是 autoReenter 触发路径。
+1. **pendingToolResult 原子标记检测**：`Run()` 循环在 `drainSteer()` 之后通过 `a.ctrl.pendingToolResult.CompareAndSwap(true, false)` 原子地检测并重置标记。若返回 true，跳过 `session.Add(userMessage)`，直接进入 `drainNotify()` + `stream()`。
+2. **drainNotify 位置**：在现有 `Run(ctx, input)` 循环的每次 `stream()` 前增加 `drainNotify()` 调用点，无论是普通用户消息路径还是 autoReenter 触发路径。
 3. **autoReenter 不再直接调用 drainNotify**：改为设置 `pendingToolResult` 标记并发送空字符串触发 turn，由 `Run()` 循环统一处理，避免并发写 session 的问题。
+4. **兼容性**：保留现有 `Runner` 接口签名 `Run(ctx context.Context, input string) error`，不改为无限循环。`autoReenter` 通过原有的 `Send("")` 机制触发 turn，与 `runGuarded` 流程兼容。
 
 ---
 
@@ -400,6 +409,7 @@ func (a *Agent) Run(ctx context.Context) {
 8. 主代理 stream → "已告诉 task-1 加查 ZZZ"
 9. [task-1 drainSteer 消费 steer] → ackCh 推 ack
 10. 主代理 drainNotify → 消费 ack
+    > 注：ack 通过 `peek-job` 工具返回值暴露，不写入 session。模型若需确认需调用 `peek-job`。
 11. [task-2 完成] → resultCh 推 result("YYY 的结果是...")
 12. 主代理 SetOnCompletion 触发 → autoReenter → drainNotify
     → 追加 tool message(toolCallID=task-2-call-id, content="YYY 的结果是...")
@@ -418,6 +428,7 @@ func (a *Agent) Run(ctx context.Context) {
 | `internal/agent/agent.go` | 删+增 | 删 activeChild/setActiveChild/clearActiveChild/SubagentStop 触发/isBackgroundTaskCall/SubagentStop 接口声明；新增 drainNotify、notifyCh 消费；保留 steerCh/drainSteer |
 | `internal/agent/context.go` | 删 | 删 WithActiveChild/isActiveChild/activeChildKey |
 | `internal/tool/builtin/bgjobs.go` | 删+增 | 删 wait；新增 steer-job/cancel-job/peek-job。**外部引用清理**（共 11 处 `"wait"` 工具名引用）：`internal/cli/toolcard.go:75/144/165`（映射表，其中 165 行含特殊 "wait" 逻辑需清理）、`internal/cli/toolcard_test.go:18`（测试）、`internal/cli/acp_test.go:34`（测试）、`internal/tool/builtin/workspace_test.go:118/119/129`（同一包测试）、`internal/agent/task.go:257`（工具限制列表 `plannerNonResearchTools` 中的 "wait" 条目需清理）、`internal/hook/rtk_rewriter.go:48/80`（switch case）、`internal/boot/boot_test.go:187`（测试） |
+| `internal/tool/builtin/bash.go` | 改 | 更新 schema 描述中的 "wait" 引用 |
 | `internal/jobs/jobs.go` | 删+增 | 删 DrainCompletedNote/completed/recordCompletion/Result 类型/Wait 方法；新增 Steer/Peek/NotifyChannels 方法、notifyCh 支持 |
 | `internal/control/controller.go` | 删 | 删 DrainCompletedNote 调用；保留 autoReenter |
 | `internal/control/input.go` | 删 | 删 `<background-jobs>` 注入 |
