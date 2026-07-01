@@ -29,8 +29,6 @@ func TestACPBuiltinToolsKeepSessionLevelBuiltins(t *testing.T) {
 	dir := t.TempDir()
 	tools := toolMap(acpBuiltinTools(&config.Config{}, dir, []string{dir}))
 	for _, name := range []string{
-		"bash_output",
-		"kill_shell",
 		"move_file",
 		"notebook_edit",
 	} {

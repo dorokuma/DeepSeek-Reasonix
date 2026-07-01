@@ -56,7 +56,7 @@ type jobKey struct{}
 
 // UpdateJobActivity updates the last active timestamp of a job associated with the context.
 func UpdateJobActivity(ctx context.Context) {
-	if j, ok := ctx.Value(jobKey{}).(*Job); ok {
+	if j, ok := ctx.Value(jobKey{}).(*Job); ok && j != nil {
 		j.lastActive.Store(time.Now().Unix())
 	}
 }
@@ -86,8 +86,17 @@ type Job struct {
 	ackCh     chan JobNotify   // child → parent ack, buf 4
 	resultCh  chan JobNotify   // child → parent result, buf 1
 	notifyCh  chan JobNotify   // child → parent progress, buf 16
+	inbox     chan string      // child → parent inbox messages, buf 16
 
 	completed bool // true after onComplete fires; drainNotify removes the job from the map
+	onMessage func(jobID string)
+	sink      event.Sink
+}
+
+func (j *Job) SetOnMessage(fn func(jobID string)) {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	j.onMessage = fn
 }
 
 // Manager is the session's background-job table. It is safe for concurrent use.
@@ -151,7 +160,7 @@ func (m *Manager) checkAndClean() bool {
 		if j.status == Running {
 			runningCount++
 			lastActive := j.lastActive.Load()
-			if lastActive > 0 && now-lastActive > 30 {
+			if lastActive > 0 && now-lastActive > 120 {
 				j.status = Killed
 				j.cancel()
 			}
@@ -214,7 +223,7 @@ func (m *Manager) Start(ctx context.Context, kind, label string, run func(ctx co
 	m.mu.Lock()
 	m.seq++
 	id := fmt.Sprintf("%s-%d", kind, m.seq)
-	jobCtx, cancel := context.WithCancel(ctx)
+	jobCtx, cancel := context.WithCancel(m.root)
 	j := &Job{
 		ID:        id,
 		Kind:      kind,
@@ -227,6 +236,8 @@ func (m *Manager) Start(ctx context.Context, kind, label string, run func(ctx co
 		ackCh:     make(chan JobNotify, 4),
 		resultCh:  make(chan JobNotify, 1),
 		notifyCh:  make(chan JobNotify, 16),
+		inbox:     make(chan string, 16),
+		sink:      m.sink,
 	}
 	j.lastActive.Store(time.Now().Unix())
 	jobCtx = context.WithValue(jobCtx, jobKey{}, j)
@@ -273,10 +284,7 @@ func (m *Manager) Start(ctx context.Context, kind, label string, run func(ctx co
 			}
 		}
 
-		// Close child→parent channels before onComplete (M2).
-		close(j.ackCh)
-		close(j.notifyCh)
-		close(j.resultCh)
+		// Do not close child-parent notification channels; async PostMessage may still be in flight.
 
 		// Emit the closing notice.
 		level, text := event.LevelInfo, fmt.Sprintf("background %s finished: %s", kind, id)
@@ -288,6 +296,13 @@ func (m *Manager) Start(ctx context.Context, kind, label string, run func(ctx co
 		}
 		m.sink.Emit(event.Event{Kind: event.Notice, Level: level, Text: text})
 
+j.mu.Lock()
+		j.result = result
+		if j.status != Killed { // a concurrent Kill already published Killed — keep it
+			j.status = st
+		}
+		j.completed = true
+		j.mu.Unlock()
 		// Fire completion callbacks — onComplete (per-call) then onCompletion (global).
 		if onComplete != nil {
 			onComplete(id)
@@ -296,13 +311,7 @@ func (m *Manager) Start(ctx context.Context, kind, label string, run func(ctx co
 			m.onCompletion(id)
 		}
 
-		j.mu.Lock()
-		j.result = result
-		if j.status != Killed { // a concurrent Kill already published Killed — keep it
-			j.status = st
-		}
-		j.completed = true
-		j.mu.Unlock()
+		
 		close(j.done)
 	}()
 	return j, nil
@@ -455,6 +464,7 @@ type JobChannels struct {
 	Ack      <-chan JobNotify
 	Result   <-chan JobNotify
 	Progress <-chan JobNotify
+	Inbox    <-chan string
 }
 
 // Steer sends a message to a job's steer channel (non-blocking).
@@ -508,7 +518,26 @@ func (m *Manager) NotifyChannels(jobID string) *JobChannels {
 		Ack:      j.ackCh,
 		Result:   j.resultCh,
 		Progress: j.notifyCh,
+		Inbox:    j.inbox,
 	}
+}
+
+// CompletedResult returns a terminal result for a finished job when resultCh
+// was not drained (e.g. buffer full drop) or the channel read raced completion.
+func (m *Manager) CompletedResult(jobID string) (JobNotify, bool) {
+j := m.get(jobID)
+if j == nil {
+return JobNotify{}, false
+}
+j.mu.Lock()
+defer j.mu.Unlock()
+if !j.completed {
+return JobNotify{}, false
+}
+if j.status != Done && j.status != Failed {
+return JobNotify{}, false
+}
+return JobNotify{JobID: jobID, Type: "result", Output: j.result}, true
 }
 
 // RemoveJob deletes a job from the map. Called by drainNotify after consuming resultCh.
@@ -533,4 +562,39 @@ func WithManager(ctx context.Context, m *Manager) context.Context {
 func FromContext(ctx context.Context) (*Manager, bool) {
 	m, ok := ctx.Value(ctxKey{}).(*Manager)
 	return m, ok && m != nil
+}
+
+// PostMessage sends a message to the job's inbox channel. It retrieves the current Job
+// from the context and performs a non-blocking write. If a callback is registered,
+// it triggers it. Returns true on success.
+func PostMessage(ctx context.Context, msg string) bool {
+	if j, ok := ctx.Value(jobKey{}).(*Job); ok && j != nil {
+	j.mu.Lock()
+	if j.completed {
+		j.mu.Unlock()
+		return false
+	}
+	j.mu.Unlock()
+		select {
+		case j.inbox <- msg:
+			j.mu.Lock()
+			fn := j.onMessage
+			j.mu.Unlock()
+			if fn != nil {
+				fn(j.ID)
+			}
+			if j.sink != nil {
+				j.sink.Emit(event.Event{
+					Kind:  event.Notice,
+					Level: event.LevelInfo,
+					Text:  fmt.Sprintf("· sub-agent message: %s", msg),
+				})
+			}
+			return true
+		default:
+			slog.Warn("inbox full, dropping message for job", "id", j.ID)
+			return false
+		}
+	}
+	return false
 }

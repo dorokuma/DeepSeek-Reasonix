@@ -15,7 +15,7 @@ import (
 func TestRunSkillInline(t *testing.T) {
 	home := t.TempDir()
 	writeSkill(t, home, ".reasonix/skills/note.md", "---\ndescription: take a note\n---\nDo the thing.")
-	tl := NewRunSkillTool(New(Options{HomeDir: home, DisableBuiltins: true}), nil)
+	tl := NewRunSkillTool(New(Options{HomeDir: home, DisableBuiltins: true}), nil, nil)
 
 	out, err := tl.Execute(context.Background(), json.RawMessage(`{"name":"note","arguments":"with args"}`))
 	if err != nil {
@@ -30,7 +30,7 @@ func TestRunSkillInline(t *testing.T) {
 }
 
 func TestRunSkillUnknown(t *testing.T) {
-	tl := NewRunSkillTool(New(Options{HomeDir: t.TempDir(), DisableBuiltins: true}), nil)
+	tl := NewRunSkillTool(New(Options{HomeDir: t.TempDir(), DisableBuiltins: true}), nil, nil)
 	if _, err := tl.Execute(context.Background(), json.RawMessage(`{"name":"nope"}`)); err == nil {
 		t.Error("unknown skill should error")
 	}
@@ -39,7 +39,7 @@ func TestRunSkillUnknown(t *testing.T) {
 func TestRunSkillSubagentNeedsRunner(t *testing.T) {
 	home := t.TempDir()
 	writeSkill(t, home, ".reasonix/skills/dig.md", "---\ndescription: dig\nrunAs: subagent\n---\nbody")
-	tl := NewRunSkillTool(New(Options{HomeDir: home, DisableBuiltins: true}), nil) // nil runner
+	tl := NewRunSkillTool(New(Options{HomeDir: home, DisableBuiltins: true}), nil, nil) // nil runner
 	if _, err := tl.Execute(context.Background(), json.RawMessage(`{"name":"dig","arguments":"go"}`)); err == nil {
 		t.Error("subagent skill with no runner should error, not silently inline")
 	}
@@ -53,7 +53,7 @@ func TestRunSkillSubagentRuns(t *testing.T) {
 		gotTask = task
 		return "answer from " + sk.Name, nil
 	}
-	tl := NewRunSkillTool(New(Options{HomeDir: home, DisableBuiltins: true}), runner)
+	tl := NewRunSkillTool(New(Options{HomeDir: home, DisableBuiltins: true}), runner, nil)
 	out, err := tl.Execute(context.Background(), json.RawMessage(`{"name":"dig","arguments":"find X"}`))
 	if err != nil {
 		t.Fatalf("execute: %v", err)
@@ -69,7 +69,7 @@ func TestRunSkillSubagentRuns(t *testing.T) {
 func TestRunSkillSubagentResolvesProfile(t *testing.T) {
 	home := t.TempDir()
 	writeSkill(t, home, ".reasonix/skills/deep.md", "---\ndescription: deep\nrunAs: subagent\nmodel: deepseek-pro\neffort: max\n---\nbody")
-	tl := NewRunSkillTool(New(Options{HomeDir: home, DisableBuiltins: true}), nil)
+	tl := NewRunSkillTool(New(Options{HomeDir: home, DisableBuiltins: true}), nil, nil)
 
 	pr, ok := tl.(interface {
 		ResolveProfile(json.RawMessage) *event.Profile
@@ -87,7 +87,7 @@ func TestRunSkillSubagentRequiresArgs(t *testing.T) {
 	home := t.TempDir()
 	writeSkill(t, home, ".reasonix/skills/dig.md", "---\ndescription: dig\nrunAs: subagent\n---\nbody")
 	runner := func(_ context.Context, _ Skill, _ string) (string, error) { return "x", nil }
-	tl := NewRunSkillTool(New(Options{HomeDir: home, DisableBuiltins: true}), runner)
+	tl := NewRunSkillTool(New(Options{HomeDir: home, DisableBuiltins: true}), runner, nil)
 	if _, err := tl.Execute(context.Background(), json.RawMessage(`{"name":"dig"}`)); err == nil {
 		t.Error("subagent skill should require arguments")
 	}
@@ -115,7 +115,7 @@ func TestBuiltinSubagentToolsRunner(t *testing.T) {
 		ran = sk.Name + ":" + task
 		return "ok", nil
 	}
-	tools := BuiltinSubagentTools(New(Options{HomeDir: t.TempDir()}), runner)
+	tools := BuiltinSubagentTools(New(Options{HomeDir: t.TempDir()}), runner, nil)
 	var explore interface {
 		Name() string
 		Execute(context.Context, json.RawMessage) (string, error)
@@ -138,7 +138,7 @@ func TestBuiltinSubagentToolsRunner(t *testing.T) {
 
 func TestBuiltinSubagentToolResolvesProfile(t *testing.T) {
 	store := New(Options{HomeDir: t.TempDir()})
-	tools := BuiltinSubagentTools(store, nil, func(sk Skill) *event.Profile {
+	tools := BuiltinSubagentTools(store, nil, nil, func(sk Skill) *event.Profile {
 		return &event.Profile{Model: sk.Name + "-model", Effort: "max"}
 	})
 	var review interface {
@@ -227,12 +227,12 @@ func TestReadSkillLoadsInlineAndIsReadOnly(t *testing.T) {
 	}
 }
 
-func TestReadSkillRejectsSubagent(t *testing.T) {
+func TestReadSkillHidesSubagent(t *testing.T) {
 	home := t.TempDir()
 	writeSkill(t, home, ".reasonix/skills/dig.md", "---\ndescription: dig\nrunAs: subagent\n---\nbody")
 	tl := NewReadSkillTool(New(Options{HomeDir: home, DisableBuiltins: true}))
 
-	if _, err := tl.Execute(context.Background(), json.RawMessage(`{"name":"dig"}`)); err == nil || !strings.Contains(err.Error(), "run_skill") {
-		t.Fatalf("read_skill on a subagent skill should point to run_skill, got %v", err)
+	if _, err := tl.Execute(context.Background(), json.RawMessage(`{"name":"dig"}`)); err == nil || !strings.Contains(err.Error(), "unknown skill") {
+		t.Fatalf("read_skill on a subagent skill should report it as unknown, got %v", err)
 	}
 }

@@ -566,6 +566,38 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 			ArchiveDir:    config.ArchiveDir(),
 		}, event.Discard)
 	}
+	bgRunner := func(ctx context.Context, work func(context.Context, io.Writer) (string, error), label string, onComplete func(string)) (string, error) {
+		jm, ok := jobs.FromContext(ctx)
+		if !ok {
+			return "", fmt.Errorf("background execution is not available in this context")
+		}
+		parentID, _, _, _ := agent.CallContext(ctx)
+		job, err := jm.Start(ctx, "skill", label, func(jobCtx context.Context, _ io.Writer) (string, error) {
+			heartbeatDone := make(chan struct{})
+			defer close(heartbeatDone)
+			go func() {
+				ticker := time.NewTicker(10 * time.Second)
+				defer ticker.Stop()
+				for {
+					select {
+					case <-heartbeatDone:
+						return
+					case <-ticker.C:
+						jobs.UpdateJobActivity(jobCtx)
+					}
+				}
+			}()
+			return work(jobCtx, nil)
+		}, onComplete)
+		if err != nil {
+			return "", err
+		}
+		if ctrl, ok := agent.CtrlFromContext(ctx); ok {
+			ctrl.RegisterJobMeta(job.ID, parentID)
+			job.SetOnMessage(ctrl.MakeOnMessage())
+		}
+		return job.ID, nil
+	}
 	skillProfile := func(sk skill.Skill) *event.Profile {
 		model := subagentModelRef(cfg, sk)
 		if model == "" {
@@ -573,7 +605,7 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 		}
 		return &event.Profile{Model: model, Effort: "max"}
 	}
-	reg.Add(skill.NewRunSkillTool(skillStore, skillRunner, skillProfile))
+	reg.Add(skill.NewRunSkillTool(skillStore, skillRunner, bgRunner, skillProfile))
 	reg.Add(skill.NewReadSkillTool(skillStore))
 	reg.Add(skill.NewInstallSkillTool(skillStore, nil))
 	reg.Add(installsource.NewTool(installsource.Options{
@@ -612,7 +644,7 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 			return ok
 		},
 	}))
-	for _, t := range skill.BuiltinSubagentTools(skillStore, skillRunner, skillProfile) {
+	for _, t := range skill.BuiltinSubagentTools(skillStore, skillRunner, bgRunner, skillProfile) {
 		reg.Add(t)
 	}
 

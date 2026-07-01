@@ -19,11 +19,10 @@ import (
 // terminate a job, and block until jobs finish.
 
 func init() {
-	tool.RegisterBuiltin(bashOutput{})
-	tool.RegisterBuiltin(killShell{})
 	tool.RegisterBuiltin(steerJob{})
 	tool.RegisterBuiltin(cancelJob{})
 	tool.RegisterBuiltin(peekJob{})
+	tool.RegisterBuiltin(sendMessage{})
 }
 
 // --- bash_output: poll a background job's new output (non-blocking) ---
@@ -256,4 +255,37 @@ func (peekJob) Execute(ctx context.Context, params json.RawMessage) (string, err
 		return "", fmt.Errorf("marshal status: %w", err)
 	}
 	return string(b), nil
+}
+
+// --- send_message: send a message from a background sub-agent to its parent ---
+
+type sendMessage struct{}
+
+func (sendMessage) Name() string        { return "send_message" }
+func (sendMessage) Description() string { return "Send a message/report from a background sub-agent to its parent agent" }
+func (sendMessage) ReadOnly() bool      { return false }
+func (sendMessage) Schema() json.RawMessage {
+	return json.RawMessage(`{
+		"type": "object",
+		"properties": {
+			"message": {"type": "string", "description": "The text report/message to send to the parent"}
+		},
+		"required": ["message"]
+	}`)
+}
+
+func (sendMessage) Execute(ctx context.Context, params json.RawMessage) (string, error) {
+	var p struct {
+		Message string `json:"message"`
+	}
+	if err := json.Unmarshal(params, &p); err != nil {
+		return "", fmt.Errorf("invalid args: %w", err)
+	}
+	if p.Message == "" {
+		return "", fmt.Errorf("message is required")
+	}
+	if ok := jobs.PostMessage(ctx, p.Message); ok {
+		return `{"status":"sent"}`, nil
+	}
+	return `{"status":"failed","reason":"parent inbox full or job context unavailable"}`, nil
 }

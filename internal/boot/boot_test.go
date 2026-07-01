@@ -182,8 +182,6 @@ func TestAddBuiltinsWithWorkspaceRootKeepsSessionTools(t *testing.T) {
 	for _, name := range []string{
 		"note",
 		"audit_finish",
-		"bash_output",
-		"kill_shell",
 		"notebook_edit",
 	} {
 		if _, ok := reg.Get(name); !ok {

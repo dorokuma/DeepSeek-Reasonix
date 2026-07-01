@@ -297,6 +297,17 @@ func (s *Store) Read(name string) (Skill, bool) {
 	return Skill{}, false
 }
 
+// ReadInline resolves one skill by name but only returns inline skills.
+// Subagent skills are silently treated as non-existent — the caller never
+// receives (or loads) subagent bodies.
+func (s *Store) ReadInline(name string) (Skill, bool) {
+	sk, ok := s.Read(name)
+	if !ok || sk.RunAs == RunSubagent {
+		return Skill{}, false
+	}
+	return sk, true
+}
+
 func (s *Store) discoverRoot(r Root) []Skill {
 	var out []Skill
 	s.scanDir(r.Dir, r.Scope, 1, map[string]bool{}, &out)

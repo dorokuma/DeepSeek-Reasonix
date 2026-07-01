@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -23,7 +24,10 @@ import (
 	"reasonix/internal/tool"
 )
 
-type blockingTurnRunner struct{ started chan struct{} }
+type blockingTurnRunner struct {
+	started chan struct{}
+	once     sync.Once
+}
 
 func TestMain(m *testing.M) {
 	old := detectAndroidTerminal
@@ -1459,5 +1463,59 @@ func TestCtrlCCopyBeatsClearInput(t *testing.T) {
 	m3 := out2.(chatTUI)
 	if got := m3.input.Value(); got != "" {
 		t.Errorf("second Ctrl+C should clear composer; got %q", got)
+	}
+}
+
+
+// TestEscDenyApprovalClearsPending verifies Esc routes to deny (Approve false)
+// and clears the modal approval state without panicking.
+func TestEscDenyApprovalClearsPending(t *testing.T) {
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("panic on Esc deny: %v", r)
+		}
+	}()
+	ctrl := control.New(control.Options{Sink: event.Discard})
+	m := newTestChatTUI()
+	m.ctrl = ctrl
+	m.state = tuiRunning
+	m.pendingApproval = &event.Approval{ID: "42", Tool: "bash", Subject: "ls -la", Scope: "gate"}
+	out, cmd := m.handleApprovalKey(tea.KeyPressMsg{Code: tea.KeyEscape})
+	if cmd != nil {
+		t.Fatalf("unexpected cmd from Esc deny: %v", cmd)
+	}
+	m2 := out.(chatTUI)
+	if m2.pendingApproval != nil {
+		t.Fatal("pendingApproval should be nil after Esc deny")
+	}
+}
+
+// TestEscDenyTaskScopeApproval covers the two-button task sub-agent prompt.
+func TestEscDenyTaskScopeApproval(t *testing.T) {
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("panic on task-scope Esc deny: %v", r)
+		}
+	}()
+	ctrl := control.New(control.Options{Sink: event.Discard})
+	m := newTestChatTUI()
+	m.ctrl = ctrl
+	m.state = tuiRunning
+	m.pendingApproval = &event.Approval{ID: "7", Tool: "task", Preview: "explore repo", Scope: "task"}
+	out, _ := m.handleApprovalKey(tea.KeyPressMsg{Code: tea.KeyEscape})
+	m2 := out.(chatTUI)
+	if m2.pendingApproval != nil {
+		t.Fatal("pendingApproval should be nil after Esc deny")
+	}
+}
+
+// TestTurnDoneClearsStaleApprovalBanner ensures a settled turn cannot leave a
+// phantom approval overlay if the UI missed the Esc clear.
+func TestTurnDoneClearsStaleApprovalBanner(t *testing.T) {
+	m := newTestChatTUI()
+	m.pendingApproval = &event.Approval{ID: "9", Tool: "bash", Scope: "gate"}
+	m.ingestEvent(event.Event{Kind: event.TurnDone})
+	if m.pendingApproval != nil {
+		t.Fatal("TurnDone should clear pendingApproval")
 	}
 }
