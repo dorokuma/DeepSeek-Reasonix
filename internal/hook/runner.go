@@ -145,15 +145,6 @@ func (r *Runner) SessionEnd(ctx context.Context) {
 	r.handle(Run(ctx, Payload{Event: SessionEnd, Cwd: r.cwd}, r.hooks, r.spawner, r.agentLayer))
 }
 
-// SubagentStop fires when a `task` sub-agent finishes. It can't block; last is
-// the sub-agent's final answer.
-func (r *Runner) SubagentStop(ctx context.Context, last string) {
-	if !r.Enabled() {
-		return
-	}
-	r.handle(Run(ctx, Payload{Event: SubagentStop, Cwd: r.cwd, LastAssistant: last}, r.hooks, r.spawner, r.agentLayer))
-}
-
 // Notification fires when the agent needs the user's attention (e.g. a pending
 // approval). It can't block; message describes what's waiting.
 func (r *Runner) Notification(ctx context.Context, message string) {

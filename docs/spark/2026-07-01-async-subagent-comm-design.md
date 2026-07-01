@@ -91,7 +91,7 @@ Task 工具 `Execute()` 直接走现有后台路径逻辑：创建 job → `jm.S
 
 用户 steer 底层机制不动：
 
-- `steerCh chan string`（`agent.go:272`）— 保留，缓冲大小定义为 8
+- `steerCh chan string`（`agent.go:272`）— 保留，缓冲大小定义为 8（通道创建见 §5.2）
 - `Agent.Steer(input)` — 简化为仅写入 steerCh（删 activeChild 转发分支）
 - `Agent.drainSteer()` — 保留，签名从 `func (a *Agent) drainSteer()` 改为 `func (a *Agent) drainSteer() string`，由 caller 决定是否将返回的字符串写入 session（pendingToolResult 路径不写，正常路径写入）
 - `Run()` 循环中 `drainSteer()` 调用点 — 保留
@@ -129,7 +129,7 @@ type JobNotify struct {
 ```go
 // Job 新增字段
 ackCh    chan JobNotify   // ack 通道，缓冲 4，非阻塞（满丢）
-resultCh chan JobNotify   // result 通道，缓冲 1，阻塞发送
+resultCh chan JobNotify   // result 通道，缓冲 1，非阻塞发送（满则 drop + warn）
 notifyCh chan JobNotify   // progress 通道，缓冲 16，满丢（非阻塞）
 ```
 
@@ -157,12 +157,18 @@ type JobChannels struct {
 |---|---|---|---|
 | `drainSteer()` 消费到消息后 | `ack` | `ackCh`（缓冲 4） | `AckMsg: "received"` |
 | 每轮 `stream()` 结束后 | `progress` | `notifyCh`（缓冲 16，满丢） | `Step`（从 `j.step` 原子读）, `LastTool` |
-| `Run()` 正常返回前 | `result` | `resultCh`（缓冲 1，阻塞） | `Output: 最终答案`。使用 select 感知 ctx 取消： |
-| `Run()` 因 cancel 返回 | `result` | `resultCh`（缓冲 1，阻塞） | `Output: ""`, 标记取消。如果 ctx 已取消，子代理不发送 result，直接退出，避免永久阻塞。 |
+| `Run()` 正常返回前 | `result` | `resultCh`（缓冲 1，非阻塞（满则 drop + warn）） | `Output: 最终答案`。使用 select 感知 ctx 取消： |
+| `Run()` 因 cancel 返回 | `result` | `resultCh`（缓冲 1，非阻塞（满则 drop + warn）） | `Output: ""`, 标记取消。如果 ctx 已取消，子代理不发送 result，直接退出。 |
 
-> **关于缓冲与丢消息**：`ackCh`（缓冲 4）和 `notifyCh`（缓冲 16）满则丢弃，不阻塞子代理。主代理长时间 `stream()` 期间（模型推理阶段）可能不调用 `drainNotify()`，导致 `ackCh` 和 `notifyCh` 中的非 result 通知被丢弃。设计接受此行为——ack 和 progress 是状态快照而非事件日志，丢失不影响最终结果。`resultCh`（缓冲 1，阻塞发送）保证 result 通知不丢，因为子代理 `Run()` 返回前阻塞等待主代理消费 result。
+> **关于缓冲与丢消息**：`ackCh`（缓冲 4）和 `notifyCh`（缓冲 16）满则丢弃，不阻塞子代理。主代理长时间 `stream()` 期间（模型推理阶段）可能不调用 `drainNotify()`，导致 `ackCh` 和 `notifyCh` 中的非 result 通知被丢弃。设计接受此行为——ack 和 progress 是状态快照而非事件日志，丢失不影响最终结果。`resultCh`（缓冲 1，非阻塞发送（满则 drop + warn））保证 result 通知尽量不丢，但主代理长时间不消费时满则丢弃并记录警告。
+>
+> 丢弃时记录 debug 日志：
+> ```go
+> log.Debug("ackCh full, dropping ack for job %s", jobID)
+> log.Debug("notifyCh full, dropping progress for job %s", jobID)
+> ```
 
-子代理 `Run()` 返回前通过 select 向 resultCh 发送 result：
+子代理 `Run()` 返回前通过 select 向 resultCh 非阻塞发送 result：
 ```go
 if ctx.Err() != nil {
     return  // 已取消，不发送
@@ -172,6 +178,9 @@ case <-ctx.Done():
     return
 case j.resultCh <- JobNotify{Type: "result", Output: ans}:
     // 成功发送
+default:
+    // resultCh 满（主代理未消费），drop 并 warn
+    log.Warn("resultCh full, dropping result for job %s", j.id)
 }
 ```
 
@@ -190,10 +199,11 @@ case j.resultCh <- JobNotify{Type: "result", Output: ans}:
 
 ```go
 func (a *Agent) drainNotify() bool {
-    // 从 jobs.Manager 获取活跃 job 列表（通过 Manager.ActiveJobs() 返回 []string jobID）
+    // 从 jobs.Manager 获取活跃 job 列表（通过 Manager.ActiveJobs() 返回 []string jobID，包括 completed 状态的）
     // 对每个 jobID，通过 jm.NotifyChannels(jobID) 拿到 resultCh，非阻塞读取
     // 仅当从 resultCh 读到数据时，调用 Controller.TakeJobMeta(jobID)
     // 找到 type=result 的，用 jobMeta.ToolCallID 追加为 tool message 到 session
+    //   消费后调用 jm.RemoveJob(jobID) 清理已完成的 job
     // 找到 type=progress/ack 的，不追加到 session（仅通过 steer-job/peek-job 工具返回值暴露）
     // 返回是否成功消费到至少一个 result
 }
@@ -319,7 +329,24 @@ type peekJob struct{}
 steerCh chan string  // 父代理 → 子代理 steer 消息通道
 ```
 
-Manager 的 `Start()` 方法在创建 Job 时初始化 `steerCh`，并将写入端传给子代理。子代理的 `Run()` 循环通过 `drainSteer()` 消费该通道。
+Manager 的 `Start()` 方法新增 `onComplete` 参数，在创建 Job 时初始化 `steerCh`，并将写入端传给子代理。同时，`Start()` 方法必须接收父任务的运行 Context 作为子任务的 base context（或者在 Manager 中显式维护父子 JobID 树形映射关系），在父任务取消或退出时，递归取消其下属的所有子任务/孙任务，以防生命周期泄露。子代理的 `Run()` 循环通过 `drainSteer()` 消费该通道。
+
+`Start()` 创建 Job 时初始化以下通道：
+```go
+// steerCh   chan string      缓冲 8   父代理 → 子代理
+// ackCh     chan JobNotify   缓冲 4   子代理 → 父代理，满丢
+// resultCh  chan JobNotify   缓冲 1   子代理 → 父代理，满丢+warn
+// notifyCh  chan JobNotify   缓冲 16  子代理 → 父代理，满丢
+```
+
+```go
+// Start 新增参数 onComplete
+func (m *Manager) Start(ctx context.Context, id string, desc string, onComplete func(jobID string)) *Job
+
+// onComplete 回调在 job 的 goroutine 结束前调用（resultCh 发送之后）。
+// Controller 在创建 job 时传入回调：将 autoReenter 逻辑封装为回调传入。
+// 这样 Manager 不需要持有 Controller 引用，避免循环依赖。
+```
 
 ```go
 // Steer 往指定 job 的子代理 steerCh 发消息（非阻塞）
@@ -347,6 +374,20 @@ func (m *Manager) ActiveJobs() []string {
     return ids
 }
 
+// Job 清理时机：
+// 1. onComplete 回调执行后，job 标记为 completed=true，不立即从 m.jobs 删除
+// 2. drainNotify() 消费 resultCh 后，调用 jm.RemoveJob(jobID) 从 m.jobs 删除
+// 3. NotifyChannels 在 job 已删除时返回 nil
+// 4. ActiveJobs() 返回所有未删除的 job（包括 completed 状态的）
+// 5. 这确保 result 不会因竞态被丢弃
+
+// RemoveJob 从 m.jobs map 中删除指定 job，drainNotify 消费 result 后调用
+func (m *Manager) RemoveJob(jobID string) {
+    m.mu.Lock()
+    defer m.mu.Unlock()
+    delete(m.jobs, jobID)
+}
+
 // Peek 非阻塞查询 job 状态
 func (m *Manager) Peek(jobID string) (JobStatus, error)
 
@@ -368,11 +409,14 @@ type JobChannels struct {
 }
 ```
 
-### 5.3 SetOnCompletion 保留但改造
+### 5.3 onComplete 行为规范
 
-`SetOnCompletion` 回调保留，但触发后不再走 `DrainCompletedNote` 注入路径。改为：
+`onComplete` 回调（§5.2 中 `Start()` 的参数）的行为：
 
-子代理完成时 → `jm` 把 `resultCh` 中 result 排队到主代理可见的队列 → 主代理 `autoReenter` 触发新 turn → 主代理 `drainNotify()` 消费 result → 追加为 tool message → `stream()`。
+1. 子代理 goroutine 发送 result 到 `resultCh` 后触发
+2. 回调内执行：`c.pendingToolResult.Store(true)` + `c.Send("")`
+3. job 标记为 `completed=true`，不从 `m.jobs` 删除（等 `drainNotify` 消费后删除）
+4. 主代理新 turn → `drainNotify()` 消费 result → 追加为 tool message → `stream()`
 
 ---
 
@@ -442,7 +486,7 @@ func (a *Agent) Run(ctx context.Context, input string) error {
 
 ---
 
-## §7 嵌套子代理
+## §7 嵌套子代理及生命周期管理
 
 子代理 A 调 task 启动孙代理 B → B 也是后台 job → B 完成 → B 的 `resultCh` result 推给 A → A 的 `drainNotify()` 消费 → 孙代理 result 进入 A 的 `taskResults`（由 A 的 Controller 管理）→ A 的 `drainNotify()` 消费后作为 tool result 写入 A 的 session → A 继续运行 → A 完成 → A 的 result 推给主代理。
 
@@ -452,6 +496,10 @@ func (a *Agent) Run(ctx context.Context, input string) error {
 - 孙代理的 result 通过 A 的 `drainNotify()` 写入 A 的 session（`RoleTool` message），供 A 的模型消费。具体路径：孙代理的 result 进子代理的 `resultCh`，子代理 `drainNotify` 消费后作为 tool result 写入子代理 session。
 - A 的 `taskResults` 由 A 的 Controller 管理，不跨级。
 - `ackCh` / `resultCh` / `notifyCh` 只在父子之间通信，祖父代理不感知孙代理的存在。
+
+**生命周期联动规范**：
+- 主任务与子任务（包括嵌套的孙任务）的生命周期必须通过树状结构或 Context 链式继承进行联动。
+- 在 `jobs.Manager` 启动子任务时，应当将启动者（父代理）的运行 Context 传递并作为子任务的 base context（或在 Manager 中显式建立父子 JobID 树形映射关系，在父任务退出时递归取消所有子任务的 Context），确保在父任务异常退出或被取消时，子任务和嵌套的孙任务能够被安全地递归取消，不产生生命周期泄露。
 
 ---
 
@@ -500,7 +548,7 @@ func (a *Agent) Run(ctx context.Context, input string) error {
 ## §10 不变项
 
 - `bash_output` / `kill_shell` 工具不动（bash 后台任务独立体系）
-- `jobs.Manager.Start()` / `Kill()` / `Output()` 核心逻辑不动（Steer/Peek 是新增方法）
+- `jobs.Manager.Start()` 签名新增 `onComplete` 参数（见 §5.2），`Kill()` / `Output()` 核心逻辑不动
 - `event.Sink` 体系不动
 - HTTP API `/submit` / `/steer` 端点不动
 - 桥项目 `reasonix-telegram` 不动

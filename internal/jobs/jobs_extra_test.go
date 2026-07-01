@@ -18,65 +18,14 @@ func TestNewManagerTreatsTypedNilSinkAsDiscard(t *testing.T) {
 	m := NewManager(sink)
 	defer m.Close()
 
-	j, _ := m.Start("bash", "typed nil sink", func(context.Context, io.Writer) (string, error) {
+	j, _ := m.Start(context.Background(), "bash", "typed nil sink", func(context.Context, io.Writer) (string, error) {
 		return "done", nil
-	})
-	res := m.Wait(context.Background(), []string{j.ID}, 1000)
-	if len(res) != 1 || res[0].Status != Done {
-		t.Fatalf("job result = %+v, want one done job", res)
+	}, nil)
+	<-j.done
+	_, st, ok := m.Output(j.ID)
+	if !ok || st != Done {
+		t.Fatalf("job status = %s, want Done", st)
 	}
-}
-
-// --- Wait with timeout ---
-
-func TestWaitTimeout(t *testing.T) {
-	m := NewManager(event.Discard)
-	defer m.Close()
-
-	j, _ := m.Start("bash", "", func(ctx context.Context, _ io.Writer) (string, error) {
-		<-ctx.Done()
-		return "", ctx.Err()
-	})
-	// Wait with a very short timeout — the job won't finish in time.
-	res := m.Wait(context.Background(), []string{j.ID}, 1)
-	if len(res) != 1 {
-		t.Fatalf("want 1 result, got %d", len(res))
-	}
-	// Should still be running (timeout expired before completion).
-	if res[0].Status != Running {
-		t.Errorf("status = %q, want running", res[0].Status)
-	}
-	m.Kill(j.ID)
-}
-
-// --- Wait with empty ids waits for all running ---
-
-func TestWaitAllRunning(t *testing.T) {
-	m := NewManager(event.Discard)
-	defer m.Close()
-
-	// Jobs block until cancelled so they are still running when Wait resolves the
-	// "all running" set — instant-returning jobs could finish first and be missed,
-	// which is exactly the resolution this test must observe deterministically. A
-	// short timeout returns the still-running snapshot.
-	j1, _ := m.Start("bash", "", func(ctx context.Context, _ io.Writer) (string, error) {
-		<-ctx.Done()
-		return "", ctx.Err()
-	})
-	j2, _ := m.Start("bash", "", func(ctx context.Context, _ io.Writer) (string, error) {
-		<-ctx.Done()
-		return "", ctx.Err()
-	})
-	res := m.Wait(context.Background(), nil, 1)
-	if len(res) != 2 {
-		t.Fatalf("want 2 results, got %d", len(res))
-	}
-	ids := map[string]bool{res[0].ID: true, res[1].ID: true}
-	if !ids[j1.ID] || !ids[j2.ID] {
-		t.Errorf("results missing expected ids: %v", ids)
-	}
-	m.Kill(j1.ID)
-	m.Kill(j2.ID)
 }
 
 // --- Output with unknown id ---
@@ -118,32 +67,13 @@ func TestStartedTextWithoutLabel(t *testing.T) {
 	}
 }
 
-// --- DrainCompletedNote with multiple jobs ---
-
-func TestDrainMultiple(t *testing.T) {
-	m := NewManager(event.Discard)
-	defer m.Close()
-
-	_, _ = m.Start("bash", "", func(_ context.Context, _ io.Writer) (string, error) {
-		return "", nil
-	})
-	_, _ = m.Start("task", "label", func(_ context.Context, _ io.Writer) (string, error) {
-		return "answer", nil
-	})
-	m.Wait(context.Background(), nil, 5)
-	note := m.DrainCompletedNote()
-	if note == "" {
-		t.Fatal("drain should not be empty after 2 completions")
-	}
-}
-
 // --- Close is idempotent ---
 
 func TestCloseIdempotent(t *testing.T) {
 	m := NewManager(event.Discard)
-	_, _ = m.Start("bash", "", func(_ context.Context, _ io.Writer) (string, error) {
+	_, _ = m.Start(context.Background(), "bash", "", func(_ context.Context, _ io.Writer) (string, error) {
 		return "", nil
-	})
+	}, nil)
 	m.Close()
 	m.Close() // should not panic
 }
@@ -164,12 +94,13 @@ func TestJobFailed(t *testing.T) {
 	m := NewManager(event.Discard)
 	defer m.Close()
 
-	j, _ := m.Start("bash", "", func(_ context.Context, _ io.Writer) (string, error) {
+	j, _ := m.Start(context.Background(), "bash", "", func(_ context.Context, _ io.Writer) (string, error) {
 		return "", io.ErrUnexpectedEOF
-	})
-	res := m.Wait(context.Background(), []string{j.ID}, 5)
-	if len(res) != 1 || res[0].Status != Failed {
-		t.Fatalf("want Failed, got %+v", res)
+	}, nil)
+	<-j.done
+	_, st, ok := m.Output(j.ID)
+	if !ok || st != Failed {
+		t.Fatalf("want Failed, got %s", st)
 	}
 }
 
@@ -179,15 +110,16 @@ func TestJobWithResult(t *testing.T) {
 	m := NewManager(event.Discard)
 	defer m.Close()
 
-	j, _ := m.Start("task", "", func(_ context.Context, _ io.Writer) (string, error) {
+	j, _ := m.Start(context.Background(), "task", "", func(_ context.Context, _ io.Writer) (string, error) {
 		return "final answer", nil
-	})
-	res := m.Wait(context.Background(), []string{j.ID}, 5)
-	if len(res) != 1 || res[0].Status != Done {
-		t.Fatalf("want Done, got %+v", res)
+	}, nil)
+	<-j.done
+	txt, st, ok := m.Output(j.ID)
+	if !ok || st != Done {
+		t.Fatalf("want Done, got status=%s ok=%v", st, ok)
 	}
-	if res[0].Output != "final answer" {
-		t.Errorf("output = %q, want \"final answer\"", res[0].Output)
+	if txt != "final answer" {
+		t.Errorf("output = %q, want \"final answer\"", txt)
 	}
 }
 
@@ -215,26 +147,138 @@ func TestFromContextEmpty(t *testing.T) {
 
 func TestStatusConstants(t *testing.T) {
 	if Running != "running" {
-		t.Errorf("Running = %q", Running)
+		t.Errorf("Running = %q, want running", Running)
 	}
 	if Done != "done" {
-		t.Errorf("Done = %q", Done)
+		t.Errorf("Done = %q, want done", Done)
 	}
 	if Failed != "failed" {
-		t.Errorf("Failed = %q", Failed)
+		t.Errorf("Failed = %q, want failed", Failed)
 	}
 	if Killed != "killed" {
-		t.Errorf("Killed = %q", Killed)
+		t.Errorf("Killed = %q, want killed", Killed)
 	}
 }
 
-// --- nowMs ---
+// --- Peek and ActiveJobs ---
 
-func TestNowMs(t *testing.T) {
-	before := time.Now().UnixMilli()
-	got := nowMs()
-	after := time.Now().UnixMilli()
-	if got < before || got > after {
-		t.Errorf("nowMs() = %d, not in [%d, %d]", got, before, after)
+func TestPeekActiveJobs(t *testing.T) {
+	m := NewManager(event.Discard)
+	defer m.Close()
+
+	release := make(chan struct{})
+	j, _ := m.Start(context.Background(), "task", "peek-test", func(ctx context.Context, _ io.Writer) (string, error) {
+		<-release
+		return "ok", nil
+	}, nil)
+
+	// Peek while running
+	js, err := m.Peek(j.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if js.Status != string(Running) {
+		t.Errorf("Peek status = %q, want running", js.Status)
+	}
+
+	// ActiveJobs includes this job
+	ids := m.ActiveJobs()
+	found := false
+	for _, id := range ids {
+		if id == j.ID {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("ActiveJobs missing job %q", j.ID)
+	}
+
+	close(release)
+	<-j.done
+}
+
+// --- NotifyChannels ---
+
+func TestNotifyChannels(t *testing.T) {
+	m := NewManager(event.Discard)
+	defer m.Close()
+
+	j, _ := m.Start(context.Background(), "task", "notify", func(_ context.Context, _ io.Writer) (string, error) {
+		return "result", nil
+	}, nil)
+	<-j.done
+
+	ch := m.NotifyChannels(j.ID)
+	if ch == nil {
+		t.Fatal("NotifyChannels returned nil for existing job")
+	}
+	if ch.Ack == nil || ch.Result == nil || ch.Progress == nil {
+		t.Error("one or more channels are nil")
+	}
+}
+
+func TestNotifyChannelsUnknownID(t *testing.T) {
+	m := NewManager(event.Discard)
+	if ch := m.NotifyChannels("no-such-job"); ch != nil {
+		t.Error("NotifyChannels for unknown id should return nil")
+	}
+}
+
+// --- Steer ---
+
+func TestSteer(t *testing.T) {
+	m := NewManager(event.Discard)
+	defer m.Close()
+
+	release := make(chan struct{})
+	gotSteer := make(chan string, 1)
+	j, _ := m.Start(context.Background(), "task", "steer-test", func(ctx context.Context, _ io.Writer) (string, error) {
+		// Retrieve job from context to avoid capturing outer 'j' (data race).
+		job := ctx.Value(jobKey{}).(*Job)
+		select {
+		case msg := <-job.steerCh:
+			gotSteer <- msg
+		case <-release:
+		}
+		return "ok", nil
+	}, nil)
+
+	if err := m.Steer(j.ID, "hello"); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case msg := <-gotSteer:
+		if msg != "hello" {
+			t.Errorf("steer message = %q, want hello", msg)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for steer message")
+	}
+	close(release)
+	<-j.done
+}
+
+func TestSteerUnknownID(t *testing.T) {
+	m := NewManager(event.Discard)
+	if err := m.Steer("no-such-job", "msg"); err != ErrJobNotFound {
+		t.Errorf("Steer unknown id: want ErrJobNotFound, got %v", err)
+	}
+}
+
+// --- RemoveJob ---
+
+func TestRemoveJob(t *testing.T) {
+	m := NewManager(event.Discard)
+	defer m.Close()
+
+	j, _ := m.Start(context.Background(), "bash", "", func(_ context.Context, _ io.Writer) (string, error) {
+		return "", nil
+	}, nil)
+	<-j.done
+
+	m.RemoveJob(j.ID)
+	if _, err := m.Peek(j.ID); err != ErrJobNotFound {
+		t.Errorf("after RemoveJob, Peek should return ErrJobNotFound, got %v", err)
 	}
 }

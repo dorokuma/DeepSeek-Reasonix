@@ -55,6 +55,21 @@ type Asker interface {
 	Ask(ctx context.Context, questions []event.AskQuestion) ([]event.AskAnswer, error)
 }
 
+// ctrlKey carries the ControllerBridge in the tool call context.
+type ctrlKey struct{}
+
+// withCtrl stamps ctx with the ControllerBridge so tools (notably the `task`
+// tool) can register job metadata during Execute.
+func withCtrl(ctx context.Context, c ControllerBridge) context.Context {
+	return context.WithValue(ctx, ctrlKey{}, c)
+}
+
+// CtrlFromContext extracts the ControllerBridge from the context, if any.
+func CtrlFromContext(ctx context.Context) (ControllerBridge, bool) {
+	cc, ok := ctx.Value(ctrlKey{}).(ControllerBridge)
+	return cc, ok
+}
+
 // callContextKey carries the executing tool call's identity into Execute.
 type callContextKey struct{}
 
@@ -113,10 +128,6 @@ type ToolHooks interface {
 	// streaming reasoning live when none is wired up.
 	PostLLMCall(ctx context.Context, reasoning string, turn int) string
 	HasPostLLMCall() bool
-	// SubagentStop fires when a `task` sub-agent finishes (foreground). PreCompact
-	// fires just before a compaction pass and returns extra summary guidance (its
-	// hooks' stdout) to fold into the summary prompt; "" when no hook contributes.
-	SubagentStop(ctx context.Context, last string)
 	PreCompact(ctx context.Context, trigger string) string
 }
 
@@ -135,8 +146,72 @@ type sessionCostInfo struct {
 	currency string
 }
 
-// Agent drives a single task: a Provider, a tool Registry, and a Session wired
-// into the main loop.
+// ControllerBridge is the interface the Controller implements so the Agent can
+// check for pending tool results and consume job metadata without a direct
+// import dependency on the control package.
+type ControllerBridge interface {
+	// PendingToolResultCAS atomically compares-and-swaps the pendingToolResult
+	// flag. Returns true when the swap succeeded (old value matched).
+	PendingToolResultCAS(old, new bool) bool
+	// TakeJobMeta reads and deletes a job's metadata in one atomic step.
+	// Returns the tool-call ID that created the job, and whether metadata existed.
+	TakeJobMeta(jobID string) (toolCallID string, found bool)
+	// RegisterJobMeta stores the tool-call metadata for a background task job
+	// so TakeJobMeta can later correlate a completed job with its tool call.
+	RegisterJobMeta(jobID, toolCallID string)
+}
+
+// subControllerBridge is a lightweight ControllerBridge implementation for
+// sub-agents. It manages an isolated taskResults map + pendingToolResult flag
+// so the sub-agent's drainNotify can independently consume grandchild results
+// without sharing state with the parent Controller.
+type subControllerBridge struct {
+	taskResults       map[string]string
+	taskResultsMu     sync.Mutex
+	pendingToolResult atomic.Bool
+}
+
+func newSubControllerBridge() *subControllerBridge {
+	return &subControllerBridge{
+		taskResults: make(map[string]string),
+	}
+}
+
+func (c *subControllerBridge) PendingToolResultCAS(old, new bool) bool {
+	return c.pendingToolResult.CompareAndSwap(old, new)
+}
+
+func (c *subControllerBridge) TakeJobMeta(jobID string) (toolCallID string, found bool) {
+	c.taskResultsMu.Lock()
+	defer c.taskResultsMu.Unlock()
+	toolCallID, found = c.taskResults[jobID]
+	if found {
+		delete(c.taskResults, jobID)
+	}
+	return
+}
+
+func (c *subControllerBridge) RegisterJobMeta(jobID string, toolCallID string) {
+	c.taskResultsMu.Lock()
+	defer c.taskResultsMu.Unlock()
+	c.taskResults[jobID] = toolCallID
+}
+
+// MakeOnComplete implements OnCompleteProvider. It returns a callback that sets
+// the pendingToolResult flag when a grandchild background job completes, so the
+// sub-agent's Run loop picks it up on the next iteration.
+func (c *subControllerBridge) MakeOnComplete() func(jobID string) {
+	return func(jobID string) {
+		c.pendingToolResult.Store(true)
+	}
+}
+
+// Ask implements Asker. Sub-agents are headless — they cannot prompt the user.
+func (c *subControllerBridge) Ask(_ context.Context, _ []event.AskQuestion) ([]event.AskAnswer, error) {
+	return nil, fmt.Errorf("sub-agent does not support interactive prompts")
+}
+
+// Agent is the core task loop. It drives a single model — a Provider plus a tool
 type Agent struct {
 	prov        provider.Provider
 	tools       *tool.Registry
@@ -207,9 +282,13 @@ type Agent struct {
 
 	// jobs, when non-nil, is the session's background-job manager. executeOne
 	// stamps it onto each tool call's context so the background tools (bash
-	// run_in_background, task run_in_background, bash_output/kill_shell/wait) can
+	// run_in_background, task run_in_background, bash_output/kill_shell) can
 	// reach it. nil leaves those tools to degrade gracefully.
 	jobs *jobs.Manager
+
+	// ctrl, when non-nil, is the Controller bridge for auto-reentry and job
+	// metadata lookup. Set via Options.
+	ctrl ControllerBridge
 
 	// projectChecks are structured project instructions the agent gates tool
 	// calls against after each turn that wrote files.
@@ -271,10 +350,6 @@ type Agent struct {
 	// is executing. Buffered 8; drops when full.
 	steerCh chan string
 
-	// activeChild points to the currently running foreground sub-agent, if any.
-	// Steer() forwards incoming messages to this child instead of processing
-	// them itself, so the user can "talk through" to a nested sub-agent.
-	activeChild atomic.Pointer[Agent]
 }
 
 // SetGate installs the per-call permission gate. Used by `reasonix chat` to swap the
@@ -298,6 +373,10 @@ func (a *Agent) SetMemoryQueue(q memory.Queue) { a.memQueue = q }
 // SetPreEditHook installs the pre-edit snapshot hook (see onPreEdit). The
 // controller wires it to its per-session checkpoint store; nil disables capture.
 func (a *Agent) SetPreEditHook(fn func(diff.Change)) { a.onPreEdit = fn }
+
+// SetControllerBridge wires a ControllerBridge for auto-reentry and job metadata
+// lookup. Must be called before Run if auto-reentry is desired.
+func (a *Agent) SetControllerBridge(c ControllerBridge) { a.ctrl = c }
 
 // Session returns the agent's current conversation, useful for persistence
 // hooks that need to read the message log between turns. sessMu serialises this
@@ -485,6 +564,9 @@ type Options struct {
 	// Jobs is the session's background-job manager (nil disables background tools).
 	Jobs *jobs.Manager
 
+	// Ctrl is the optional Controller bridge for auto-reentry and job metadata.
+	Ctrl ControllerBridge
+
 	// CtxStore optionally shares a parent session's ctxmode store (sub-agents).
 	// When nil and ctxmode is active, New creates a fresh store.
 	CtxStore *ctxmode.Store
@@ -569,6 +651,7 @@ func New(prov provider.Provider, tools *tool.Registry, session *Session, opts Op
 		gate:                 gate,
 		hooks:                hooks,
 		jobs:                 opts.Jobs,
+		ctrl:                 opts.Ctrl,
 		ctxStore:             ctxStore,
 		sentFragments:        make(map[string]string),
 		projectChecks:        append([]instruction.VerifyCheck(nil), opts.ProjectChecks...),
@@ -612,12 +695,27 @@ func (a *Agent) Run(ctx context.Context, input string) error {
 	streamRecoveries := 0
 	executorHandoff := a.executorHandoffGuard && strings.Contains(input, executorHandoffMarker)
 	for step := 0; a.maxSteps <= 0 || step < a.maxSteps; step++ {
-		a.drainSteer()
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
 		default:
 		}
+
+		// Check for pending tool results (auto-reentry from sub-agent completion).
+		// When a background job finished, drain its result and skip drainSteer
+		// since there is no new user input — the job's output is the input.
+		autoReentry := a.ctrl != nil && a.ctrl.PendingToolResultCAS(true, false)
+		if autoReentry {
+			a.drainNotify()
+		} else {
+			// Drain one steer message from external input
+			if userInput := a.drainSteer(); userInput != "" {
+				a.session.Add(provider.Message{Role: provider.RoleUser, Content: userInput})
+			}
+			// Drain any background-job results that may have arrived
+			a.drainNotify()
+		}
+
 		schemas := a.getSchemasForContext(ctx)
 		prefixShape := a.capturePrefixShape(schemas)
 		prevPrefixShape := a.lastPrefixShape
@@ -737,26 +835,10 @@ func (a *Agent) Run(ctx context.Context, input string) error {
 	return fmt.Errorf("paused after %d tool-call rounds (%s) — the work so far is saved; send another message to continue, or set %s higher or to 0 for no limit", a.maxSteps, a.maxStepsKey, a.maxStepsKey)
 }
 
-// setActiveChild sets the current active sub-agent for steer forwarding.
-func (a *Agent) setActiveChild(child *Agent) {
-	a.activeChild.Store(child)
-}
-
-// clearActiveChild clears the active sub-agent reference.
-func (a *Agent) clearActiveChild() {
-	a.activeChild.Store(nil)
-}
-
 // Steer injects a user message into the running agent's message loop.
-// If a foreground sub-agent is active, the message is forwarded to it.
 // Non-blocking: silently drops when the buffer is full.
 func (a *Agent) Steer(input string) {
 	if a.steerCh == nil {
-		return
-	}
-	// Forward to the active foreground sub-agent if one is running.
-	if child := a.activeChild.Load(); child != nil {
-		child.Steer(input)
 		return
 	}
 	select {
@@ -765,17 +847,57 @@ func (a *Agent) Steer(input string) {
 	}
 }
 
-// drainSteer drains all pending steer messages and appends each as a
-// new user message to the session. Safe to call from the run-loop goroutine.
-func (a *Agent) drainSteer() {
-	for {
+// drainSteer drains one pending steer message and returns it.
+// Returns empty string when nothing is pending.
+func (a *Agent) drainSteer() string {
+	select {
+	case msg := <-a.steerCh:
+		return msg
+	default:
+		return ""
+	}
+}
+
+// drainNotify 消费所有活跃 job 的通知通道，返回是否消费到 result
+func (a *Agent) drainNotify() bool {
+	jm := a.jobs // jobs.Manager 引用
+	if jm == nil || a.ctrl == nil {
+		return false
+	}
+	jobIDs := jm.ActiveJobs()
+	consumed := false
+	for _, jobID := range jobIDs {
+		ch := jm.NotifyChannels(jobID)
+		if ch == nil {
+			continue
+		}
+		// 非阻塞读取 resultCh
 		select {
-		case msg := <-a.steerCh:
-			a.session.Add(provider.Message{Role: provider.RoleUser, Content: msg})
+		case notify, ok := <-ch.Result:
+			if !ok {
+				// Channel closed — job goroutine has exited. Clean up.
+				jm.RemoveJob(jobID)
+				continue
+			}
+			if notify.Type == "result" {
+				toolCallID, found := a.ctrl.TakeJobMeta(jobID)
+				if found {
+					// 追加为 tool message 到 session
+					a.session.Add(provider.Message{
+						Role:       provider.RoleTool,
+						Content:    notify.Output,
+						ToolCallID: toolCallID,
+					})
+				}
+				// 清理已完成的 job
+				jm.RemoveJob(jobID)
+				consumed = true
+			}
 		default:
-			return
+			// 没有 result，跳过
 		}
 	}
+	return consumed
 }
 
 type finalReadinessCheck struct {
@@ -1366,11 +1488,17 @@ func (a *Agent) executeOne(ctx context.Context, call provider.ToolCall) toolOutc
 	if a.jobs != nil {
 		cctx = jobs.WithManager(cctx, a.jobs)
 	}
+	if a.ctrl != nil {
+		cctx = withCtrl(cctx, a.ctrl)
+	}
 	if a.memQueue != nil {
 		cctx = memory.WithQueue(cctx, a.memQueue)
 	}
 	if a.ctxStore != nil {
 		cctx = ctxmode.WithStore(cctx, a.ctxStore)
+	}
+	if p, ok := a.asker.(OnCompleteProvider); ok {
+		cctx = WithOnCompleteProvider(cctx, p)
 	}
 	callID := call.ID
 	cctx = tool.WithProgress(cctx, func(chunk string) {
@@ -1428,12 +1556,6 @@ func (a *Agent) executeOne(ctx context.Context, call provider.ToolCall) toolOutc
 		return toolOutcome{output: body, errMsg: firstLine(err.Error()), truncated: truncMsg != "" || strings.Contains(body, "[truncated "), truncMsg: truncMsg}
 	}
 	a.recordRepeatSuccess(call, t)
-	// A foreground `task` sub-agent just finished — its result is the final answer.
-	// (A backgrounded one returns a "Started…" string and stops later in a job, so
-	// it doesn't fire here.) SubagentStop lets a hook react to delegated work.
-	if a.hooks != nil && call.Name == "task" && !isBackgroundTaskCall(call.Arguments) {
-		a.hooks.SubagentStop(ctx, result)
-	}
 	body, truncMsg := compactToolOutput(a.ctxStore, call.Name, json.RawMessage(call.Arguments), result)
 	// PostCallGuidance: if the tool teaches a post-call workflow, append it
 	// to the result so the model is explicitly reminded what to do next.
@@ -1581,16 +1703,6 @@ func hasShellWriteRedirect(command string) bool {
 		prev = r
 	}
 	return false
-}
-
-// isBackgroundTaskCall reports whether a `task` call set run_in_background, so a
-// fire-and-return dispatch isn't mistaken for a sub-agent that has stopped.
-func isBackgroundTaskCall(args string) bool {
-	var p struct {
-		RunInBackground bool `json:"run_in_background"`
-	}
-	_ = json.Unmarshal([]byte(args), &p)
-	return p.RunInBackground
 }
 
 // toolReadOnly reports a tool's ReadOnly classification by name (false for an

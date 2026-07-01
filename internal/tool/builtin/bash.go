@@ -120,7 +120,7 @@ func (b bash) resolved() shell.Shell {
 }
 
 func (bash) Schema() json.RawMessage {
-	return json.RawMessage(`{"type":"object","properties":{"command":{"type":"string","description":"Shell command to execute"},"run_in_background":{"type":"boolean","description":"Run detached: returns a job id immediately and keeps running across turns (no foreground timeout). Read new output with bash_output, wait for it with wait, stop it with kill_shell. Use for long-running commands like servers, watchers, or builds you don't need to block on."}},"required":["command"]}`)
+	return json.RawMessage(`{"type":"object","properties":{"command":{"type":"string","description":"Shell command to execute"},"run_in_background":{"type":"boolean","description":"Run detached: returns a job id immediately and keeps running across turns (no foreground timeout). Read new output with bash_output, stop it with kill_shell. Use for long-running commands like servers, watchers, or builds you don't need to block on."}},"required":["command"]}`)
 }
 
 // ReadOnly is false: bash's effect cannot be inferred from args (rm, curl,
@@ -165,7 +165,7 @@ func (b bash) Execute(ctx context.Context, args json.RawMessage) (string, error)
 		workDir := b.workDir
 		// The job runs under the manager's session context (no foreground timeout), so it
 		// survives this turn; its combined output streams to the job buffer.
-		job, err := jm.Start("bash", commandPreview(p.Command), func(jobCtx context.Context, out io.Writer) (string, error) {
+		job, err := jm.Start(ctx, "bash", commandPreview(p.Command), func(jobCtx context.Context, out io.Writer) (string, error) {
 			// Cap background output at 16 MB to prevent OOM from runaway commands.
 			const bgMaxOutput = 16 << 20
 			limitedOut := io.MultiWriter(out, &limitedWriter{limit: bgMaxOutput})
@@ -177,11 +177,11 @@ func (b bash) Execute(ctx context.Context, args json.RawMessage) (string, error)
 			cmd.Stdout = limitedOut
 			cmd.Stderr = limitedOut
 			return "", cmd.Run()
-		})
+		}, nil)
 		if err != nil {
 			return "", err
 		}
-		return fmt.Sprintf("Started background job %q. It keeps running across turns; read new output with bash_output(job_id=%q), wait for it with wait, or stop it with kill_shell(job_id=%q).", job.ID, job.ID, job.ID), nil
+		return fmt.Sprintf("Started background job %q. It keeps running across turns; read new output with bash_output(job_id=%q) or stop it with kill_shell(job_id=%q).", job.ID, job.ID, job.ID), nil
 	}
 
 	runCtx := ctx

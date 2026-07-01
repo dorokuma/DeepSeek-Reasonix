@@ -564,7 +564,7 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 			Hooks:         hookRunner.WithAgentLayer(hook.AgentLayerSubagent),
 			ContextWindow: ctxWin,
 			ArchiveDir:    config.ArchiveDir(),
-		}, agent.NestedSink(subCtx, event.Discard))
+		}, event.Discard)
 	}
 	skillProfile := func(sk skill.Skill) *event.Profile {
 		model := subagentModelRef(cfg, sk)

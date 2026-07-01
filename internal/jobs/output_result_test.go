@@ -12,12 +12,11 @@ import (
 // returns a final answer and writes nothing to the streamed buffer (task ignores
 // the io.Writer). bash_output reads only the buffer, so once such a job finishes
 // its answer is invisible there — yet bash_output's description claims it works
-// for task(run_in_background). wait sees the result; bash_output should too.
 func TestOutputSurfacesResultForBufferlessJob(t *testing.T) {
 	m := NewManager(event.Discard)
-	j, err := m.Start("task", "demo", func(ctx context.Context, _ io.Writer) (string, error) {
+	j, err := m.Start(context.Background(), "task", "demo", func(ctx context.Context, _ io.Writer) (string, error) {
 		return "THE-ANSWER", nil
-	})
+	}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -8,7 +8,7 @@ import (
 )
 
 // Compose applies pending memory notes to the turn text, returning the message
-// to actually send to the model. Background job completions are also injected.
+// to actually send to the model.
 func (c *Controller) Compose(text string) string {
 	c.mu.Lock()
 	notes := c.pendingMemory
@@ -29,14 +29,6 @@ func (c *Controller) Compose(text string) string {
 		text = b.String() + text
 	}
 
-	// Background jobs that finished since the last turn ride the turn too, so the
-	// model learns of completions even though the user-facing notices don't reach
-	// its context. Like memory, this never touches the cache-stable prefix.
-	if c.jobs != nil {
-		if note := c.jobs.DrainCompletedNote(); note != "" {
-			text = "<background-jobs>\n" + note + "\n</background-jobs>\n\n" + text
-		}
-	}
 	return text
 }
 

@@ -17,7 +17,6 @@ type stubHooks struct {
 	preSeen       []string
 	postSeen      []string
 	preCompactOut string   // returned from PreCompact (extra summary guidance)
-	subagentSeen  []string // last-answer text passed to each SubagentStop
 	hasPostLLM    bool     // whether HasPostLLMCall reports a PostLLMCall hook
 	postLLMOut    string   // replacement returned from PostLLMCall (when hasPostLLM)
 	postLLMSeen   []string // reasoning text each PostLLMCall received
@@ -35,10 +34,6 @@ func (h *stubHooks) PreToolUse(_ context.Context, name string, _ json.RawMessage
 func (h *stubHooks) PostToolUse(_ context.Context, name string, _ json.RawMessage, _ string) {
 	h.postSeen = append(h.postSeen, name)
 }
-
-func (h *stubHooks) SubagentStop(_ context.Context, last string) {
-	h.subagentSeen = append(h.subagentSeen, last)
-}
 func (h *stubHooks) PreCompact(context.Context, string) string { return h.preCompactOut }
 
 func (h *stubHooks) PostLLMCall(_ context.Context, reasoning string, turn int) string {
@@ -51,26 +46,6 @@ func (h *stubHooks) PostLLMCall(_ context.Context, reasoning string, turn int) s
 }
 
 func (h *stubHooks) HasPostLLMCall() bool { return h.hasPostLLM }
-
-// TestSubagentStopFiresForForegroundTask checks SubagentStop fires (with the
-// sub-agent's answer) when a foreground `task` call completes, but not for a
-// backgrounded one (which only returns a "started" handle and stops later).
-func TestSubagentStopFiresForForegroundTask(t *testing.T) {
-	reg := tool.NewRegistry()
-	reg.Add(okTool{name: "task"}) // stands in for the real task tool; returns "ok"
-	h := &stubHooks{}
-	a := New(nil, reg, NewSession(""), Options{Hooks: h}, event.Discard)
-
-	a.executeBatch(context.Background(), []provider.ToolCall{{Name: "task", Arguments: `{"prompt":"x"}`}})
-	if len(h.subagentSeen) != 1 || h.subagentSeen[0] != "ok" {
-		t.Fatalf("foreground task should fire SubagentStop with the answer, saw %v", h.subagentSeen)
-	}
-
-	a.executeBatch(context.Background(), []provider.ToolCall{{Name: "task", Arguments: `{"run_in_background":true}`}})
-	if len(h.subagentSeen) != 1 {
-		t.Errorf("backgrounded task must not fire SubagentStop, saw %v", h.subagentSeen)
-	}
-}
 
 // TestPreToolUseHookBlocks proves a gating PreToolUse hook refuses a tool call
 // (returning a blocked result, never running the tool or its PostToolUse), while

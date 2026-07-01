@@ -24,6 +24,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"reasonix/internal/agent"
@@ -128,6 +129,9 @@ type Controller struct {
 	approvals   map[string]chan approvalReply
 	asks        map[string]chan []event.AskAnswer
 	granted     map[string]bool
+	taskResults    map[string]jobMeta // jobID → creation-time tool call metadata
+	taskResultsMu  sync.Mutex         // guards taskResults
+	pendingToolResult atomic.Bool     // sub-agent completion auto-reentry flag
 	nextID      int
 	// turn counts model turns this session, passed to hooks in their payload.
 	turn int
@@ -159,6 +163,14 @@ type approvalReply struct {
 	allow   bool
 	session bool
 	persist bool // true = write "always allow" rule to config
+}
+
+// jobMeta records the tool-call metadata for a background task job when it is
+// created, so the Controller can correlate a completed job's result with the
+// original tool call that spawned it.
+type jobMeta struct {
+	ToolCallID string
+	StartStep  int
 }
 
 // Options carries the already-built pieces setup assembles. Lifecycle metadata
@@ -255,6 +267,7 @@ func New(opts Options) *Controller {
 		approvals:     map[string]chan approvalReply{},
 		asks:          map[string]chan []event.AskAnswer{},
 		granted:       map[string]bool{},
+		taskResults:   make(map[string]jobMeta),
 	}
 	// Checkpoints: bind a store to the session and route writer pre-edits into it.
 	c.rebindCheckpoints(opts.SessionPath)
@@ -265,6 +278,7 @@ func New(opts Options) *Controller {
 			}
 		})
 		c.executor.SetMemoryQueue(c)
+		c.executor.SetControllerBridge(c)
 	}
 	if c.jobs != nil {
 		c.jobs.SetOnCompletion(func(id string) {
@@ -350,6 +364,17 @@ func (c *Controller) runGuarded(input string, body func(ctx context.Context) err
 	}()
 }
 
+// MakeOnComplete returns an onComplete callback for jobs.Manager.Start() that
+// the task tool passes to jm.Start so sub-agent completion triggers auto-reentry.
+// The callback sets pendingToolResult and sends an empty string to re-enter the
+// turn loop.
+func (c *Controller) MakeOnComplete() func(jobID string) {
+	return func(jobID string) {
+		c.pendingToolResult.Store(true)
+		c.Send("")
+	}
+}
+
 // autoReenter starts a turn when a background task completes so the model can
 // report results without waiting for the user's next message.
 func (c *Controller) autoReenter() {
@@ -363,6 +388,43 @@ func (c *Controller) autoReenter() {
 	c.mu.Unlock()
 	c.Send(c.pendingInput)
 	c.pendingInput = ""
+}
+
+// RegisterJobMeta implements agent.ControllerBridge by storing the tool-call
+// metadata for a background task job.
+func (c *Controller) RegisterJobMeta(jobID string, toolCallID string) {
+	c.taskResultsMu.Lock()
+	defer c.taskResultsMu.Unlock()
+	c.taskResults[jobID] = jobMeta{ToolCallID: toolCallID}
+}
+
+// GetJobMeta retrieves the stored metadata for a job without removing it.
+func (c *Controller) GetJobMeta(jobID string) (jobMeta, bool) {
+	c.taskResultsMu.Lock()
+	defer c.taskResultsMu.Unlock()
+	meta, ok := c.taskResults[jobID]
+	return meta, ok
+}
+
+// TakeJobMeta reads and deletes a job's metadata in one atomic step, preventing
+// accumulation of metadata for already-completed jobs.
+func (c *Controller) TakeJobMeta(jobID string) (toolCallID string, found bool) {
+	c.taskResultsMu.Lock()
+	defer c.taskResultsMu.Unlock()
+	meta, ok := c.taskResults[jobID]
+	if ok {
+		delete(c.taskResults, jobID)
+	}
+	if !ok {
+		return "", false
+	}
+	return meta.ToolCallID, true
+}
+
+// PendingToolResultCAS implements agent.ControllerBridge by delegating to the
+// Controller's pendingToolResult atomic flag.
+func (c *Controller) PendingToolResultCAS(old, new bool) bool {
+	return c.pendingToolResult.CompareAndSwap(old, new)
 }
 
 // Send starts a turn with an uncomposed message. The controller applies

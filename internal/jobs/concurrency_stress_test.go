@@ -25,10 +25,10 @@ func TestManagerConcurrentAccess(t *testing.T) {
 			for i := 0; i < 200; i++ {
 				switch (w + i) % 6 {
 				case 0:
-					j, err := m.Start("bash", "x", func(ctx context.Context, out io.Writer) (string, error) {
+					j, err := m.Start(context.Background(), "bash", "x", func(ctx context.Context, out io.Writer) (string, error) {
 						_, _ = out.Write([]byte("tick"))
 						return "done", nil
-					})
+					}, nil)
 					if err != nil {
 						break
 					}
@@ -36,9 +36,9 @@ func TestManagerConcurrentAccess(t *testing.T) {
 				case 1:
 					_ = m.Running()
 				case 2:
-					_ = m.DrainCompletedNote()
+					_ = m.ActiveJobs()
 				case 3:
-					_ = m.Wait(context.Background(), nil, 0) // non-blocking-ish: returns running snapshot
+					_, _ = m.Peek("bash-1")
 				case 4:
 					m.Kill("bash-1")
 				case 5:

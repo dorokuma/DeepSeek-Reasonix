@@ -291,7 +291,7 @@ func RenderTOMLForScope(c *Config, scope RenderScope) string {
 	if len(c.Permissions.MainAgentAllowed) > 0 {
 		fmt.Fprintf(&b, "main_agent_allowed = %s\n", renderStringArray(c.Permissions.MainAgentAllowed))
 	} else {
-		b.WriteString("# main_agent_allowed = [\"task\", \"ask\", \"note\", \"audit_finish\", \"read_skill\", \"run_skill\", \"slash_command\", \"remember\", \"forget\", \"bash_output\", \"wait\", \"kill_shell\"]\n")
+		b.WriteString("# main_agent_allowed = [\"task\", \"ask\", \"note\", \"audit_finish\", \"read_skill\", \"run_skill\", \"slash_command\", \"remember\", \"forget\", \"bash_output\", \"kill_shell\"]\n")
 	}
 	b.WriteString("\n")
 

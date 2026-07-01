@@ -72,7 +72,6 @@ var toolVerb = map[string]string{
 	"bash":          "Bash",
 	"bash_output":   "Output",
 	"kill_shell":    "Kill",
-	"wait":          "Wait",
 	"read_file":     "Read",
 	"write_file":    "Write",
 	"edit_file":     "Update",
@@ -90,8 +89,7 @@ var toolVerb = map[string]string{
 	"audit_finish":  "Report",
 }
 
-// toolArgKey is the JSON field shown in parentheses for each tool (wait is
-// special-cased — it carries a job_ids array, not a scalar).
+// toolArgKey is the JSON field shown in parentheses for each tool.
 var toolArgKey = map[string]string{
 	"bash":          "command",
 	"bash_output":   "job_id",
@@ -141,7 +139,7 @@ var toolCategory = map[string]string{
 	"note": "write",
 	"audit_finish": "write",
 	"bash": "exec",
-	"wait": "proc", "kill_shell": "proc",
+	"kill_shell": "proc",
 }
 
 // toolDisplayName returns the card verb for a tool: a mapped builtin verb, the
@@ -161,9 +159,6 @@ func toolArg(name, args string) string {
 	var m map[string]any
 	if json.Unmarshal([]byte(args), &m) != nil {
 		return ""
-	}
-	if name == "wait" {
-		return argList(m["job_ids"])
 	}
 	v, ok := m[toolArgKey[name]]
 	if !ok {
