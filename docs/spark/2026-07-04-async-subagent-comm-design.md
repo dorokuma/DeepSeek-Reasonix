@@ -12,11 +12,11 @@
 用户 ←→ 主代理（Run 循环永不停转）
               │
               │ steerCh (用户消息注入，保留)
-              │ drain: steerCh + notifyCh → session
+              │ drain: steerCh + ackCh/resultCh/notifyCh → session
               │
               ├─ task 工具 → 子代理 A (后台 goroutine)
               │     ├─ steerCh ← steer-job 工具
-              │     └─ notifyCh → 主代理 drain 消费
+              │     └─ ackCh/resultCh/notifyCh → 主代理 drain 消费
               │
               ├─ task 工具 → 子代理 B (后台 goroutine)
               │
@@ -93,7 +93,7 @@ Task 工具 `Execute()` 直接走现有后台路径逻辑：创建 job → `jm.S
 
 - `steerCh chan string`（`agent.go:272`）— 保留，缓冲大小定义为 8
 - `Agent.Steer(input)` — 简化为仅写入 steerCh（删 activeChild 转发分支）
-- `Agent.drainSteer()` — 保留
+- `Agent.drainSteer()` — 保留，签名从 `func (a *Agent) drainSteer()` 改为 `func (a *Agent) drainSteer() string`，由 caller 决定是否将返回的字符串写入 session（pendingToolResult 路径不写，正常路径写入）
 - `Run()` 循环中 `drainSteer()` 调用点 — 保留
 - `Controller.Steer()` — 保留
 - HTTP `POST /steer` — 保留
@@ -106,7 +106,7 @@ Task 工具 `Execute()` 直接走现有后台路径逻辑：创建 job → `jm.S
 
 ---
 
-## §3 notifyCh — 子代理 → 主代理反向通道
+## §3 通知通道（ackCh / resultCh / notifyCh）
 
 ### 3.1 类型定义
 
@@ -160,11 +160,15 @@ type JobChannels struct {
 | `Run()` 正常返回前 | `result` | `resultCh`（缓冲 1，阻塞） | `Output: 最终答案`。使用 select 感知 ctx 取消： |
 | `Run()` 因 cancel 返回 | `result` | `resultCh`（缓冲 1，阻塞） | `Output: ""`, 标记取消。如果 ctx 已取消，子代理不发送 result，直接退出，避免永久阻塞。 |
 
+> **关于缓冲与丢消息**：`ackCh`（缓冲 4）和 `notifyCh`（缓冲 16）满则丢弃，不阻塞子代理。主代理长时间 `stream()` 期间（模型推理阶段）可能不调用 `drainNotify()`，导致 `ackCh` 和 `notifyCh` 中的非 result 通知被丢弃。设计接受此行为——ack 和 progress 是状态快照而非事件日志，丢失不影响最终结果。`resultCh`（缓冲 1，阻塞发送）保证 result 通知不丢，因为子代理 `Run()` 返回前阻塞等待主代理消费 result。
+
 子代理 `Run()` 返回前通过 select 向 resultCh 发送 result：
 ```go
+if ctx.Err() != nil {
+    return  // 已取消，不发送
+}
 select {
 case <-ctx.Done():
-    // 父代理已取消，不再等待 result，直接退出
     return
 case j.resultCh <- JobNotify{Type: "result", Output: ans}:
     // 成功发送
@@ -175,21 +179,27 @@ case j.resultCh <- JobNotify{Type: "result", Output: ans}:
 
 ### 3.3 消费端
 
-主代理在每次 `Run()` 循环的 `drain()` 阶段（在 `drainSteer()` 之后、`stream()` 之前）消费所有已完成子代理的 notifyCh。
+主代理在每次 `Run()` 循环的 `drain()` 阶段消费所有已完成子代理的 notifyCh。
+
+**循环顺序**：
+- **正常路径**：`drainSteer()` → `drainNotify()` → `stream()`
+- **pendingToolResult 路径**：`drainNotify()` → `stream()`（跳过 `drainSteer`）
+- 顺序调整原因见 §6.1。
 
 新增 `drainNotify()`，返回 bool 表示是否消费到 result：
 
 ```go
 func (a *Agent) drainNotify() bool {
-    // 从 Controller.TakeJobMeta(jobID) 获取 toolCallID（读取后自动删除）
-    // 对每个 job，通过 jm.NotifyChannels(jobID) 拿到三个 channel，分别非阻塞读取
+    // 从 jobs.Manager 获取活跃 job 列表（通过 Manager.ActiveJobs() 返回 []string jobID）
+    // 对每个 jobID，通过 jm.NotifyChannels(jobID) 拿到 resultCh，非阻塞读取
+    // 仅当从 resultCh 读到数据时，调用 Controller.TakeJobMeta(jobID)
     // 找到 type=result 的，用 jobMeta.ToolCallID 追加为 tool message 到 session
     // 找到 type=progress/ack 的，不追加到 session（仅通过 steer-job/peek-job 工具返回值暴露）
     // 返回是否成功消费到至少一个 result
 }
 ```
 
-**关键设计**：`taskResults` 从 `Agent` 移入 `Controller`。`Controller` 新增 `taskResults map[string]jobMeta` 字段维护 `jobID → toolCallID` 映射，并新增 `taskResultsMu sync.Mutex` 保护并发访问。Agent 的 task tool `Execute()` 通过 `CallContext(ctx)` 拿到当前 `toolCallID`，然后调用 `Controller.RegisterJobMeta(jobID, toolCallID)`（加锁写入）。`drainNotify()` 通过 `Controller.TakeJobMeta(jobID)` 获取映射并自动删除条目（加锁读写）。消费 result 后从 `Controller.taskResults` 中删除该条目，避免内存泄漏。
+**关键设计**：`drainNotify()` 从 `jobs.Manager.ActiveJobs()` 获取活跃 jobID 列表，对每个 job 通过 `NotifyChannels(jobID).Result` 非阻塞读取 resultCh，仅当读到数据时才调用 `Controller.TakeJobMeta(jobID)`。`taskResults` 从 `Agent` 移入 `Controller`。`Controller` 新增 `taskResults map[string]jobMeta` 字段维护 `jobID → toolCallID` 映射，并新增 `taskResultsMu sync.Mutex` 保护并发访问。Agent 的 task tool `Execute()` 通过 `CallContext(ctx)` 拿到当前 `toolCallID`，然后调用 `Controller.RegisterJobMeta(jobID, toolCallID)`（加锁写入）。`drainNotify()` 通过 `Controller.TakeJobMeta(jobID)` 获取映射并自动删除条目（加锁读写）。消费 result 后从 `Controller.taskResults` 中删除该条目，避免内存泄漏。
 
 ```go
 // Controller 新增字段和方法
@@ -312,14 +322,29 @@ steerCh chan string  // 父代理 → 子代理 steer 消息通道
 Manager 的 `Start()` 方法在创建 Job 时初始化 `steerCh`，并将写入端传给子代理。子代理的 `Run()` 循环通过 `drainSteer()` 消费该通道。
 
 ```go
-// Steer 往指定 job 的子代理 steerCh 发消息
+// Steer 往指定 job 的子代理 steerCh 发消息（非阻塞）
 func (m *Manager) Steer(jobID string, message string) error {
     job, ok := m.jobs[jobID]
     if !ok {
         return ErrJobNotFound
     }
-    job.steerCh <- message
-    return nil
+    select {
+    case job.steerCh <- message:
+        return nil
+    default:
+        return ErrSteerBufferFull
+    }
+}
+
+// ActiveJobs 返回当前所有活跃 job 的 ID 列表
+func (m *Manager) ActiveJobs() []string {
+    m.mu.Lock()
+    defer m.mu.Unlock()
+    ids := make([]string, 0, len(m.jobs))
+    for id := range m.jobs {
+        ids = append(ids, id)
+    }
+    return ids
 }
 
 // Peek 非阻塞查询 job 状态
@@ -422,8 +447,9 @@ func (a *Agent) Run(ctx context.Context, input string) error {
 子代理 A 调 task 启动孙代理 B → B 也是后台 job → B 完成 → B 的 `resultCh` result 推给 A → A 的 `drainNotify()` 消费 → 孙代理 result 进入 A 的 `taskResults`（由 A 的 Controller 管理）→ A 的 `drainNotify()` 消费后作为 tool result 写入 A 的 session → A 继续运行 → A 完成 → A 的 result 推给主代理。
 
 **关键点**：
-- 子代理的 `Run()` 循环与主代理结构一致，包含 `drainSteer()` + `drainNotify()` + `stream()` 三阶段。子代理的 `Run()` 循环中也包含 `drainNotify()` 调用，用于消费孙代理的通知。
-- 孙代理的 result 通过 A 的 `drainNotify()` 写入 A 的 session（`RoleTool` message），供 A 的模型消费。
+- 子代理通过 `runSub()` 启动时，`runSub()` 为子代理创建独立的 Controller 实例（或等效的 `taskResults` map + `pendingToolResult` 标记），确保子代理的通知消费和结果管理独立于父代理。
+- 子代理的 `Run()` 循环结构与主代理一致，包含 `drainSteer()` + `drainNotify()` + `stream()` 三阶段。子代理的 `Run()` 循环中也包含 `drainNotify()` 调用，用于消费孙代理的通知。
+- 孙代理的 result 通过 A 的 `drainNotify()` 写入 A 的 session（`RoleTool` message），供 A 的模型消费。具体路径：孙代理的 result 进子代理的 `resultCh`，子代理 `drainNotify` 消费后作为 tool result 写入子代理 session。
 - A 的 `taskResults` 由 A 的 Controller 管理，不跨级。
 - `ackCh` / `resultCh` / `notifyCh` 只在父子之间通信，祖父代理不感知孙代理的存在。
 
