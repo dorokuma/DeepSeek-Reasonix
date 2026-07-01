@@ -1318,18 +1318,17 @@ func (a *App) openTopicTabWithActivation(scope, workspaceRoot, topicID, sessionP
 			return TabMeta{}, err
 		}
 	}
+	profile := loadTabSessionProfile(sessionPath)
 	tab := &WorkspaceTab{
-		ID:               tabID,
-		Scope:            scope,
-		WorkspaceRoot:    actualRoot,
-		TopicID:          topicID,
-		TopicTitle:       topicTitle,
-		SessionPath:      sessionPath,
-		tokenMode:        boot.TokenModeFull,
-		mode:             "normal",
-		toolApprovalMode: control.ToolApprovalAsk,
-		disabledMCP:      map[string]ServerView{},
+		ID:            tabID,
+		Scope:         scope,
+		WorkspaceRoot: actualRoot,
+		TopicID:       topicID,
+		TopicTitle:    topicTitle,
+		SessionPath:   sessionPath,
+		disabledMCP:   map[string]ServerView{},
 	}
+	applyTabSessionProfile(tab, profile)
 	tab.sink = &tabEventSink{tabID: tabID, app: a}
 
 	a.tabs[tabID] = tab
@@ -5631,11 +5630,64 @@ func saveTabSessionMeta(tab *WorkspaceTab, path string) error {
 	m.WorkspaceRoot = workspaceRoot
 	m.TopicID = tab.TopicID
 	m.TopicTitle = tab.TopicTitle
+	m.TokenMode = persistedTabTokenMode(currentTabTokenMode(tab))
+	m.Mode = persistedTabMode(currentTabMode(tab))
+	m.ToolApprovalMode = persistedToolApprovalMode(currentTabToolApprovalMode(tab))
+	m.Goal = strings.TrimSpace(currentTabGoal(tab))
 	if err := agent.SaveBranchMetaPreserveUpdated(path, m); err != nil {
 		return err
 	}
 	invalidateTopicSessionIndexForPath(path)
 	return nil
+}
+
+type tabSessionProfile struct {
+	tokenMode        string
+	mode             string
+	toolApprovalMode string
+	goal             string
+}
+
+func defaultTabSessionProfile() tabSessionProfile {
+	return tabSessionProfile{
+		tokenMode:        boot.TokenModeFull,
+		mode:             "normal",
+		toolApprovalMode: control.ToolApprovalAsk,
+	}
+}
+
+func tabSessionProfileFromMeta(meta agent.BranchMeta) tabSessionProfile {
+	profile := defaultTabSessionProfile()
+	profile.tokenMode = boot.NormalizeTokenMode(meta.TokenMode)
+	profile.mode = normalizeTabMode(meta.Mode)
+	profile.toolApprovalMode = normalizeToolApprovalMode(meta.ToolApprovalMode)
+	if profile.toolApprovalMode == control.ToolApprovalAsk && tabModeHasAutoApproveTools(meta.Mode) {
+		profile.toolApprovalMode = control.ToolApprovalYolo
+	}
+	profile.goal = strings.TrimSpace(meta.Goal)
+	return profile
+}
+
+func loadTabSessionProfile(sessionPath string) tabSessionProfile {
+	meta, ok, err := agent.LoadBranchMeta(sessionPath)
+	if err != nil || !ok {
+		return defaultTabSessionProfile()
+	}
+	return tabSessionProfileFromMeta(meta)
+}
+
+func applyTabSessionProfile(tab *WorkspaceTab, profile tabSessionProfile) {
+	if tab == nil {
+		return
+	}
+	tab.tokenMode = boot.NormalizeTokenMode(profile.tokenMode)
+	tab.mode = normalizeTabMode(profile.mode)
+	tab.toolApprovalMode = normalizeToolApprovalMode(profile.toolApprovalMode)
+	if tab.toolApprovalMode == control.ToolApprovalAsk && tabModeHasAutoApproveTools(tab.mode) {
+		tab.toolApprovalMode = control.ToolApprovalYolo
+	}
+	tab.mode = tabModeFromAxes(tabModeHasPlan(tab.mode), tab.toolApprovalMode == control.ToolApprovalYolo)
+	tab.goal = strings.TrimSpace(profile.goal)
 }
 
 func canonicalTabSessionPath(path string) string {

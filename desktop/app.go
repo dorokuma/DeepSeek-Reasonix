@@ -2699,11 +2699,13 @@ func (a *App) rebindTabToLoadedSessionPath(tab *WorkspaceTab, sessionPath string
 	if sessionRuntimeKey(tab.currentSessionPath()) == sessionRuntimeKey(sessionPath) {
 		return nil
 	}
+	profile := loadTabSessionProfile(sessionPath)
 
 	ctrl := tab.Ctrl
 	if ctrl == nil {
 		a.mu.Lock()
 		tab.SessionPath = sessionPath
+		applyTabSessionProfile(tab, profile)
 		tab.Ready = false
 		tab.StartupErr = ""
 		tab.ActivityStatus = ""
@@ -2721,6 +2723,9 @@ func (a *App) rebindTabToLoadedSessionPath(tab *WorkspaceTab, sessionPath string
 	}
 
 	_ = a.snapshotTab(tab) // persist writable sessions before switching the view.
+	if oldPath := a.reconciledSessionPathForTab(tab); oldPath != "" {
+		_ = saveTabSessionMeta(tab, oldPath)
+	}
 	if tab.hasActiveRuntimeWork() {
 		if !a.detachRuntimeForReplacement(tab) {
 			return fmt.Errorf("current session runtime cannot be detached")
@@ -2732,6 +2737,7 @@ func (a *App) rebindTabToLoadedSessionPath(tab *WorkspaceTab, sessionPath string
 	a.mu.Lock()
 	tab.Ctrl = nil
 	tab.SessionPath = sessionPath
+	applyTabSessionProfile(tab, profile)
 	tab.Ready = false
 	tab.StartupErr = ""
 	tab.ActivityStatus = ""

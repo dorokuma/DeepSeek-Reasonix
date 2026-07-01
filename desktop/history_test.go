@@ -9,6 +9,7 @@ import (
 	"unicode/utf8"
 
 	"reasonix/internal/agent"
+	"reasonix/internal/boot"
 	"reasonix/internal/control"
 	"reasonix/internal/event"
 	"reasonix/internal/provider"
@@ -825,6 +826,76 @@ func TestRebindTabToLoadedSessionReusesPreloadedTranscript(t *testing.T) {
 	}
 	if gotPath := app.tabs[tab.ID].Ctrl.SessionPath(); gotPath != targetPath {
 		t.Fatalf("rebound session path = %q, want %q", gotPath, targetPath)
+	}
+}
+
+func TestRebindTabToLoadedSessionPersistsAndRestoresSessionProfile(t *testing.T) {
+	isolateDesktopUserDirs(t)
+	root := globalTabWorkspaceRoot()
+	dir := desktopSessionDir(root)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir session dir: %v", err)
+	}
+
+	currentPath := filepath.Join(dir, "current.jsonl")
+	targetPath := filepath.Join(dir, "target.jsonl")
+	writeHistoryTestSession(t, currentPath, "current prompt")
+	writeHistoryTestSession(t, targetPath, "target prompt")
+	if err := agent.SaveBranchMetaPreserveUpdated(targetPath, agent.BranchMeta{
+		TokenMode:        boot.TokenModeFull,
+		Mode:             "yolo",
+		ToolApprovalMode: control.ToolApprovalYolo,
+	}); err != nil {
+		t.Fatalf("SaveBranchMetaPreserveUpdated target: %v", err)
+	}
+
+	loaded, err := agent.LoadSession(targetPath)
+	if err != nil {
+		t.Fatalf("LoadSession: %v", err)
+	}
+	ctrl := control.New(control.Options{SessionDir: dir, SessionPath: currentPath, Label: "current", Sink: event.Discard})
+	ctrl.SetMode(true, false)
+	ctrl.SetToolApprovalMode(control.ToolApprovalAuto)
+	defer ctrl.Close()
+
+	app := NewApp()
+	tab := &WorkspaceTab{
+		ID:               "tab",
+		Scope:            "global",
+		WorkspaceRoot:    root,
+		SessionPath:      currentPath,
+		Ctrl:             ctrl,
+		Ready:            true,
+		tokenMode:        boot.TokenModeEconomy,
+		mode:             "plan",
+		toolApprovalMode: control.ToolApprovalAuto,
+		sink:             &tabEventSink{tabID: "tab", app: app},
+		disabledMCP:      map[string]ServerView{},
+	}
+	app.tabs[tab.ID] = tab
+	app.tabOrder = []string{tab.ID}
+	app.activeTabID = tab.ID
+
+	if err := app.rebindTabToLoadedSessionPath(tab, targetPath, loaded); err != nil {
+		t.Fatalf("rebindTabToLoadedSessionPath: %v", err)
+	}
+
+	currentMeta, ok, err := agent.LoadBranchMeta(currentPath)
+	if err != nil || !ok {
+		t.Fatalf("LoadBranchMeta current ok=%v err=%v", ok, err)
+	}
+	if currentMeta.TokenMode != boot.TokenModeEconomy || currentMeta.Mode != "plan" || currentMeta.ToolApprovalMode != control.ToolApprovalAuto {
+		t.Fatalf("current session profile = token:%q mode:%q approval:%q, want economy/plan/auto",
+			currentMeta.TokenMode, currentMeta.Mode, currentMeta.ToolApprovalMode)
+	}
+	if got := currentTabTokenMode(tab); got != boot.TokenModeFull {
+		t.Fatalf("rebound token mode = %q, want full", got)
+	}
+	if got := currentTabMode(tab); got != "yolo" {
+		t.Fatalf("rebound mode = %q, want yolo", got)
+	}
+	if got := currentTabToolApprovalMode(tab); got != control.ToolApprovalYolo {
+		t.Fatalf("rebound tool approval = %q, want yolo", got)
 	}
 }
 
