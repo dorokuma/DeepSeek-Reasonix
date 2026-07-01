@@ -300,11 +300,39 @@ func waitForTrackedShellProcess(ctx context.Context, tracked *trackedShellProces
 	// If the shell's Wait path is wedged on a held pipe or a platform-specific
 	// process-tree edge, do not keep the foreground turn hostage after Stop.
 	select {
-	case <-waitCh:
-		return context.Cause(ctx)
+	case err := <-waitCh:
+		return canceledShellWaitError{cause: context.Cause(ctx), waitErr: err}
 	case <-time.After(grace):
 		return context.Cause(ctx)
 	}
+}
+
+type canceledShellWaitError struct {
+	cause   error
+	waitErr error
+}
+
+func (e canceledShellWaitError) Error() string {
+	if e.cause != nil {
+		return e.cause.Error()
+	}
+	if e.waitErr != nil {
+		return e.waitErr.Error()
+	}
+	return "shell wait canceled"
+}
+
+func (e canceledShellWaitError) Unwrap() []error {
+	if e.cause != nil && e.waitErr != nil {
+		return []error{e.cause, e.waitErr}
+	}
+	if e.cause != nil {
+		return []error{e.cause}
+	}
+	if e.waitErr != nil {
+		return []error{e.waitErr}
+	}
+	return nil
 }
 
 func reapShellProcess(cmd *exec.Cmd, tracked *trackedShellProcess) {

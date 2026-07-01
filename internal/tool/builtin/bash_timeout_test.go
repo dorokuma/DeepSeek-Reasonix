@@ -101,6 +101,62 @@ func TestWaitForTrackedShellProcessReturnsWhenWaitStallsAfterCancel(t *testing.T
 	}
 }
 
+func TestWaitForTrackedShellProcessKeepsWaitErrorAfterCancel(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	tracked := &trackedShellProcess{}
+	waitStarted := make(chan struct{})
+	releaseWait := make(chan struct{})
+	errWait := errors.New("wait failed after cancel")
+	done := make(chan error, 1)
+
+	go func() {
+		done <- waitForTrackedShellProcess(ctx, tracked, func() error {
+			close(waitStarted)
+			<-releaseWait
+			return errWait
+		}, time.Second)
+	}()
+
+	<-waitStarted
+	cancel()
+	waitUntilTrackedShellKilled(t, tracked)
+	close(releaseWait)
+
+	select {
+	case err := <-done:
+		if err.Error() != context.Canceled.Error() {
+			t.Fatalf("error text = %q, want %q", err.Error(), context.Canceled.Error())
+		}
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("error = %v, want context.Canceled", err)
+		}
+		if !errors.Is(err, errWait) {
+			t.Fatalf("error = %v, want wrapped wait error %v", err, errWait)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for cancelled shell wait")
+	}
+}
+
+func waitUntilTrackedShellKilled(t *testing.T, tracked *trackedShellProcess) {
+	t.Helper()
+	deadline := time.After(time.Second)
+	for {
+		tracked.mu.Lock()
+		killed := tracked.killed
+		tracked.mu.Unlock()
+		if killed {
+			return
+		}
+		select {
+		case <-deadline:
+			t.Fatal("timed out waiting for tracked shell kill")
+		default:
+			time.Sleep(time.Millisecond)
+		}
+	}
+}
+
 func longSleepCommand(sh sandbox.Shell) string {
 	if sh.Kind == sandbox.ShellPowerShell {
 		return "Start-Sleep -Seconds 2"
