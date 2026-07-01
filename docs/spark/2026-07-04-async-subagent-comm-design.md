@@ -47,7 +47,7 @@ Task 工具 `Execute()` 直接走现有后台路径逻辑：创建 job → `jm.S
 
 | 删除内容 | 文件 | 行 |
 |---|---|---|
-| `steerCh` 字段（Agent 保留该字段本身，见 §3.1） | — | — |
+| `steerCh` 字段（Agent 保留该字段本身，见 §2） | — | — |
 | `activeChild atomic.Pointer[Agent]` | `internal/agent/agent.go` | 274-277 |
 | `setActiveChild()` | `internal/agent/agent.go` | 740-742 |
 | `clearActiveChild()` | `internal/agent/agent.go` | 744-747 |
@@ -91,13 +91,14 @@ Task 工具 `Execute()` 直接走现有后台路径逻辑：创建 job → `jm.S
 
 用户 steer 底层机制不动：
 
-- `steerCh chan string`（`agent.go:272`）— 保留
+- `steerCh chan string`（`agent.go:272`）— 保留，缓冲大小定义为 8
 - `Agent.Steer(input)` — 简化为仅写入 steerCh（删 activeChild 转发分支）
 - `Agent.drainSteer()` — 保留
 - `Run()` 循环中 `drainSteer()` 调用点 — 保留
 - `Controller.Steer()` — 保留
 - HTTP `POST /steer` — 保留
 - TUI `tuiRunning` 状态 Enter → `ctrl.Steer()` — 保留
+- `autoReenter` 中 `Send` 为非阻塞（select default）
 
 ### 2.2 语义变化
 
@@ -132,11 +133,18 @@ resultCh chan JobNotify   // result 通道，缓冲 1，阻塞发送
 notifyCh chan JobNotify   // progress 通道，缓冲 16，满丢（非阻塞）
 ```
 
-Manager 提供 `NotifyChan` 方法供父代理获取指定 job 的读端：
+Manager 提供 `NotifyChannels` 方法供父代理获取指定 job 的三个通道读端：
 
 ```go
-// Manager 新增方法
-func (m *Manager) NotifyChan(jobID string) <-chan JobNotify
+// NotifyChannels 返回 job 的三个通知通道的读端封装
+func (m *Manager) NotifyChannels(jobID string) *JobChannels
+
+// JobChannels 封装 job 的三个通知通道的读端
+type JobChannels struct {
+    Ack     <-chan JobNotify  // ackCh 读端
+    Result  <-chan JobNotify  // resultCh 读端
+    Progress <-chan JobNotify // notifyCh 读端（进度，满丢）
+}
 ```
 
 **子代理工具事件转发机制**：保留 `subSinkFor()`（background 专用），子代理的 tool dispatch/result 事件仍通过 `subSinkFor` 转发到父代理的 event sink，用于工具执行的日志和调试。`subSink(ctx)`（foreground 专用）已删除。
@@ -163,13 +171,13 @@ func (m *Manager) NotifyChan(jobID string) <-chan JobNotify
 ```go
 func (a *Agent) drainNotify() {
     // 从 Controller.GetJobMeta(jobID) 获取 toolCallID
-    // 对每个 job，通过 jm.NotifyChan(jobID) 获取读端，非阻塞读取
+    // 对每个 job，通过 jm.NotifyChannels(jobID) 拿到三个 channel，分别非阻塞读取
     // 找到 type=result 的，用 jobMeta.ToolCallID 追加为 tool message 到 session
     // 找到 type=progress/ack 的，不追加到 session（仅通过 steer-job/peek-job 工具返回值暴露）
 }
 ```
 
-**关键设计**：`taskResults` 从 `Agent` 移入 `Controller`。`Controller` 新增 `taskResults map[string]jobMeta` 字段维护 `jobID → toolCallID` 映射。Agent 的 task tool `Execute()` 通过 `CallContext(ctx)` 拿到当前 `toolCallID`，然后调用 `Controller.RegisterJobMeta(jobID, toolCallID)`。`drainNotify()` 通过 `Controller.GetJobMeta(jobID)` 获取映射。
+**关键设计**：`taskResults` 从 `Agent` 移入 `Controller`。`Controller` 新增 `taskResults map[string]jobMeta` 字段维护 `jobID → toolCallID` 映射。Agent 的 task tool `Execute()` 通过 `CallContext(ctx)` 拿到当前 `toolCallID`，然后调用 `Controller.RegisterJobMeta(jobID, toolCallID)`。`drainNotify()` 通过 `Controller.GetJobMeta(jobID)` 获取映射。消费 result 后从 `Controller.taskResults` 中删除该条目，避免内存泄漏。
 
 ```go
 // Controller 新增字段和方法
@@ -296,6 +304,15 @@ type JobStatus struct {
     LastTool string
     LastAck  string
 }
+
+// NotifyChannels 返回 job 的三个通知通道读端
+func (m *Manager) NotifyChannels(jobID string) *JobChannels
+
+type JobChannels struct {
+    Ack     <-chan JobNotify  // ackCh 读端
+    Result  <-chan JobNotify  // resultCh 读端
+    Progress <-chan JobNotify // notifyCh 读端（进度，满丢）
+}
 ```
 
 ### 5.3 SetOnCompletion 保留但改造
@@ -312,7 +329,7 @@ type JobStatus struct {
 
 ### 6.1 保留 autoReenter（A 方案）
 
-`autoReenter()` 方法保留。子代理完成 → `SetOnCompletion` 回调 → `autoReenter()` 调用 `c.Send("<tool-result-pending>")`。主代理 `Run()` 循环在下一次迭代中收到特殊标记 `<tool-result-pending>`，识别该标记后跳过 `session.Add(userMessage)`，直接进入 `drainNotify()` + `stream()`。不再产生空 user message。
+`autoReenter()` 方法保留。Controller 新增 `pendingToolResult bool` 字段。子代理完成 → `SetOnCompletion` 回调 → `autoReenter()` 设置 `c.pendingToolResult = true` 然后调用 `c.Send("")`（空字符串，仅触发 turn）。主代理 `Run()` 循环在下一次迭代中检测到 `c.pendingToolResult`，若为 true 则重置为 false，跳过 `session.Add(userMessage)`，直接进入 `drainNotify()` + `stream()`。不再产生空 user message。
 
 **Run() 循环中的特殊标记检测逻辑**：
 
@@ -327,8 +344,9 @@ func (a *Agent) Run(ctx context.Context) {
 
         userInput := a.drainSteer()
 
-        // 检测特殊标记，跳过 session 写入
-        if userInput == "<tool-result-pending>" {
+        // 检查 pendingToolResult 标记，跳过 session 写入
+        if a.ctrl.pendingToolResult {
+            a.ctrl.pendingToolResult = false
             a.drainNotify()  // 消费子代理 result
             a.stream(ctx)    // 继续对话
             continue
@@ -350,9 +368,9 @@ func (a *Agent) Run(ctx context.Context) {
 
 ### 6.3 Run() 循环改造要点
 
-1. **特殊标记检测**：`Run()` 循环在 `drainSteer()` 之后检查返回值是否为 `"<tool-result-pending>"`，如果是则跳过 `session.Add(userMessage)`，直接进入 `drainNotify()` + `stream()`。
+1. **pendingToolResult 标记检测**：`Run()` 循环在 `drainSteer()` 之后检查 `c.pendingToolResult`，若为 true 则重置为 false，跳过 `session.Add(userMessage)`，直接进入 `drainNotify()` + `stream()`。
 2. **drainNotify 位置**：`drainNotify()` 在每次 `stream()` 之前调用，无论是普通用户消息路径还是 autoReenter 触发路径。
-3. **autoReenter 不再直接调用 drainNotify**：改为发送特殊标记，由 `Run()` 循环统一处理，避免并发写 session 的问题。
+3. **autoReenter 不再直接调用 drainNotify**：改为设置 `pendingToolResult` 标记并发送空字符串触发 turn，由 `Run()` 循环统一处理，避免并发写 session 的问题。
 
 ---
 
@@ -382,13 +400,12 @@ func (a *Agent) Run(ctx context.Context) {
 8. 主代理 stream → "已告诉 task-1 加查 ZZZ"
 9. [task-1 drainSteer 消费 steer] → ackCh 推 ack
 10. 主代理 drainNotify → 消费 ack
-11. 主代理 stream → "task-1 已确认收到，正在加查 ZZZ"
-12. [task-2 完成] → resultCh 推 result("YYY 的结果是...")
-13. 主代理 SetOnCompletion 触发 → autoReenter → drainNotify
+11. [task-2 完成] → resultCh 推 result("YYY 的结果是...")
+12. 主代理 SetOnCompletion 触发 → autoReenter → drainNotify
     → 追加 tool message(toolCallID=task-2-call-id, content="YYY 的结果是...")
-14. 主代理 stream → "YYY 的结果出来了，是这样的..."
-15. [task-1 完成] → 同上流程
-16. 主代理 stream → "XXX 和 ZZZ 的结果也出来了..."
+13. 主代理 stream → "YYY 的结果出来了，是这样的..."
+14. [task-1 完成] → 同上流程
+15. 主代理 stream → "XXX 和 ZZZ 的结果也出来了..."
 ```
 
 ---
@@ -400,9 +417,8 @@ func (a *Agent) Run(ctx context.Context) {
 | `internal/agent/task.go` | 重写 | 删前台分支（runSub 内）、activeChild、subSink；保留 runSub() 和 subSinkFor()；新增 ackCh/resultCh/notifyCh 推送逻辑 |
 | `internal/agent/agent.go` | 删+增 | 删 activeChild/setActiveChild/clearActiveChild/SubagentStop 触发/isBackgroundTaskCall/SubagentStop 接口声明；新增 drainNotify、notifyCh 消费；保留 steerCh/drainSteer |
 | `internal/agent/context.go` | 删 | 删 WithActiveChild/isActiveChild/activeChildKey |
-| `internal/agent/coordinator.go` | 确认 | Steer 方法是否涉及 activeChild 转发 |
 | `internal/tool/builtin/bgjobs.go` | 删+增 | 删 wait；新增 steer-job/cancel-job/peek-job。**外部引用清理**（共 11 处 `"wait"` 工具名引用）：`internal/cli/toolcard.go:75/144/165`（映射表，其中 165 行含特殊 "wait" 逻辑需清理）、`internal/cli/toolcard_test.go:18`（测试）、`internal/cli/acp_test.go:34`（测试）、`internal/tool/builtin/workspace_test.go:118/119/129`（同一包测试）、`internal/agent/task.go:257`（工具限制列表 `plannerNonResearchTools` 中的 "wait" 条目需清理）、`internal/hook/rtk_rewriter.go:48/80`（switch case）、`internal/boot/boot_test.go:187`（测试） |
-| `internal/jobs/jobs.go` | 删+增 | 删 DrainCompletedNote/completed/recordCompletion/Result 类型/Wait 方法；新增 Steer/Peek/NotifyChan 方法、notifyCh 支持 |
+| `internal/jobs/jobs.go` | 删+增 | 删 DrainCompletedNote/completed/recordCompletion/Result 类型/Wait 方法；新增 Steer/Peek/NotifyChannels 方法、notifyCh 支持 |
 | `internal/control/controller.go` | 删 | 删 DrainCompletedNote 调用；保留 autoReenter |
 | `internal/control/input.go` | 删 | 删 `<background-jobs>` 注入 |
 | `internal/hook/hook.go` | 删 | SubagentStop 常量、Events 条目、文档注释 |
