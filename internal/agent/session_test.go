@@ -88,6 +88,21 @@ func TestHasContentWithTool(t *testing.T) {
 	}
 }
 
+func TestPatchToolResultUpdatesPlaceholder(t *testing.T) {
+	s := NewSession("")
+	s.Add(provider.Message{Role: provider.RoleAssistant, ToolCalls: []provider.ToolCall{{ID: "c1", Name: "task"}}})
+	s.Add(provider.Message{Role: provider.RoleTool, ToolCallID: "c1", Name: "task", Content: "Started task task-1 (explore)"})
+	if !s.PatchToolResult("c1", "final answer") {
+		t.Fatal("PatchToolResult should find placeholder tool message")
+	}
+	if s.Messages[1].Content != "final answer" {
+		t.Fatalf("content = %q, want final answer", s.Messages[1].Content)
+	}
+	if len(s.Messages) != 2 {
+		t.Fatalf("expected 2 messages, got %d", len(s.Messages))
+	}
+}
+
 // --- Save / LoadSession round-trip ---
 
 func TestSaveLoadSessionRoundTrip(t *testing.T) {

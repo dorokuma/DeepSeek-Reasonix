@@ -440,10 +440,20 @@ func (c *Controller) TakeJobMeta(jobID string) (toolCallID string, found bool) {
 	return meta.ToolCallID, true
 }
 
+// PendingToolResult implements agent.ControllerBridge.
+func (c *Controller) PendingToolResult() bool {
+	return c.pendingToolResult.Load()
+}
+
 // PendingToolResultCAS implements agent.ControllerBridge by delegating to the
 // Controller's pendingToolResult atomic flag.
 func (c *Controller) PendingToolResultCAS(old, new bool) bool {
 	return c.pendingToolResult.CompareAndSwap(old, new)
+}
+
+// SetPendingToolResult implements agent.ControllerBridge.
+func (c *Controller) SetPendingToolResult(v bool) {
+	c.pendingToolResult.Store(v)
 }
 
 // Send starts a turn with an uncomposed message. The controller applies

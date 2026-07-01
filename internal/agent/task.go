@@ -169,18 +169,12 @@ func (t *TaskTool) Execute(ctx context.Context, args json.RawMessage) (string, e
 	if label == "" {
 		label = "task"
 	}
-	// Build the onComplete callback from the Controller (if available) so
-	// sub-agent completion triggers auto-reentry via pendingToolResult.
-	var onComplete func(string)
+	onComplete := OnCompleteCallbackFrom(ctx)
 	var provider OnCompleteProvider
 	if p, ok := OnCompleteProviderFrom(ctx); ok {
-		onComplete = p.MakeOnComplete()
 		provider = p
 	} else if ctrl, ok := CtrlFromContext(ctx); ok {
-		if p, ok := ctrl.(OnCompleteProvider); ok {
-			onComplete = p.MakeOnComplete()
-			provider = p
-		}
+		provider, _ = ctrl.(OnCompleteProvider)
 	}
 	var registerMeta jobs.BeforeRunFunc
 	if ctrl, ok := CtrlFromContext(ctx); ok {

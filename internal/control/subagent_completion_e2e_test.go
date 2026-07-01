@@ -411,6 +411,48 @@ func TestAutoReenterDeferredWhileMainTurnBusy(t *testing.T) {
 	}
 }
 
+// TestAutoReentryPatchesStartedToolPlaceholder verifies async completion updates
+// the in-flight "Started task …" tool row instead of appending an orphan tool message.
+func TestAutoReentryPatchesStartedToolPlaceholder(t *testing.T) {
+	sink := event.Discard
+	jm := jobs.NewManager(sink)
+	defer jm.Close()
+
+	sess := agent.NewSession("test")
+	ag := agent.New(nil, nil, sess, agent.Options{Jobs: jm}, sink)
+	ctrl := New(Options{Executor: ag, Sink: sink, SessionDir: t.TempDir(), Label: "test"})
+	ag.SetControllerBridge(ctrl)
+
+	sess.Add(provider.Message{Role: provider.RoleAssistant, ToolCalls: []provider.ToolCall{{ID: "tool-call-1", Name: "task"}}})
+	sess.Add(provider.Message{Role: provider.RoleTool, ToolCallID: "tool-call-1", Name: "task", Content: "Started task task-1 (explore)"})
+
+	job, err := jm.Start(context.Background(), "task", "explore", func(_ context.Context, _ io.Writer) (string, error) {
+		return "explore-result", nil
+	}, nil, func(id string) { ctrl.RegisterJobMeta(id, "tool-call-1") })
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitJobDone(t, jm, job.ID)
+
+	ctrl.pendingToolResult.Store(true)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	_ = ag.Run(ctx, "")
+
+	var toolRows int
+	for _, m := range sess.Messages {
+		if m.Role == provider.RoleTool && m.ToolCallID == "tool-call-1" {
+			toolRows++
+			if m.Content != "explore-result" {
+				t.Fatalf("tool content = %q, want explore-result", m.Content)
+			}
+		}
+	}
+	if toolRows != 1 {
+		t.Fatalf("want exactly one tool row for tool-call-1, got %d tool messages", toolRows)
+	}
+}
+
 // TestInstantCompletionDrainsToolResult verifies RegisterJobMeta runs before the
 // job goroutine starts, so a zero-delay sub-agent still lands its result in session.
 func TestInstantCompletionDrainsToolResult(t *testing.T) {

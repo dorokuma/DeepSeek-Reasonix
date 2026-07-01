@@ -150,9 +150,15 @@ type sessionCostInfo struct {
 // check for pending tool results and consume job metadata without a direct
 // import dependency on the control package.
 type ControllerBridge interface {
+	// PendingToolResult reports whether a completed background task is waiting
+	// to be drained (peek only; does not clear the flag).
+	PendingToolResult() bool
 	// PendingToolResultCAS atomically compares-and-swaps the pendingToolResult
 	// flag. Returns true when the swap succeeded (old value matched).
 	PendingToolResultCAS(old, new bool) bool
+	// SetPendingToolResult sets the pending-tool-result flag (e.g. re-arm after
+	// a drain race).
+	SetPendingToolResult(v bool)
 	// TakeJobMeta reads and deletes a job's metadata in one atomic step.
 	// Returns the tool-call ID that created the job, and whether metadata existed.
 	TakeJobMeta(jobID string) (toolCallID string, found bool)
@@ -178,8 +184,16 @@ func newSubControllerBridge() *subControllerBridge {
 	}
 }
 
+func (c *subControllerBridge) PendingToolResult() bool {
+	return c.pendingToolResult.Load()
+}
+
 func (c *subControllerBridge) PendingToolResultCAS(old, new bool) bool {
 	return c.pendingToolResult.CompareAndSwap(old, new)
+}
+
+func (c *subControllerBridge) SetPendingToolResult(v bool) {
+	c.pendingToolResult.Store(v)
 }
 
 func (c *subControllerBridge) TakeJobMeta(jobID string) (toolCallID string, found bool) {
@@ -717,7 +731,12 @@ func (a *Agent) Run(ctx context.Context, input string) error {
 		// Auto-reentry: first loop iteration drains the completed sub-agent result
 		// without injecting steer input (there is no new user message).
 		if autoReentryTurn && step == 0 {
-			a.drainNotify()
+			if !a.drainNotify() {
+				if a.ctrl != nil {
+					a.ctrl.SetPendingToolResult(true)
+				}
+				return nil
+			}
 		} else {
 			if userInput := a.drainSteer(); userInput != "" {
 				a.session.Add(provider.Message{Role: provider.RoleUser, Content: userInput})
@@ -867,6 +886,17 @@ func (a *Agent) drainSteer() string {
 	}
 }
 
+func (a *Agent) deliverBackgroundToolResult(toolCallID, output string) {
+	if a.session.PatchToolResult(toolCallID, output) {
+		return
+	}
+	a.session.Add(provider.Message{
+		Role:       provider.RoleTool,
+		Content:    output,
+		ToolCallID: toolCallID,
+	})
+}
+
 // drainNotify 消费所有活跃 job 的通知通道，返回是否消费到 result
 func (a *Agent) drainNotify() bool {
 	jm := a.jobs // jobs.Manager 引用
@@ -886,11 +916,7 @@ func (a *Agent) drainNotify() bool {
 			if ok && notify.Type == "result" {
 				toolCallID, found := a.ctrl.TakeJobMeta(jobID)
 				if found {
-					a.session.Add(provider.Message{
-						Role:       provider.RoleTool,
-						Content:    notify.Output,
-						ToolCallID: toolCallID,
-					})
+					a.deliverBackgroundToolResult(toolCallID, notify.Output)
 					jm.RemoveJob(jobID)
 					consumed = true
 				}
@@ -900,11 +926,7 @@ func (a *Agent) drainNotify() bool {
 			if notify, ok := jm.CompletedResult(jobID); ok {
 				toolCallID, found := a.ctrl.TakeJobMeta(jobID)
 				if found {
-					a.session.Add(provider.Message{
-						Role:       provider.RoleTool,
-						Content:    notify.Output,
-						ToolCallID: toolCallID,
-					})
+					a.deliverBackgroundToolResult(toolCallID, notify.Output)
 					jm.RemoveJob(jobID)
 					consumed = true
 				}

@@ -1557,3 +1557,17 @@ func TestEscDuringJobFinishNoticeNoPanic(t *testing.T) {
 	m.ingestEvent(event.Event{Kind: event.Notice, Level: event.LevelInfo, Text: "background task finished: task-1"})
 	_, _ = m.update(tea.KeyPressMsg{Code: tea.KeyEscape})
 }
+
+// TestAutoReentryTurnStartedEntersRunning verifies controller-initiated auto-reentry
+// turns flip the TUI into tuiRunning so streaming UI activates without startTurn.
+func TestAutoReentryTurnStartedEntersRunning(t *testing.T) {
+	m := newTestChatTUI()
+	m.state = tuiIdle
+	m.eventCh = make(chan event.Event, 4)
+	model, _ := m.update(agentEventMsg(event.Event{Kind: event.TurnStarted}))
+	m = model.(chatTUI)
+	if m.state != tuiRunning {
+		t.Fatalf("TurnStarted while idle: state=%v, want tuiRunning", m.state)
+	}
+}
+

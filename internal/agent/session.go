@@ -37,6 +37,26 @@ func (s *Session) Add(m provider.Message) {
 	s.Messages = append(s.Messages, m)
 }
 
+// PatchToolResult replaces the content of the most recent tool message with the
+// given toolCallID. Used when a background sub-agent finishes: the placeholder
+// "Started task …" tool result is updated in place instead of appending an
+// orphan tool message after later assistant turns.
+func (s *Session) PatchToolResult(toolCallID, content string) bool {
+	if toolCallID == "" {
+		return false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i := len(s.Messages) - 1; i >= 0; i-- {
+		m := &s.Messages[i]
+		if m.Role == provider.RoleTool && m.ToolCallID == toolCallID {
+			m.Content = content
+			return true
+		}
+	}
+	return false
+}
+
 // AddUserNudge appends content to the last message if it's a user message,
 // otherwise adds a new user message.
 func (s *Session) AddUserNudge(content string) {

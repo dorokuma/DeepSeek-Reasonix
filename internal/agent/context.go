@@ -26,6 +26,20 @@ func OnCompleteProviderFrom(ctx context.Context) (OnCompleteProvider, bool) {
 	return p, ok
 }
 
+// OnCompleteCallbackFrom returns a per-job onComplete callback when the tool
+// context carries a Controller (task tool, run_skill, built-in subagent skills).
+func OnCompleteCallbackFrom(ctx context.Context) func(jobID string) {
+	if p, ok := OnCompleteProviderFrom(ctx); ok {
+		return p.MakeOnComplete()
+	}
+	if ctrl, ok := CtrlFromContext(ctx); ok {
+		if p, ok := ctrl.(OnCompleteProvider); ok {
+			return p.MakeOnComplete()
+		}
+	}
+	return nil
+}
+
 // agentKey is the context key for the parent Agent reference.
 type agentKey struct{}
 

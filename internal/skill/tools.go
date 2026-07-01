@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 
+	"reasonix/internal/agent"
 	"reasonix/internal/event"
 	"reasonix/internal/tool"
 )
@@ -100,7 +101,7 @@ func (t *runSkillTool) Execute(ctx context.Context, args json.RawMessage) (strin
 		if t.bgRunner != nil {
 			jobID, err := t.bgRunner(ctx, func(jobCtx context.Context, _ io.Writer) (string, error) {
 				return t.runner(jobCtx, sk, rawArgs)
-			}, "run_skill:"+name, nil)
+			}, "run_skill:"+name, agent.OnCompleteCallbackFrom(ctx))
 			if err != nil {
 				return "", err
 			}
@@ -239,7 +240,7 @@ func (t *subagentSkillTool) Execute(ctx context.Context, args json.RawMessage) (
 	if t.bgRunner != nil {
 		jobID, err := t.bgRunner(ctx, func(jobCtx context.Context, _ io.Writer) (string, error) {
 			return t.runner(jobCtx, sk, task)
-		}, t.toolName, nil)
+		}, t.toolName, agent.OnCompleteCallbackFrom(ctx))
 		if err != nil {
 			return "", err
 		}
