@@ -285,6 +285,9 @@ func New(opts Options) *Controller {
 }
 if c.jobs != nil {
 	c.jobs.SetOnCompletion(func(id string) {
+		// Always mark pending before autoReenter so completion activates the main
+		// agent even when per-job onComplete was not wired (e.g. missing provider).
+		c.pendingToolResult.Store(true)
 		c.autoReenter()
 	})
 	}
@@ -357,12 +360,16 @@ func (c *Controller) runGuarded(input string, body func(ctx context.Context) err
 		c.running = false
 		c.cancel = nil
 		shouldReenter := c.pendingReentry
+		reentryInput := c.pendingInput
 		c.pendingReentry = false
+		c.pendingInput = ""
+		if input == "" && c.autoReentryDepth > 0 {
+			c.autoReentryDepth--
+		}
 		c.mu.Unlock()
 		c.sink.Emit(event.Event{Kind: event.TurnDone, Err: explainError(err)})
 		if shouldReenter {
-			c.Send(c.pendingInput)
-			c.pendingInput = ""
+			c.Send(reentryInput)
 		}
 	}()
 }
@@ -380,6 +387,7 @@ func (c *Controller) MakeOnComplete() func(jobID string) {
 func (c *Controller) MakeOnMessage() func(jobID string) {
 	return func(jobID string) {
 		c.pendingToolResult.Store(true)
+		c.autoReenter()
 	}
 }
 
@@ -398,8 +406,7 @@ func (c *Controller) autoReenter() {
 	}
 	c.autoReentryDepth++
 	c.mu.Unlock()
-	c.Send(c.pendingInput)
-	c.pendingInput = ""
+	c.Send("")
 }
 
 // RegisterJobMeta implements agent.ControllerBridge by storing the tool-call

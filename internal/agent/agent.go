@@ -692,10 +692,13 @@ func (a *Agent) Run(ctx context.Context, input string) error {
 	// Parse multimodal data URLs embedded in the input text (e.g.
 	// [REASONIX_IMAGE:data:image/jpeg;base64,...]) and convert them to
 	// ContentPart objects so the model can "see" images directly.
-	cleanInput, parts := parseMultimodalInput(input)
-	a.session.Add(provider.Message{Role: provider.RoleUser, Content: cleanInput, Parts: parts})
-	if a.ctxStore != nil {
-		ctxmode.RecordUserPrompt(a.ctxStore.Journal(), input)
+	autoReentryTurn := input == "" && a.ctrl != nil && a.ctrl.PendingToolResultCAS(true, false)
+	if !autoReentryTurn {
+		cleanInput, parts := parseMultimodalInput(input)
+		a.session.Add(provider.Message{Role: provider.RoleUser, Content: cleanInput, Parts: parts})
+		if a.ctxStore != nil {
+			ctxmode.RecordUserPrompt(a.ctxStore.Journal(), input)
+		}
 	}
 
 	finalReadinessBlocks := 0
@@ -711,18 +714,14 @@ func (a *Agent) Run(ctx context.Context, input string) error {
 		default:
 		}
 
-		// Check for pending tool results (auto-reentry from sub-agent completion).
-		// When a background job finished, drain its result and skip drainSteer
-		// since there is no new user input — the job's output is the input.
-		autoReentry := a.ctrl != nil && a.ctrl.PendingToolResultCAS(true, false)
-		if autoReentry {
+		// Auto-reentry: first loop iteration drains the completed sub-agent result
+		// without injecting steer input (there is no new user message).
+		if autoReentryTurn && step == 0 {
 			a.drainNotify()
 		} else {
-			// Drain one steer message from external input
 			if userInput := a.drainSteer(); userInput != "" {
 				a.session.Add(provider.Message{Role: provider.RoleUser, Content: userInput})
 			}
-			// Drain any background-job results that may have arrived
 			a.drainNotify()
 		}
 
@@ -887,16 +886,15 @@ func (a *Agent) drainNotify() bool {
 			if ok && notify.Type == "result" {
 				toolCallID, found := a.ctrl.TakeJobMeta(jobID)
 				if found {
-					// 追加为 tool message 到 session
 					a.session.Add(provider.Message{
 						Role:       provider.RoleTool,
 						Content:    notify.Output,
 						ToolCallID: toolCallID,
 					})
+					jm.RemoveJob(jobID)
+					consumed = true
 				}
-				// 清理已完成的 job
-				jm.RemoveJob(jobID)
-				consumed = true
+				// meta 未就绪时保留 job，依赖 CompletedResult 在后续 drain 重试
 			}
 		default:
 			if notify, ok := jm.CompletedResult(jobID); ok {
@@ -907,9 +905,9 @@ func (a *Agent) drainNotify() bool {
 						Content:    notify.Output,
 						ToolCallID: toolCallID,
 					})
+					jm.RemoveJob(jobID)
+					consumed = true
 				}
-				jm.RemoveJob(jobID)
-				consumed = true
 			}
 		}
 
@@ -1529,6 +1527,9 @@ func (a *Agent) executeOne(ctx context.Context, call provider.ToolCall) toolOutc
 	}
 	if a.ctrl != nil {
 		cctx = withCtrl(cctx, a.ctrl)
+		if p, ok := a.ctrl.(OnCompleteProvider); ok {
+			cctx = WithOnCompleteProvider(cctx, p)
+		}
 	}
 	if a.memQueue != nil {
 		cctx = memory.WithQueue(cctx, a.memQueue)

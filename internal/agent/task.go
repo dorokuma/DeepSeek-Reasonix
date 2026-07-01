@@ -176,6 +176,15 @@ func (t *TaskTool) Execute(ctx context.Context, args json.RawMessage) (string, e
 	if p, ok := OnCompleteProviderFrom(ctx); ok {
 		onComplete = p.MakeOnComplete()
 		provider = p
+	} else if ctrl, ok := CtrlFromContext(ctx); ok {
+		if p, ok := ctrl.(OnCompleteProvider); ok {
+			onComplete = p.MakeOnComplete()
+			provider = p
+		}
+	}
+	var registerMeta jobs.BeforeRunFunc
+	if ctrl, ok := CtrlFromContext(ctx); ok {
+		registerMeta = func(jobID string) { ctrl.RegisterJobMeta(jobID, parentID) }
 	}
 	job, err := jm.Start(ctx, "task", label, func(jobCtx context.Context, _ io.Writer) (string, error) {
 		// Heartbeat: keep lastActive fresh so the stale monitor (30s timeout)
@@ -203,14 +212,9 @@ func (t *TaskTool) Execute(ctx context.Context, args json.RawMessage) (string, e
 			bgCtx = WithOptions(bgCtx, opts)
 		}
 		return t.runSub(bgCtx, p.Prompt, subReg, nested, maxSteps)
-	}, onComplete)
+	}, onComplete, registerMeta)
 	if err != nil {
 		return "", err
-	}
-	// Register the job-toolCall correlation so that when this job completes,
-	// drainNotify can correlate the result with the original tool call.
-	if ctrl, ok := CtrlFromContext(ctx); ok {
-		ctrl.RegisterJobMeta(job.ID, parentID)
 	}
 	if provider != nil {
 		job.SetOnMessage(provider.MakeOnMessage())

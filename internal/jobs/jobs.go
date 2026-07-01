@@ -207,12 +207,17 @@ func (w jobWriter) Write(p []byte) (int, error) {
 	return w.j.buf.Write(p)
 }
 
+// BeforeRunFunc runs synchronously after the job is registered but before the
+// run goroutine starts. Callers use it to RegisterJobMeta so drainNotify can
+// correlate results even when the job completes instantly.
+type BeforeRunFunc func(jobID string)
+
 // Start launches run on a goroutine under the manager's session context and
 // returns the job immediately. run streams output to the writer and returns the
 // terminal result text (a task's final answer; a bash job streams everything to
 // the buffer and returns ""). The job is marked killed when its context was
 // cancelled, failed on any other error, else done.
-func (m *Manager) Start(ctx context.Context, kind, label string, run func(ctx context.Context, out io.Writer) (string, error), onComplete func(jobID string)) (*Job, error) {
+func (m *Manager) Start(ctx context.Context, kind, label string, run func(ctx context.Context, out io.Writer) (string, error), onComplete func(jobID string), beforeRun ...BeforeRunFunc) (*Job, error) {
 	m.startMonitorIfNeeded()
 	select {
 	case m.sem <- struct{}{}:
@@ -247,6 +252,10 @@ func (m *Manager) Start(ctx context.Context, kind, label string, run func(ctx co
 	m.mu.Unlock()
 
 	m.sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelInfo, Text: startedText(kind, id, label)})
+
+if len(beforeRun) > 0 && beforeRun[0] != nil {
+beforeRun[0](id)
+}
 
 	go func() {
 		defer func() {
