@@ -1,4 +1,4 @@
-VERSION := 0.1.$(shell git rev-list --count a9682280b407c90abb337f2a68ebd5a527b9d086..HEAD 2>/dev/null || echo 0)
+VERSION := $(shell git describe --tags --abbrev=0 2>/dev/null || echo dev)
 LDFLAGS := -s -w -X main.version=$(VERSION)
 GOEXE := $(shell go env GOEXE)
 .PHONY: build vet fmt test hooks cross clean install
