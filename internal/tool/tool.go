@@ -33,6 +33,14 @@ type Tool interface {
 	ReadOnly() bool
 }
 
+// Concurrenter is an optional capability a Tool may implement to signal that
+// it is safe to run concurrently with other tools even though it is not
+// ReadOnly. Sub-agents (task tool) run in isolated sessions and cannot race
+// on shared resources, so they are inherently concurrent-safe.
+type Concurrenter interface {
+	Concurrent() bool
+}
+
 // Previewer is an optional capability a writer Tool may implement: given the
 // same raw JSON args Execute would receive, compute the file change the call
 // *would* make — without touching disk. A front-end uses it to show an approval

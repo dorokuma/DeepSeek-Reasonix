@@ -118,10 +118,14 @@ func (t *TaskTool) Schema() json.RawMessage {
 }`)
 }
 
-// ReadOnly is true: a sub-agent can invoke any whitelisted tool, including
-// writers. Conservative classification keeps the parallel-dispatch path from
-// running two sub-agents at once and letting their writes race.
+// ReadOnly returns false because a sub-agent can invoke any whitelisted tool,
+// including writers. Concurrent() returns true because each sub-agent runs in
+// an isolated session, so parallel dispatch is safe.
 func (t *TaskTool) ReadOnly() bool { return false }
+
+// Concurrent reports that the task tool is safe to run concurrently because
+// each sub-agent operates in an isolated session.
+func (t *TaskTool) Concurrent() bool { return true }
 
 func (t *TaskTool) Execute(ctx context.Context, args json.RawMessage) (string, error) {
 	// Depth guard: enforce nesting limit from Agent Options.
