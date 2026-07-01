@@ -1606,7 +1606,7 @@ func (a *App) CheckpointsForTab(tabID string) []CheckpointMeta {
 		}
 		out[i].CanCode = hasCodeAfter
 		out[i].FileCount = len(codeFileSet)
-		out[i].Files = append([]string(nil), codeFilePreview...)
+		out[i].Files = append([]string{}, codeFilePreview...)
 		out[i].FilesTruncated = out[i].FileCount > len(out[i].Files)
 	}
 	return out

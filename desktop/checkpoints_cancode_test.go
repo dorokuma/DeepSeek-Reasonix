@@ -25,6 +25,28 @@ func seedCheckpoint(t *testing.T, ckptDir string, c checkpoint.Checkpoint) {
 	}
 }
 
+func assertCheckpointFilesEncodeAsArray(t *testing.T, metas []CheckpointMeta) {
+	t.Helper()
+	raw, err := json.Marshal(metas)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payload []struct {
+		Files json.RawMessage `json:"files"`
+	}
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		t.Fatal(err)
+	}
+	for i, item := range payload {
+		if string(item.Files) == "null" {
+			t.Fatalf("checkpoint %d files encoded as null; frontend expects []", i)
+		}
+		if len(item.Files) == 0 || item.Files[0] != '[' {
+			t.Fatalf("checkpoint %d files encoded as %s, want JSON array", i, item.Files)
+		}
+	}
+}
+
 // TestCheckpointsCanCodePropagatesToEarlierTurns covers #3438: RestoreCode(turn)
 // reverts files touched in that turn or any later one, so a turn with no file
 // changes of its own can still rewind code when a later turn changed files. The
@@ -80,6 +102,10 @@ func TestCheckpointsCanCodePropagatesToEarlierTurns(t *testing.T) {
 	if metas[0].FileCount != 1 || metas[0].FilesTruncated {
 		t.Fatalf("turn 0 file summary = count %d truncated %v, want count 1 truncated false", metas[0].FileCount, metas[0].FilesTruncated)
 	}
+	if len(metas[2].Files) != 0 {
+		t.Fatalf("turn 2 cumulative files = %#v, want empty", metas[2].Files)
+	}
+	assertCheckpointFilesEncodeAsArray(t, metas)
 }
 
 func TestCheckpointsForTabLimitsCumulativeFilePreview(t *testing.T) {
@@ -124,4 +150,5 @@ func TestCheckpointsForTabLimitsCumulativeFilePreview(t *testing.T) {
 	if metas[1].TurnFileCount != checkpointFilePreviewLimit+5 {
 		t.Fatalf("turn 1 file count = %d, want %d", metas[1].TurnFileCount, checkpointFilePreviewLimit+5)
 	}
+	assertCheckpointFilesEncodeAsArray(t, metas)
 }
