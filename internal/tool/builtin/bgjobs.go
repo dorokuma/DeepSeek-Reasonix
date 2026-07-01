@@ -11,7 +11,7 @@ import (
 	"reasonix/internal/tool"
 )
 
-// bash_output / kill_shell / wait operate the background jobs registered by
+// bash_output and kill_shell operate the background jobs registered by
 // bash(run_in_background) and task(run_in_background). They reach the session's
 // job manager through the call context (jobs.FromContext) — the agent stamps it
 // onto every tool call — and degrade to a clear error when it isn't available
@@ -21,7 +21,9 @@ import (
 func init() {
 	tool.RegisterBuiltin(bashOutput{})
 	tool.RegisterBuiltin(killShell{})
-	tool.RegisterBuiltin(waitJob{})
+	tool.RegisterBuiltin(steerJob{})
+	tool.RegisterBuiltin(cancelJob{})
+	tool.RegisterBuiltin(peekJob{})
 }
 
 // --- bash_output: poll a background job's new output (non-blocking) ---
@@ -129,53 +131,129 @@ func (killShell) Execute(ctx context.Context, args json.RawMessage) (string, err
 	return fmt.Sprintf("Background job %q was not running (already finished or unknown).", p.JobID), nil
 }
 
-// --- wait: block until background jobs finish, then return their results ---
+// --- steer-job: send a message to a running background job ---
 
-type waitJob struct{}
+type steerJob struct{}
 
-func (waitJob) Name() string { return "wait" }
-
-func (waitJob) Description() string {
-	return "Block until background jobs finish, then return each job's status and final output/answer. Use to collect the result of a task(run_in_background) or bash(run_in_background) before continuing. Omit job_ids to wait for every running job."
+func (steerJob) Name() string        { return "steer-job" }
+func (steerJob) Description() string { return "Send a message to a running background job" }
+func (steerJob) ReadOnly() bool      { return false }
+func (steerJob) Schema() json.RawMessage {
+	return json.RawMessage(`{
+		"type": "object",
+		"properties": {
+			"job_id": {"type": "string", "description": "The ID of the job to steer"},
+			"message": {"type": "string", "description": "The message to send to the job"}
+		},
+		"required": ["job_id", "message"]
+	}`)
 }
 
-func (waitJob) Schema() json.RawMessage {
-	return json.RawMessage(`{"type":"object","properties":{"job_ids":{"type":"array","items":{"type":"string"},"description":"Background job ids to wait for. Omit to wait for every currently-running job."},"timeout_seconds":{"type":"integer","description":"Optional maximum seconds to block before returning current progress. Omit to wait until the jobs finish.","minimum":1}}}`)
-}
-
-func (waitJob) ReadOnly() bool { return true }
-
-func (waitJob) Execute(ctx context.Context, args json.RawMessage) (string, error) {
+func (steerJob) Execute(ctx context.Context, params json.RawMessage) (string, error) {
 	var p struct {
-		JobIDs         []string `json:"job_ids"`
-		TimeoutSeconds int      `json:"timeout_seconds"`
+		JobID   string `json:"job_id"`
+		Message string `json:"message"`
 	}
-	if len(args) > 0 {
-		if err := json.Unmarshal(args, &p); err != nil {
-			return "", fmt.Errorf("invalid args: %w", err)
-		}
+	if err := json.Unmarshal(params, &p); err != nil {
+		return "", fmt.Errorf("invalid args: %w", err)
+	}
+	if p.JobID == "" {
+		return "", fmt.Errorf("job_id is required")
+	}
+	if p.Message == "" {
+		return "", fmt.Errorf("message is required")
 	}
 	jm, ok := jobs.FromContext(ctx)
 	if !ok {
 		return "", fmt.Errorf("background jobs are not available in this context")
 	}
-	results := jm.Wait(ctx, p.JobIDs, p.TimeoutSeconds)
-	if len(results) == 0 {
-		return "No background jobs to wait for.", nil
+	if err := jm.Steer(p.JobID, p.Message); err != nil {
+		if err == jobs.ErrJobNotFound {
+			return `{"status":"not_found"}`, nil
+		}
+		return "", fmt.Errorf("steer failed: %w", err)
 	}
-	var b strings.Builder
-	for i, r := range results {
-		if i > 0 {
-			b.WriteString("\n\n")
-		}
-		label := r.ID
-		if r.Label != "" {
-			label = fmt.Sprintf("%s (%s)", r.ID, r.Label)
-		}
-		fmt.Fprintf(&b, "[%s] %s", label, r.Status)
-		if strings.TrimSpace(r.Output) != "" {
-			b.WriteString("\n" + r.Output)
-		}
+	return `{"status":"queued","message":"queued"}`, nil
+}
+
+// --- cancel-job: cancel a running background job ---
+
+type cancelJob struct{}
+
+func (cancelJob) Name() string        { return "cancel-job" }
+func (cancelJob) Description() string { return "Cancel a running background job" }
+func (cancelJob) ReadOnly() bool      { return false }
+func (cancelJob) Schema() json.RawMessage {
+	return json.RawMessage(`{
+		"type": "object",
+		"properties": {
+			"job_id": {"type": "string", "description": "The ID of the job to cancel"}
+		},
+		"required": ["job_id"]
+	}`)
+}
+
+func (cancelJob) Execute(ctx context.Context, params json.RawMessage) (string, error) {
+	var p struct {
+		JobID string `json:"job_id"`
 	}
-	return b.String(), nil
+	if err := json.Unmarshal(params, &p); err != nil {
+		return "", fmt.Errorf("invalid args: %w", err)
+	}
+	if p.JobID == "" {
+		return "", fmt.Errorf("job_id is required")
+	}
+	jm, ok := jobs.FromContext(ctx)
+	if !ok {
+		return "", fmt.Errorf("background jobs are not available in this context")
+	}
+	if jm.Kill(p.JobID) {
+		return `{"cancelled":true}`, nil
+	}
+	return `{"cancelled":false,"reason":"not found"}`, nil
+}
+
+// --- peek-job: peek at the status of a background job ---
+
+type peekJob struct{}
+
+func (peekJob) Name() string        { return "peek-job" }
+func (peekJob) Description() string { return "Peek at the status of a background job" }
+func (peekJob) ReadOnly() bool      { return true }
+func (peekJob) Schema() json.RawMessage {
+	return json.RawMessage(`{
+		"type": "object",
+		"properties": {
+			"job_id": {"type": "string", "description": "The ID of the job to peek at"}
+		},
+		"required": ["job_id"]
+	}`)
+}
+
+func (peekJob) Execute(ctx context.Context, params json.RawMessage) (string, error) {
+	var p struct {
+		JobID string `json:"job_id"`
+	}
+	if err := json.Unmarshal(params, &p); err != nil {
+		return "", fmt.Errorf("invalid args: %w", err)
+	}
+	if p.JobID == "" {
+		return "", fmt.Errorf("job_id is required")
+	}
+	jm, ok := jobs.FromContext(ctx)
+	if !ok {
+		return "", fmt.Errorf("background jobs are not available in this context")
+	}
+	status, err := jm.Peek(p.JobID)
+	if err != nil {
+		if err == jobs.ErrJobNotFound {
+			return "", fmt.Errorf("no background job %q", p.JobID)
+		}
+		return "", fmt.Errorf("peek failed: %w", err)
+	}
+	b, err := json.Marshal(status)
+	if err != nil {
+		return "", fmt.Errorf("marshal status: %w", err)
+	}
+	return string(b), nil
 }

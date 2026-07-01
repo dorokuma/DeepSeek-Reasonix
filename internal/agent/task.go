@@ -111,8 +111,7 @@ func (t *TaskTool) Schema() json.RawMessage {
 "type":"object",
 "properties":{
   "prompt":{"type":"string","description":"What the sub-agent should accomplish. Be specific about the deliverable — the sub-agent does not see this conversation."},
-  "description":{"type":"string","description":"Short label for the sub-task (3-7 words). Surfaced in the dispatch line so the user sees what's running."},
-  "run_in_background":{"type":"boolean","description":"Run the sub-agent asynchronously: returns a job id immediately and keeps working across turns. Collect its final answer with wait, and you'll be notified when it finishes. Use for long, independent sub-tasks you don't need to block on right now."}
+  "description":{"type":"string","description":"Short label for the sub-task (3-7 words). Surfaced in the dispatch line so the user sees what's running."}
 },
 "required":["prompt"]
 }`)
@@ -142,7 +141,6 @@ func (t *TaskTool) Execute(ctx context.Context, args json.RawMessage) (string, e
 	var p struct {
 		Prompt          string   `json:"prompt"`
 		Description     string   `json:"description"`
-		RunInBackground bool     `json:"run_in_background"`
 	}
 	if err := json.Unmarshal(args, &p); err != nil {
 		return "", fmt.Errorf("invalid args: %w", err)
@@ -160,61 +158,59 @@ func (t *TaskTool) Execute(ctx context.Context, args json.RawMessage) (string, e
 	allowMeta := depth+1 < maxDepth
 	subReg := t.buildSubReg(nil, allowMeta)
 
-	// Background: register a job that runs the sub-agent under the manager's
-	// session context (so it survives this turn) and return immediately. The
-	// sub-agent's tool activity still streams, nested under this call, because the
-	// nested sink captures the parent ID + stream now (not from the job ctx).
-	if p.RunInBackground {
-		jm, ok := jobs.FromContext(ctx)
-		if !ok {
-			return "", fmt.Errorf("background execution is not available in this context")
-		}
-		parentID, parent, _, _ := CallContext(ctx)
-		nested := subSinkFor(parentID, parent)
-		label := p.Description
-		if label == "" {
-			label = "task"
-		}
-		job, err := jm.Start("task", label, func(jobCtx context.Context, _ io.Writer) (string, error) {
-			// Heartbeat: keep lastActive fresh so the stale monitor (30s timeout)
-			// won't kill a busy task sub-agent whose output doesn't flow through the writer.
-			heartbeatDone := make(chan struct{})
-			defer close(heartbeatDone)
-			go func() {
-				ticker := time.NewTicker(10 * time.Second)
-				defer ticker.Stop()
-				for {
-					select {
-					case <-heartbeatDone:
-						return
-					case <-ticker.C:
-						jobs.UpdateJobActivity(jobCtx)
-					}
+	// Always run as a background job so the sub-agent survives across turns.
+	jm, ok := jobs.FromContext(ctx)
+	if !ok {
+		return "", fmt.Errorf("background execution is not available in this context")
+	}
+	parentID, parent, _, _ := CallContext(ctx)
+	nested := subSinkFor(parentID, parent)
+	label := p.Description
+	if label == "" {
+		label = "task"
+	}
+	// Build the onComplete callback from the Controller (if available) so
+	// sub-agent completion triggers auto-reentry via pendingToolResult.
+	var onComplete func(string)
+	if p, ok := OnCompleteProviderFrom(ctx); ok {
+		onComplete = p.MakeOnComplete()
+	}
+	job, err := jm.Start(ctx, "task", label, func(jobCtx context.Context, _ io.Writer) (string, error) {
+		// Heartbeat: keep lastActive fresh so the stale monitor (30s timeout)
+		// won't kill a busy task sub-agent whose output doesn't flow through the writer.
+		heartbeatDone := make(chan struct{})
+		defer close(heartbeatDone)
+		go func() {
+			ticker := time.NewTicker(10 * time.Second)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-heartbeatDone:
+					return
+				case <-ticker.C:
+					jobs.UpdateJobActivity(jobCtx)
 				}
-			}()
+			}
+		}()
 
-			bgCtx := WithNestingDepth(jobCtx, depth+1)
-			if parentAgent := AgentFromContext(ctx); parentAgent != nil {
-				bgCtx = WithAgent(bgCtx, parentAgent)
-			}
-			if opts := OptionsFromContext(ctx); opts != nil {
-				bgCtx = WithOptions(bgCtx, opts)
-			}
-			return t.runSub(bgCtx, p.Prompt, subReg, nested, maxSteps)
-		})
-		if err != nil {
-			return "", err
+		bgCtx := WithNestingDepth(jobCtx, depth+1)
+		if parentAgent := AgentFromContext(ctx); parentAgent != nil {
+			bgCtx = WithAgent(bgCtx, parentAgent)
 		}
-		return fmt.Sprintf("Started background task %q (%s). It runs across turns; collect its final answer with wait (or wait will return it once done), and you'll be notified when it finishes.", job.ID, label), nil
+		if opts := OptionsFromContext(ctx); opts != nil {
+			bgCtx = WithOptions(bgCtx, opts)
+		}
+		return t.runSub(bgCtx, p.Prompt, subReg, nested, maxSteps)
+	}, onComplete)
+	if err != nil {
+		return "", err
 	}
-
-	// Foreground: run synchronously, nesting events under this call.
-	subCtx := WithNestingDepth(ctx, depth+1)
-	subCtx = WithActiveChild(subCtx)
-	if opts := OptionsFromContext(ctx); opts != nil {
-		subCtx = WithOptions(subCtx, opts)
+	// Register the job-toolCall correlation so that when this job completes,
+	// drainNotify can correlate the result with the original tool call.
+	if ctrl, ok := CtrlFromContext(ctx); ok {
+		ctrl.RegisterJobMeta(job.ID, parentID)
 	}
-	return t.runSub(subCtx, p.Prompt, subReg, subSink(ctx), maxSteps)
+	return fmt.Sprintf("Started task %s (%s)", job.ID, label), nil
 }
 
 // buildSubReg returns the sub-agent's tool set: the named whitelist (minus
@@ -258,7 +254,6 @@ var plannerNonResearchTools = []string{
 	"bash_output",
 	"slash_command",
 	"todo_write",
-	"wait",
 }
 
 // PlannerToolRegistry returns the tool set exposed to the two-model planner:
@@ -338,16 +333,22 @@ func (t *TaskTool) runSub(ctx context.Context, prompt string, subReg *tool.Regis
 // tool registry (already filtered), and the run Options (model budget, gate).
 func RunSubAgent(ctx context.Context, prov provider.Provider, reg *tool.Registry, sysPrompt, prompt string, opts Options, sink event.Sink) (string, error) {
 	sess := NewSession(sysPrompt)
-	sub := New(prov, reg, sess, opts, sink)
 
-	// Register as the parent's active child for steer forwarding when the
-	// context enables it (foreground task). This lets external user messages
-	// ("steer") reach the running sub-agent directly. Nested sub-agents work
-	// recursively: each sets itself as its parent's active child.
-	if parentAgent := AgentFromContext(ctx); parentAgent != nil && isActiveChild(ctx) {
-		parentAgent.setActiveChild(sub)
-		defer parentAgent.clearActiveChild()
-	}
+	// Create an independent jobs manager and ControllerBridge for this
+	// sub-agent so it can manage its own background jobs (grandchildren)
+	// without sharing state with the parent.
+	subJobs := jobs.NewManager(sink)
+	subCtrl := newSubControllerBridge()
+	subJobs.SetOnCompletion(func(id string) {
+		subCtrl.pendingToolResult.Store(true)
+	})
+	defer subJobs.Close()
+
+	opts.Jobs = subJobs
+	opts.Ctrl = subCtrl
+
+	sub := New(prov, reg, sess, opts, sink)
+	sub.SetAsker(subCtrl)
 
 	// mergeSubUsage merges the sub-agent's accumulated cache/cost stats into
 	// the parent agent. Called on both success and failure paths so token
@@ -407,34 +408,6 @@ func RunSubAgent(ctx context.Context, prov provider.Provider, reg *tool.Registry
 		}
 	}
 	return ans, nil
-}
-
-// NestedSink returns a sink that forwards a sub-agent's tool activity to the
-// parent stream, nested under the tool call carried by ctx, so a frontend shows
-// it beneath that call (the same nesting `task` uses). Falls back to the given
-// sink when ctx carries no call context. Used by subagent skills.
-func NestedSink(ctx context.Context, fallback event.Sink) event.Sink {
-	parentID, parent, _, ok := CallContext(ctx)
-	if !ok || parent == nil {
-		return fallback
-	}
-	return subSinkFor(parentID, parent)
-}
-
-// subSink forwards a sub-agent's tool dispatch/result events to the parent's
-// event stream, tagged with the parent task call's ID so a frontend nests them
-// under it. The sub-agent's own turn/usage/text/reasoning events are dropped —
-// only its tool activity (the part worth seeing live) and its final answer
-// (returned by Execute) reach the parent. The forwarded call IDs are namespaced
-// with the parent ID so a sub-agent call can never collide with a parent call in
-// the frontend's dispatch→result matching. Falls back to Discard when there's no
-// parent stream (the headless run loop, or a direct Execute in tests).
-func subSink(ctx context.Context) event.Sink {
-	parentID, parent, _, ok := CallContext(ctx)
-	if !ok || parent == nil {
-		return event.Discard
-	}
-	return subSinkFor(parentID, parent)
 }
 
 // subSinkFor builds the nesting sink from an already-captured parent ID + stream,

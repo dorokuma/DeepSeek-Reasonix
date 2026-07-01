@@ -1,14 +1,12 @@
 // Package jobs is the session-scoped background-job registry behind the agent's
 // background tools (bash run_in_background, task run_in_background) and the
-// bash_output / kill_shell / wait tools. A Manager owns a context whose lifetime
+// bash_output and kill_shell tools. A Manager owns a context whose lifetime
 // is the session, NOT a single turn — so a job started in one turn keeps running
 // across turns and is cancelled only when the controller closes (or kill_shell is
 // called). Tools reach the Manager through the call context (WithManager /
 // FromContext), the same injection pattern the `ask` tool uses for the asker.
 //
-// The Manager emits a user-visible Notice when a job starts and finishes, and
-// accumulates a one-line completion summary that the controller drains into the
-// next turn (DrainCompletedNote) so the model itself learns of completions.
+// The Manager emits a user-visible Notice when a job starts and finishes.
 package jobs
 
 import (
@@ -16,7 +14,7 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"strings"
+	"log/slog"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -44,13 +42,14 @@ type View struct {
 	StartedAt int64  `json:"startedAt"` // unix milliseconds
 }
 
-// Result is one job's terminal (or current) state returned by Wait.
-type Result struct {
-	ID     string
-	Kind   string
-	Label  string
-	Status Status
-	Output string // the terminal result text, or the streamed buffer when no result was set
+// JobNotify is a notification sent from a background sub-agent to its parent.
+type JobNotify struct {
+	JobID    string `json:"job_id"`
+	Type     string `json:"type"`              // "ack" | "progress" | "result"
+	Step     int    `json:"step,omitempty"`
+	AckMsg   string `json:"ack_msg,omitempty"`    // for ack
+	LastTool string `json:"last_tool,omitempty"`  // for progress
+	Output   string `json:"output,omitempty"`     // for result (final answer)
 }
 
 type jobKey struct{}
@@ -80,6 +79,15 @@ type Job struct {
 	cancel     context.CancelFunc
 	done       chan struct{}
 	lastActive atomic.Int64
+
+	// Notification channels for sub-agent ↔ parent communication (used by task jobs).
+	// Initialized by Start — defined here as fields only for now.
+	steerCh   chan string      // parent → child steer messages
+	ackCh     chan JobNotify   // child → parent ack, buf 4
+	resultCh  chan JobNotify   // child → parent result, buf 1
+	notifyCh  chan JobNotify   // child → parent progress, buf 16
+
+	completed bool // true after onComplete fires; drainNotify removes the job from the map
 }
 
 // Manager is the session's background-job table. It is safe for concurrent use.
@@ -92,7 +100,6 @@ type Manager struct {
 	seq            int
 	jobs           map[string]*Job
 	order          []string
-	completed      []string // finished-job summaries awaiting drain into the next turn
 	sem            chan struct{}
 	monitorRunning bool
 	jobDone        chan struct{}
@@ -196,7 +203,7 @@ func (w jobWriter) Write(p []byte) (int, error) {
 // terminal result text (a task's final answer; a bash job streams everything to
 // the buffer and returns ""). The job is marked killed when its context was
 // cancelled, failed on any other error, else done.
-func (m *Manager) Start(kind, label string, run func(ctx context.Context, out io.Writer) (string, error)) (*Job, error) {
+func (m *Manager) Start(ctx context.Context, kind, label string, run func(ctx context.Context, out io.Writer) (string, error), onComplete func(jobID string)) (*Job, error) {
 	m.startMonitorIfNeeded()
 	select {
 	case m.sem <- struct{}{}:
@@ -207,7 +214,7 @@ func (m *Manager) Start(kind, label string, run func(ctx context.Context, out io
 	m.mu.Lock()
 	m.seq++
 	id := fmt.Sprintf("%s-%d", kind, m.seq)
-	ctx, cancel := context.WithCancel(m.root)
+	jobCtx, cancel := context.WithCancel(ctx)
 	j := &Job{
 		ID:        id,
 		Kind:      kind,
@@ -216,9 +223,13 @@ func (m *Manager) Start(kind, label string, run func(ctx context.Context, out io
 		startedAt: nowMs(),
 		cancel:    cancel,
 		done:      make(chan struct{}),
+		steerCh:   make(chan string, 8),
+		ackCh:     make(chan JobNotify, 4),
+		resultCh:  make(chan JobNotify, 1),
+		notifyCh:  make(chan JobNotify, 16),
 	}
 	j.lastActive.Store(time.Now().Unix())
-	ctx = context.WithValue(ctx, jobKey{}, j)
+	jobCtx = context.WithValue(jobCtx, jobKey{}, j)
 
 	m.jobs[id] = j
 	m.order = append(m.order, id)
@@ -234,11 +245,11 @@ func (m *Manager) Start(kind, label string, run func(ctx context.Context, out io
 			default:
 			}
 		}()
-		result, err := run(ctx, jobWriter{j})
+		result, err := run(jobCtx, jobWriter{j})
 
 		var st Status
 		switch {
-		case ctx.Err() != nil:
+		case jobCtx.Err() != nil:
 			st = Killed
 		case err != nil:
 			st = Failed
@@ -248,62 +259,55 @@ func (m *Manager) Start(kind, label string, run func(ctx context.Context, out io
 		default:
 			st = Done
 		}
-		// Queue the drain note (and emit the closing Notice) BEFORE publishing the
-		// terminal status. Wait(nil)/resolve only block on Running jobs, so if the
-		// status flipped to terminal before the note was queued, a Wait could observe
-		// completion, skip j.done, and DrainCompletedNote would race ahead of the
-		// bookkeeping (the TestDrainMultiple -race flake). Recording first makes an
-		// observed terminal status imply the note is already queued.
-		m.recordCompletion(id, kind, label, st, err)
+
+		// Send result to resultCh before onComplete (per spec §5.3).
+		if st == Done || st == Failed {
+			select {
+			case <-jobCtx.Done():
+				// ctx 已取消，不发送
+			case j.resultCh <- JobNotify{JobID: id, Type: "result", Output: result}:
+				// 成功发送
+			default:
+				// resultCh 满，drop + warn
+				slog.Warn("resultCh full, dropping result for job", "id", id)
+			}
+		}
+
+		// Close child→parent channels before onComplete (M2).
+		close(j.ackCh)
+		close(j.notifyCh)
+		close(j.resultCh)
+
+		// Emit the closing notice.
+		level, text := event.LevelInfo, fmt.Sprintf("background %s finished: %s", kind, id)
+		switch st {
+		case Failed:
+			level, text = event.LevelWarn, fmt.Sprintf("background %s failed: %s — %v", kind, id, err)
+		case Killed:
+			text = fmt.Sprintf("background %s killed: %s", kind, id)
+		}
+		m.sink.Emit(event.Event{Kind: event.Notice, Level: level, Text: text})
+
+		// Fire completion callbacks — onComplete (per-call) then onCompletion (global).
+		if onComplete != nil {
+			onComplete(id)
+		}
+		if m.onCompletion != nil {
+			m.onCompletion(id)
+		}
 
 		j.mu.Lock()
 		j.result = result
 		if j.status != Killed { // a concurrent Kill already published Killed — keep it
 			j.status = st
 		}
+		j.completed = true
 		j.mu.Unlock()
 		close(j.done)
 	}()
 	return j, nil
 }
 
-// recordCompletion queues the finished-job summary for DrainCompletedNote and
-// emits a closing Notice (warn for a failure, info otherwise).
-func (m *Manager) recordCompletion(id, kind, label string, st Status, err error) {
-	tag := id
-	if label != "" {
-		tag = fmt.Sprintf("%s (%s)", id, label)
-	}
-	m.mu.Lock()
-	m.completed = append(m.completed, fmt.Sprintf("%s — %s", tag, st))
-	m.mu.Unlock()
-
-	level, text := event.LevelInfo, fmt.Sprintf("background %s finished: %s", kind, id)
-	switch st {
-	case Failed:
-		level, text = event.LevelWarn, fmt.Sprintf("background %s failed: %s — %v", kind, id, err)
-	case Killed:
-		text = fmt.Sprintf("background %s killed: %s", kind, id)
-	}
-	m.sink.Emit(event.Event{Kind: event.Notice, Level: level, Text: text})
-	if m.onCompletion != nil {
-		m.onCompletion(id)
-	}
-}
-
-// clearCompleted removes a job's completion entry from the completed queue.
-func (m *Manager) clearCompleted(id string) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	prefix := id + " "
-	filtered := m.completed[:0]
-	for _, s := range m.completed {
-		if !strings.HasPrefix(s, prefix) {
-			filtered = append(filtered, s)
-		}
-	}
-	m.completed = filtered
-}
 
 func (m *Manager) get(id string) *Job {
 	m.mu.Lock()
@@ -334,17 +338,13 @@ func (m *Manager) Output(id string) (text string, status Status, ok bool) {
 	// A task job streams nothing to the buffer — its answer lands in result. Once
 	// it is terminal with no buffered output, surface that result once so a task's
 	// answer is visible here too (bash_output's description promises task support).
-	var needClear bool
 	if text == "" && j.status != Running && j.result != "" && !j.resultRead {
 		text = j.result
 		j.resultRead = true
-		needClear = true
 	}
 	status = j.status
 	j.mu.Unlock()
-	if needClear {
-		m.clearCompleted(j.ID)
-	}
+
 	return text, status, true
 }
 
@@ -374,34 +374,6 @@ func (m *Manager) Kill(id string) bool {
 	return true
 }
 
-// Wait blocks until the named jobs (or every currently-running job when ids is
-// empty) reach a terminal state, or ctx is cancelled, or timeoutSec elapses
-// (0 = no timeout). It returns each target's snapshot regardless of why it
-// returned, so a timeout still reports partial progress.
-func (m *Manager) Wait(ctx context.Context, ids []string, timeoutSec int) []Result {
-	targets := m.resolve(ids)
-	if len(targets) == 0 {
-		return nil
-	}
-	var timeout <-chan time.Time
-	if timeoutSec > 0 {
-		t := time.NewTimer(time.Duration(timeoutSec) * time.Second)
-		defer t.Stop()
-		timeout = t.C
-	}
-	for _, j := range targets {
-		select {
-		case <-j.done:
-		case <-ctx.Done():
-			return m.results(targets)
-		case <-timeout:
-			return m.results(targets)
-		}
-	}
-	return m.results(targets)
-}
-
-// resolve maps requested ids to jobs; an empty list selects all running jobs.
 func (m *Manager) resolve(ids []string) []*Job {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -426,20 +398,6 @@ func (m *Manager) resolve(ids []string) []*Job {
 	return out
 }
 
-func (m *Manager) results(targets []*Job) []Result {
-	out := make([]Result, 0, len(targets))
-	for _, j := range targets {
-		j.mu.Lock()
-		text := j.result
-		if text == "" {
-			text = j.buf.String()
-		}
-		out = append(out, Result{ID: j.ID, Kind: j.Kind, Label: j.Label, Status: j.status, Output: text})
-		j.mu.Unlock()
-	}
-	return out
-}
-
 // Running returns a snapshot of the still-running jobs (for the status bar).
 func (m *Manager) Running() []View {
 	m.mu.Lock()
@@ -455,25 +413,17 @@ func (m *Manager) Running() []View {
 	}
 	return out
 }
-
-// DrainCompletedNote returns (and clears) a one-line summary of jobs that
-// finished since the last drain, for the controller to fold into the next turn
-// so the model learns of completions. "" when nothing finished.
-func (m *Manager) DrainCompletedNote() string {
-	m.mu.Lock()
-	c := m.completed
-	m.completed = nil
-	m.mu.Unlock()
-	if len(c) == 0 {
-		return ""
-	}
-	return "Background jobs finished since your last message: " + strings.Join(c, "; ") +
-		". Read their output with bash_output or wait if you still need it."
-}
-
 // Close cancels the session context, terminating every running job. Safe to call
 // once at controller shutdown.
-func (m *Manager) Close() { m.cancel() }
+func (m *Manager) Close() {
+	m.mu.Lock()
+	// Cancel every job's context individually, since they may not derive from m.root.
+	for _, j := range m.jobs {
+		j.cancel()
+	}
+	m.mu.Unlock()
+	m.cancel()
+}
 
 func nowMs() int64 { return time.Now().UnixMilli() }
 
@@ -482,6 +432,90 @@ func startedText(kind, id, label string) string {
 		return fmt.Sprintf("background %s started: %s (%s)", kind, id, label)
 	}
 	return fmt.Sprintf("background %s started: %s", kind, id)
+}
+
+// --- new types and methods per spec §5 ---
+
+var (
+	ErrJobNotFound     = fmt.Errorf("job not found")
+	ErrSteerBufferFull = fmt.Errorf("steer buffer full")
+)
+
+// JobStatus is a read-only snapshot returned by Peek.
+type JobStatus struct {
+	JobID    string
+	Status   string // "running" | "done" | "cancelled" | "error"
+	Step     int
+	LastTool string
+	LastAck  string
+}
+
+// JobChannels exposes the three notification channel read-ends for a job.
+type JobChannels struct {
+	Ack      <-chan JobNotify
+	Result   <-chan JobNotify
+	Progress <-chan JobNotify
+}
+
+// Steer sends a message to a job's steer channel (non-blocking).
+func (m *Manager) Steer(jobID string, message string) error {
+	j := m.get(jobID)
+	if j == nil {
+		return ErrJobNotFound
+	}
+	select {
+	case j.steerCh <- message:
+		return nil
+	default:
+		return ErrSteerBufferFull
+	}
+}
+
+// ActiveJobs returns all job IDs currently in the map (including completed ones).
+func (m *Manager) ActiveJobs() []string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	ids := make([]string, 0, len(m.jobs))
+	for id := range m.jobs {
+		ids = append(ids, id)
+	}
+	return ids
+}
+
+// Peek returns a non-blocking snapshot of a job's status.
+func (m *Manager) Peek(jobID string) (JobStatus, error) {
+	j := m.get(jobID)
+	if j == nil {
+		return JobStatus{}, ErrJobNotFound
+	}
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	s := JobStatus{
+		JobID:  j.ID,
+		Status: string(j.status),
+	}
+	return s, nil
+}
+
+// NotifyChannels returns the three notification channel read-ends for a job.
+// Returns nil if the job no longer exists.
+func (m *Manager) NotifyChannels(jobID string) *JobChannels {
+	j := m.get(jobID)
+	if j == nil {
+		return nil
+	}
+	return &JobChannels{
+		Ack:      j.ackCh,
+		Result:   j.resultCh,
+		Progress: j.notifyCh,
+	}
+}
+
+// RemoveJob deletes a job from the map. Called by drainNotify after consuming resultCh.
+func (m *Manager) RemoveJob(jobID string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	delete(m.jobs, jobID)
 }
 
 // --- call-context injection (mirrors agent.CallContext) ---

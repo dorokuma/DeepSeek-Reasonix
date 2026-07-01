@@ -1,6 +1,29 @@
 package agent
 
-import "context"
+import (
+	"context"
+)
+
+// OnCompleteProvider is the interface the Controller implements to provide
+// onComplete callbacks for background jobs spawned by the task tool.
+type OnCompleteProvider interface {
+	MakeOnComplete() func(jobID string)
+}
+
+// onCompleteKey carries the OnCompleteProvider in the tool call context.
+type onCompleteKey struct{}
+
+// WithOnCompleteProvider stamps ctx with the provider so the task tool can
+// create per-job onComplete callbacks that trigger auto-reentry.
+func WithOnCompleteProvider(ctx context.Context, p OnCompleteProvider) context.Context {
+	return context.WithValue(ctx, onCompleteKey{}, p)
+}
+
+// OnCompleteProviderFrom extracts the provider from the context, if any.
+func OnCompleteProviderFrom(ctx context.Context) (OnCompleteProvider, bool) {
+	p, ok := ctx.Value(onCompleteKey{}).(OnCompleteProvider)
+	return p, ok
+}
 
 // agentKey is the context key for the parent Agent reference.
 type agentKey struct{}
@@ -10,11 +33,6 @@ type depthKey struct{}
 
 // optionsKey is the context key for Agent Options.
 type optionsKey struct{}
-
-// activeChildKey controls whether RunSubAgent should register the sub-agent
-// as the parent's active child for steer forwarding. Only foreground (not
-// background) task tool invocations set this in their context.
-type activeChildKey struct{}
 
 // WithNestingDepth stores a nesting depth value in the context.
 func WithNestingDepth(ctx context.Context, depth int) context.Context {
@@ -65,15 +83,3 @@ func AgentFromContext(ctx context.Context) *Agent {
 	return nil
 }
 
-// WithActiveChild returns a context that enables active child registration
-// in RunSubAgent, so steer messages from the parent are forwarded to the
-// foreground sub-agent instead of being queued on the parent.
-func WithActiveChild(ctx context.Context) context.Context {
-	return context.WithValue(ctx, activeChildKey{}, struct{}{})
-}
-
-// isActiveChild reports whether the context has active-child forwarding
-// enabled, i.e. the caller is a foreground (not background) task invocation.
-func isActiveChild(ctx context.Context) bool {
-	return ctx.Value(activeChildKey{}) != nil
-}

@@ -15,7 +15,6 @@ func TestToolCard(t *testing.T) {
 		{"bash", `{"command":"npm test"}`, []string{"Bash", "npm test"}, nil},
 		{"read_file", `{"path":"pkg/a.go"}`, []string{"Read", "pkg/a.go"}, nil},
 		{"grep", `{"pattern":"TODO","path":"."}`, []string{"Search", "TODO"}, nil},
-		{"wait", `{"job_ids":["bash-1","bash-2"],"timeout_seconds":300}`, []string{"Wait", "bash-1", "bash-2"}, []string{"timeout_seconds", "300", "job_ids"}},
 	}
 	for _, c := range cases {
 		got := toolCard(c.name, c.args, 120)

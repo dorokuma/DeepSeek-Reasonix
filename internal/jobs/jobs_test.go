@@ -22,29 +22,19 @@ func waitFor(t *testing.T, cond func() bool) {
 	t.Fatal("condition not met within deadline")
 }
 
-// A job runs to completion: Wait reports Done with its output, and the completion
-// note drains exactly once.
-func TestStartWaitDoneAndDrain(t *testing.T) {
+// A job runs to completion.
+func TestStartDone(t *testing.T) {
 	m := NewManager(event.Discard)
 	defer m.Close()
 
-	j, _ := m.Start("bash", "echo", func(_ context.Context, out io.Writer) (string, error) {
+	j, _ := m.Start(context.Background(), "bash", "echo", func(_ context.Context, out io.Writer) (string, error) {
 		io.WriteString(out, "hello\n")
 		return "", nil
-	})
-	res := m.Wait(context.Background(), []string{j.ID}, 5)
-	if len(res) != 1 || res[0].Status != Done {
-		t.Fatalf("want one Done result, got %+v", res)
-	}
-	if !strings.Contains(res[0].Output, "hello") {
-		t.Errorf("output = %q, want it to contain hello", res[0].Output)
-	}
-	note := m.DrainCompletedNote()
-	if !strings.Contains(note, j.ID) {
-		t.Errorf("note = %q, want it to mention %s", note, j.ID)
-	}
-	if again := m.DrainCompletedNote(); again != "" {
-		t.Errorf("second drain = %q, want empty", again)
+	}, nil)
+	<-j.done
+	_, st, ok := m.Output(j.ID)
+	if !ok || st != Done {
+		t.Fatalf("want Done, got status=%s ok=%v", st, ok)
 	}
 }
 
@@ -54,19 +44,19 @@ func TestOutputStreamsIncrementally(t *testing.T) {
 	defer m.Close()
 
 	release := make(chan struct{})
-	j, _ := m.Start("bash", "", func(_ context.Context, out io.Writer) (string, error) {
+	j, _ := m.Start(context.Background(), "bash", "", func(_ context.Context, out io.Writer) (string, error) {
 		io.WriteString(out, "first\n")
 		<-release
 		io.WriteString(out, "second\n")
 		return "", nil
-	})
+	}, nil)
 
 	waitFor(t, func() bool {
 		txt, _, _ := m.Output(j.ID)
 		return strings.Contains(txt, "first")
 	})
 	close(release)
-	m.Wait(context.Background(), []string{j.ID}, 5)
+	<-j.done
 
 	txt, st, ok := m.Output(j.ID)
 	if !ok || st != Done {
@@ -82,16 +72,17 @@ func TestKill(t *testing.T) {
 	m := NewManager(event.Discard)
 	defer m.Close()
 
-	j, _ := m.Start("bash", "", func(ctx context.Context, _ io.Writer) (string, error) {
+	j, _ := m.Start(context.Background(), "bash", "", func(ctx context.Context, _ io.Writer) (string, error) {
 		<-ctx.Done()
 		return "", ctx.Err()
-	})
+	}, nil)
 	if !m.Kill(j.ID) {
 		t.Fatal("Kill on a running job returned false")
 	}
-	res := m.Wait(context.Background(), []string{j.ID}, 5)
-	if len(res) != 1 || res[0].Status != Killed {
-		t.Fatalf("want Killed, got %+v", res)
+	<-j.done
+	_, st, ok := m.Output(j.ID)
+	if !ok || st != Killed {
+		t.Fatalf("want Killed, got %+v", st)
 	}
 	if m.Kill(j.ID) {
 		t.Error("Kill on a finished job should return false")
@@ -99,35 +90,32 @@ func TestKill(t *testing.T) {
 }
 
 // Killed status is observable as soon as Kill returns, before the run goroutine
-// unwinds — otherwise a slow cancelled process tree (Windows taskkill + WaitDelay
-// drain) leaves Wait reporting Running until the goroutine finally returns, which
-// is the TestBackgroundKill flake. The job here stays blocked past ctx.Done.
+// unwinds.
 func TestKillStatusObservableBeforeGoroutineReturns(t *testing.T) {
 	m := NewManager(event.Discard)
 	defer m.Close()
 
 	release := make(chan struct{})
-	j, _ := m.Start("bash", "", func(ctx context.Context, _ io.Writer) (string, error) {
+	j, _ := m.Start(context.Background(), "bash", "", func(ctx context.Context, _ io.Writer) (string, error) {
 		<-ctx.Done()
 		<-release // simulate a teardown that hasn't returned yet
 		return "", ctx.Err()
-	})
+	}, nil)
 	if !m.Kill(j.ID) {
 		t.Fatal("Kill on a running job returned false")
 	}
 
-	// Short timeout: the goroutine is still blocked, so Wait can only know the
-	// status if Kill set it synchronously.
-	res := m.Wait(context.Background(), []string{j.ID}, 1)
-	if len(res) != 1 || res[0].Status != Killed {
-		t.Fatalf("want Killed before the goroutine returns, got %+v", res)
+	// Status should be Killed immediately (set by Kill), before the goroutine returns.
+	_, st, ok := m.Output(j.ID)
+	if !ok || st != Killed {
+		t.Fatalf("want Killed before the goroutine returns, got %s", st)
 	}
 	if n := len(m.Running()); n != 0 {
 		t.Fatalf("a killed job should not still be Running(), got %d", n)
 	}
 
 	close(release)
-	m.Wait(context.Background(), []string{j.ID}, 5)
+	<-j.done
 }
 
 // Close cancels every still-running job.
@@ -135,17 +123,18 @@ func TestCloseCancels(t *testing.T) {
 	m := NewManager(event.Discard)
 
 	started := make(chan struct{})
-	j, _ := m.Start("task", "", func(ctx context.Context, _ io.Writer) (string, error) {
+	j, _ := m.Start(context.Background(), "task", "", func(ctx context.Context, _ io.Writer) (string, error) {
 		close(started)
 		<-ctx.Done()
 		return "", ctx.Err()
-	})
+	}, nil)
 	<-started
 	m.Close()
 
-	res := m.Wait(context.Background(), []string{j.ID}, 5)
-	if len(res) != 1 || res[0].Status != Killed {
-		t.Fatalf("want Killed after Close, got %+v", res)
+	<-j.done
+	_, st, ok := m.Output(j.ID)
+	if !ok || st != Killed {
+		t.Fatalf("want Killed after Close, got %s", st)
 	}
 }
 
@@ -155,15 +144,15 @@ func TestRunning(t *testing.T) {
 	defer m.Close()
 
 	release := make(chan struct{})
-	j, _ := m.Start("task", "label", func(ctx context.Context, _ io.Writer) (string, error) {
+	j, _ := m.Start(context.Background(), "task", "label", func(ctx context.Context, _ io.Writer) (string, error) {
 		<-release
 		return "answer", nil
-	})
+	}, nil)
 	waitFor(t, func() bool { return len(m.Running()) == 1 })
 	if r := m.Running()[0]; r.ID != j.ID || r.Label != "label" {
 		t.Errorf("running view = %+v, want id=%s label=label", r, j.ID)
 	}
 	close(release)
-	m.Wait(context.Background(), []string{j.ID}, 5)
+	<-j.done
 	waitFor(t, func() bool { return len(m.Running()) == 0 })
 }

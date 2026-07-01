@@ -31,7 +31,6 @@ func TestACPBuiltinToolsKeepSessionLevelBuiltins(t *testing.T) {
 	for _, name := range []string{
 		"bash_output",
 		"kill_shell",
-		"wait",
 		"move_file",
 		"notebook_edit",
 	} {

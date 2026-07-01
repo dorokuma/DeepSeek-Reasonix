@@ -184,7 +184,6 @@ func TestAddBuiltinsWithWorkspaceRootKeepsSessionTools(t *testing.T) {
 		"audit_finish",
 		"bash_output",
 		"kill_shell",
-		"wait",
 		"notebook_edit",
 	} {
 		if _, ok := reg.Get(name); !ok {
@@ -392,6 +391,7 @@ func systemMessage(msgs []provider.Message) string {
 func stripLanguagePolicy(s string) string {
 	s = strings.TrimSpace(s)
 	for _, policy := range []string{
+		config.ToolUseEnforcementPolicy,
 		config.VisibilityPolicy,
 		config.LanguagePolicy,
 	} {

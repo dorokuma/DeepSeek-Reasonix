@@ -44,13 +44,11 @@ const (
 	// non-zero exit or empty stdout leaves the reasoning unchanged.
 	PostLLMCall Event = "PostLLMCall"
 	// SessionStart fires once when a session becomes active (fresh, resumed, or
-	// after /new). SessionEnd fires when it is closed or rotated. SubagentStop
-	// fires when a `task` sub-agent finishes. Notification fires when the agent
+	// after /new). SessionEnd fires when it is closed or rotated. Notification fires when the agent
 	// needs the user's attention (e.g. a pending approval). PreCompact fires just
 	// before a compaction pass; its stdout is injected as extra summary guidance.
 	SessionStart Event = "SessionStart"
 	SessionEnd   Event = "SessionEnd"
-	SubagentStop Event = "SubagentStop"
 	Notification Event = "Notification"
 	PreCompact   Event = "PreCompact"
 )
@@ -59,7 +57,7 @@ const (
 var Events = []Event{
 	PreToolUse, PostToolUse, UserPromptSubmit, Stop,
 	PostLLMCall,
-	SessionStart, SessionEnd, SubagentStop, Notification, PreCompact,
+	SessionStart, SessionEnd, Notification, PreCompact,
 }
 
 // IsBlocking reports whether a non-zero/exit-2 (or timed-out) hook on this event
