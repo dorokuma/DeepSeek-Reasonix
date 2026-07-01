@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -3466,4 +3467,15 @@ type eventSink struct {
 	ch chan<- event.Event
 }
 
-func (s *eventSink) Emit(e event.Event) { s.ch <- e }
+func (s *eventSink) Emit(e event.Event) {
+	defer func() {
+		if recover() != nil {
+			slog.Warn("event sink: channel closed, dropping event", "kind", e.Kind)
+		}
+	}()
+	select {
+	case s.ch <- e:
+	default:
+		slog.Warn("event sink: channel full, dropping event", "kind", e.Kind)
+	}
+}

@@ -43,3 +43,16 @@ func TestJobCompletionKeepsResultChannelOpen(t *testing.T) {
 		}
 	}
 }
+
+func TestSafeChanSendClosedChannelNoPanic(t *testing.T) {
+	ch := make(chan JobNotify, 1)
+	close(ch)
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("safeChanSend panicked on closed channel: %v", r)
+		}
+	}()
+	if safeChanSend(ch, JobNotify{JobID: "x", Type: "result", Output: "y"}) {
+		t.Fatal("expected false on closed channel")
+	}
+}

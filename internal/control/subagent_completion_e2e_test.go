@@ -148,9 +148,11 @@ func TestSubagentCompletionChainNoPanic(t *testing.T) {
 
 	ctrl.pendingToolResult.Store(true)
 
+	// SetOnCompletion already wired autoReenter; wait for background Send turn.
+	time.Sleep(100 * time.Millisecond)
 	defer func() {
 		if r := recover(); r != nil {
-			t.Fatalf("panic during auto-reentry Run: %v", r)
+			t.Fatalf("panic during auto-reentry: %v", r)
 		}
 	}()
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
@@ -158,4 +160,31 @@ func TestSubagentCompletionChainNoPanic(t *testing.T) {
 	if err := ag.Run(ctx, ""); err == nil {
 		t.Fatal("expected Run to fail with nil provider, got nil error")
 	}
+}
+
+
+// TestAutoReenterDefaultsRunnerNoPanic verifies SetOnCompletion autoReenter does not
+// panic when Options omitted Runner but provided Executor (regression for nil runner).
+func TestAutoReenterDefaultsRunnerNoPanic(t *testing.T) {
+	sink := event.Discard
+	jm := jobs.NewManager(sink)
+	defer jm.Close()
+
+	ag := agent.New(nil, nil, agent.NewSession("test"), agent.Options{Jobs: jm}, sink)
+	ctrl := New(Options{Executor: ag, Sink: sink, SessionDir: t.TempDir(), Label: "test", Jobs: jm})
+	ag.SetControllerBridge(ctrl)
+
+	_, err := jm.Start(context.Background(), "task", "runner-default", func(ctx context.Context, _ io.Writer) (string, error) {
+		return "ok", nil
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("panic: %v", r)
+		}
+	}()
+	time.Sleep(150 * time.Millisecond)
 }
