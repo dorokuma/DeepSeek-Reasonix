@@ -572,6 +572,10 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 			return "", fmt.Errorf("background execution is not available in this context")
 		}
 		parentID, _, _, _ := agent.CallContext(ctx)
+		var registerMeta jobs.BeforeRunFunc
+		if ctrl, ok := agent.CtrlFromContext(ctx); ok {
+			registerMeta = func(jobID string) { ctrl.RegisterJobMeta(jobID, parentID) }
+		}
 		job, err := jm.Start(ctx, "skill", label, func(jobCtx context.Context, _ io.Writer) (string, error) {
 			heartbeatDone := make(chan struct{})
 			defer close(heartbeatDone)
@@ -588,12 +592,11 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 				}
 			}()
 			return work(jobCtx, nil)
-		}, onComplete)
+		}, onComplete, registerMeta)
 		if err != nil {
 			return "", err
 		}
 		if ctrl, ok := agent.CtrlFromContext(ctx); ok {
-			ctrl.RegisterJobMeta(job.ID, parentID)
 			job.SetOnMessage(ctrl.MakeOnMessage())
 		}
 		return job.ID, nil

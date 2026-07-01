@@ -11,6 +11,7 @@ import (
 	"reasonix/internal/agent"
 	"reasonix/internal/event"
 	"reasonix/internal/jobs"
+	"reasonix/internal/provider"
 )
 
 type recordingRunner struct {
@@ -75,11 +76,10 @@ func TestSubagentCompletionNoticeAndAutoReentry(t *testing.T) {
 		jobs.PostMessage(ctx, "mid-flight report")
 		time.Sleep(2 * time.Millisecond)
 		return "sub-result", nil
-	}, ctrl.MakeOnComplete())
+	}, ctrl.MakeOnComplete(), func(id string) { ctrl.RegisterJobMeta(id, "tool-call-1") })
 	if err != nil {
 		t.Fatal(err)
 	}
-	ctrl.RegisterJobMeta(job.ID, "tool-call-1")
 	waitJobDone(t, jm, job.ID)
 
 	deadline := time.After(3 * time.Second)
@@ -126,8 +126,10 @@ func TestSubagentCompletionChainNoPanic(t *testing.T) {
 
 	sess := agent.NewSession("test")
 	ag := agent.New(nil, nil, sess, agent.Options{Jobs: jm}, sink)
+	runner := &recordingRunner{}
 
 	ctrl := New(Options{
+		Runner:     runner,
 		Executor:   ag,
 		Sink:       sink,
 		SessionDir: t.TempDir(),
@@ -138,12 +140,12 @@ func TestSubagentCompletionChainNoPanic(t *testing.T) {
 
 	job, err := jm.Start(context.Background(), "task", "e2e", func(ctx context.Context, _ io.Writer) (string, error) {
 		jobs.PostMessage(ctx, "mid-flight report")
+		time.Sleep(2 * time.Millisecond) // yield so RegisterJobMeta wins instant-completion race
 		return "sub-result", nil
-	}, nil)
+	}, nil, func(id string) { ctrl.RegisterJobMeta(id, "tool-call-1") })
 	if err != nil {
 		t.Fatal(err)
 	}
-	ctrl.RegisterJobMeta(job.ID, "tool-call-1")
 	waitJobDone(t, jm, job.ID)
 
 	ctrl.pendingToolResult.Store(true)
@@ -187,4 +189,263 @@ func TestAutoReenterDefaultsRunnerNoPanic(t *testing.T) {
 		}
 	}()
 	time.Sleep(150 * time.Millisecond)
+}
+
+// TestAutoReenterWithoutPerJobOnComplete verifies SetOnCompletion alone activates
+// the main agent when per-job onComplete was not wired (regression for silent no-op).
+func TestAutoReenterWithoutPerJobOnComplete(t *testing.T) {
+	sink := event.Discard
+	jm := jobs.NewManager(sink)
+	defer jm.Close()
+
+	runner := &recordingRunner{}
+	ag := agent.New(nil, nil, agent.NewSession("test"), agent.Options{Jobs: jm}, sink)
+	ctrl := New(Options{Runner: runner, Executor: ag, Sink: sink, SessionDir: t.TempDir(), Label: "test", Jobs: jm})
+	ag.SetControllerBridge(ctrl)
+
+	job, err := jm.Start(context.Background(), "task", "no-callback", func(ctx context.Context, _ io.Writer) (string, error) {
+		return "done", nil
+	}, nil, func(id string) { ctrl.RegisterJobMeta(id, "tool-call-1") })
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitJobDone(t, jm, job.ID)
+
+	time.Sleep(100 * time.Millisecond)
+	runner.mu.Lock()
+	defer runner.mu.Unlock()
+	if len(runner.inputs) == 0 {
+		t.Fatal("SetOnCompletion did not schedule auto-reentry without per-job onComplete")
+	}
+}
+
+// TestAutoReentryDrainsToolResultIntoSession verifies the auto-reentry turn folds the
+// completed sub-agent output into the session as a tool message.
+func TestAutoReentryDrainsToolResultIntoSession(t *testing.T) {
+	sink := event.Discard
+	jm := jobs.NewManager(sink)
+	defer jm.Close()
+
+	sess := agent.NewSession("test")
+	ag := agent.New(nil, nil, sess, agent.Options{Jobs: jm}, sink)
+	// Controller without Jobs: no SetOnCompletion auto-reenter, so we can test drain in isolation.
+	ctrl := New(Options{Executor: ag, Sink: sink, SessionDir: t.TempDir(), Label: "test"})
+	ag.SetControllerBridge(ctrl)
+
+	job, err := jm.Start(context.Background(), "task", "drain", func(ctx context.Context, _ io.Writer) (string, error) {
+		return "sub-result", nil
+	}, nil, func(id string) { ctrl.RegisterJobMeta(id, "tool-call-1") })
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitJobDone(t, jm, job.ID)
+
+	ctrl.pendingToolResult.Store(true)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := ag.Run(ctx, ""); err == nil {
+		t.Fatal("expected nil-provider Run to error")
+	}
+
+	var toolMsgs int
+	for _, m := range sess.Messages {
+		if m.Role == provider.RoleTool && m.ToolCallID == "tool-call-1" && m.Content == "sub-result" {
+			toolMsgs++
+		}
+	}
+	if toolMsgs != 1 {
+		t.Fatalf("expected 1 tool result message, got %d; messages=%d", toolMsgs, len(sess.Messages))
+	}
+}
+
+
+// phasedBlockingRunner blocks the first Run call until ReleaseFirst is invoked,
+// then delegates to the wrapped runner so auto-reentry exercises the real agent path.
+type phasedBlockingRunner struct {
+	inner        agent.Runner
+	mu           sync.Mutex
+	inputs       []string
+	firstStarted chan struct{}
+	firstRelease chan struct{}
+	firstOnce    sync.Once
+}
+
+func newPhasedBlockingRunner(inner agent.Runner) *phasedBlockingRunner {
+	return &phasedBlockingRunner{
+		inner:        inner,
+		firstStarted: make(chan struct{}),
+		firstRelease: make(chan struct{}),
+	}
+}
+
+func (r *phasedBlockingRunner) Run(ctx context.Context, input string) error {
+	r.mu.Lock()
+	r.inputs = append(r.inputs, input)
+	phase := len(r.inputs) - 1
+	r.mu.Unlock()
+
+	if phase == 0 {
+		r.firstOnce.Do(func() { close(r.firstStarted) })
+		select {
+		case <-r.firstRelease:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	if r.inner == nil {
+		return nil
+	}
+	return r.inner.Run(ctx, input)
+}
+
+func (r *phasedBlockingRunner) Steer(input string) {
+	if r.inner != nil {
+		r.inner.Steer(input)
+	}
+}
+
+func (r *phasedBlockingRunner) Inputs() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := make([]string, len(r.inputs))
+	copy(out, r.inputs)
+	return out
+}
+
+// TestAutoReenterDeferredWhileMainTurnBusy verifies that when a background job
+// completes while the main turn is still running, auto-reentry is queued via
+// pendingReentry and only fires Send("") after the busy turn finishes.
+func TestAutoReenterDeferredWhileMainTurnBusy(t *testing.T) {
+	evCh := make(chan event.Event, 64)
+	sink := event.Sync(event.FuncSink(func(e event.Event) {
+		select {
+		case evCh <- e:
+		default:
+		}
+	}))
+
+	jm := jobs.NewManager(sink)
+	defer jm.Close()
+
+	sess := agent.NewSession("test")
+	ag := agent.New(nil, nil, sess, agent.Options{Jobs: jm}, sink)
+	runner := newPhasedBlockingRunner(ag)
+
+	ctrl := New(Options{
+		Runner:     runner,
+		Executor:   ag,
+		Sink:       sink,
+		SessionDir: t.TempDir(),
+		Label:      "test",
+		Jobs:       jm,
+	})
+	ag.SetControllerBridge(ctrl)
+
+	ctrl.Send("main-turn")
+	select {
+	case <-runner.firstStarted:
+	case <-time.After(3 * time.Second):
+		t.Fatal("main turn did not start")
+	}
+
+	job, err := jm.Start(context.Background(), "task", "deferred", func(ctx context.Context, _ io.Writer) (string, error) {
+		return "sub-result", nil
+	}, ctrl.MakeOnComplete(), func(id string) { ctrl.RegisterJobMeta(id, "tool-call-deferred") })
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitJobDone(t, jm, job.ID)
+
+	ctrl.mu.Lock()
+	gotPending := ctrl.pendingReentry
+	gotRunning := ctrl.running
+	gotInput := ctrl.pendingInput
+	ctrl.mu.Unlock()
+	if !gotPending {
+		t.Fatal("pendingReentry should be true while main turn is busy")
+	}
+	if !gotRunning {
+		t.Fatal("main turn should still be running when job completes")
+	}
+	if gotInput != "" {
+		t.Fatalf("pendingInput should be empty for deferred auto-reentry, got %q", gotInput)
+	}
+	if !ctrl.pendingToolResult.Load() {
+		t.Fatal("pendingToolResult should be set after job completion")
+	}
+
+	close(runner.firstRelease)
+
+	turnDoneCount := 0
+	deadline := time.After(5 * time.Second)
+	for turnDoneCount < 2 {
+		select {
+		case e := <-evCh:
+			if e.Kind == event.TurnDone {
+				turnDoneCount++
+			}
+		case <-deadline:
+			t.Fatalf("timed out waiting for turns; turnDoneCount=%d inputs=%v", turnDoneCount, runner.Inputs())
+		}
+	}
+
+	inputs := runner.Inputs()
+	if len(inputs) < 2 {
+		t.Fatalf("expected at least 2 runner inputs (main + auto-reentry), got %v", inputs)
+	}
+	if inputs[0] != "main-turn" {
+		t.Fatalf("first turn input = %q, want main-turn", inputs[0])
+	}
+	if inputs[1] != "" {
+		t.Fatalf("deferred auto-reentry should Send(\"\"), got %q", inputs[1])
+	}
+
+	var toolMsgs int
+	for _, m := range sess.Messages {
+		if m.Role == provider.RoleTool && m.ToolCallID == "tool-call-deferred" && m.Content == "sub-result" {
+			toolMsgs++
+		}
+	}
+	if toolMsgs != 1 {
+		t.Fatalf("auto-reentry turn should drain tool result into session, got %d tool messages; messages=%d", toolMsgs, len(sess.Messages))
+	}
+}
+
+// TestInstantCompletionDrainsToolResult verifies RegisterJobMeta runs before the
+// job goroutine starts, so a zero-delay sub-agent still lands its result in session.
+func TestInstantCompletionDrainsToolResult(t *testing.T) {
+	sink := event.Discard
+	jm := jobs.NewManager(sink)
+	defer jm.Close()
+
+	sess := agent.NewSession("test")
+	ag := agent.New(nil, nil, sess, agent.Options{Jobs: jm}, sink)
+	// No Jobs on ctrl: avoid SetOnCompletion auto-reenter racing waitJobDone/RemoveJob.
+	ctrl := New(Options{Executor: ag, Sink: sink, SessionDir: t.TempDir(), Label: "test"})
+	ag.SetControllerBridge(ctrl)
+
+	job, err := jm.Start(context.Background(), "task", "instant", func(_ context.Context, _ io.Writer) (string, error) {
+		return "instant-result", nil
+	}, nil, func(id string) { ctrl.RegisterJobMeta(id, "tool-call-instant") })
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitJobDone(t, jm, job.ID)
+
+	ctrl.pendingToolResult.Store(true)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := ag.Run(ctx, ""); err == nil {
+		t.Fatal("expected nil-provider Run to error")
+	}
+
+	var toolMsgs int
+	for _, m := range sess.Messages {
+		if m.Role == provider.RoleTool && m.ToolCallID == "tool-call-instant" && m.Content == "instant-result" {
+			toolMsgs++
+		}
+	}
+	if toolMsgs != 1 {
+		t.Fatalf("expected 1 instant tool result, got %d; messages=%d", toolMsgs, len(sess.Messages))
+	}
 }
