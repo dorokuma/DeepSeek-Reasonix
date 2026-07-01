@@ -157,8 +157,19 @@ type JobChannels struct {
 |---|---|---|---|
 | `drainSteer()` 消费到消息后 | `ack` | `ackCh`（缓冲 4） | `AckMsg: "received"` |
 | 每轮 `stream()` 结束后 | `progress` | `notifyCh`（缓冲 16，满丢） | `Step`（从 `j.step` 原子读）, `LastTool` |
-| `Run()` 正常返回前 | `result` | `resultCh`（缓冲 1，阻塞） | `Output: 最终答案` |
-| `Run()` 因 cancel 返回 | `result` | `resultCh`（缓冲 1，阻塞） | `Output: ""`, 标记取消 |
+| `Run()` 正常返回前 | `result` | `resultCh`（缓冲 1，阻塞） | `Output: 最终答案`。使用 select 感知 ctx 取消： |
+| `Run()` 因 cancel 返回 | `result` | `resultCh`（缓冲 1，阻塞） | `Output: ""`, 标记取消。如果 ctx 已取消，子代理不发送 result，直接退出，避免永久阻塞。 |
+
+子代理 `Run()` 返回前通过 select 向 resultCh 发送 result：
+```go
+select {
+case <-ctx.Done():
+    // 父代理已取消，不再等待 result，直接退出
+    return
+case j.resultCh <- JobNotify{Type: "result", Output: ans}:
+    // 成功发送
+}
+```
 
 **Step 更新机制**：子代理 `Run()` 循环中维护 step 计数器，每轮 `stream()` 结束后执行 `atomic.StoreInt32(&j.step, step)`。`JobNotify.Step` 的值从 `j.step` 原子读取，确保主代理 peek-job 和 progress 通知中看到最新的 step。
 
@@ -166,18 +177,19 @@ type JobChannels struct {
 
 主代理在每次 `Run()` 循环的 `drain()` 阶段（在 `drainSteer()` 之后、`stream()` 之前）消费所有已完成子代理的 notifyCh。
 
-新增 `drainNotify()`：
+新增 `drainNotify()`，返回 bool 表示是否消费到 result：
 
 ```go
-func (a *Agent) drainNotify() {
-    // 从 Controller.GetJobMeta(jobID) 获取 toolCallID
+func (a *Agent) drainNotify() bool {
+    // 从 Controller.TakeJobMeta(jobID) 获取 toolCallID（读取后自动删除）
     // 对每个 job，通过 jm.NotifyChannels(jobID) 拿到三个 channel，分别非阻塞读取
     // 找到 type=result 的，用 jobMeta.ToolCallID 追加为 tool message 到 session
     // 找到 type=progress/ack 的，不追加到 session（仅通过 steer-job/peek-job 工具返回值暴露）
+    // 返回是否成功消费到至少一个 result
 }
 ```
 
-**关键设计**：`taskResults` 从 `Agent` 移入 `Controller`。`Controller` 新增 `taskResults map[string]jobMeta` 字段维护 `jobID → toolCallID` 映射，并新增 `taskResultsMu sync.Mutex` 保护并发访问。Agent 的 task tool `Execute()` 通过 `CallContext(ctx)` 拿到当前 `toolCallID`，然后调用 `Controller.RegisterJobMeta(jobID, toolCallID)`（加锁写入）。`drainNotify()` 通过 `Controller.GetJobMeta(jobID)` 获取映射（加锁读取）。消费 result 后从 `Controller.taskResults` 中删除该条目，避免内存泄漏。
+**关键设计**：`taskResults` 从 `Agent` 移入 `Controller`。`Controller` 新增 `taskResults map[string]jobMeta` 字段维护 `jobID → toolCallID` 映射，并新增 `taskResultsMu sync.Mutex` 保护并发访问。Agent 的 task tool `Execute()` 通过 `CallContext(ctx)` 拿到当前 `toolCallID`，然后调用 `Controller.RegisterJobMeta(jobID, toolCallID)`（加锁写入）。`drainNotify()` 通过 `Controller.TakeJobMeta(jobID)` 获取映射并自动删除条目（加锁读写）。消费 result 后从 `Controller.taskResults` 中删除该条目，避免内存泄漏。
 
 ```go
 // Controller 新增字段和方法
@@ -202,6 +214,17 @@ func (c *Controller) GetJobMeta(jobID string) (jobMeta, bool) {
     c.taskResultsMu.Lock()
     defer c.taskResultsMu.Unlock()
     meta, ok := c.taskResults[jobID]
+    return meta, ok
+}
+
+// TakeJobMeta 读取并删除 job 元信息，避免已完成 job 的元数据无限累积
+func (c *Controller) TakeJobMeta(jobID string) (jobMeta, bool) {
+    c.taskResultsMu.Lock()
+    defer c.taskResultsMu.Unlock()
+    meta, ok := c.taskResults[jobID]
+    if ok {
+        delete(c.taskResults, jobID)
+    }
     return meta, ok
 }
 ```
@@ -336,27 +359,38 @@ type JobChannels struct {
 
 保留现有 `Run(ctx context.Context, input string) error` 签名，不改为无限循环。`autoReenter()` 方法保留，通过 `c.Send("")` 启动新 turn，与 `runGuarded` 兼容——如果当前 turn 未结束会排队，turn 结束后自动处理。
 
-Controller 新增 `pendingToolResult atomic.Bool` 字段（atomic 类型确保并发安全）。子代理完成 → `SetOnCompletion` 回调 → `autoReenter()` 调用 `c.pendingToolResult.Store(true)` 然后调用 `c.Send("")`（空字符串，仅触发 turn）。`Run()` 循环在下一次迭代中检测到 `c.pendingToolResult`，通过 `CompareAndSwap(true, false)` 原子地重置为 false，跳过 `session.Add(userMessage)`，直接进入 `drainNotify()` + `stream()`。不再产生空 user message。
+Controller 新增 `pendingToolResult atomic.Bool` 字段（atomic 类型确保并发安全）。子代理完成 → `SetOnCompletion` 回调 → `autoReenter()` 调用 `c.pendingToolResult.Store(true)` 然后调用 `c.Send("")`（空字符串，仅触发 turn）。`Run()` 循环在下一次迭代中**先**检测 `c.pendingToolResult`（在 `drainSteer()` 之前），通过 `CompareAndSwap(true, false)` 原子地重置为 false，跳过 `drainSteer()` 和 `session.Add(userMessage)`，直接进入 `drainNotify()` + `stream()`。不再产生空 user message。
+
+**顺序调整的原因**：`pendingToolResult` 检查必须在 `drainSteer()` 之前进行，否则 `drainSteer()` 可能已消费掉一条用户消息，然后被 `pendingToolResult` 分支跳过导致该消息丢失。
 
 **Run() 循环中的特殊标记检测逻辑**：
 
 ```go
 func (a *Agent) Run(ctx context.Context, input string) error {
-    for {
+    // 处理 input（首次用户消息或空字符串）
+    if input != "" {
+        a.session.Add(provider.Message{Role: provider.RoleUser, Content: input})
+    }
+
+    for step := 0; ; step++ {
         select {
         case <-ctx.Done():
             return ctx.Err()
         default:
         }
 
-        userInput := a.drainSteer()
-
-        // 检查 pendingToolResult 标记，跳过 session 写入
+        // 1. 先检查是否有待处理的 tool result（auto-reentry）
         if a.ctrl.pendingToolResult.CompareAndSwap(true, false) {
-            a.drainNotify()  // 消费子代理 result
-            a.stream(ctx)    // 继续对话
+            consumed := a.drainNotify()  // 返回是否消费到 result
+            if consumed {
+                a.stream(ctx)
+            }
+            // 若未消费到 result（多个 job 同时完成的冗余触发），跳过 stream
             continue
         }
+
+        // 2. 正常 drain 用户输入
+        userInput := a.drainSteer()
 
         if userInput != "" {
             a.session.Add(session.UserMessage(userInput))
@@ -376,7 +410,7 @@ func (a *Agent) Run(ctx context.Context, input string) error {
 
 ### 6.3 Run() 循环改造要点
 
-1. **pendingToolResult 原子标记检测**：`Run()` 循环在 `drainSteer()` 之后通过 `a.ctrl.pendingToolResult.CompareAndSwap(true, false)` 原子地检测并重置标记。若返回 true，跳过 `session.Add(userMessage)`，直接进入 `drainNotify()` + `stream()`。
+1. **pendingToolResult 原子标记检测**：`Run()` 循环在 `drainSteer()` 之前通过 `a.ctrl.pendingToolResult.CompareAndSwap(true, false)` 原子地检测并重置标记。若返回 true，跳过 `drainSteer()` 和 `session.Add(userMessage)`，直接进入 `drainNotify()` + `stream()`。
 2. **drainNotify 位置**：在现有 `Run(ctx, input)` 循环的每次 `stream()` 前增加 `drainNotify()` 调用点，无论是普通用户消息路径还是 autoReenter 触发路径。
 3. **autoReenter 不再直接调用 drainNotify**：改为设置 `pendingToolResult` 标记并发送空字符串触发 turn，由 `Run()` 循环统一处理，避免并发写 session 的问题。
 4. **兼容性**：保留现有 `Runner` 接口签名 `Run(ctx context.Context, input string) error`，不改为无限循环。`autoReenter` 通过原有的 `Send("")` 机制触发 turn，与 `runGuarded` 流程兼容。
