@@ -622,6 +622,9 @@ func New(prov provider.Provider, tools *tool.Registry, session *Session, opts Op
 	if nilutil.IsNil(sink) {
 		sink = event.Discard
 	}
+	if tools == nil {
+		tools = tool.NewRegistry()
+	}
 	gate := opts.Gate
 	if nilutil.IsNil(gate) {
 		gate = nil
@@ -1021,6 +1024,9 @@ func streamRecoveryMessage(hasPartialText, hadPartialTool bool) string {
 // accumulated text and reasoning are also returned so the caller can round-trip
 // reasoning on the next turn.
 func (a *Agent) stream(ctx context.Context, turn int) (string, string, string, []provider.ToolCall, *provider.Usage, bool, bool, error) {
+	if a.prov == nil {
+		return "", "", "", nil, nil, false, false, fmt.Errorf("agent: no provider configured")
+	}
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
@@ -1163,6 +1169,9 @@ func (a *Agent) systemPrompt() string {
 }
 
 func (a *Agent) getSchemasForContext(ctx context.Context) []provider.ToolSchema {
+	if a.tools == nil {
+		return nil
+	}
 	schemas := a.tools.Schemas()
 	if allow := a.mainAgentAllowed; allow != nil && NestingDepthFrom(ctx) == 0 {
 		filtered := make([]provider.ToolSchema, 0, len(schemas))

@@ -102,16 +102,60 @@ func TestSubagentCompletionNoticeAndAutoReentry(t *testing.T) {
 		}
 	}
 
-	if !ctrl.PendingToolResultCAS(true, false) {
-		t.Fatal("pendingToolResult not set after job completion")
-	}
+if !ctrl.PendingToolResultCAS(true, false) {
+	t.Fatal("pendingToolResult not set after job completion")
+}
 
-	// autoReenter should have been invoked via SetOnCompletion; drain runner input.
-	time.Sleep(50 * time.Millisecond)
-	runner.mu.Lock()
-	n := len(runner.inputs)
-	runner.mu.Unlock()
-	if n == 0 {
-		t.Fatal("autoReenter did not schedule a turn via Send")
+// autoReenter should have been invoked via SetOnCompletion; drain runner input.
+time.Sleep(50 * time.Millisecond)
+runner.mu.Lock()
+n := len(runner.inputs)
+runner.mu.Unlock()
+if n == 0 {
+	t.Fatal("autoReenter did not schedule a turn via Send")
+}
+}
+
+// TestSubagentCompletionChainNoPanic exercises the full auto-reentry chain:
+// job completion -> pendingToolResult -> Agent.Run drains job result without panic.
+// Regression for nil-pointer panic in getSchemasForContext when tools is unset.
+func TestSubagentCompletionChainNoPanic(t *testing.T) {
+	sink := event.Discard
+	jm := jobs.NewManager(sink)
+	defer jm.Close()
+
+	sess := agent.NewSession("test")
+	ag := agent.New(nil, nil, sess, agent.Options{Jobs: jm}, sink)
+
+	ctrl := New(Options{
+		Executor:   ag,
+		Sink:       sink,
+		SessionDir: t.TempDir(),
+		Label:      "test",
+		Jobs:       jm,
+	})
+	ag.SetControllerBridge(ctrl)
+
+	job, err := jm.Start(context.Background(), "task", "e2e", func(ctx context.Context, _ io.Writer) (string, error) {
+		jobs.PostMessage(ctx, "mid-flight report")
+		return "sub-result", nil
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctrl.RegisterJobMeta(job.ID, "tool-call-1")
+	waitJobDone(t, jm, job.ID)
+
+	ctrl.pendingToolResult.Store(true)
+
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("panic during auto-reentry Run: %v", r)
+		}
+	}()
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := ag.Run(ctx, ""); err == nil {
+		t.Fatal("expected Run to fail with nil provider, got nil error")
 	}
 }
