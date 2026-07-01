@@ -59,7 +59,15 @@ import { HeartbeatPanel } from "./custom/features/heartbeat/HeartbeatPanel";
 import "./custom/features/heartbeat/heartbeat.css";
 import { CopyButton } from "./components/CopyButton";
 import { parseTodos } from "./lib/tools";
-import { shouldShowTodoPanel, todoDismissalKey } from "./lib/todoVisibility";
+import {
+  dismissedTodoKeyForScope,
+  scopedTodoBatchKey,
+  scopedTodoDismissalKey,
+  shouldShowTodoPanel,
+  todoBatchKey,
+  todoDismissalKey,
+  todoPanelScope,
+} from "./lib/todoVisibility";
 import {
   type BotConnectionView,
   type BotRuntimeStatusView,
@@ -182,6 +190,8 @@ function normalizeDesktopLayoutStyle(style: string | undefined): DesktopLayoutSt
   return "classic";
 }
 const SHOW_CONTEXT_DOCK = true;
+const DISMISSED_TODO_STORAGE_KEY = "todoPanel:dismissedKeys";
+const MAX_DISMISSED_TODO_KEYS = 160;
 type HistoryScopeFilter = { scope: "global" | "project"; workspaceRoot: string };
 type WorkspaceInsertTarget = "composer" | "planRevision";
 type DesktopPlatform = "darwin" | "windows" | "linux";
@@ -230,6 +240,29 @@ type SidebarImConnectionDetailProps = {
   onOpenSettings: () => void;
   onManageAllowlist: () => void;
 };
+
+function loadDismissedTodoKeys(): Set<string> {
+  try {
+    const saved = window.localStorage.getItem(DISMISSED_TODO_STORAGE_KEY);
+    if (!saved) return new Set();
+    const parsed = JSON.parse(saved) as unknown;
+    if (!Array.isArray(parsed)) return new Set();
+    return new Set(parsed.filter((value): value is string => typeof value === "string" && value.length > 0));
+  } catch {
+    return new Set();
+  }
+}
+
+function saveDismissedTodoKeys(keys: ReadonlySet<string>): void {
+  try {
+    window.localStorage.setItem(
+      DISMISSED_TODO_STORAGE_KEY,
+      JSON.stringify(Array.from(keys).slice(-MAX_DISMISSED_TODO_KEYS)),
+    );
+  } catch {
+    /* ignore quota errors */
+  }
+}
 
 function isSidebarImConnection(connection: BotConnectionView): boolean {
   return connection.provider === "feishu" || connection.provider === "weixin";
@@ -1395,7 +1428,11 @@ export default function App() {
   // a stale local dismissal cannot hide work that still blocks final readiness;
   // completed lists collapse automatically and can then be dismissed. The
   // dismissal key is still based on stable todo content/state so history reloads
-  // do not resurrect the same finished list under a different event id.
+  // do not resurrect the same finished list under a different event id. The
+  // batch key ignores status changes so progress within the same task list does
+  // not look like a brand-new task batch. Dismissal and open state are scoped to
+  // the active session/topic/tab so different projects and sessions do not hide
+  // or reopen each other's todo panels.
   const todoEntry = useMemo(() => {
     for (let i = state.items.length - 1; i >= 0; i--) {
       const it = state.items[i];
@@ -1407,9 +1444,30 @@ export default function App() {
   }, [state.items]);
   const todoItem = todoEntry?.item ?? null;
   const todos = useMemo(() => (todoItem ? parseTodos(todoItem.args) : []), [todoItem]);
-  const [dismissedTodo, setDismissedTodo] = useState<string | null>(null);
+  const [dismissedTodoKeys, setDismissedTodoKeys] = useState<Set<string>>(loadDismissedTodoKeys);
   const todoKey = useMemo(() => todoDismissalKey(todos), [todos]);
+  const todoBatch = useMemo(() => todoBatchKey(todos), [todos]);
+  const todoScope = useMemo(
+    () => todoPanelScope({ activeTab, activeTabId, eventChannel: state.meta?.eventChannel }),
+    [activeTab, activeTabId, state.meta?.eventChannel],
+  );
+  const dismissedTodo = useMemo(
+    () => dismissedTodoKeyForScope(todoScope, dismissedTodoKeys, todoKey),
+    [dismissedTodoKeys, todoKey, todoScope],
+  );
+  const scopedTodoKey = useMemo(() => scopedTodoDismissalKey(todoScope, todoKey), [todoKey, todoScope]);
+  const scopedTodoBatch = useMemo(() => scopedTodoBatchKey(todoScope, todoBatch), [todoBatch, todoScope]);
   const showTodos = shouldShowTodoPanel(todoKey, dismissedTodo, todos);
+  const dismissTodos = useCallback(() => {
+    if (!scopedTodoKey) return;
+    setDismissedTodoKeys((current) => {
+      if (current.has(scopedTodoKey)) return current;
+      const next = new Set(current);
+      next.add(scopedTodoKey);
+      saveDismissedTodoKeys(next);
+      return next;
+    });
+  }, [scopedTodoKey]);
 
   const sessionTitle = topicTitle(activeTab);
   const sessionHasContent = state.items.length > 0 || Boolean(state.live?.text || state.live?.reasoning);
@@ -3280,7 +3338,14 @@ export default function App() {
 
           {!sidebarImDetailConnection && (
           <footer className="footer" ref={footerRef}>
-            {showTodos && <TodoPanel todos={todos} onDismiss={() => setDismissedTodo(todoKey)} />}
+            {showTodos && (
+              <TodoPanel
+                key={scopedTodoBatch}
+                stateKey={scopedTodoBatch}
+                todos={todos}
+                onDismiss={dismissTodos}
+              />
+            )}
             {rewindState && (
               <UndoRewindBanner
                 meta={{
