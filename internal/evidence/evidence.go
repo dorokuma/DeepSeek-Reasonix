@@ -359,10 +359,11 @@ func (l *Ledger) LatestSuccessfulWriteIndex(paths []string) (int, bool) {
 	return latest, latest >= 0
 }
 
-// HasSuccessfulReadAfter reports whether any wanted path was read after the
-// given receipt index. It lets anchor-based edit tools require a fresh file view
-// after a same-turn write changed the text their anchors would match.
-func (l *Ledger) HasSuccessfulReadAfter(paths []string, after int) bool {
+// HasSuccessfulAnchorRefreshReadAfter reports whether read_file refreshed a
+// wanted path after the given receipt index. Windowed reads and grep/ls receipts
+// are deliberately not enough for same-turn anchor edits: they may have observed
+// a different region than the next old_string/delete_range anchor.
+func (l *Ledger) HasSuccessfulAnchorRefreshReadAfter(paths []string, after int) bool {
 	wanted := pathSet(normalizePaths(paths))
 	if l == nil || len(wanted) == 0 {
 		return false
@@ -376,7 +377,7 @@ func (l *Ledger) HasSuccessfulReadAfter(paths []string, after int) bool {
 	defer l.mu.Unlock()
 	for i := start; i < len(l.receipts); i++ {
 		r := l.receipts[i]
-		if !r.Success || !r.Read {
+		if !r.Success || !anchorRefreshRead(r) {
 			continue
 		}
 		for _, p := range r.Paths {
@@ -386,6 +387,23 @@ func (l *Ledger) HasSuccessfulReadAfter(paths []string, after int) bool {
 		}
 	}
 	return false
+}
+
+func anchorRefreshRead(r Receipt) bool {
+	if r.ToolName != "read_file" || !r.Read {
+		return false
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(r.Args, &fields); err != nil {
+		return false
+	}
+	if limit, ok := intField(fields, "limit"); ok && limit > 0 {
+		return false
+	}
+	if offset, ok := intField(fields, "offset"); ok && offset > 0 {
+		return false
+	}
+	return true
 }
 
 func (l *Ledger) LatestSuccessfulWriterIndex() (int, bool) {

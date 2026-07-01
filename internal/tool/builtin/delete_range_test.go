@@ -203,6 +203,33 @@ func TestDeleteRangeRejectsClosingBraceWithoutOpening(t *testing.T) {
 	}
 }
 
+func TestDeleteRangeAllowsPartialBraceDeletionInPlainText(t *testing.T) {
+	f := filepath.Join(t.TempDir(), "notes.md")
+	body := strings.Join([]string{
+		"intro",
+		"example {",
+		"  remove this prose line",
+		"}",
+		"end",
+		"",
+	}, "\n")
+	os.WriteFile(f, []byte(body), 0o644)
+
+	runTool(t, deleteRange{}, map[string]any{
+		"path": f, "start_anchor": "example {", "end_anchor": "  remove this prose line",
+	})
+	got, _ := os.ReadFile(f)
+	want := strings.Join([]string{
+		"intro",
+		"}",
+		"end",
+		"",
+	}, "\n")
+	if string(got) != want {
+		t.Errorf("file = %q, want %q", got, want)
+	}
+}
+
 func TestDeleteRangeDuplicateAnchorReportsLines(t *testing.T) {
 	f := filepath.Join(t.TempDir(), "dup-separator.js")
 	body := strings.Join([]string{

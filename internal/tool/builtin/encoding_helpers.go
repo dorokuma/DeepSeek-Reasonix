@@ -350,7 +350,7 @@ func oldStringMatchLineSummary(oldString, content string, limit int) string {
 		if i > 0 {
 			b.WriteString(", ")
 		}
-		b.WriteString(fmt.Sprint(line))
+		fmt.Fprint(&b, line)
 	}
 	return b.String()
 }

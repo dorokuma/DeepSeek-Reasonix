@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"strings"
 
 	"reasonix/internal/diff"
@@ -123,7 +124,7 @@ func (d deleteRange) preview(args json.RawMessage) (diff.Change, error) {
 	if err != nil {
 		return diff.Change{}, err
 	}
-	if deletesLines {
+	if deletesLines && shouldValidateBraceCompleteDeletion(p.Path) {
 		if err := validateBraceCompleteDeletion(lines, deleteStart, deleteEnd, p.Path); err != nil {
 			return diff.Change{}, err
 		}
@@ -180,6 +181,19 @@ func deletionLineInterval(startLine, endLine int, inclusive bool, path string) (
 		return start, end, false, nil
 	}
 	return start, end, true, nil
+}
+
+func shouldValidateBraceCompleteDeletion(path string) bool {
+	switch strings.ToLower(filepath.Ext(path)) {
+	case ".c", ".cc", ".cjs", ".cpp", ".cs", ".css", ".cxx",
+		".go", ".h", ".hh", ".hpp", ".htm", ".html",
+		".java", ".js", ".json", ".jsonc", ".jsx", ".kt", ".kts",
+		".less", ".mjs", ".php", ".rs", ".sass", ".scss", ".svelte",
+		".swift", ".ts", ".tsx", ".vue":
+		return true
+	default:
+		return false
+	}
 }
 
 func validateBraceCompleteDeletion(lines []string, deleteStart, deleteEnd int, path string) error {
@@ -299,7 +313,7 @@ func lineMatchSummary(lines []string, target string, limit int) string {
 		if i > 0 {
 			b.WriteString(", ")
 		}
-		b.WriteString(fmt.Sprint(line))
+		fmt.Fprint(&b, line)
 	}
 	b.WriteString(")")
 	return b.String()
