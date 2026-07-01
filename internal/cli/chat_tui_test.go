@@ -1519,3 +1519,41 @@ func TestTurnDoneClearsStaleApprovalBanner(t *testing.T) {
 		t.Fatal("TurnDone should clear pendingApproval")
 	}
 }
+
+// TestJobFinishNoticeDuringRunningNoPanic reproduces the user report: a background
+// task completion Notice arrives while the TUI is in tuiRunning (streaming).
+func TestJobFinishNoticeDuringRunningNoPanic(t *testing.T) {
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("panic ingesting job-finish notice during running turn: %v", r)
+		}
+	}()
+	m := newTestChatTUI()
+	m.state = tuiRunning
+	m.width = 80
+	m.ingestEvent(event.Event{Kind: event.Notice, Level: event.LevelInfo, Text: "background task started: task-1 (explore)"})
+	m.ingestEvent(event.Event{Kind: event.Notice, Level: event.LevelInfo, Text: "· sub-agent message: done"})
+	m.ingestEvent(event.Event{Kind: event.Notice, Level: event.LevelInfo, Text: "background task finished: task-1"})
+	m.ingestEvent(event.Event{Kind: event.TurnDone})
+	if m.state != tuiIdle {
+		t.Fatalf("state = %v, want idle after TurnDone", m.state)
+	}
+}
+
+// TestEscDuringJobFinishNoticeNoPanic covers Esc coinciding with completion notice.
+func TestEscDuringJobFinishNoticeNoPanic(t *testing.T) {
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("panic on Esc during job finish: %v", r)
+		}
+	}()
+	r := &blockingTurnRunner{started: make(chan struct{})}
+	ctrl := control.New(control.Options{Runner: r, Sink: event.Discard, SessionDir: t.TempDir(), Label: "test"})
+	ctrl.Send("hi")
+	<-r.started
+	m := newTestChatTUI()
+	m.ctrl = ctrl
+	m.state = tuiRunning
+	m.ingestEvent(event.Event{Kind: event.Notice, Level: event.LevelInfo, Text: "background task finished: task-1"})
+	_, _ = m.update(tea.KeyPressMsg{Code: tea.KeyEscape})
+}
