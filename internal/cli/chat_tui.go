@@ -1191,6 +1191,15 @@ func (m chatTUI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case agentEventMsg:
 		e := event.Event(msg)
+		// Controller-initiated auto-reentry (background task done) does not pass
+		// through startTurn; enter tuiRunning when TurnStarted arrives while idle.
+		if e.Kind == event.TurnStarted && m.state != tuiRunning && !m.turnDiscarded {
+			m.state = tuiRunning
+			m.runStart = time.Now()
+			m.elapsed = 0
+			m.turnTokens = 0
+			cmds = append(cmds, m.spinner.Tick, elapsedTick())
+		}
 		m.ingestEvent(e)
 		turnDone := e.Kind == event.TurnDone
 		gitMaybeChanged := e.Kind == event.ToolResult && !e.Tool.ReadOnly

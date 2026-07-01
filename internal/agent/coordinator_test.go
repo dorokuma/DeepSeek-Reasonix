@@ -113,6 +113,25 @@ func TestCoordinatorSkipsPlannerForTrivialTurn(t *testing.T) {
 	}
 }
 
+// TestCoordinatorAutoReentryBypassesPlanner verifies background-task completion
+// routes auto-reentry to the executor so drainNotify can fold results into session.
+func TestCoordinatorAutoReentryBypassesPlanner(t *testing.T) {
+	planner := &mockProvider{name: "planner", chunks: []provider.Chunk{{Type: provider.ChunkText, Text: "plan"}, {Type: provider.ChunkDone}}}
+	exec := &mockProvider{name: "executor", chunks: []provider.Chunk{{Type: provider.ChunkText, Text: "ok"}, {Type: provider.ChunkDone}}}
+	executor := New(exec, tool.NewRegistry(), NewSession("exec-sys"), Options{}, event.Discard)
+	bridge := newSubControllerBridge()
+	bridge.SetPendingToolResult(true)
+	executor.SetControllerBridge(bridge)
+	coord := NewCoordinator(planner, NewSession("planner-sys"), nil, nil, Options{}, executor, 0, event.Discard, nil)
+
+	if err := coord.Run(context.Background(), ""); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(planner.requests) != 0 {
+		t.Fatalf("planner should not run on pending-tool auto-reentry, got %d requests", len(planner.requests))
+	}
+}
+
 type coordinatorTestTool struct {
 	name     string
 	readOnly bool
