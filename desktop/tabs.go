@@ -2776,6 +2776,7 @@ func topicTitleFromText(text string) string {
 const desktopProjectsFile = "desktop-projects.json"
 const tabsFileName = "desktop-tabs.json"
 const desktopGlobalOrderToken = "__global__"
+const legacyProjectSidebarRecoveryMarker = "desktop-projects-legacy-recovered"
 
 type desktopProject struct {
 	Root         string   `json:"root"`
@@ -2987,6 +2988,62 @@ func desktopMCPMigrationRoots(tabs desktopTabsFile) []string {
 		add(project.Root)
 	}
 	return roots
+}
+
+func recoverLegacyProjectSidebarRoots(tabs desktopTabsFile) (bool, error) {
+	markerPath := filepath.Join(desktopConfigDir(), legacyProjectSidebarRecoveryMarker)
+	if _, err := os.Stat(markerPath); err == nil {
+		return false, nil
+	}
+
+	f := loadProjectsFile()
+	seen := map[string]bool{}
+	for _, project := range f.Projects {
+		root := normalizeProjectRoot(project.Root)
+		if root != "" {
+			seen[root] = true
+		}
+	}
+
+	changed := false
+	add := func(root string) {
+		root = normalizeProjectRoot(root)
+		if root == "" || seen[root] || !existingDirectory(root) {
+			return
+		}
+		seen[root] = true
+		f.Projects = append(f.Projects, desktopProject{Root: root})
+		changed = true
+	}
+	if cur := loadWorkspace(); cur != "" {
+		add(cur)
+	}
+	for _, root := range loadWorkspaces() {
+		add(root)
+	}
+	for _, entry := range tabs.Tabs {
+		if entry.Scope == "project" {
+			add(entry.WorkspaceRoot)
+		}
+	}
+	if changed {
+		if err := saveProjectsFile(f); err != nil {
+			return false, err
+		}
+	}
+	return changed, writeLegacyProjectSidebarRecoveryMarker(markerPath)
+}
+
+func existingDirectory(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.IsDir()
+}
+
+func writeLegacyProjectSidebarRecoveryMarker(path string) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(path, []byte("ok\n"), 0o644)
 }
 
 func loadProjectsFile() desktopProjectFile {

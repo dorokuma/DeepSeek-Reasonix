@@ -525,6 +525,7 @@ func (a *App) restoreOrBuildTabs() {
 	// picked up by Load instead of falling back to built-in defaults.
 	_, _ = config.MigrateLegacyIfNeeded()
 	f := loadTabsFile()
+	_, _ = recoverLegacyProjectSidebarRoots(f)
 	_, _ = config.ResetOfficialProviderPricingOnUpgrade(config.UserConfigPath())
 	_, _ = config.MigrateMCPToUserConfigOnUpgrade(desktopMCPMigrationRoots(f))
 
