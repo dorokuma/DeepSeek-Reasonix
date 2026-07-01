@@ -65,8 +65,6 @@ type TaskTool struct {
 	archiveDir        string
 	sysPrompt         string
 	gate              Gate
-	subagentModel     string
-	subagentEffort    string
 	resolveProvider   func(modelRef, effort string) (provider.Provider, *provider.Pricing, int, error)
 	hooks ToolHooks
 }
@@ -80,7 +78,7 @@ type TaskTool struct {
 // runner; the task tool derives a sub-agent copy from it.
 func NewTaskTool(prov provider.Provider, pricing *provider.Pricing, parentReg *tool.Registry,
 	contextWindow int, softCompactRatio, compactRatio, compactForceRatio, temperature float64, archiveDir, sysPrompt string, gate Gate,
-	subagentModel, subagentEffort string, resolveProvider func(string, string) (provider.Provider, *provider.Pricing, int, error),
+	resolveProvider func(string, string) (provider.Provider, *provider.Pricing, int, error),
 	hooks ToolHooks) *TaskTool {
 	if sysPrompt == "" {
 		sysPrompt = DefaultTaskSystemPrompt
@@ -97,8 +95,6 @@ func NewTaskTool(prov provider.Provider, pricing *provider.Pricing, parentReg *t
 		archiveDir:        archiveDir,
 		sysPrompt:         sysPrompt,
 		gate:              gate,
-		subagentModel:     subagentModel,
-		subagentEffort:    subagentEffort,
 		resolveProvider:   resolveProvider,
 		hooks:             hooks,
 	}
@@ -116,9 +112,7 @@ func (t *TaskTool) Schema() json.RawMessage {
 "properties":{
   "prompt":{"type":"string","description":"What the sub-agent should accomplish. Be specific about the deliverable — the sub-agent does not see this conversation."},
   "description":{"type":"string","description":"Short label for the sub-task (3-7 words). Surfaced in the dispatch line so the user sees what's running."},
-  "run_in_background":{"type":"boolean","description":"Run the sub-agent asynchronously: returns a job id immediately and keeps working across turns. Collect its final answer with wait, and you'll be notified when it finishes. Use for long, independent sub-tasks you don't need to block on right now."},
-  "model":{"type":"string","description":"Optional model override for the sub-agent (a configured provider/model name)."},
-  "effort":{"type":"string","description":"Optional reasoning effort for the sub-agent (e.g. high, max)."}
+  "run_in_background":{"type":"boolean","description":"Run the sub-agent asynchronously: returns a job id immediately and keeps working across turns. Collect its final answer with wait, and you'll be notified when it finishes. Use for long, independent sub-tasks you don't need to block on right now."}
 },
 "required":["prompt"]
 }`)
@@ -128,34 +122,6 @@ func (t *TaskTool) Schema() json.RawMessage {
 // writers. Conservative classification keeps the parallel-dispatch path from
 // running two sub-agents at once and letting their writes race.
 func (t *TaskTool) ReadOnly() bool { return false }
-
-// ResolveProfile extracts model/effort from task args and applies config defaults.
-func (t *TaskTool) ResolveProfile(args json.RawMessage) *event.Profile {
-	var p struct {
-		Model  string `json:"model"`
-		Effort string `json:"effort"`
-	}
-	if err := json.Unmarshal(args, &p); err != nil {
-		return nil
-	}
-	model, effort := t.effectiveProfile(p.Model, p.Effort)
-	if model == "" && effort == "" {
-		return nil
-	}
-	return &event.Profile{Model: model, Effort: effort}
-}
-
-func (t *TaskTool) effectiveProfile(model, effort string) (string, string) {
-	model = strings.TrimSpace(model)
-	effort = strings.TrimSpace(effort)
-	if model == "" {
-		model = strings.TrimSpace(t.subagentModel)
-	}
-	if effort == "" {
-		effort = strings.TrimSpace(t.subagentEffort)
-	}
-	return model, effort
-}
 
 func (t *TaskTool) Execute(ctx context.Context, args json.RawMessage) (string, error) {
 	// Depth guard: enforce nesting limit from Agent Options.
@@ -173,8 +139,6 @@ func (t *TaskTool) Execute(ctx context.Context, args json.RawMessage) (string, e
 		Prompt          string   `json:"prompt"`
 		Description     string   `json:"description"`
 		RunInBackground bool     `json:"run_in_background"`
-		Model           string   `json:"model"`
-		Effort          string   `json:"effort"`
 	}
 	if err := json.Unmarshal(args, &p); err != nil {
 		return "", fmt.Errorf("invalid args: %w", err)
@@ -191,7 +155,6 @@ func (t *TaskTool) Execute(ctx context.Context, args json.RawMessage) (string, e
 	// keep the default behaviour which excludes them.
 	allowMeta := depth+1 < maxDepth
 	subReg := t.buildSubReg(nil, allowMeta)
-	modelRef, effortRef := t.effectiveProfile(p.Model, p.Effort)
 
 	// Background: register a job that runs the sub-agent under the manager's
 	// session context (so it survives this turn) and return immediately. The
@@ -233,7 +196,7 @@ func (t *TaskTool) Execute(ctx context.Context, args json.RawMessage) (string, e
 			if opts := OptionsFromContext(ctx); opts != nil {
 				bgCtx = WithOptions(bgCtx, opts)
 			}
-			return t.runSub(bgCtx, p.Prompt, subReg, nested, maxSteps, modelRef, effortRef)
+			return t.runSub(bgCtx, p.Prompt, subReg, nested, maxSteps)
 		})
 		if err != nil {
 			return "", err
@@ -247,7 +210,7 @@ func (t *TaskTool) Execute(ctx context.Context, args json.RawMessage) (string, e
 	if opts := OptionsFromContext(ctx); opts != nil {
 		subCtx = WithOptions(subCtx, opts)
 	}
-	return t.runSub(subCtx, p.Prompt, subReg, subSink(ctx), maxSteps, modelRef, effortRef)
+	return t.runSub(subCtx, p.Prompt, subReg, subSink(ctx), maxSteps)
 }
 
 // buildSubReg returns the sub-agent's tool set: the named whitelist (minus
@@ -329,15 +292,15 @@ func FilterReadOnlyRegistry(parent *tool.Registry, exclude ...string) *tool.Regi
 
 // runSub builds a sub-agent over subReg, runs prompt to completion emitting to
 // sink, and returns its final assistant answer. Shared by the foreground and
-// background paths. modelRef and effort override the parent defaults when non-empty.
-func (t *TaskTool) runSub(ctx context.Context, prompt string, subReg *tool.Registry, sink event.Sink, maxSteps int, modelRef, effort string) (string, error) {
+// background paths. effort overrides the parent default when non-empty.
+func (t *TaskTool) runSub(ctx context.Context, prompt string, subReg *tool.Registry, sink event.Sink, maxSteps int) (string, error) {
 	prov, pricing, ctxWin := t.prov, t.pricing, t.contextWindow
-	if t.resolveProvider != nil && (modelRef != "" || effort != "") {
-		p, pr, cw, err := t.resolveProvider(modelRef, effort)
-		if err != nil {
-			return "", fmt.Errorf("sub-agent profile: %w", err)
+	if t.resolveProvider != nil {
+		if p, pr, cw, err := t.resolveProvider("", "max"); err == nil {
+			prov, pricing, ctxWin = p, pr, cw
 		}
-		prov, pricing, ctxWin = p, pr, cw
+		// On error, keep using parent provider (t.prov) — gracefully degrades
+		// for provider kinds that don't support effort configuration.
 	}
 	var shared *ctxmode.Store
 	if s, ok := ctxmode.FromContext(ctx); ok {

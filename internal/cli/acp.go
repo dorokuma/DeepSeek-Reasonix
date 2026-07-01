@@ -141,12 +141,11 @@ func (f *acpFactory) NewSession(ctx context.Context, p acp.SessionParams) (*cont
 	maxSteps := cfg.Agent.MaxSteps
 	policy := permission.New(cfg.Permissions.Mode, cfg.Permissions.Allow, cfg.Permissions.Ask, cfg.Permissions.Deny)
 	headlessGate := permission.NewGate(policy, nil)
-	taskModel, taskEffort := acpTaskProfileDefaults(cfg)
 	resolveSubagentProvider := newACPSubagentProviderResolver(cfg, entry, proxySpec)
 	reg.Add(agent.NewTaskTool(execProv, entry.Price, reg,
 		entry.ContextWindow, cfg.Agent.SoftCompactRatio, cfg.Agent.CompactRatio, cfg.Agent.CompactForceRatio,
 		cfg.Agent.Temperature, config.ArchiveDir(), "", headlessGate,
-		taskModel, taskEffort, resolveSubagentProvider, nil))
+		resolveSubagentProvider, nil))
 
 	executor := agent.New(execProv, reg, agent.NewSession(sysPrompt), agent.Options{
 		MaxSteps:          maxSteps,
@@ -214,21 +213,6 @@ func acpBuiltinTools(cfg *config.Config, cwd string, writeRoots []string) []tool
 		Search:      builtin.ResolveSearch(cfg.Tools.Search.Engine, cfg.Tools.Search.RgPath, nil),
 	}
 	return ws.Tools(cfg.Tools.Enabled...)
-}
-
-func acpTaskProfileDefaults(cfg *config.Config) (string, string) {
-	if cfg == nil {
-		return "", ""
-	}
-	model := strings.TrimSpace(cfg.Agent.SubagentModels["task"])
-	if model == "" {
-		model = strings.TrimSpace(cfg.Agent.SubagentModel)
-	}
-	effort := strings.TrimSpace(cfg.Agent.SubagentEfforts["task"])
-	if effort == "" {
-		effort = strings.TrimSpace(cfg.Agent.SubagentEffort)
-	}
-	return model, effort
 }
 
 func newACPSubagentProviderResolver(cfg *config.Config, parent *config.ProviderEntry, proxySpec netclient.ProxySpec) func(string, string) (provider.Provider, *provider.Pricing, int, error) {
