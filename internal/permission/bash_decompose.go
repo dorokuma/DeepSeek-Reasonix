@@ -65,9 +65,10 @@ func DecomposeBashCommand(cmd string) []string {
 			continue
 		case parenDepth > 0:
 			buf.WriteByte(c)
-			if c == '(' {
+			switch c {
+			case '(':
 				parenDepth++
-			} else if c == ')' {
+			case ')':
 				parenDepth--
 			}
 			continue
