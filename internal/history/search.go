@@ -251,9 +251,7 @@ func (s *Searcher) Around(ctx context.Context, req AroundRequest) ([]MessageCont
 	}
 	remainingAfter := len(msgs) - req.MessageIndex - 1
 	end := len(msgs)
-	if after >= remainingAfter {
-		end = len(msgs)
-	} else {
+	if after < remainingAfter {
 		end = len(msgs) - (remainingAfter - after)
 	}
 	out := make([]MessageContext, 0, end-start)
