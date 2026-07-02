@@ -327,7 +327,6 @@ export const zh: Record<DictKey, string> = {
   "caps.pluginNoLocalFolder": "尚未选择目录",
   "caps.pluginInstallName": "安装名称（可选）",
   "caps.pluginInstallNamePlaceholder": "安装名称（可选）",
-  "caps.pluginInstallNameHint": "默认使用插件清单里的名称；填写后会以此名称安装或覆盖。",
   "caps.pluginLink": "开发模式：链接源目录",
   "caps.pluginLinkHint": "不复制插件，直接使用所选目录；适合调试插件。移动或删除该目录会导致插件失效。",
   "caps.pluginReplace": "覆盖同名插件",

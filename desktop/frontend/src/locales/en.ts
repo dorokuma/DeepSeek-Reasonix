@@ -326,7 +326,6 @@ export const en = {
   "caps.pluginNoLocalFolder": "No folder selected",
   "caps.pluginInstallName": "Install name (optional)",
   "caps.pluginInstallNamePlaceholder": "install name (optional)",
-  "caps.pluginInstallNameHint": "Defaults to the plugin manifest name; when filled, install or overwrite using this name.",
   "caps.pluginLink": "Developer mode: link source folder",
   "caps.pluginLinkHint": "Do not copy the plugin; use the selected folder directly. Useful for plugin debugging. Moving or deleting the folder breaks the plugin.",
   "caps.pluginReplace": "Overwrite same-name plugin",

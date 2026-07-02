@@ -1797,7 +1797,6 @@ export function PluginsSettingsPage() {
 									value={name}
 									onChange={(e) => setName(e.target.value)}
 								/>
-								<div className="cap-plugin-field-hint">{t("caps.pluginInstallNameHint")}</div>
 							</div>
 						</div>
 					)}

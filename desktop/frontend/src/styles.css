@@ -10299,7 +10299,7 @@ body > .mermaid-diagram--fullscreen {
   align-items: flex-start;
 }
 .cap-plugin-fields {
-  min-height: 68px;
+  min-height: 35px;
 }
 .cap-plugin-folder-field {
   grid-column: 1 / -1;
@@ -10318,11 +10318,6 @@ body > .mermaid-diagram--fullscreen {
 .cap-plugin-field .mem-input,
 .cap-plugin-fields > .mem-input {
   width: 100%;
-}
-.cap-plugin-field-hint {
-  color: var(--fg-faint);
-  font-size: 11px;
-  line-height: 1.35;
 }
 .cap-plugin-path {
   min-height: 34px;
