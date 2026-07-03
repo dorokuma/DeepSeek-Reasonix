@@ -1037,7 +1037,7 @@ export const en = {
   "settings.coldResumePrune.on": "On",
   "settings.coldResumePrune.off": "Off",
   "settings.reasoningLanguage": "Thinking language",
-  "settings.reasoningLanguageHint": "Affects visible reasoning only. Auto follows the conversation language without injecting a language instruction.",
+  "settings.reasoningLanguageHint": "Affects visible reasoning only. Auto anchors clear Chinese prompts; referenced context is ignored.",
   "settings.reasoningLanguage.auto": "Auto",
   "settings.reasoningLanguage.zh": "中文",
   "settings.reasoningLanguage.en": "English",

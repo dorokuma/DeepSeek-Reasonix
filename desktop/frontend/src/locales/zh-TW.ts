@@ -795,7 +795,7 @@ export const zhTW: Record<DictKey, string> = {
   "settings.coldResumePrune.on": "開",
   "settings.coldResumePrune.off": "關",
   "settings.reasoningLanguage": "思考語言",
-  "settings.reasoningLanguageHint": "只影響可見思考過程。自動跟隨對話語言，不額外注入語言指令。",
+  "settings.reasoningLanguageHint": "只影響可見思考過程。自動在原始提問明顯為中文時錨定中文，引用內容不參與判斷。",
   "settings.reasoningLanguage.auto": "自動",
   "settings.reasoningLanguage.zh": "中文",
   "settings.reasoningLanguage.en": "English",

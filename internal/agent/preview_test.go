@@ -80,6 +80,11 @@ func TestStripTransientUserBlocksUnwrapsMemoryCompilerExecution(t *testing.T) {
 				"<active-goal>\nDo X\n</active-goal>\n\nhelp me",
 			want: "help me",
 		},
+		{
+			name: "capability route prefix is stripped",
+			in:   "<capability-route version=\"1\">\nRelevant capabilities:\n- skill:review prefer\n</capability-route>\n\nreview this",
+			want: "review this",
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

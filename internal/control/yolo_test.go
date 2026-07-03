@@ -71,7 +71,7 @@ func TestAutoApproveToolsStillAutoPlansAndRequiresPlanApproval(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("approved plan did not continue into execution")
 	}
-	if got := firstUserMessage(ag.Session().Messages); !strings.HasPrefix(got, PlanModeMarker) {
+	if got := agent.StripTransientUserBlocks(firstUserMessage(ag.Session().Messages)); !strings.HasPrefix(got, PlanModeMarker) {
 		t.Fatalf("first model input = %q, want the auto-plan marker prefixed", got)
 	}
 	if c.PlanMode() {

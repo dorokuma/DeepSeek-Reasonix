@@ -2216,7 +2216,7 @@ func TestApprovedPlanAutoApproveEndsWithExecutionTurn(t *testing.T) {
 	// The plan approval auto-approves writers for the execution turn only. A later
 	// turn does not inherit it, and "继续" carries no special meaning — Compose must
 	// not inject any marker, and the next writer falls back to per-tool approval.
-	if got := c.Compose("继续"); got != "继续" {
+	if got := c.Compose("继续"); StripComposePrefixes(got) != "继续" {
 		t.Fatalf("a paused approved plan must not marker-prefix the next turn, got %q", got)
 	}
 	allow, _, err := gateApprover{c}.Approve(context.Background(), "write_file", "/tmp/a", nil)
@@ -2265,7 +2265,7 @@ func TestApprovedPlanDoesNotAutoApproveNonContinuationTurn(t *testing.T) {
 	if err := c.runTurn(context.Background(), "plan this"); err != nil {
 		t.Fatal(err)
 	}
-	if got := c.Compose("先别继续"); got != "先别继续" {
+	if got := c.Compose("先别继续"); StripComposePrefixes(got) != "先别继续" {
 		t.Fatalf("non-continuation input should not be marker-prefixed, got %q", got)
 	}
 

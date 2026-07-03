@@ -1368,7 +1368,7 @@ func TestAutoPlanCommandPersistsAndUpdatesController(t *testing.T) {
 	input := "实现 GitHub issue #2395：\n- 新增配置项\n- 自动判断复杂任务\n- 补测试和文档"
 	ctrl.Send(input)
 	waitForCLIEvent(t, events, event.TurnDone)
-	if len(runner.inputs) != 1 || !strings.HasPrefix(runner.inputs[0], control.PlanModeMarker) {
+	if len(runner.inputs) != 1 || !strings.HasPrefix(agent.StripTransientUserBlocks(runner.inputs[0]), control.PlanModeMarker) {
 		t.Fatalf("/auto-plan on should affect current controller, inputs=%q", runner.inputs)
 	}
 }
@@ -1417,7 +1417,7 @@ func TestReasoningLanguageCommandPersistsAndUpdatesController(t *testing.T) {
 		t.Fatalf("saved config missing reasoning_language=zh:\n%s", body)
 	}
 	composed := ctrl.Compose("hello")
-	if !strings.HasPrefix(composed, "<reasoning-language>") || !strings.Contains(composed, "Simplified Chinese") {
+	if !strings.HasPrefix(composed, "<reasoning-language>") || !strings.Contains(composed, "简体中文") {
 		t.Fatalf("/reasoning-language zh should affect current controller, got %q", composed)
 	}
 }
