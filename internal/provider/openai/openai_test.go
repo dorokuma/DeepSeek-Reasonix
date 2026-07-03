@@ -545,20 +545,33 @@ func TestNewThinkingConfigParsing(t *testing.T) {
 	}
 }
 
-// TestBuildRequestDeepSeekDisabled covers turning DeepSeek thinking off via
-// effort=disabled, which the factory routes to thinking.type=disabled.
+// TestBuildRequestDeepSeekDisabled covers both user-facing ways to turn
+// DeepSeek thinking off. Either input must route to thinking.type=disabled and
+// drop reasoning_effort.
 func TestBuildRequestDeepSeekDisabled(t *testing.T) {
 	base := provider.Config{Name: "ds", BaseURL: "https://api.deepseek.com", Model: "deepseek-v4", APIKey: "k"}
-	p, err := New(withEffort(base, "disabled"))
-	if err != nil {
-		t.Fatalf("New(effort=disabled): %v", err)
-	}
-	req := p.(*client).buildRequest(provider.Request{})
-	if req.Thinking == nil || req.Thinking.Type != "disabled" {
-		t.Fatalf("Thinking = %+v, want disabled", req.Thinking)
-	}
-	if req.ReasoningEffort != "" {
-		t.Fatalf("disabled DeepSeek must not send reasoning_effort, got %q", req.ReasoningEffort)
+	for _, tc := range []struct {
+		name  string
+		extra map[string]any
+	}{
+		{name: "effort-disabled", extra: map[string]any{"effort": "disabled"}},
+		{name: "thinking-disabled", extra: map[string]any{"thinking": "disabled"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := base
+			cfg.Extra = tc.extra
+			p, err := New(cfg)
+			if err != nil {
+				t.Fatalf("New(%v): %v", tc.extra, err)
+			}
+			req := p.(*client).buildRequest(provider.Request{})
+			if req.Thinking == nil || req.Thinking.Type != "disabled" {
+				t.Fatalf("Thinking = %+v, want disabled", req.Thinking)
+			}
+			if req.ReasoningEffort != "" {
+				t.Fatalf("disabled DeepSeek must not send reasoning_effort, got %q", req.ReasoningEffort)
+			}
+		})
 	}
 }
 

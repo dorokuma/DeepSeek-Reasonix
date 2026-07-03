@@ -88,6 +88,10 @@ func New(cfg provider.Config) (provider.Provider, error) {
 	case protocol == "none":
 		effort = ""
 	case deepseek:
+		if thinkingType == "disabled" {
+			effort = ""
+			break
+		}
 		switch effort {
 		case "", "off": // "off" is a retired level (disabled thinking); fall back to the default depth
 			effort = "high"
