@@ -110,6 +110,7 @@ func (f *blockingSendAdapter) Send(ctx context.Context, msg OutboundMessage) (Se
 type fakeReactionAdapter struct {
 	*fakeAdapter
 	reactions []string
+	cleanups  []string
 }
 
 type gatewayFakeProvider struct{}
@@ -122,11 +123,23 @@ func (gatewayFakeProvider) Stream(context.Context, provider.Request) (<-chan pro
 	return ch, nil
 }
 
-func (f *fakeReactionAdapter) AddPendingReaction(ctx context.Context, messageID string) error {
+func (f *fakeReactionAdapter) AddPendingReaction(ctx context.Context, messageID string) (func(), error) {
+	f.mu.Lock()
+	f.reactions = append(f.reactions, messageID)
+	f.mu.Unlock()
+	return func() {
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		f.cleanups = append(f.cleanups, messageID)
+	}, nil
+}
+
+func (f *fakeReactionAdapter) cleanupMessages() []string {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.reactions = append(f.reactions, messageID)
-	return nil
+	out := make([]string, len(f.cleanups))
+	copy(out, f.cleanups)
+	return out
 }
 
 type queueTestController struct {
@@ -898,6 +911,30 @@ func TestGatewaySearchAllSearchesIndexedProjects(t *testing.T) {
 	}
 }
 
+func TestSearchBotProjectsFallbackStopsAtLimit(t *testing.T) {
+	projectRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(projectRoot, "one.txt"), []byte("first fallback needle\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(projectRoot, "two.txt"), []byte("second fallback needle\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	projects := []botProjectEntry{{
+		ID:   "p1",
+		Name: "project",
+		Root: projectRoot,
+	}}
+
+	results := searchBotProjectsFallback(projects, []string{projectRoot}, "fallback needle", 1)
+
+	if len(results) != 1 {
+		t.Fatalf("fallback results = %d, want 1", len(results))
+	}
+	if results[0].ProjectID != "p1" || !strings.Contains(results[0].Text, "fallback needle") {
+		t.Fatalf("fallback result = %#v, want project hit", results[0])
+	}
+}
+
 func TestGatewayAdminRoleRequiredForProjectIndexCommands(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	gw := NewGateway(GatewayConfig{
@@ -928,7 +965,7 @@ func TestGatewayAdminRoleRequiredForProjectIndexCommands(t *testing.T) {
 func TestGatewayDefaultQueueSteersActiveTurn(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	gw := NewGateway(GatewayConfig{Allowlist: AllowlistConfig{AllowAll: true}}, nil, logger)
-	adapter := newFakeAdapter(PlatformFeishu, "fake-feishu")
+	adapter := &fakeReactionAdapter{fakeAdapter: newFakeAdapter(PlatformFeishu, "fake-feishu")}
 	msg := InboundMessage{
 		Platform:     PlatformFeishu,
 		ConnectionID: "feishu-feishu",
@@ -956,6 +993,9 @@ func TestGatewayDefaultQueueSteersActiveTurn(t *testing.T) {
 	}
 	if pending := gw.sessions.PendingCount(key); pending != 0 {
 		t.Fatalf("pending = %d, want 0", pending)
+	}
+	if cleaned := adapter.cleanupMessages(); len(cleaned) != 1 || cleaned[0] != "m2" {
+		t.Fatalf("cleanup messages = %#v, want [m2]", cleaned)
 	}
 }
 
@@ -1302,6 +1342,47 @@ func TestGatewayAddsPendingReactionWhenAdapterSupportsIt(t *testing.T) {
 
 	if len(fa.reactions) != 1 || fa.reactions[0] != "om_123" {
 		t.Fatalf("reactions = %#v, want [om_123]", fa.reactions)
+	}
+}
+
+func TestGatewayStoresQueuedReactionCleanupBeforeControllerExists(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	gw := NewGateway(GatewayConfig{}, nil, logger)
+	fa := &fakeReactionAdapter{fakeAdapter: newFakeAdapter(PlatformFeishu, "fake-feishu")}
+	first := InboundMessage{
+		Platform:     PlatformFeishu,
+		ConnectionID: "feishu-feishu",
+		Domain:       "feishu",
+		ChatType:     ChatDM,
+		ChatID:       "chat",
+		UserID:       "user",
+		Text:         "first",
+		MessageID:    "om_first",
+	}
+	key := BuildSessionKey(first.Session())
+	if acquired, merged := gw.sessions.TryAcquire(key, first); !acquired || merged {
+		t.Fatalf("first TryAcquire = (%v, %v), want acquired without merge", acquired, merged)
+	}
+
+	queued := first
+	queued.Text = "queued"
+	queued.MessageID = "om_queued"
+	cleanup := gw.addPendingReaction(context.Background(), PlatformFeishu, fa, queued)
+	if acquired, merged := gw.sessions.TryAcquire(key, queued); acquired || !merged {
+		t.Fatalf("queued TryAcquire = (%v, %v), want merged while active", acquired, merged)
+	}
+	gw.storeReactionCleanup(key, cleanup)
+	if _, ok := gw.controllers[key]; ok {
+		t.Fatal("test setup expected no controller state yet")
+	}
+	if cleaned := fa.cleanupMessages(); len(cleaned) != 0 {
+		t.Fatalf("cleanup messages before flush = %#v, want none", cleaned)
+	}
+
+	gw.flushReactionCleanups(key, nil)
+	cleaned := fa.cleanupMessages()
+	if len(cleaned) != 1 || cleaned[0] != "om_queued" {
+		t.Fatalf("cleanup messages = %#v, want [om_queued]", cleaned)
 	}
 }
 

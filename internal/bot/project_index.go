@@ -681,7 +681,6 @@ func searchBotProjectsFallback(projects []botProjectEntry, roots []string, query
 			if err != nil {
 				return nil
 			}
-			defer file.Close()
 			scanner := bufio.NewScanner(file)
 			scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 			line := 0
@@ -698,10 +697,12 @@ func searchBotProjectsFallback(projects []botProjectEntry, roots []string, query
 						Text:        strings.TrimSpace(text),
 					})
 					if len(results) >= limit {
+						_ = file.Close()
 						return errStopBotSearch
 					}
 				}
 			}
+			_ = file.Close()
 			return nil
 		})
 		if len(results) >= limit {

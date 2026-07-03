@@ -263,9 +263,11 @@ mid-turn guidance 注入，而不是等完整回合结束。`queue_cap` 和 `que
 可以在配置里限制排队堆积；`reasonix bot doctor --deep` 会显示当前队列、
 配对和角色诊断信息。
 
-IM 图片或文件附件会下载到当前工作区的 `.reasonix/attachments`，并以
-`@.reasonix/attachments/...` 形式传给 Reasonix。保存失败的附件会在 IM 中
-提示，文本内容仍会继续处理。
+当适配器提供媒体 URL 时，gateway 会把文件下载到当前工作区的
+`.reasonix/attachments`，并以 `@.reasonix/attachments/...` 形式传给
+Reasonix。保存失败的附件会在 IM 中提示，文本内容仍会继续处理。内置
+Feishu、Weixin、QQ 适配器当前仍以文本事件为主，普通 IM 附件抽取可以继续在
+适配器层补齐。
 
 ## 审批与 YOLO
 

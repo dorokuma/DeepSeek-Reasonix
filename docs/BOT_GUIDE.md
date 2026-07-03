@@ -283,10 +283,12 @@ new message is injected as mid-turn guidance instead of waiting for the whole
 turn to finish. `queue_cap` and `queue_drop` bound backlog growth in config.
 `reasonix bot doctor --deep` reports queue, pairing, and role diagnostics.
 
-IM image and file attachments are downloaded into the current workspace's
-`.reasonix/attachments` directory and passed to Reasonix as
-`@.reasonix/attachments/...` references. If an attachment cannot be saved, the
-bot sends a short warning and continues with the available text.
+When an adapter supplies media URLs, the gateway downloads those files into the
+current workspace's `.reasonix/attachments` directory and passes them to
+Reasonix as `@.reasonix/attachments/...` references. If an attachment cannot be
+saved, the bot sends a short warning and continues with the available text. The
+built-in Feishu, Weixin, and QQ adapters currently focus on text events; ordinary
+IM attachment extraction can be added at the adapter layer.
 
 ## Approvals and YOLO
 
