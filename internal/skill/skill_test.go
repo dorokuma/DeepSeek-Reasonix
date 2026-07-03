@@ -771,6 +771,15 @@ func TestApplyIndexTruncates(t *testing.T) {
 	}
 }
 
+func TestIndexLineClipsGraphemeClusters(t *testing.T) {
+	cluster := "👨‍👩‍👧‍👦"
+	got := clipRunes("a"+cluster+"bc", 3)
+	want := "a" + cluster + "…"
+	if got != want {
+		t.Fatalf("clipRunes() = %q, want %q", got, want)
+	}
+}
+
 func TestCreateRefusesOverwrite(t *testing.T) {
 	home := t.TempDir()
 	st := New(Options{HomeDir: home, DisableBuiltins: true})

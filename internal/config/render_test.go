@@ -907,6 +907,33 @@ func TestRenderTOMLRoundTripsProviderHeadersAndModelOverrides(t *testing.T) {
 	}
 }
 
+func TestRenderStringMapQuotesNonBareTOMLKeys(t *testing.T) {
+	rendered := renderStringMap(map[string]string{
+		"github:gh-fix-ci": "deepseek-pro",
+		"review":           "deepseek-flash",
+	})
+	if !strings.Contains(rendered, `"github:gh-fix-ci" = "deepseek-pro"`) {
+		t.Fatalf("non-bare key was not quoted: %s", rendered)
+	}
+	var got struct {
+		M map[string]string `toml:"m"`
+	}
+	if _, err := toml.Decode("m = "+rendered, &got); err != nil {
+		t.Fatalf("rendered inline map does not parse: %v (%s)", err, rendered)
+	}
+	if got.M["github:gh-fix-ci"] != "deepseek-pro" || got.M["review"] != "deepseek-flash" {
+		t.Fatalf("decoded map = %+v", got.M)
+	}
+}
+
+func TestRenderTOMLTablePathQuotesEachSegment(t *testing.T) {
+	got := renderTOMLTablePath("lsp", "servers", "c++", "github:gh-fix-ci")
+	want := `lsp.servers."c++"."github:gh-fix-ci"`
+	if got != want {
+		t.Fatalf("renderTOMLTablePath = %q, want %q", got, want)
+	}
+}
+
 func boolPtr(v bool) *bool { return &v }
 
 func intPtr(v int) *int { return &v }

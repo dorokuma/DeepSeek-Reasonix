@@ -1142,7 +1142,7 @@ func renderLSPConfig(b *strings.Builder, cfg LSPConfig) {
 	sort.Strings(langs)
 	for _, lang := range langs {
 		srv := cfg.Servers[lang]
-		fmt.Fprintf(b, "[lsp.servers.%s]\n", renderTOMLKeyPart(lang))
+		fmt.Fprintf(b, "[%s]\n", renderTOMLTablePath("lsp", "servers", lang))
 		if srv.Command != "" {
 			fmt.Fprintf(b, "command = %q\n", srv.Command)
 		}
@@ -1170,6 +1170,14 @@ func renderTOMLKeyPart(key string) string {
 		return key
 	}
 	return strconv.Quote(key)
+}
+
+func renderTOMLTablePath(parts ...string) string {
+	rendered := make([]string, 0, len(parts))
+	for _, part := range parts {
+		rendered = append(rendered, renderTOMLKeyPart(part))
+	}
+	return strings.Join(rendered, ".")
 }
 
 func isBareTOMLKey(key string) bool {
@@ -1213,7 +1221,7 @@ func renderStringMap(m map[string]string) string {
 		if i > 0 {
 			b.WriteString(", ")
 		}
-		fmt.Fprintf(&b, "%s = %q", k, m[k])
+		fmt.Fprintf(&b, "%s = %q", renderTOMLKeyPart(k), m[k])
 	}
 	b.WriteString(" }")
 	return b.String()
