@@ -304,13 +304,6 @@ func normalizeAutoUse(raw string) AutoUse {
 	}
 }
 
-func atLeast(a, b AutoUse) AutoUse {
-	if rank(a) >= rank(b) {
-		return a
-	}
-	return b
-}
-
 func rank(a AutoUse) int {
 	switch a {
 	case AutoUseRequire:
