@@ -316,7 +316,10 @@ func (p Policy) Decide(toolName string, readOnly bool, args json.RawMessage) Dec
   decision: `auto`, `yolo`, and the approved-plan execution window do not answer
   it, but an explicit session grant still prevents repeat prompts for the same
   tool. Non-interactive sessions and declined approvals remain fail-closed.
-  Writers, installers, memory mutation, process
+  Bash is gated separately: built-in read-only commands and concrete prefixes
+  declared in `[agent].plan_mode_read_only_commands` may run, but shell
+  operators, background execution, shell interpreters, and unsafe arguments stay
+  blocked while planning. Writers, installers, memory mutation, process
   control, and `complete_step` (read-only yet post-approval only, so it
   self-reports plan-unsafe) are refused; the enforced invariant is
   PlanSafe ⇒ ReadOnly. An untrusted read-only MCP/plugin tool is therefore
@@ -523,6 +526,7 @@ memory_compiler = { enabled = true, verbosity = "observe" }   # user/global only
 reasoning_language = "auto"       # visible reasoning text: auto|zh|en
 # plan_mode_allowed_tools = ["custom_reader"]   # extra read-only declarations for custom tools;
 #                                                # cannot unlock known blocked tools or unsafe bash
+# plan_mode_read_only_commands = ["gh issue view", "gh pr diff"]   # extra read-only shell prefixes for plan mode
 # planner_model = "deepseek-pro"   # optional: two-model collaboration (low-frequency planner)
 # subagent_model = "deepseek-pro"   # optional default for runAs=subagent skills
 # subagent_models = { review = "deepseek-pro", security_review = "deepseek-pro" }

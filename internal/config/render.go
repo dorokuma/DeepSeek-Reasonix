@@ -238,6 +238,11 @@ func RenderTOMLForScope(c *Config, scope RenderScope) string {
 	} else {
 		b.WriteString("# plan_mode_allowed_tools = [\"custom_reader\"]   # extra read-only declarations; cannot unlock known blocked tools or unsafe bash\n")
 	}
+	if len(c.Agent.PlanModeReadOnlyCommands) > 0 {
+		fmt.Fprintf(&b, "plan_mode_read_only_commands = %s   # concrete read-only shell prefixes available while planning\n", renderStringArray(c.Agent.PlanModeReadOnlyCommands))
+	} else {
+		b.WriteString("# plan_mode_read_only_commands = [\"gh issue view\", \"gh pr diff\"]   # concrete read-only shell prefixes; does not allow shell operators or shell interpreters\n")
+	}
 	if c.Agent.PlannerModel != "" {
 		fmt.Fprintf(&b, "planner_model = %q   # low-frequency planner (two-model collaboration)\n", c.Agent.PlannerModel)
 	} else {
@@ -727,6 +732,10 @@ func RenderTOMLProjectDelta(c *Config) string {
 	}
 	if len(c.Agent.PlanModeAllowedTools) > 0 && !reflect.DeepEqual(c.Agent.PlanModeAllowedTools, d.Agent.PlanModeAllowedTools) {
 		fmt.Fprintf(&agentBuf, "plan_mode_allowed_tools = %s\n", renderStringArray(c.Agent.PlanModeAllowedTools))
+		anyAgent = true
+	}
+	if len(c.Agent.PlanModeReadOnlyCommands) > 0 && !reflect.DeepEqual(c.Agent.PlanModeReadOnlyCommands, d.Agent.PlanModeReadOnlyCommands) {
+		fmt.Fprintf(&agentBuf, "plan_mode_read_only_commands = %s\n", renderStringArray(c.Agent.PlanModeReadOnlyCommands))
 		anyAgent = true
 	}
 	if c.Agent.PlannerModel != "" && c.Agent.PlannerModel != d.Agent.PlannerModel {

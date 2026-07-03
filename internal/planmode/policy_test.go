@@ -120,6 +120,53 @@ func TestDecideStillValidatesBashArgumentsWhenOverridden(t *testing.T) {
 	}
 }
 
+func TestDecideAllowsDeclaredReadOnlyBashCommandPrefix(t *testing.T) {
+	p := Policy{ReadOnlyCommands: []string{"gh issue view", "internal-report --read"}}
+	args, err := json.Marshal(map[string]any{"command": "gh issue view 4572 --json title,body"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if decision := p.Decide(Call{Name: "bash", Args: args}); decision.Blocked {
+		t.Fatalf("declared read-only command should be allowed in plan mode: %s", decision.Message)
+	}
+
+	args, err = json.Marshal(map[string]any{"command": "internal-report --read service-a"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if decision := p.Decide(Call{Name: "bash", Args: args}); decision.Blocked {
+		t.Fatalf("declared read-only command with flags should be allowed in plan mode: %s", decision.Message)
+	}
+}
+
+func TestDecideDeclaredReadOnlyBashCommandStillBlocksShellSyntax(t *testing.T) {
+	p := Policy{ReadOnlyCommands: []string{"gh issue view"}}
+	args, err := json.Marshal(map[string]any{"command": "gh issue view 4572 && rm -rf /"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if decision := p.Decide(Call{Name: "bash", Args: args}); !decision.Blocked {
+		t.Fatal("declared read-only command must not bypass shell syntax checks")
+	}
+}
+
+func TestDecideDeclaredReadOnlyBashCommandIgnoresShellInterpreters(t *testing.T) {
+	p := Policy{ReadOnlyCommands: []string{"bash"}}
+	args, err := json.Marshal(map[string]any{"command": "bash run-anything"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if decision := p.Decide(Call{Name: "bash", Args: args}); !decision.Blocked {
+		t.Fatal("plan_mode_read_only_commands must not reopen shell interpreters")
+	}
+	if got := p.IgnoredReadOnlyCommands(); len(got) != 1 || got[0] != "bash" {
+		t.Fatalf("IgnoredReadOnlyCommands() = %v, want [bash]", got)
+	}
+}
+
 func TestDecideBlocksQuotedBashWriteArguments(t *testing.T) {
 	tests := []struct {
 		name    string

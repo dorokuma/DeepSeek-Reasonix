@@ -61,6 +61,7 @@ planner_max_steps = 0            # user/global only; planner read-only tool-call
 reasoning_language = "auto"      # visible reasoning text: auto|zh|en
 # plan_mode_allowed_tools = ["custom_reader"]   # extra read-only custom tools only;
 #                                                # does not unlock blocked tools or unsafe bash
+# plan_mode_read_only_commands = ["gh issue view", "gh pr diff"]   # extra read-only shell prefixes for planning
 # planner_model = "deepseek-pro"      # optional low-frequency planner
 # subagent_model = "deepseek-pro"     # optional default for runAs=subagent skills
 # subagent_models = { review = "deepseek-pro", security_review = "deepseek-pro" }
@@ -126,6 +127,14 @@ when you want to pre-seed audited tools; keep `plan_mode_allowed_tools` as the
 compatibility escape valve. It never unlocks known blocked plan-mode tools such
 as `bash`, `task`, writers, installers, or memory mutation tools, and it never
 bypasses bash's plan-mode safety checks.
+
+Use `[agent].plan_mode_read_only_commands` when plan-mode research needs a
+specific shell command that Reasonix cannot classify but you know is read-only,
+such as `gh issue view` or an internal query CLI. Entries are concrete command
+prefixes, not tool names: `["gh issue view"]` permits `gh issue view 4572`, while
+`bash`, `sh`, and other shell interpreters are ignored. Shell operators,
+redirection, command substitution, background execution, and unsafe built-in
+command flags remain blocked while planning.
 
 ### Environment variables
 

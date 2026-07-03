@@ -38,6 +38,8 @@ auto_plan         = "off"   # user-level only; ignored in project reasonix.toml
 memory_compiler = { enabled = true }   # user-level only; Memory v5 execution compiler
 # reasoning_language = "auto"   # visible reasoning text: auto|zh|en
 # auto_plan_classifier = "deepseek-flash"   # optional; only used for borderline tasks
+# plan_mode_allowed_tools = ["custom_reader"]   # extra read-only custom tools; cannot unlock bash/task/run_skill
+# plan_mode_read_only_commands = ["gh issue view", "gh pr diff"]   # extra read-only shell prefixes for plan mode
 soft_compact_ratio  = 0.5   # notice only; keeps the cache-first prefix intact
 tool_result_snip_ratio = 0.6   # snip stale tool results before summary compaction
 compact_ratio       = 0.8   # try compacting when prompt reaches this fraction

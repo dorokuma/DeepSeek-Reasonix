@@ -55,7 +55,8 @@ type Decision struct {
 
 // Policy is the single plan-mode stage policy.
 type Policy struct {
-	AllowedTools []string
+	AllowedTools     []string
+	ReadOnlyCommands []string
 }
 
 var knownBlockedTools = map[string]bool{
@@ -89,6 +90,15 @@ var knownBlockedTools = map[string]bool{
 var alwaysAllowedTools = map[string]bool{
 	"ask":        true,
 	"todo_write": true,
+}
+
+var unsafeDeclaredReadOnlyCommandBases = map[string]bool{
+	"bash":       true,
+	"sh":         true,
+	"zsh":        true,
+	"fish":       true,
+	"powershell": true,
+	"pwsh":       true,
 }
 
 // planSafeReadOnly is the audited set of read-only built-in tools confirmed safe
@@ -141,7 +151,7 @@ var goWriteOrExecArgs = map[string]bool{
 func (p Policy) Decide(call Call) Decision {
 	name := strings.TrimSpace(call.Name)
 	if name == "bash" {
-		return decideBash(call.Args)
+		return decideBash(call.Args, p.ReadOnlyCommands)
 	}
 	if knownBlockedTools[name] {
 		return blockKnown(name)
@@ -191,6 +201,31 @@ func (p Policy) IgnoredAllowedTools() []string {
 		if name == "bash" || knownBlockedTools[name] {
 			out = append(out, name)
 			seen[name] = true
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// IgnoredReadOnlyCommands names configured plan-mode read-only command prefixes
+// that are too broad to honor safely.
+func (p Policy) IgnoredReadOnlyCommands() []string {
+	var out []string
+	seen := map[string]bool{}
+	for _, cmd := range p.ReadOnlyCommands {
+		cmd = strings.TrimSpace(cmd)
+		if cmd == "" || seen[cmd] {
+			continue
+		}
+		fields, err := shellFields(cmd)
+		if err != "" || len(fields) == 0 {
+			out = append(out, cmd)
+			seen[cmd] = true
+			continue
+		}
+		if unsafeDeclaredReadOnlyCommandBases[strings.ToLower(fields[0])] {
+			out = append(out, cmd)
+			seen[cmd] = true
 		}
 	}
 	sort.Strings(out)
@@ -279,7 +314,7 @@ func Classify(name string, readOnly bool, safety PlanSafety) Class {
 	return ClassDefaultBlocked
 }
 
-func decideBash(args json.RawMessage) Decision {
+func decideBash(args json.RawMessage, readOnlyCommands []string) Decision {
 	var p struct {
 		Command                     string `json:"command"`
 		RunInBackground             bool   `json:"run_in_background"`
@@ -314,9 +349,17 @@ func decideBash(args json.RawMessage) Decision {
 
 	base, sub, ok := shellsafe.CommandIsReadOnly(cmd)
 	if !ok {
+		if ok, malformed := declaredReadOnlyCommand(cmd, readOnlyCommands); malformed != "" {
+			return Decision{
+				Blocked: true,
+				Message: fmt.Sprintf("blocked: bash command in plan mode has malformed shell quoting (%s). Use a simple read-only command while planning.", malformed),
+			}
+		} else if ok {
+			return Decision{}
+		}
 		return Decision{
 			Blocked: true,
-			Message: fmt.Sprintf("blocked: bash commands in plan mode must be read-only. %q is not a known read-only command. Use read-only tools for exploration, then exit plan mode to run this command.", cmd),
+			Message: fmt.Sprintf("blocked: bash commands in plan mode must be read-only. %q is not a known read-only command. Use read-only tools for exploration, declare a concrete prefix in plan_mode_read_only_commands, or exit plan mode to run this command.", cmd),
 		}
 	}
 	if arg, malformed := unsafePlanModeArg(cmd, base, sub); malformed != "" {
@@ -331,6 +374,43 @@ func decideBash(args json.RawMessage) Decision {
 		}
 	}
 	return Decision{}
+}
+
+func declaredReadOnlyCommand(cmd string, prefixes []string) (bool, string) {
+	fields, malformed := shellFields(cmd)
+	if malformed != "" {
+		return false, malformed
+	}
+	if len(fields) == 0 {
+		return false, ""
+	}
+	for _, prefix := range prefixes {
+		prefix = strings.TrimSpace(prefix)
+		if prefix == "" {
+			continue
+		}
+		prefixFields, prefixMalformed := shellFields(prefix)
+		if prefixMalformed != "" || len(prefixFields) == 0 {
+			continue
+		}
+		if unsafeDeclaredReadOnlyCommandBases[strings.ToLower(prefixFields[0])] {
+			continue
+		}
+		if len(prefixFields) > len(fields) {
+			continue
+		}
+		matches := true
+		for i, want := range prefixFields {
+			if fields[i] != want {
+				matches = false
+				break
+			}
+		}
+		if matches {
+			return true, ""
+		}
+	}
+	return false, ""
 }
 
 // unsafePlanModeArg applies plan-mode's stricter, quote-aware argument check on

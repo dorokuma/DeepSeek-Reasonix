@@ -152,6 +152,14 @@ func TestPlanModeAllowedToolsOverride(t *testing.T) {
 	}
 }
 
+func TestPlanModeReadOnlyCommandsOverride(t *testing.T) {
+	a := &Agent{planModeReadOnlyCommands: []string{"gh issue view"}}
+	blocked, msg := a.planModeBlocked("bash", false, false, planmode.PlanSafetyUnknown, bashCommandArgs(t, "gh issue view 4572 --json title"))
+	if blocked {
+		t.Fatalf("command in planModeReadOnlyCommands should not be blocked: %s", msg)
+	}
+}
+
 func TestPlanModeGenericWriterBlocked(t *testing.T) {
 	blocked, msg := (&Agent{}).planModeBlocked("some_writer_tool", false, false, planmode.PlanSafetyUnknown, nil)
 	if !blocked {

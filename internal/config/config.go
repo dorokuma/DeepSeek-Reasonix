@@ -910,6 +910,10 @@ type AgentConfig struct {
 	// PlanModeAllowedTools names extra custom tools the plan-mode policy may treat
 	// as read-only. It cannot unlock known blocked tools or unsafe bash commands.
 	PlanModeAllowedTools []string `toml:"plan_mode_allowed_tools"`
+	// PlanModeReadOnlyCommands names concrete shell command prefixes that plan mode
+	// may treat as read-only. Shell operators, background execution, and shell
+	// interpreter prefixes remain blocked.
+	PlanModeReadOnlyCommands []string `toml:"plan_mode_read_only_commands"`
 	// MemoryCompiler controls the v5 execution-memory compiler. Missing configs
 	// default to enabled so users get the self-improving planner unless they opt
 	// out explicitly.

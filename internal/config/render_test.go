@@ -442,6 +442,7 @@ func TestRenderTOMLRoundTrips(t *testing.T) {
 func TestRenderTOMLDocumentsPlanModeAllowedTools(t *testing.T) {
 	cfg := Default()
 	cfg.Agent.PlanModeAllowedTools = []string{"custom_reader"}
+	cfg.Agent.PlanModeReadOnlyCommands = []string{"gh issue view"}
 
 	rendered := RenderTOML(cfg)
 	if !strings.Contains(rendered, `plan_mode_allowed_tools = ["custom_reader"]`) {
@@ -457,6 +458,15 @@ func TestRenderTOMLDocumentsPlanModeAllowedTools(t *testing.T) {
 	}
 	if !reflect.DeepEqual(got.Agent.PlanModeAllowedTools, cfg.Agent.PlanModeAllowedTools) {
 		t.Fatalf("PlanModeAllowedTools round trip = %v, want %v", got.Agent.PlanModeAllowedTools, cfg.Agent.PlanModeAllowedTools)
+	}
+	if !strings.Contains(rendered, `plan_mode_read_only_commands = ["gh issue view"]`) {
+		t.Fatalf("rendered config should preserve plan_mode_read_only_commands:\n%s", rendered)
+	}
+	if !strings.Contains(rendered, "concrete read-only shell prefixes") {
+		t.Fatalf("rendered config should document plan_mode_read_only_commands semantics:\n%s", rendered)
+	}
+	if !reflect.DeepEqual(got.Agent.PlanModeReadOnlyCommands, cfg.Agent.PlanModeReadOnlyCommands) {
+		t.Fatalf("PlanModeReadOnlyCommands round trip = %v, want %v", got.Agent.PlanModeReadOnlyCommands, cfg.Agent.PlanModeReadOnlyCommands)
 	}
 }
 
