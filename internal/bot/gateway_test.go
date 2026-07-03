@@ -178,6 +178,31 @@ func (c *queueTestController) wasCanceled() bool {
 	return c.canceled
 }
 
+type blockingApprovalController struct {
+	botController
+	emit     func(event.Event)
+	emitted  chan struct{}
+	approved chan struct{}
+	done     chan struct{}
+	once     sync.Once
+}
+
+func (c *blockingApprovalController) RunTurn(ctx context.Context, input string) error {
+	c.emit(event.Event{Kind: event.ApprovalRequest, Approval: event.Approval{ID: "appr-1", Tool: "bash", Subject: "sample command"}})
+	close(c.emitted)
+	select {
+	case <-c.approved:
+		close(c.done)
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (c *blockingApprovalController) Approve(id string, allow, session, persist bool) {
+	c.once.Do(func() { close(c.approved) })
+}
+
 func TestFakeAdapterInterface(t *testing.T) {
 	fa := newFakeAdapter(PlatformQQ, "fake-qq")
 
@@ -464,7 +489,7 @@ func TestGatewayNormalizesNumericApprovalShortcutsOnlyWhenPending(t *testing.T) 
 	}
 }
 
-func TestGatewayNormalizesNumericAskShortcutOnlyForSingleChoicePendingAsk(t *testing.T) {
+func TestGatewayNormalizesAskShortcutForPendingAsk(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	gw := NewGateway(GatewayConfig{}, nil, logger)
 	key := "session-key"
@@ -491,8 +516,13 @@ func TestGatewayNormalizesNumericAskShortcutOnlyForSingleChoicePendingAsk(t *tes
 	if !ok || got != "/answer ask-1 2" {
 		t.Fatalf("normalize 2 = %q,%v; want /answer ask-1 2,true", got, ok)
 	}
-	if _, ok := gw.normalizeAskShortcut(key, "1;2"); ok {
-		t.Fatal("compound numeric text should stay a normal message")
+	got, ok = gw.normalizeAskShortcut(key, "1;2")
+	if !ok || got != "/answer ask-1 1;2" {
+		t.Fatalf("normalize 1;2 = %q,%v; want /answer ask-1 1;2,true", got, ok)
+	}
+	got, ok = gw.normalizeAskShortcut(key, "freeform answer")
+	if !ok || got != "/answer ask-1 freeform answer" {
+		t.Fatalf("normalize freeform answer = %q,%v; want /answer ask-1 freeform answer,true", got, ok)
 	}
 
 	gw.controllers[key].pendingAsks["ask-2"] = []event.AskQuestion{
@@ -500,8 +530,12 @@ func TestGatewayNormalizesNumericAskShortcutOnlyForSingleChoicePendingAsk(t *tes
 		{ID: "q2", Prompt: "Second", Options: []event.AskOption{{Label: "B"}}},
 	}
 	gw.controllers[key].lastAskID = "ask-2"
-	if _, ok := gw.normalizeAskShortcut(key, "1"); ok {
-		t.Fatal("numeric shortcut should not answer multi-question asks")
+	got, ok = gw.normalizeAskShortcut(key, "1")
+	if !ok || got != "/answer ask-2 1" {
+		t.Fatalf("normalize 1 on multi-question = %q,%v; want /answer ask-2 1,true", got, ok)
+	}
+	if _, ok := gw.normalizeAskShortcut(key, "/stop"); ok {
+		t.Fatal("slash commands should not be normalized/routed by ask shortcut")
 	}
 }
 
@@ -738,6 +772,61 @@ func TestGatewayUpdateConnectionToolApprovalModeInheritsGatewayDefault(t *testin
 	}
 	if got := otherCtrl.ToolApprovalMode(); got != control.ToolApprovalYolo {
 		t.Fatalf("other connection mode = %q, want unchanged yolo", got)
+	}
+}
+
+func TestGatewayApprovalReplyUnblocksWedgedTurn(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	gw := NewGateway(GatewayConfig{Allowlist: AllowlistConfig{AllowAll: true}}, nil, logger)
+	adapter := newFakeAdapter(PlatformFeishu, "fake-feishu")
+	binding := AdapterBinding{ID: "feishu", Platform: PlatformFeishu, Adapter: adapter}
+	msg := InboundMessage{
+		Platform:     PlatformFeishu,
+		ConnectionID: "feishu",
+		ChatType:     ChatDM,
+		ChatID:       "chat",
+		UserID:       "user",
+		Text:         "delete everything",
+	}
+	key := BuildSessionKey(msg.Session())
+	sink := &sessionEventSink{}
+	ctrl := &blockingApprovalController{
+		emit:     sink.Emit,
+		emitted:  make(chan struct{}),
+		approved: make(chan struct{}),
+		done:     make(chan struct{}),
+	}
+	gw.controllers[key] = &sessionState{
+		ctrl:             ctrl,
+		sink:             sink,
+		pendingApprovals: make(map[string]event.Approval),
+		pendingAsks:      make(map[string][]event.AskQuestion),
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go gw.dispatchLoop(ctx, binding)
+
+	adapter.msgCh <- msg
+	select {
+	case <-ctrl.emitted:
+	case <-time.After(2 * time.Second):
+		t.Fatal("approval request was never emitted; turn did not start")
+	}
+
+	adapter.msgCh <- InboundMessage{
+		Platform:     PlatformFeishu,
+		ConnectionID: "feishu",
+		ChatType:     ChatDM,
+		ChatID:       "chat",
+		UserID:       "user",
+		Text:         "/approve appr-1",
+	}
+
+	select {
+	case <-ctrl.done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("deadlock: /approve reply was not delivered while the turn blocked on approval")
 	}
 }
 

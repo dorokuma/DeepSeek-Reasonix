@@ -954,15 +954,15 @@ func (gw *BotGateway) forgetPendingApproval(key, id string) {
 }
 
 func (gw *BotGateway) normalizeAskShortcut(key, text string) (string, bool) {
-	answer, ok := askShortcutAnswer(text)
-	if !ok {
+	raw := strings.TrimSpace(text)
+	if raw == "" || strings.HasPrefix(raw, "/") {
 		return "", false
 	}
-	askID := gw.currentPendingAskID(key)
+	askID := gw.currentPendingAskIDForReply(key)
 	if askID == "" {
 		return "", false
 	}
-	return "/answer " + askID + " " + answer, true
+	return "/answer " + askID + " " + raw, true
 }
 
 func askShortcutAnswer(text string) (string, bool) {
@@ -979,7 +979,7 @@ func askShortcutAnswer(text string) (string, bool) {
 	return "", false
 }
 
-func (gw *BotGateway) currentPendingAskID(key string) string {
+func (gw *BotGateway) currentPendingAskIDForReply(key string) string {
 	gw.mu.Lock()
 	defer gw.mu.Unlock()
 	state, ok := gw.controllers[key]
@@ -987,27 +987,17 @@ func (gw *BotGateway) currentPendingAskID(key string) string {
 		return ""
 	}
 	if state.lastAskID != "" {
-		if questions, ok := state.pendingAsks[state.lastAskID]; ok {
-			if askQuestionsSupportNumericShortcut(questions) {
-				return state.lastAskID
-			}
-			return ""
+		if _, ok := state.pendingAsks[state.lastAskID]; ok {
+			return state.lastAskID
 		}
 	}
-	var singleID string
-	for id, questions := range state.pendingAsks {
-		if askQuestionsSupportNumericShortcut(questions) {
-			if singleID != "" {
-				return ""
-			}
-			singleID = id
-		}
+	if len(state.pendingAsks) != 1 {
+		return ""
 	}
-	return singleID
-}
-
-func askQuestionsSupportNumericShortcut(questions []event.AskQuestion) bool {
-	return len(questions) == 1 && len(questions[0].Options) > 0
+	for id := range state.pendingAsks {
+		return id
+	}
+	return ""
 }
 
 func (gw *BotGateway) handleSlashCommand(ctx context.Context, adapter Adapter, key string, msg InboundMessage) {
