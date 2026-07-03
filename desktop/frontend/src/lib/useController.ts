@@ -1785,7 +1785,19 @@ export function useController() {
     dispatchTo(tabId, { type: "hydrate_start", reason: "switch-tab" });
     addBreadcrumb("tab.switch", `active-rendered ${tabId} ms=${Date.now() - startedAt}`);
     const backendActivation = app.SetActiveTab(tabId)
-      .then(() => {
+      .then(async () => {
+        if (activeTabIdRef.current !== tabId) {
+          const currentTabId = activeTabIdRef.current;
+          if (currentTabId) {
+            await app.SetActiveTab(currentTabId).then(() => {
+              if (activeTabIdRef.current === currentTabId) confirmBackendActiveTab(currentTabId);
+            }).catch((err) => {
+              addBreadcrumb("tab.switch", `set-active-stale-reassert-failed ${currentTabId}: ${errorMessage(err)}`);
+            });
+          }
+          addBreadcrumb("tab.switch", `set-active-stale ${tabId} current=${currentTabId ?? ""} ms=${Date.now() - startedAt}`);
+          return false;
+        }
         confirmBackendActiveTab(tabId);
         addBreadcrumb("tab.switch", `set-active-done ${tabId} ms=${Date.now() - startedAt}`);
         return true;
