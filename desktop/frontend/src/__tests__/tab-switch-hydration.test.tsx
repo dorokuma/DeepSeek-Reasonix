@@ -130,6 +130,7 @@ const tabA = tabMeta("tab-a", { active: true });
 const tabB = tabMeta("tab-b");
 const tabC = tabMeta("tab-c");
 const tabD = tabMeta("tab-d");
+const tabE = tabMeta("tab-e");
 let backendActiveId = "tab-a";
 const historyB = deferred<HistoryMessage[]>();
 const historyD = deferred<HistoryMessage[]>();
@@ -148,7 +149,7 @@ const eventHandlers: Array<(e: WireEvent) => void> = [];
 const readyHandlers: Array<(tabId?: string) => void> = [];
 
 function currentTabs(): TabMeta[] {
-  return [tabA, tabB, tabC, tabD].map((tab) => ({ ...tab, active: tab.id === backendActiveId, running: runningTabs.has(tab.id) }));
+  return Array.from(tabsById.values()).map((tab) => ({ ...tab, active: tab.id === backendActiveId, running: runningTabs.has(tab.id) }));
 }
 
 window.runtime = {
@@ -181,6 +182,7 @@ window.go = {
         historyCalls.push(tabID);
         if (tabID === "tab-b") return historyB.promise;
         if (tabID === "tab-d") return historyD.promise;
+        if (tabID === "tab-e") return [userMessage("fork E")];
         return [userMessage("cached A")];
       },
       HistoryPageForTab: async (tabID: string) => {
@@ -194,6 +196,12 @@ window.go = {
       },
       NewSession: async () => {
         newSessionCalls += 1;
+      },
+      Fork: async () => {
+        tabsById.set("tab-e", tabE);
+        backendActiveId = "tab-e";
+        runningTabs.add("tab-e");
+        return { ...tabE, active: true, running: true };
       },
       ReplayPendingPrompts: async () => {},
       SetActiveTab: async (tabID: string) => {
@@ -280,6 +288,10 @@ ok(controller?.state.items.some((item) => item.kind === "user" && item.text === 
 ok(!(controller?.state.items.some((item) => item.kind === "user" && item.text === "late B") ?? false), "late history stays scoped to its tab state");
 
 const historyCallsBeforeFallbackSync = historyCalls.length;
+await act(async () => {
+  for (const handler of eventHandlers) handler({ kind: "approval_request", tabId: "tab-b", approval: { id: "stale-fallback-approval", tool: "bash", subject: "stale fallback approval" } });
+  await flushPromises();
+});
 backendActiveId = "tab-b";
 await act(async () => {
   await controller?.syncActiveTab(false);
@@ -288,6 +300,8 @@ await act(async () => {
 eq(controller?.activeTabId, "tab-b", "backend fallback sync activates the backend-selected cached tab");
 ok(controller?.state.items.some((item) => item.kind === "user" && item.text === "late B") ?? false, "backend fallback sync keeps the cached transcript");
 eq(historyCalls.length, historyCallsBeforeFallbackSync, "backend fallback sync preserves cached history instead of reloading it");
+eq(controller?.state.approval?.id, undefined, "backend fallback sync reconciles stale approval state");
+eq(controller?.state.running, false, "backend fallback sync reconciles stale running state");
 await act(async () => {
   await controller?.switchTab("tab-a", tabA);
   await flushPromises();
@@ -383,12 +397,28 @@ eq(controller?.state.hydratePlaceholderItems?.length ?? 0, 0, "topic history cle
 
 const historyCallsBeforeReopenD = historyCalls.length;
 await act(async () => {
+  for (const handler of eventHandlers) handler({ kind: "approval_request", tabId: "tab-d", approval: { id: "stale-approval", tool: "bash", subject: "stale approval" } });
+  await controller?.switchTab("tab-a", tabA);
+  await flushPromises();
+});
+await act(async () => {
   await controller?.openProjectTab(tabD.workspaceRoot, tabD.topicId || "");
   await flushPromises();
 });
 eq(controller?.activeTabId, "tab-d", "reopening an already hydrated topic keeps it active");
 ok(controller?.state.items.some((item) => item.kind === "user" && item.text === "history D") ?? false, "reopened cached topic keeps its transcript");
 eq(historyCalls.length, historyCallsBeforeReopenD, "reopening an already hydrated topic skips history hydration");
+eq(controller?.state.approval?.id, undefined, "reopening a topic reconciles stale approval state");
+eq(controller?.state.running, false, "reopening a topic reconciles stale running state");
+
+await act(async () => {
+  await controller?.rewind(0, "fork");
+  await flushPromises();
+});
+eq(controller?.activeTabId, "tab-e", "fork activates the forked tab");
+ok(controller?.state.items.some((item) => item.kind === "user" && item.text === "fork E") ?? false, "fork loads the forked transcript");
+eq(controller?.state.running, true, "fork reconciles backend running state after reset hydration");
+runningTabs.delete("tab-e");
 
 const contextCallsBeforeInactiveD = contextDCalls;
 await act(async () => {
