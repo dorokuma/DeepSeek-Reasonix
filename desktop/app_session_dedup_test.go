@@ -243,6 +243,148 @@ func TestEnsureBlankTabStartsProjectRuntimeWithCurrentWorkspacePrompt(t *testing
 	}
 }
 
+func TestForkKeepsProjectWorkspacePrompt(t *testing.T) {
+	isolateDesktopUserDirs(t)
+
+	projectA := robustTempDir(t)
+	projectB := robustTempDir(t)
+	if err := addProject(projectA, "Project A"); err != nil {
+		t.Fatalf("add project A: %v", err)
+	}
+	if err := addProject(projectB, "Project B"); err != nil {
+		t.Fatalf("add project B: %v", err)
+	}
+
+	app := NewApp()
+	first, err := app.EnsureBlankTab("project", projectA)
+	if err != nil {
+		t.Fatalf("EnsureBlankTab(project A): %v", err)
+	}
+	waitForTabReady(t, app, first.ID)
+
+	second, err := app.EnsureBlankTab("project", projectB)
+	if err != nil {
+		t.Fatalf("EnsureBlankTab(project B): %v", err)
+	}
+	tabB := waitForTabReady(t, app, second.ID)
+	ctrl := installStubControllerWithCurrentPrompt(t, app, tabB)
+	turn := submitStubTurnAndWaitForCheckpoint(t, ctrl, "project B turn")
+
+	forked, err := app.Fork(turn)
+	if err != nil {
+		t.Fatalf("Fork: %v", err)
+	}
+	if forked.ID == "" || forked.ID == second.ID {
+		t.Fatalf("forked tab ID = %q, want a fresh tab distinct from %q", forked.ID, second.ID)
+	}
+	forkTab := waitForTabReady(t, app, forked.ID)
+	if got := normalizeProjectRoot(forkTab.WorkspaceRoot); got != normalizeProjectRoot(projectB) {
+		t.Fatalf("fork tab workspace root = %q, want %q", got, normalizeProjectRoot(projectB))
+	}
+	if got := normalizeProjectRoot(forkTab.Ctrl.WorkspaceRoot()); got != normalizeProjectRoot(projectB) {
+		t.Fatalf("fork controller workspace root = %q, want %q", got, normalizeProjectRoot(projectB))
+	}
+	sys := systemPromptFrom(forkTab.Ctrl.History())
+	if !strings.Contains(sys, "Current workspace: "+strconv.Quote(projectB)) {
+		t.Fatalf("fork system prompt missing project B workspace %q:\n%s", projectB, sys)
+	}
+	if strings.Contains(sys, "Current workspace: "+strconv.Quote(projectA)) {
+		t.Fatalf("fork system prompt retained project A workspace %q:\n%s", projectA, sys)
+	}
+}
+
+func TestRewindKeepsProjectWorkspacePrompt(t *testing.T) {
+	isolateDesktopUserDirs(t)
+
+	projectA := robustTempDir(t)
+	projectB := robustTempDir(t)
+	if err := addProject(projectA, "Project A"); err != nil {
+		t.Fatalf("add project A: %v", err)
+	}
+	if err := addProject(projectB, "Project B"); err != nil {
+		t.Fatalf("add project B: %v", err)
+	}
+
+	app := NewApp()
+	first, err := app.EnsureBlankTab("project", projectA)
+	if err != nil {
+		t.Fatalf("EnsureBlankTab(project A): %v", err)
+	}
+	waitForTabReady(t, app, first.ID)
+
+	second, err := app.EnsureBlankTab("project", projectB)
+	if err != nil {
+		t.Fatalf("EnsureBlankTab(project B): %v", err)
+	}
+	tabB := waitForTabReady(t, app, second.ID)
+	ctrl := installStubControllerWithCurrentPrompt(t, app, tabB)
+	turn := submitStubTurnAndWaitForCheckpoint(t, ctrl, "project B turn")
+
+	if err := app.Rewind(turn, "conversation"); err != nil {
+		t.Fatalf("Rewind: %v", err)
+	}
+	if got := normalizeProjectRoot(tabB.Ctrl.WorkspaceRoot()); got != normalizeProjectRoot(projectB) {
+		t.Fatalf("rewound controller workspace root = %q, want %q", got, normalizeProjectRoot(projectB))
+	}
+	sys := systemPromptFrom(tabB.Ctrl.History())
+	if !strings.Contains(sys, "Current workspace: "+strconv.Quote(projectB)) {
+		t.Fatalf("rewound system prompt missing project B workspace %q:\n%s", projectB, sys)
+	}
+	if strings.Contains(sys, "Current workspace: "+strconv.Quote(projectA)) {
+		t.Fatalf("rewound system prompt retained project A workspace %q:\n%s", projectA, sys)
+	}
+}
+
+func installStubControllerWithCurrentPrompt(t *testing.T, app *App, tab *WorkspaceTab) *control.Controller {
+	t.Helper()
+	if tab == nil || tab.Ctrl == nil {
+		t.Fatal("tab controller is required")
+	}
+	sys := systemPromptFrom(tab.Ctrl.History())
+	if strings.TrimSpace(sys) == "" {
+		t.Fatal("tab controller did not expose a system prompt")
+	}
+	sessionDir := tab.Ctrl.SessionDir()
+	sessionPath := tab.Ctrl.SessionPath()
+	workspaceRoot := tab.Ctrl.WorkspaceRoot()
+	label := tab.Ctrl.Label()
+	tab.Ctrl.Close()
+
+	sess := agent.NewSession(sys)
+	ag := agent.New(stubProvider{}, tool.NewRegistry(), sess, agent.Options{}, event.Discard)
+	ctrl := control.New(control.Options{
+		Runner:        ag,
+		Executor:      ag,
+		SessionDir:    sessionDir,
+		SessionPath:   sessionPath,
+		WorkspaceRoot: workspaceRoot,
+		Label:         label,
+		SystemPrompt:  sys,
+		Sink:          event.Discard,
+	})
+	tab.Ctrl = ctrl
+	app.bindControllerDisplayRecorder(ctrl)
+	return ctrl
+}
+
+func submitStubTurnAndWaitForCheckpoint(t *testing.T, ctrl control.SessionAPI, input string) int {
+	t.Helper()
+	ctrl.SubmitUserTurn(input, input)
+	waitNotRunning(t, ctrl)
+
+	deadline := time.Now().Add(time.Second)
+	for {
+		checkpoints := ctrl.Checkpoints()
+		if len(checkpoints) > 0 {
+			return checkpoints[len(checkpoints)-1].Turn
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("controller did not record a checkpoint")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
 func TestEnsureBlankTabResetsReusableAutoTopicTitle(t *testing.T) {
 	isolateDesktopUserDirs(t)
 
