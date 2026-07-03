@@ -978,8 +978,8 @@ func TestBuildRequestContentNullForAssistantToolCalls(t *testing.T) {
 	if !strings.Contains(s, `"content":"all done"`) {
 		t.Errorf("text assistant turn should keep its string content: %s", s)
 	}
-	if !strings.Contains(s, `"parameters":{"type":"object"}`) {
-		t.Errorf("no-param tool should serialize a valid empty-object schema: %s", s)
+	if !strings.Contains(s, `"parameters":{"properties":{},"type":"object"}`) {
+		t.Errorf("no-param tool should serialize a strict empty-object schema: %s", s)
 	}
 }
 
@@ -1035,7 +1035,7 @@ func TestBuildRequestDefaultsEmptyToolParameters(t *testing.T) {
 	if _, ok := fn["description"]; ok {
 		t.Fatalf("empty description should be omitted: %s", body)
 	}
-	if got, want := string(fn["parameters"]), `{"type":"object"}`; got != want {
+	if got, want := string(fn["parameters"]), `{"properties":{},"type":"object"}`; got != want {
 		t.Fatalf("nil parameters should default to %s, got %s in %s", want, got, body)
 	}
 }
