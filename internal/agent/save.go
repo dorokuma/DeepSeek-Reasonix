@@ -23,8 +23,9 @@ import (
 const cleanupPendingExt = ".cleanup-pending.json"
 
 var (
-	sessionSaveLocks           sync.Map
-	ErrSessionSnapshotConflict = errors.New("session snapshot conflicts with newer transcript")
+	sessionSaveLocks            sync.Map
+	ErrSessionSnapshotConflict  = errors.New("session snapshot conflicts with newer transcript")
+	ErrSessionRecoveryNotNeeded = errors.New("session recovery not needed")
 )
 
 type sessionPersistState struct {
@@ -41,6 +42,64 @@ const (
 	sessionSaveSnapshot
 	sessionSaveRewrite
 )
+
+type SessionSnapshotConflictKind string
+
+const (
+	SessionSnapshotConflictStalePrefix SessionSnapshotConflictKind = "stale_prefix"
+	SessionSnapshotConflictDiverged    SessionSnapshotConflictKind = "diverged"
+)
+
+type SessionSnapshotConflictError struct {
+	Path             string
+	Kind             SessionSnapshotConflictKind
+	ExistingMessages int
+	SnapshotMessages int
+}
+
+func (e *SessionSnapshotConflictError) Error() string {
+	if e == nil {
+		return ErrSessionSnapshotConflict.Error()
+	}
+	switch e.Kind {
+	case SessionSnapshotConflictStalePrefix:
+		return fmt.Sprintf("%s: %s has %d messages; stale snapshot has %d",
+			ErrSessionSnapshotConflict, e.Path, e.ExistingMessages, e.SnapshotMessages)
+	default:
+		return fmt.Sprintf("%s: %s diverged on disk (%d messages) from snapshot (%d messages)",
+			ErrSessionSnapshotConflict, e.Path, e.ExistingMessages, e.SnapshotMessages)
+	}
+}
+
+func (e *SessionSnapshotConflictError) Unwrap() error {
+	return ErrSessionSnapshotConflict
+}
+
+func SnapshotConflictKind(err error) (SessionSnapshotConflictKind, bool) {
+	var conflict *SessionSnapshotConflictError
+	if errors.As(err, &conflict) && conflict != nil {
+		return conflict.Kind, true
+	}
+	return "", false
+}
+
+const RecoveryBranchDefaultName = "Recovered unsaved changes from stale runtime"
+
+type RecoveryBranchOptions struct {
+	OriginalPath string
+	Name         string
+	Reason       string
+	BranchMeta   BranchMeta
+}
+
+type RecoveryBranchInfo struct {
+	Path     string
+	Digest   string
+	Existing bool
+	Meta     BranchMeta
+	Preview  string
+	Turns    int
+}
 
 // Save writes the session's messages to path in JSONL — one provider.Message
 // per line — so a user can resume the conversation later. The file is
@@ -79,6 +138,11 @@ func (s *Session) save(path string, mode sessionSaveMode) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return fmt.Errorf("create session dir: %w", err)
 	}
+	unlockFile, err := lockSessionFile(path)
+	if err != nil {
+		return fmt.Errorf("lock session file: %w", err)
+	}
+	defer unlockFile()
 	if mode != sessionSaveForce {
 		if err := s.checkSnapshotWrite(path, msgs, digest, version, mode == sessionSaveRewrite); err != nil {
 			return err
@@ -138,11 +202,139 @@ func (s *Session) checkSnapshotWrite(path string, next []provider.Message, nextD
 		return nil
 	}
 	if messagesHavePrefix(existing, next) || messagesHavePrefixWithCompatibleSystem(existing, next) {
-		return fmt.Errorf("%w: %s has %d messages; stale snapshot has %d",
-			ErrSessionSnapshotConflict, path, len(existing), len(next))
+		return &SessionSnapshotConflictError{
+			Path:             path,
+			Kind:             SessionSnapshotConflictStalePrefix,
+			ExistingMessages: len(existing),
+			SnapshotMessages: len(next),
+		}
 	}
-	return fmt.Errorf("%w: %s diverged on disk (%d messages) from snapshot (%d messages)",
-		ErrSessionSnapshotConflict, path, len(existing), len(next))
+	return &SessionSnapshotConflictError{
+		Path:             path,
+		Kind:             SessionSnapshotConflictDiverged,
+		ExistingMessages: len(existing),
+		SnapshotMessages: len(next),
+	}
+}
+
+func (s *Session) SaveRecoveryBranch(opts RecoveryBranchOptions) (RecoveryBranchInfo, error) {
+	originalPath := strings.TrimSpace(opts.OriginalPath)
+	if originalPath == "" {
+		return RecoveryBranchInfo{}, fmt.Errorf("empty original session path")
+	}
+	msgs, version := s.snapshotWithVersion()
+	preview, turns := SessionPreviewFromMessages(msgs)
+	if turns == 0 {
+		return RecoveryBranchInfo{}, ErrSessionRecoveryNotNeeded
+	}
+	digest, err := digestSessionMessages(msgs)
+	if err != nil {
+		return RecoveryBranchInfo{}, err
+	}
+	digestText := fmt.Sprintf("%x", digest[:])
+
+	unlockOriginal := lockSessionSavePath(originalPath)
+	unlockOriginalFile, lockErr := lockSessionFile(originalPath)
+	if lockErr != nil {
+		unlockOriginal()
+		return RecoveryBranchInfo{}, fmt.Errorf("lock original session file: %w", lockErr)
+	}
+	current, err := LoadSession(originalPath)
+	unlockOriginalFile()
+	unlockOriginal()
+	if err != nil && !os.IsNotExist(err) {
+		return RecoveryBranchInfo{}, err
+	}
+	if err == nil && current != nil {
+		existing := current.Snapshot()
+		existingDigest, digestErr := digestSessionMessages(existing)
+		if digestErr != nil {
+			return RecoveryBranchInfo{}, digestErr
+		}
+		if bytes.Equal(existingDigest[:], digest[:]) ||
+			messagesHavePrefix(existing, msgs) ||
+			messagesHavePrefixWithCompatibleSystem(existing, msgs) {
+			return RecoveryBranchInfo{}, ErrSessionRecoveryNotNeeded
+		}
+	}
+
+	recoveryPath := recoverySessionPath(originalPath, digest)
+	unlockRecovery := lockSessionSavePath(recoveryPath)
+	defer unlockRecovery()
+	unlockRecoveryFile, err := lockSessionFile(recoveryPath)
+	if err != nil {
+		return RecoveryBranchInfo{}, fmt.Errorf("lock recovery session file: %w", err)
+	}
+	defer unlockRecoveryFile()
+	if loaded, loadErr := LoadSession(recoveryPath); loadErr == nil && loaded != nil {
+		existingDigest, digestErr := digestSessionMessages(loaded.Snapshot())
+		if digestErr != nil {
+			return RecoveryBranchInfo{}, digestErr
+		}
+		if bytes.Equal(existingDigest[:], digest[:]) {
+			meta, err := s.saveRecoveryBranchMeta(recoveryPath, opts, preview, turns, digestText)
+			if err != nil {
+				return RecoveryBranchInfo{}, err
+			}
+			s.markPersisted(recoveryPath, digest, version)
+			return RecoveryBranchInfo{Path: recoveryPath, Digest: digestText, Existing: true, Meta: meta, Preview: preview, Turns: turns}, nil
+		}
+	} else if loadErr != nil && !os.IsNotExist(loadErr) {
+		return RecoveryBranchInfo{}, loadErr
+	}
+
+	if err := os.MkdirAll(filepath.Dir(recoveryPath), 0o755); err != nil {
+		return RecoveryBranchInfo{}, fmt.Errorf("create recovery session dir: %w", err)
+	}
+	if err := writeSessionMessages(recoveryPath, msgs); err != nil {
+		return RecoveryBranchInfo{}, err
+	}
+	meta, err := s.saveRecoveryBranchMeta(recoveryPath, opts, preview, turns, digestText)
+	if err != nil {
+		return RecoveryBranchInfo{}, err
+	}
+	s.markPersisted(recoveryPath, digest, version)
+	return RecoveryBranchInfo{Path: recoveryPath, Digest: digestText, Meta: meta, Preview: preview, Turns: turns}, nil
+}
+
+func (s *Session) saveRecoveryBranchMeta(path string, opts RecoveryBranchOptions, preview string, turns int, digest string) (BranchMeta, error) {
+	meta := opts.BranchMeta
+	meta.ID = BranchID(path)
+	if strings.TrimSpace(meta.Name) == "" {
+		meta.Name = firstNonEmpty(strings.TrimSpace(opts.Name), RecoveryBranchDefaultName)
+	}
+	if strings.TrimSpace(meta.ParentID) == "" {
+		meta.ParentID = BranchID(opts.OriginalPath)
+	}
+	meta.ForkTurn = -1
+	meta.ForkMessageIndex = len(s.Snapshot())
+	meta.Preview = preview
+	meta.Turns = turns
+	meta.SchemaVersion = BranchMetaCountsVersion
+	meta.Recovered = true
+	meta.RecoveryReason = firstNonEmpty(strings.TrimSpace(opts.Reason), "session snapshot conflict")
+	meta.RecoveryDigest = digest
+	if err := SaveBranchMeta(path, meta); err != nil {
+		return BranchMeta{}, err
+	}
+	return meta, nil
+}
+
+func recoverySessionPath(originalPath string, digest [sha256.Size]byte) string {
+	parent := BranchID(originalPath)
+	if parent == "" {
+		parent = "session"
+	}
+	return filepath.Join(filepath.Dir(originalPath), fmt.Sprintf("%s-recovery-%x.jsonl", parent, digest[:8]))
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func (s *Session) ownsPersistedState(path string, existingDigest [sha256.Size]byte, nextVersion uint64) bool {
@@ -306,6 +498,10 @@ type SessionInfo struct {
 	WorkspaceRoot  string
 	TopicID        string
 	TopicTitle     string
+	Recovered      bool
+	RecoveryReason string
+	RecoveryDigest string
+	ParentID       string
 }
 
 // SessionOrderInfo is the lightweight sidecar/mtime ordering record shared by
@@ -320,6 +516,10 @@ type SessionOrderInfo struct {
 	WorkspaceRoot  string
 	TopicID        string
 	TopicTitle     string
+	Recovered      bool
+	RecoveryReason string
+	RecoveryDigest string
+	ParentID       string
 	// Turns and Preview are the cached listing fields from the sidecar; SchemaVersion
 	// >= agent.BranchMetaCountsVersion means they were recorded from content and can
 	// be trusted (even Turns == 0). ListSessions uses them to skip the whole-file decode.
@@ -489,6 +689,10 @@ func ListSessionOrder(dir string) ([]SessionOrderInfo, error) {
 		workspaceRoot := ""
 		topicID := ""
 		topicTitle := ""
+		recovered := false
+		recoveryReason := ""
+		recoveryDigest := ""
+		parentID := ""
 		turns := 0
 		preview := ""
 		schemaVersion := 0
@@ -503,6 +707,10 @@ func ListSessionOrder(dir string) ([]SessionOrderInfo, error) {
 			workspaceRoot = meta.WorkspaceRoot
 			topicID = meta.TopicID
 			topicTitle = meta.TopicTitle
+			recovered = meta.Recovered
+			recoveryReason = meta.RecoveryReason
+			recoveryDigest = meta.RecoveryDigest
+			parentID = meta.ParentID
 			turns = meta.Turns
 			preview = meta.Preview
 			schemaVersion = meta.SchemaVersion
@@ -516,6 +724,10 @@ func ListSessionOrder(dir string) ([]SessionOrderInfo, error) {
 			WorkspaceRoot:  workspaceRoot,
 			TopicID:        topicID,
 			TopicTitle:     topicTitle,
+			Recovered:      recovered,
+			RecoveryReason: recoveryReason,
+			RecoveryDigest: recoveryDigest,
+			ParentID:       parentID,
 			Turns:          turns,
 			Preview:        preview,
 			SchemaVersion:  schemaVersion,
@@ -567,6 +779,10 @@ func ListSessions(dir string) ([]SessionInfo, error) {
 			WorkspaceRoot:  session.WorkspaceRoot,
 			TopicID:        session.TopicID,
 			TopicTitle:     session.TopicTitle,
+			Recovered:      session.Recovered,
+			RecoveryReason: session.RecoveryReason,
+			RecoveryDigest: session.RecoveryDigest,
+			ParentID:       session.ParentID,
 		})
 	}
 	return out, nil

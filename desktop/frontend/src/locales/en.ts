@@ -728,6 +728,16 @@ export const en = {
   "history.historySessionActions": "History session actions",
   "history.trashActions": "Trash actions",
 
+  // session recovery
+  "recovery.branch": "Recovery branch",
+  "recovery.badge": "Recovery",
+  "recovery.open": "Open recovery branch",
+  "recovery.toast": "Unsaved local changes were saved as {title}.",
+  "recovery.banner": "This session was recovered from a save conflict. Compare it with the original before continuing.",
+  "recovery.reason": "Reason: {reason}",
+  "recovery.digest": "Digest: {digest}",
+  "recovery.parent": "Parent: {parent}",
+
   // project tree
   "projectTree.workspaceTitle": "Projects",
   "projectTree.pinnedTitle": "Pinned",
