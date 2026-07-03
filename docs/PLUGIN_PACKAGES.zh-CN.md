@@ -110,6 +110,9 @@ reasonix plugin remove superpowers --yes
 
 已安装插件不会打开一个独立聊天界面。插件启用后，Reasonix 会把它的能力加载到普通交互会话里：
 
+- 在交互会话里运行 `/plugins` 可以列出已安装插件包。
+  运行 `/plugins show <name>` 可以在不离开聊天的情况下查看该插件导出的
+  skills、hooks、MCP servers 和使用提示。
 - **Skills** 会出现在 `/skills` 中。可以用 `/<skill> [args]` 直接调用，
   也可以自然描述任务，让 agent 按 description 选择匹配的 skill。
 - **Hooks** 会在配置的生命周期事件里自动运行，例如 `SessionStart`、
@@ -166,6 +169,8 @@ reasonix plugin remove superpowers --yes
 桌面端设置页和 CLI 使用同一套运行模型：
 
 - 展开已安装插件，可以看到 **使用方法** 区域。
+- 在任意桌面会话里输入 `/plugins` 可以列出已安装插件；
+  输入 `/plugins show <name>` 可以直接从聊天界面查看同一套使用详情。
 - Skills 会展示建议的直接命令，例如 `/plan`；在会话中也可以通过 `/skills` 浏览。
 - Hooks 和 MCP servers 作为透明能力清单展示。它们不需要单独的“运行”按钮：
   启用的 hooks 会自动触发，MCP 工具会通过普通工具调用流程可用。

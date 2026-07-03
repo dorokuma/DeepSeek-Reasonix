@@ -2167,6 +2167,7 @@ function makeMockApp(): AppBindings {
         { name: "model", description: "Switch model", kind: "builtin" as const },
         { name: "effort", description: "Set reasoning effort", kind: "builtin" as const },
         { name: "skill", description: "List skills", kind: "builtin" as const },
+        { name: "plugins", description: "Manage plugin packages", kind: "builtin" as const },
         { name: "explore", description: "Investigate the codebase in an isolated subagent", kind: "skill" as const },
         { name: "review", description: "Review the staged diff", hint: "[focus]", kind: "custom" as const },
       ];

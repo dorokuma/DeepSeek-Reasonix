@@ -3,6 +3,7 @@ package pluginpkg
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -136,6 +137,40 @@ func TestStateRoundTripSortsPlugins(t *testing.T) {
 	}
 	if len(st.Plugins) != 2 || st.Plugins[0].Name != "alpha" || st.Plugins[1].Name != "zeta" {
 		t.Fatalf("state plugins = %+v", st.Plugins)
+	}
+}
+
+func TestInstalledTextDescribesUsageInventory(t *testing.T) {
+	home := t.TempDir()
+	root := filepath.Join(home, "plugins", "superpowers")
+	writeTestFile(t, filepath.Join(root, CodexManifest), `{
+	  "name": "superpowers",
+	  "version": "6.1.0",
+	  "description": "Planning workflows",
+	  "skills": "skills"
+	}`)
+	writeTestFile(t, filepath.Join(root, "skills", "plan", "SKILL.md"), "---\ndescription: Plan work\nrunAs: subagent\n---\nbody")
+	writeTestFile(t, filepath.Join(root, "hooks", "session-start-codex"), "#!/usr/bin/env bash\n")
+	if err := Upsert(home, InstalledPlugin{Name: "superpowers", Root: "plugins/superpowers", Version: "6.1.0", Description: "Planning workflows", ManifestKind: "codex", Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	list, err := InstalledListText(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"plugins (1):", "superpowers [enabled]", "1 skills / 1 hooks", "/plugins show <name>"} {
+		if !strings.Contains(list, want) {
+			t.Fatalf("InstalledListText missing %q:\n%s", want, list)
+		}
+	}
+	details, err := InstalledShowText(home, "superpowers")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"plugin superpowers [enabled]", "usage: enabled plugins load into new sessions", "/plan [subagent] - Plan work", "SessionStart"} {
+		if !strings.Contains(details, want) {
+			t.Fatalf("InstalledShowText missing %q:\n%s", want, details)
+		}
 	}
 }
 

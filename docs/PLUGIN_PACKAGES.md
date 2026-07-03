@@ -115,6 +115,9 @@ external source directory is left in place.
 Installed plugins do not open a separate chat surface. When a plugin is enabled,
 Reasonix loads its capabilities into normal interactive sessions:
 
+- Run `/plugins` inside an interactive session to list installed plugin
+  packages. Run `/plugins show <name>` to inspect a plugin's exported skills,
+  hooks, MCP servers, and usage hints without leaving the chat.
 - **Skills** appear in `/skills`. Invoke a skill with `/<skill> [args]`, or ask
   naturally and let the agent choose a matching skill by description.
 - **Hooks** run automatically at their configured lifecycle events, such as
@@ -180,6 +183,8 @@ Expand a plugin row to manage it:
 The desktop settings page uses the same runtime model as the CLI:
 
 - Expand an installed plugin to see its **How to use** section.
+- In any desktop session, type `/plugins` to list installed plugins, or
+  `/plugins show <name>` to see the same usage details from the chat surface.
 - Skills are shown with suggested direct commands such as `/plan`; they are also
   discoverable from `/skills` in a session.
 - Hooks and MCP servers are listed for transparency. They do not need a manual
