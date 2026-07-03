@@ -57,6 +57,7 @@ import type {
   QuestionAnswer,
   ServerView,
   SessionMeta,
+  SessionRecoveryFailedEvent,
   SessionRecoveryEvent,
   SettingsView,
   SkillsSettingsView,
@@ -586,6 +587,13 @@ export function onProjectTreeChanged(cb: () => void): () => void {
 export function onSessionRecovered(cb: (payload: SessionRecoveryEvent) => void): () => void {
   if (realApp() && typeof window !== "undefined" && window.runtime) {
     return window.runtime.EventsOn("session:recovered", (payload?: unknown) => cb((payload ?? {}) as SessionRecoveryEvent));
+  }
+  return () => {};
+}
+
+export function onSessionRecoveryFailed(cb: (payload: SessionRecoveryFailedEvent) => void): () => void {
+  if (realApp() && typeof window !== "undefined" && window.runtime) {
+    return window.runtime.EventsOn("session:recovery-failed", (payload?: unknown) => cb((payload ?? {}) as SessionRecoveryFailedEvent));
   }
   return () => {};
 }

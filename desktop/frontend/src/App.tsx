@@ -38,7 +38,7 @@ import { useToast } from "./lib/toast";
 import { asArray } from "./lib/array";
 import { clearLegacyLangPref, normalizeLangPref, readLegacyLangPref, useI18n, useT, type Translator } from "./lib/i18n";
 import { useController, type Item, type LiveStream } from "./lib/useController";
-import { app, onEvent, onProjectTreeChanged, onSessionRecovered } from "./lib/bridge";
+import { app, onEvent, onProjectTreeChanged, onSessionRecovered, onSessionRecoveryFailed } from "./lib/bridge";
 import { generativeMusic, isGenerativeMusicEnabled } from "./lib/generative-music";
 import { playSuccessChime } from "./lib/sound";
 import { Transcript } from "./components/Transcript";
@@ -2611,6 +2611,13 @@ export default function App() {
         : { durationMs: 9000 });
     });
   }, [enqueueNavigation, refreshTabMetas, showToast, t]);
+
+  useEffect(() => {
+    return onSessionRecoveryFailed((event) => {
+      const key = event.reason === "lease_held" ? "recovery.failedLease" : "recovery.failedUnavailable";
+      showToast(t(key), "error", { durationMs: 9000 });
+    });
+  }, [showToast, t]);
 
   const handleNewTab = useCallback(async () => {
     closeTransientOverlays();

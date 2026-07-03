@@ -4019,6 +4019,10 @@ type sessionRecoveryEvent struct {
 	Existing         bool   `json:"existing,omitempty"`
 }
 
+type sessionRecoveryFailedEvent struct {
+	Reason string `json:"reason,omitempty"`
+}
+
 func (a *App) tabSessionRecoveryMeta(tab *WorkspaceTab) func(control.SessionRecoveryRequest) agent.BranchMeta {
 	return func(req control.SessionRecoveryRequest) agent.BranchMeta {
 		if tab == nil {
@@ -4057,6 +4061,11 @@ func (a *App) handleTabSessionRecovered(tab *WorkspaceTab) func(control.SessionR
 		if tab != nil && !tab.ReadOnly {
 			if err := tab.ensureSessionLease(info.RecoveryPath); err != nil {
 				slog.Warn("desktop: acquire recovery session lease", "path", info.RecoveryPath, "err", err)
+				reason := "lease_unavailable"
+				if errors.Is(err, agent.ErrSessionLeaseHeld) {
+					reason = "lease_held"
+				}
+				a.emitRuntimeEvent("session:recovery-failed", sessionRecoveryFailedEvent{Reason: reason})
 				return fmt.Errorf("acquire recovery session lease: %w", err)
 			}
 		}

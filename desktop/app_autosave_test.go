@@ -322,10 +322,19 @@ func TestDesktopSnapshotConflictRecoveryRequiresRecoveryLease(t *testing.T) {
 	defer lease.Release()
 
 	staleExec := agent.New(stubProvider{}, tool.NewRegistry(), staleSess, agent.Options{}, event.Discard)
+	runtimeEvents := make(chan runtimeEventEnvelope, 4)
 	app := &App{
+		ctx:              context.Background(),
 		tabs:             map[string]*WorkspaceTab{},
 		detachedSessions: map[string]*WorkspaceTab{},
 		activeTabID:      "recovery_tab",
+	}
+	app.runtimeEvents.emit = func(ctx context.Context, name string, payload ...interface{}) {
+		runtimeEvents <- runtimeEventEnvelope{
+			ctx:     ctx,
+			name:    name,
+			payload: append([]interface{}(nil), payload...),
+		}
 	}
 	tab := &WorkspaceTab{
 		ID:            "recovery_tab",
@@ -362,6 +371,29 @@ func TestDesktopSnapshotConflictRecoveryRequiresRecoveryLease(t *testing.T) {
 	}
 	if tab.TopicID != "topic_original" {
 		t.Fatalf("tab topic ID = %q, want original topic", tab.TopicID)
+	}
+
+	deadline := time.After(time.Second)
+	for {
+		select {
+		case emitted := <-runtimeEvents:
+			if emitted.name != "session:recovery-failed" {
+				continue
+			}
+			if len(emitted.payload) != 1 {
+				t.Fatalf("session:recovery-failed payload count = %d, want 1", len(emitted.payload))
+			}
+			failed, ok := emitted.payload[0].(sessionRecoveryFailedEvent)
+			if !ok {
+				t.Fatalf("session:recovery-failed payload type = %T, want sessionRecoveryFailedEvent", emitted.payload[0])
+			}
+			if failed.Reason != "lease_held" {
+				t.Fatalf("session:recovery-failed reason = %q, want lease_held", failed.Reason)
+			}
+			return
+		case <-deadline:
+			t.Fatal("session:recovery-failed event was not emitted")
+		}
 	}
 }
 

@@ -260,6 +260,10 @@ export interface SessionRecoveryEvent {
   existing?: boolean;
 }
 
+export interface SessionRecoveryFailedEvent {
+  reason?: "lease_held" | "lease_unavailable" | string;
+}
+
 export interface ContextPanelInfo {
   usedTokens: number;
   windowTokens: number;
