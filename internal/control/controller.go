@@ -794,9 +794,8 @@ func (c *Controller) submitCommandOrTurn(trimmed, input, display string, scopedR
 			}
 			return runGoalLoop(ctx, sent, sent, display)
 		})
-	case strings.HasPrefix(trimmed, "//"):
-		// Double-slash — not a command. Common in code snippets (JS
-		// comments, file:// URLs). Run as a normal turn.
+	case SlashCodeCommentLine(trimmed):
+		// Slash-prefixed code comments are prompt text, not slash commands.
 		runRefTurn(input, display)
 	case strings.HasPrefix(trimmed, "/"):
 		if ref, ok := FileRefLine(trimmed); ok {

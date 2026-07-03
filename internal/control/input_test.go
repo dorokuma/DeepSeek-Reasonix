@@ -643,6 +643,26 @@ func TestSubmitMissingSlashPathDiagnosticStartsTurn(t *testing.T) {
 	}
 }
 
+func TestSubmitBlockCommentPrefixStartsTurn(t *testing.T) {
+	runner := &fakeTurnRunner{}
+	events := make(chan event.Event, 4)
+	c := New(Options{
+		AutoPlan: "off",
+		Runner:   runner,
+		Sink: event.FuncSink(func(e event.Event) {
+			events <- e
+		}),
+	})
+
+	input := "/**\n * 阿明\n */"
+	c.Submit(input)
+	waitForTurnDone(t, events)
+
+	if len(runner.inputs) != 1 || runner.inputs[0] != input {
+		t.Fatalf("block comment prefix should start a model turn, inputs=%q", runner.inputs)
+	}
+}
+
 func TestSubmitUnknownSlashCommandStillReportsNotice(t *testing.T) {
 	runner := &fakeTurnRunner{}
 	events := make(chan event.Event, 4)

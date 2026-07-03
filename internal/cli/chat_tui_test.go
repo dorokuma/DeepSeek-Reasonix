@@ -2249,6 +2249,56 @@ func TestPasteFoldExpandOnSubmit(t *testing.T) {
 	}
 }
 
+func TestSlashCodeCommentSubmitStartsTurn(t *testing.T) {
+	for _, input := range []string{
+		"// explain this",
+		"/**\n * 阿明\n */",
+	} {
+		t.Run(input, func(t *testing.T) {
+			r := &recordingTurnRunner{}
+			events := make(chan event.Event, 8)
+			ctrl := control.New(control.Options{
+				AutoPlan: "off",
+				Runner:   r,
+				Sink:     event.FuncSink(func(e event.Event) { events <- e }),
+			})
+			m := newTestChatTUI()
+			m.ctrl = ctrl
+			m.input.SetValue(input)
+
+			model, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+			m = model.(chatTUI)
+			waitForCLIEvent(t, events, event.TurnDone)
+
+			if len(r.inputs) != 1 || r.inputs[0] != input {
+				t.Fatalf("slash code comment should start a model turn, inputs=%q", r.inputs)
+			}
+		})
+	}
+}
+
+func TestUnknownSlashCommandDoesNotStartTurn(t *testing.T) {
+	r := &recordingTurnRunner{}
+	ctrl := control.New(control.Options{
+		AutoPlan: "off",
+		Runner:   r,
+		Sink:     event.FuncSink(func(event.Event) {}),
+	})
+	m := newTestChatTUI()
+	m.ctrl = ctrl
+	m.input.SetValue("/definitely-not-a-command")
+
+	model, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	m = model.(chatTUI)
+
+	if len(r.inputs) != 0 {
+		t.Fatalf("unknown slash command should not start a model turn, inputs=%q", r.inputs)
+	}
+	if got := strings.Join(m.transcript, "\n"); !strings.Contains(got, "unknown command") {
+		t.Fatalf("unknown slash command should be reported in transcript, got:\n%s", got)
+	}
+}
+
 func TestPasteMsgFoldsBeforeTextareaConsumesNewlines(t *testing.T) {
 	m := newTestChatTUI()
 	model, _ := m.Update(tea.PasteMsg{Content: "1\n2\n3\n4\n5"})
