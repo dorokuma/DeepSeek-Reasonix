@@ -438,8 +438,7 @@ func sessionContentRevision(path string) (int64, string, error) {
 func recordSessionContentRevision(path string, digest [sha256.Size]byte, baseRevision int64) (int64, error) {
 	meta, ok, err := LoadBranchMeta(path)
 	if err != nil {
-		meta = BranchMeta{ID: BranchID(path)}
-		ok = false
+		return baseRevision, nil
 	}
 	if !ok {
 		meta = BranchMeta{ID: BranchID(path)}
