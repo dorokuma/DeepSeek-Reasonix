@@ -1,6 +1,7 @@
 package shellparse
 
 import (
+	"errors"
 	"strings"
 
 	"mvdan.cc/sh/v3/syntax"
@@ -11,41 +12,174 @@ func ParseBash(command string) (*syntax.File, error) {
 	return syntax.NewParser(syntax.Variant(syntax.LangBash)).Parse(strings.NewReader(command), "")
 }
 
+// StaticCommandPolicy controls which static shell features may be modeled
+// without invoking a shell.
+type StaticCommandPolicy struct {
+	AllowEnvAssignments bool
+	AllowStderrToStdout bool
+}
+
+// StaticCommand is a shell command reduced to exec.Command inputs.
+type StaticCommand struct {
+	Argv        []string
+	Env         []string
+	MergeStderr bool
+}
+
+// StaticRejectReason names why a command cannot be reduced to StaticCommand.
+type StaticRejectReason string
+
+const (
+	StaticRejectParse       StaticRejectReason = "parse error"
+	StaticRejectHereDoc     StaticRejectReason = "here document"
+	StaticRejectControl     StaticRejectReason = "shell control syntax"
+	StaticRejectRedirection StaticRejectReason = "shell redirection"
+	StaticRejectAssignment  StaticRejectReason = "shell assignment"
+	StaticRejectExpansion   StaticRejectReason = "shell expansion"
+)
+
+// StaticRejectError carries a machine-readable rejection reason plus optional
+// parser detail.
+type StaticRejectError struct {
+	Reason StaticRejectReason
+	Detail string
+}
+
+func (e *StaticRejectError) Error() string {
+	if e == nil {
+		return ""
+	}
+	if e.Detail != "" {
+		return e.Detail
+	}
+	return string(e.Reason)
+}
+
+func staticReject(reason StaticRejectReason, detail string) *StaticRejectError {
+	return &StaticRejectError{Reason: reason, Detail: detail}
+}
+
 // StaticFields returns the fields of a single static Bash command. It rejects
 // shell syntax that can alter command shape, such as control operators,
 // redirects, assignments, backgrounding, and runtime expansions.
 func StaticFields(command string) ([]string, string) {
+	cmd, err := ParseStaticCommand(command, StaticCommandPolicy{})
+	if err != nil {
+		return nil, staticFieldsMessage(err)
+	}
+	return cmd.Argv, ""
+}
+
+// ParseStaticCommand parses a single static Bash command into argv and optional
+// environment assignments. It never evaluates shell expansion or runs a shell.
+func ParseStaticCommand(command string, policy StaticCommandPolicy) (StaticCommand, error) {
+	var out StaticCommand
 	if strings.TrimSpace(command) == "" {
-		return nil, ""
+		return out, nil
 	}
 	file, err := ParseBash(command)
 	if err != nil {
-		return nil, err.Error()
+		return out, staticReject(StaticRejectParse, err.Error())
 	}
 	if HasHereDoc(file) {
-		return nil, "here document"
+		return out, staticReject(StaticRejectHereDoc, "")
 	}
 	if len(file.Stmts) != 1 {
-		return nil, "shell control syntax"
+		return out, staticReject(StaticRejectControl, "")
 	}
 	stmt := file.Stmts[0]
-	if stmt == nil || stmt.Negated || stmt.Background || stmt.Coprocess || stmt.Disown || len(stmt.Redirs) > 0 {
-		return nil, "shell control syntax"
+	if stmt == nil || stmt.Negated || stmt.Background || stmt.Coprocess || stmt.Disown {
+		return out, staticReject(StaticRejectControl, "")
 	}
 	call, ok := stmt.Cmd.(*syntax.CallExpr)
-	if !ok || len(call.Assigns) > 0 {
-		return nil, "shell control syntax"
+	if !ok {
+		return out, staticReject(StaticRejectControl, "")
+	}
+	if len(stmt.Redirs) > 0 {
+		mergeStderr, err := staticRedirections(stmt.Redirs, policy)
+		if err != nil {
+			return out, err
+		}
+		out.MergeStderr = mergeStderr
+	}
+	if len(call.Assigns) > 0 {
+		env, err := staticAssignments(call.Assigns, policy)
+		if err != nil {
+			return out, err
+		}
+		out.Env = env
 	}
 
-	fields := make([]string, 0, len(call.Args))
+	out.Argv = make([]string, 0, len(call.Args))
 	for _, arg := range call.Args {
 		field, ok := StaticWord(arg)
 		if !ok {
-			return nil, "shell expansion"
+			return out, staticReject(StaticRejectExpansion, "")
 		}
-		fields = append(fields, field)
+		out.Argv = append(out.Argv, field)
 	}
-	return fields, ""
+	if len(out.Argv) == 0 && len(out.Env) > 0 {
+		return StaticCommand{}, staticReject(StaticRejectAssignment, "shell assignment without command")
+	}
+	return out, nil
+}
+
+func staticFieldsMessage(err error) string {
+	var reject *StaticRejectError
+	if !errors.As(err, &reject) {
+		return err.Error()
+	}
+	switch reject.Reason {
+	case StaticRejectParse:
+		return reject.Error()
+	case StaticRejectHereDoc:
+		return "here document"
+	case StaticRejectExpansion:
+		return "shell expansion"
+	default:
+		return "shell control syntax"
+	}
+}
+
+func staticAssignments(assigns []*syntax.Assign, policy StaticCommandPolicy) ([]string, error) {
+	if !policy.AllowEnvAssignments {
+		return nil, staticReject(StaticRejectAssignment, "")
+	}
+	env := make([]string, 0, len(assigns))
+	for _, assign := range assigns {
+		if assign == nil || assign.Append || assign.Naked || assign.Name == nil || assign.Index != nil || assign.Array != nil {
+			return nil, staticReject(StaticRejectAssignment, "")
+		}
+		value := ""
+		if assign.Value != nil {
+			var ok bool
+			value, ok = StaticWord(assign.Value)
+			if !ok {
+				return nil, staticReject(StaticRejectExpansion, "")
+			}
+		}
+		env = append(env, assign.Name.Value+"="+value)
+	}
+	return env, nil
+}
+
+func staticRedirections(redirs []*syntax.Redirect, policy StaticCommandPolicy) (bool, error) {
+	mergeStderr := false
+	for _, redir := range redirs {
+		if !policy.AllowStderrToStdout || !isStderrToStdout(redir) || mergeStderr {
+			return false, staticReject(StaticRejectRedirection, "")
+		}
+		mergeStderr = true
+	}
+	return mergeStderr, nil
+}
+
+func isStderrToStdout(redir *syntax.Redirect) bool {
+	if redir == nil || redir.Op != syntax.DplOut || redir.N == nil || redir.N.Value != "2" {
+		return false
+	}
+	word, ok := StaticWord(redir.Word)
+	return ok && word == "1"
 }
 
 // ContainsShellSyntax reports whether command is anything other than a single

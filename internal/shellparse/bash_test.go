@@ -1,6 +1,7 @@
 package shellparse
 
 import (
+	"errors"
 	"reflect"
 	"strings"
 	"testing"
@@ -75,6 +76,60 @@ func TestStaticFields(t *testing.T) {
 				t.Fatalf("StaticFields(%q) = %#v, want %#v", tt.command, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestParseStaticCommandPolicy(t *testing.T) {
+	got, err := ParseStaticCommand(`FOO=bar MESSAGE='hello world' go test ./...`, StaticCommandPolicy{AllowEnvAssignments: true})
+	if err != nil {
+		t.Fatalf("ParseStaticCommand env assignment: %v", err)
+	}
+	if !reflect.DeepEqual(got.Env, []string{"FOO=bar", "MESSAGE=hello world"}) {
+		t.Fatalf("Env = %#v", got.Env)
+	}
+	if !reflect.DeepEqual(got.Argv, []string{"go", "test", "./..."}) {
+		t.Fatalf("Argv = %#v", got.Argv)
+	}
+
+	_, err = ParseStaticCommand(`FOO=bar go test`, StaticCommandPolicy{})
+	assertStaticRejectReason(t, err, StaticRejectAssignment)
+
+	_, err = ParseStaticCommand(`FOO=$(whoami) go test`, StaticCommandPolicy{AllowEnvAssignments: true})
+	assertStaticRejectReason(t, err, StaticRejectExpansion)
+
+	_, err = ParseStaticCommand(`go test ./... >out.txt`, StaticCommandPolicy{AllowEnvAssignments: true})
+	assertStaticRejectReason(t, err, StaticRejectRedirection)
+
+	got, err = ParseStaticCommand(`go test ./... 2>&1`, StaticCommandPolicy{AllowStderrToStdout: true})
+	if err != nil {
+		t.Fatalf("ParseStaticCommand stderr merge: %v", err)
+	}
+	if !got.MergeStderr {
+		t.Fatalf("MergeStderr = false, want true")
+	}
+	if !reflect.DeepEqual(got.Argv, []string{"go", "test", "./..."}) {
+		t.Fatalf("Argv with stderr merge = %#v", got.Argv)
+	}
+
+	_, err = ParseStaticCommand(`go test ./... 2>err.txt`, StaticCommandPolicy{AllowStderrToStdout: true})
+	assertStaticRejectReason(t, err, StaticRejectRedirection)
+
+	if _, malformed := StaticFields(`FOO=bar go test`); malformed != "shell control syntax" {
+		t.Fatalf("StaticFields assignment malformed = %q", malformed)
+	}
+	if _, malformed := StaticFields(`go test 2>&1`); malformed != "shell control syntax" {
+		t.Fatalf("StaticFields redirection malformed = %q", malformed)
+	}
+}
+
+func assertStaticRejectReason(t *testing.T, err error, want StaticRejectReason) {
+	t.Helper()
+	var reject *StaticRejectError
+	if !errors.As(err, &reject) {
+		t.Fatalf("error = %v (%T), want StaticRejectError", err, err)
+	}
+	if reject.Reason != want {
+		t.Fatalf("reason = %q, want %q (err=%v)", reject.Reason, want, err)
 	}
 }
 

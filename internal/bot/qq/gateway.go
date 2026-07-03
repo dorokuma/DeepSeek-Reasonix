@@ -15,9 +15,9 @@ import (
 	"strings"
 	"sync"
 	"time"
-	"unicode/utf8"
 
 	"reasonix/internal/bot"
+	"reasonix/internal/textutil"
 
 	"golang.org/x/net/websocket"
 )
@@ -731,33 +731,7 @@ func fitQQChunkWithSuffix(text, suffix string, maxBytes int) string {
 }
 
 func fitUTF8Slice(text string, maxBytes int) string {
-	if maxBytes <= 0 {
-		return ""
-	}
-	end := 0
-	used := 0
-	for len(text[end:]) > 0 {
-		r, size := utf8.DecodeRuneInString(text[end:])
-		if r == utf8.RuneError && size == 0 {
-			break
-		}
-		if used > 0 && used+size > maxBytes {
-			break
-		}
-		end += size
-		used += size
-		if used >= maxBytes {
-			break
-		}
-	}
-	if end > 0 {
-		return text[:end]
-	}
-	_, size := utf8.DecodeRuneInString(text)
-	if size == 0 {
-		return ""
-	}
-	return text[:size]
+	return textutil.FitGraphemeBytes(text, maxBytes)
 }
 
 func pickNaturalSplit(candidate string) int {
