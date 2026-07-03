@@ -17,8 +17,8 @@ import (
 // newlines. Quoting (single, double, backslash-escapes inside double quotes)
 // and $(...) / <(...) / >(...) / `...` command / process substitutions are
 // treated as opaque — operators inside them do NOT split the outer command.
-// File-descriptor duplication like `2>&1` is recognized (the `&` following an
-// unquoted `>` does not split).
+// File-descriptor duplication like `2>&1` and combined redirects like
+// `&>/dev/null` are recognized as redirection syntax rather than splitters.
 //
 // Known out-of-scope shapes — the parser refuses to decompose these to keep
 // downstream matching safe, so callers fall back to whole-string matching:
@@ -30,7 +30,7 @@ import (
 // Returns nil when the input has no control operator to split on, or when the
 // parser encounters one of the above out-of-scope shapes. Redirect fragments
 // (`2>/dev/null`, `> file`) are left attached to the simple command they
-// annotate; stripping those is out of scope for this pass.
+// annotate; permission matching later strips only the conservative safe subset.
 //
 // The tokenizer is hand-rolled to avoid pulling in a full shell parser (e.g.
 // `mvdan.cc/sh`) for what is otherwise a small piece of permission-layer
@@ -44,6 +44,9 @@ func DecomposeBashCommand(cmd string) []string {
 	// Malformed shell: leading control operator with nothing before it.
 	trimmed := strings.TrimLeft(cmd, " \t\n\r")
 	for _, op := range []string{"&&", "||", ";", "|", "&"} {
+		if op == "&" && strings.HasPrefix(trimmed, "&>") {
+			continue
+		}
 		if strings.HasPrefix(trimmed, op) {
 			return nil
 		}
@@ -155,6 +158,12 @@ func DecomposeBashCommand(cmd string) []string {
 			flush()
 			split = true
 		case '&':
+			// `&>` / `&>>` are combined stdout+stderr redirections, not
+			// background/control operators.
+			if i+1 < len(cmd) && cmd[i+1] == '>' {
+				buf.WriteByte(c)
+				continue
+			}
 			// `>&` (fd duplication) is not a splitter. Look at the last
 			// non-whitespace byte written to buf.
 			if lastMeaningfulByte(&buf) == '>' {

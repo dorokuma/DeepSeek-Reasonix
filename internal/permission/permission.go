@@ -9,8 +9,6 @@ import (
 	"context"
 	"encoding/json"
 	"strings"
-
-	"reasonix/internal/shellsafe"
 )
 
 // Decision is the outcome of evaluating a tool call against a Policy.
@@ -184,7 +182,7 @@ func (p Policy) decideBashSegments(readOnly bool, parts []string) Decision {
 	for _, sub := range parts {
 		segReadOnly := readOnly
 		if !segReadOnly {
-			if _, _, ok := shellsafe.CommandIsReadOnly(sub); ok {
+			if isReadOnlyBashSubject(sub) {
 				segReadOnly = true
 			}
 		}
@@ -637,6 +635,9 @@ func bashPrefixBase(pattern string) (string, bool) {
 }
 
 func bashPrefixMatches(base, subject string) bool {
+	if normalized, ok := normalizeBashSafeRedirectsForMatch(subject); ok {
+		subject = normalized
+	}
 	if containsShellSyntax(subject) {
 		return false
 	}

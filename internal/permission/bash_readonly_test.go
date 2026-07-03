@@ -31,6 +31,10 @@ func TestIsReadOnlyBashSubject(t *testing.T) {
 		{"git diff", true},
 		{"git show HEAD", true},
 		{"git blame main.go", true},
+		{"git log 2>/dev/null", true},
+		{"git log >/dev/null", true},
+		{"git log 2>&1", true},
+		{"git log &>/dev/null", true},
 		{"git remote", false},
 		{"git remote add origin git@example.com:x/y", false},
 		{"git config --global user.name Xinwei", false},
@@ -40,6 +44,9 @@ func TestIsReadOnlyBashSubject(t *testing.T) {
 		{"git bundle create repo.bundle HEAD", false},
 		{"git diff --output changes.patch", false},
 		{"git show --output=changes.patch HEAD", false},
+		{"git diff --output changes.patch 2>/dev/null", false},
+		{"git log > changes.patch", false},
+		{"git log < /dev/null", false},
 
 		// Go read-only
 		{"go vet ./...", true},

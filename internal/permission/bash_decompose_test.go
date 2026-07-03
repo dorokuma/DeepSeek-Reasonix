@@ -76,6 +76,16 @@ func TestDecomposeBashCommand(t *testing.T) {
 			want: []string{"go test ./... 2>&1", "tee log"},
 		},
 		{
+			name: "&>/dev/null redirection is not a splitter",
+			in:   "git log &>/dev/null | head -20",
+			want: []string{"git log &>/dev/null", "head -20"},
+		},
+		{
+			name: "leading &>/dev/null redirection is not malformed",
+			in:   "&>/dev/null git log | head -20",
+			want: []string{"&>/dev/null git log", "head -20"},
+		},
+		{
 			name: "empty tail after trailing operator is dropped",
 			in:   "ls -la;",
 			want: nil, // only one non-empty segment after split
@@ -157,6 +167,7 @@ func TestPolicyDecideCompoundBash(t *testing.T) {
 		"Bash(git add:*)",
 		"Bash(git commit:*)",
 		"Bash(git push:*)",
+		"Bash(go test:*)",
 		"Bash(sudo chmod:*)",
 	}, nil, []string{
 		"Bash(rm -rf*)",
@@ -195,14 +206,29 @@ func TestPolicyDecideCompoundBash(t *testing.T) {
 			want: Allow,
 		},
 		{
-			name:    "segments carrying redirects currently miss prefix match (follow-up)",
+			name:    "segment with dev null redirect still matches prefix rule",
 			subject: `sudo chmod 644 /etc/foo 2>/dev/null || echo "chmod failed"`,
-			// bashPrefixMatches rejects subjects with shell syntax, so the
-			// `2>/dev/null` suffix on the first segment prevents it from
-			// matching Bash(sudo chmod:*). This PR intentionally scopes to
-			// pure operator decomposition; redirect stripping is left for a
-			// follow-up so the diff stays reviewable.
-			want: Ask,
+			want:    Allow,
+		},
+		{
+			name:    "segment with file redirect still misses prefix rule",
+			subject: `sudo chmod 644 /etc/foo > chmod.log || echo "chmod failed"`,
+			want:    Ask,
+		},
+		{
+			name:    "segment with fd duplication still matches prefix rule",
+			subject: `go test ./... 2>&1 | head -20`,
+			want:    Allow,
+		},
+		{
+			name:    "read-only segment with dev null redirect auto-allows",
+			subject: `git log --oneline 2>/dev/null | head -20`,
+			want:    Allow,
+		},
+		{
+			name:    "write-capable read-only-looking arg still asks after safe redirect",
+			subject: `git diff --output changes.patch 2>/dev/null | head -20`,
+			want:    Ask,
 		},
 		{
 			name:    "atomic subject with matching prefix rule still allows",

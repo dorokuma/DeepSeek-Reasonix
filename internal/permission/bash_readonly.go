@@ -12,6 +12,9 @@ import (
 // shellsafe tables (one source of truth with the plan-mode gate, #5341); the
 // argument rigor below is permission-specific.
 func isReadOnlyBashSubject(subject string) bool {
+	if normalized, ok := normalizeBashSafeRedirectsForMatch(subject); ok {
+		subject = normalized
+	}
 	base, sub, ok := shellsafe.CommandIsReadOnly(subject)
 	if !ok {
 		return false
