@@ -45,6 +45,7 @@ type ProviderView struct {
 	BalanceURL        string   `json:"balanceUrl"`
 	ContextWindow     int      `json:"contextWindow"`
 	ReasoningProtocol string   `json:"reasoningProtocol"`
+	Thinking          string   `json:"thinking"`
 	SupportedEfforts  []string `json:"supportedEfforts"`
 	DefaultEffort     string   `json:"defaultEffort"`
 }
@@ -314,8 +315,19 @@ func providerViewFromEntryForRootWithResolver(p config.ProviderEntry, builtIn, a
 		BalanceURL:        p.BalanceURL,
 		ContextWindow:     p.ContextWindow,
 		ReasoningProtocol: p.ReasoningProtocol,
+		Thinking:          providerThinkingForSettings(p.Thinking),
 		SupportedEfforts:  nonNil(p.SupportedEfforts),
 		DefaultEffort:     p.DefaultEffort,
+	}
+}
+
+func providerThinkingForSettings(thinking string) string {
+	normalized := strings.ToLower(strings.TrimSpace(thinking))
+	switch normalized {
+	case "enabled", "disabled", "adaptive":
+		return normalized
+	default:
+		return ""
 	}
 }
 
@@ -1184,6 +1196,7 @@ func (a *App) SaveProvider(p ProviderView) error {
 		e.BalanceURL = strings.TrimSpace(p.BalanceURL)
 		e.ContextWindow = p.ContextWindow
 		e.ReasoningProtocol = p.ReasoningProtocol
+		e.Thinking = providerThinkingForSettings(p.Thinking)
 		e.SupportedEfforts = p.SupportedEfforts
 		e.DefaultEffort = p.DefaultEffort
 		e.Model = ""

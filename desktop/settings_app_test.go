@@ -97,6 +97,16 @@ func TestProviderViewFromEntry_MigratesProviderWideVision(t *testing.T) {
 	}
 }
 
+func TestProviderViewFromEntryIncludesThinking(t *testing.T) {
+	view := providerViewFromEntry(config.ProviderEntry{
+		Name:     "anthropic",
+		Thinking: "ADAPTIVE",
+	}, false, true)
+	if view.Thinking != "adaptive" {
+		t.Fatalf("ProviderView.Thinking = %q, want adaptive", view.Thinking)
+	}
+}
+
 func TestProviderViewFromEntryShowsKeySource(t *testing.T) {
 	isolateDesktopUserDirs(t)
 	t.Setenv("TEST_PROVIDER_KEY_SOURCE", "")
@@ -334,6 +344,31 @@ func TestSaveProviderFiltersNonChatModels(t *testing.T) {
 	}
 	if !strings.Contains(block, `vision_models = ["mimo-v2.5-pro"]`) {
 		t.Fatalf("saved provider block did not persist filtered vision_models:\n%s", block)
+	}
+}
+
+func TestSaveProviderPersistsThinkingOverride(t *testing.T) {
+	isolateDesktopUserDirs(t)
+
+	app := NewApp()
+	if err := app.SaveProvider(ProviderView{
+		Name:      "glm-proxy",
+		Kind:      "openai",
+		BaseURL:   "https://proxy.example.com/v1",
+		Models:    []string{"glm-4.5-air"},
+		APIKeyEnv: "GLM_PROXY_API_KEY",
+		Thinking:  "DISABLED",
+	}); err != nil {
+		t.Fatalf("SaveProvider: %v", err)
+	}
+
+	cfg := config.LoadForEdit(config.UserConfigPath())
+	got, ok := cfg.Provider("glm-proxy")
+	if !ok {
+		t.Fatal("saved provider not found")
+	}
+	if got.Thinking != "disabled" {
+		t.Fatalf("saved provider thinking = %q, want disabled", got.Thinking)
 	}
 }
 
