@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -100,6 +101,25 @@ func TestParallelTasksForegroundCompletesAndClosesWorkers(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("parallel_tasks foreground execution did not return; workers likely waited on spawnCh forever")
+	}
+}
+
+func TestParallelTasksInjectsWorkspaceContextIntoChildren(t *testing.T) {
+	workspace := t.TempDir()
+	task := NewTaskTool(promptRoutingProvider{}, nil, tool.NewRegistry(), 20, 0, 0, 0, 0, 0, 0, 0.0, "", "sys", nil, 0, "", "", nil).
+		WithTranscripts(NewSubagentStore(t.TempDir()), workspace, "base-model", "base-effort")
+	parallel := NewParallelTasksTool(task, tool.NewRegistry())
+	ctx := withCallContext(context.Background(), "parallel-call", event.Discard, nil, false)
+
+	out, err := parallel.Execute(ctx, json.RawMessage(`{"tasks":[{"prompt":"inspect one"},{"prompt":"inspect two"}]}`))
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if !strings.Contains(out, "Current workspace: "+strconv.Quote(workspace)) ||
+		!strings.Contains(out, `prefer "." or relative paths`) ||
+		!strings.Contains(out, "inspect one ok") ||
+		!strings.Contains(out, "inspect two ok") {
+		t.Fatalf("parallel output = %q, want child workspace context and prompt", out)
 	}
 }
 

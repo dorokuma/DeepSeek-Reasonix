@@ -161,16 +161,35 @@ func ConnectionChannelConfigs(connections []config.BotConnectionConfig, includeM
 		}
 		if includeWorkspaceRoot {
 			channel.WorkspaceRoot = strings.TrimSpace(conn.WorkspaceRoot)
+			channel.SessionMappings = botSessionMappings(conn.SessionMappings)
 		}
 		if value := normalizeToolApprovalMode(conn.ToolApprovalMode); value != "" {
 			channel.ToolApprovalMode = value
 		}
-		if channel.Model != "" || channel.WorkspaceRoot != "" || channel.ToolApprovalMode != "" {
+		if channel.Model != "" || channel.WorkspaceRoot != "" || channel.ToolApprovalMode != "" || len(channel.SessionMappings) > 0 {
 			out[id] = channel
 		}
 	}
 	if len(out) == 0 {
 		return nil
+	}
+	return out
+}
+
+func botSessionMappings(mappings []config.BotConnectionSessionMapping) []bot.SessionMapping {
+	if len(mappings) == 0 {
+		return nil
+	}
+	out := make([]bot.SessionMapping, 0, len(mappings))
+	for _, mapping := range mappings {
+		out = append(out, bot.SessionMapping{
+			RemoteID:      strings.TrimSpace(mapping.RemoteID),
+			ChatType:      strings.TrimSpace(mapping.ChatType),
+			UserID:        strings.TrimSpace(mapping.UserID),
+			ThreadID:      strings.TrimSpace(mapping.ThreadID),
+			Scope:         strings.TrimSpace(mapping.Scope),
+			WorkspaceRoot: strings.TrimSpace(mapping.WorkspaceRoot),
+		})
 	}
 	return out
 }

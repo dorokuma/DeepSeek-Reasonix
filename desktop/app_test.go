@@ -1888,6 +1888,34 @@ func TestEnsureTabControllerWorkspaceRebuildsStaleWorkspace(t *testing.T) {
 	assertTabRebuiltToPinnedWorkspace(t, f)
 }
 
+func TestEnsureTabControllerWorkspaceWarnsWhenPinnedSessionSwitchesWorkspace(t *testing.T) {
+	f := newStaleWorkspaceBindingFixture(t, "warn_workspace_switch")
+	events := make(chan event.Event, 8)
+	f.tab.sink.SetBotSink(event.FuncSink(func(e event.Event) {
+		events <- e
+	}))
+
+	if err := f.app.ensureTabControllerWorkspace(f.tab); err != nil {
+		t.Fatalf("ensureTabControllerWorkspace: %v", err)
+	}
+	assertTabRebuiltToPinnedWorkspace(t, f)
+
+	deadline := time.After(2 * time.Second)
+	for {
+		select {
+		case e := <-events:
+			if e.Kind == event.Notice &&
+				e.Level == event.LevelWarn &&
+				strings.Contains(e.Text, f.projectA) &&
+				strings.Contains(e.Text, "switched tab") {
+				return
+			}
+		case <-deadline:
+			t.Fatal("did not receive workspace switch warning notice")
+		}
+	}
+}
+
 func TestSteerForTabReconcilesStaleWorkspaceBeforeIdleFallback(t *testing.T) {
 	f := newStaleWorkspaceBindingFixture(t, "steer_idle_fallback")
 

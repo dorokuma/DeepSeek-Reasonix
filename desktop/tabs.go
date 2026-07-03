@@ -2562,9 +2562,12 @@ func (a *App) applySessionBindingToTab(tab *WorkspaceTab, binding sessionBinding
 		a.mu.Unlock()
 		return
 	}
+	oldScope := tab.Scope
+	oldWorkspaceRoot := tab.WorkspaceRoot
 	changed := tab.Scope != scope ||
 		tab.WorkspaceRoot != workspaceRoot ||
 		canonicalTabSessionPath(tab.SessionPath) != canonicalTabSessionPath(binding.path)
+	workspaceChanged := tab.Scope != scope || tab.WorkspaceRoot != workspaceRoot
 	tab.Scope = scope
 	tab.WorkspaceRoot = workspaceRoot
 	tab.SessionPath = canonicalTabSessionPath(binding.path)
@@ -2579,7 +2582,28 @@ func (a *App) applySessionBindingToTab(tab *WorkspaceTab, binding sessionBinding
 	if changed && current == tab {
 		a.saveTabsLocked()
 	}
+	sink := tab.sink
 	a.mu.Unlock()
+	if workspaceChanged && sink != nil {
+		sink.Emit(event.Event{
+			Kind:  event.Notice,
+			Level: event.LevelWarn,
+			Text:  sessionBindingWorkspaceNotice(oldScope, oldWorkspaceRoot, scope, workspaceRoot),
+		})
+	}
+}
+
+func sessionBindingWorkspaceNotice(oldScope, oldWorkspaceRoot, scope, workspaceRoot string) string {
+	return "Session belongs to " + describeSessionBindingWorkspace(scope, workspaceRoot) +
+		"; switched tab from " + describeSessionBindingWorkspace(oldScope, oldWorkspaceRoot) +
+		" to match the saved session."
+}
+
+func describeSessionBindingWorkspace(scope, workspaceRoot string) string {
+	if strings.TrimSpace(scope) == "project" && strings.TrimSpace(workspaceRoot) != "" {
+		return fmt.Sprintf("project workspace %q", strings.TrimSpace(workspaceRoot))
+	}
+	return "global workspace"
 }
 
 func (a *App) resolveSessionBinding(sessionPath string) (sessionBinding, bool) {

@@ -243,6 +243,27 @@ func TestEnsureBlankTabStartsProjectRuntimeWithCurrentWorkspacePrompt(t *testing
 	}
 }
 
+func TestBlankTabSessionPathRejectsOtherProjectWorkspace(t *testing.T) {
+	isolateDesktopUserDirs(t)
+
+	projectA := robustTempDir(t)
+	projectB := robustTempDir(t)
+	pathA, err := createEmptySessionFile(desktopSessionDir(projectA), "test-model")
+	if err != nil {
+		t.Fatalf("create project A empty session: %v", err)
+	}
+	tab := &WorkspaceTab{
+		ID:            "blank-project-b",
+		Scope:         "project",
+		WorkspaceRoot: projectB,
+		SessionPath:   pathA,
+	}
+
+	if blankTabSessionPathHasNoContent(tab) {
+		t.Fatalf("blank tab treated session %q from project A as reusable for project B %q", pathA, projectB)
+	}
+}
+
 func TestForkKeepsProjectWorkspacePrompt(t *testing.T) {
 	isolateDesktopUserDirs(t)
 

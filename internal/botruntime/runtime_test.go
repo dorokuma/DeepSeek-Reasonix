@@ -353,6 +353,44 @@ func TestConnectionChannelConfigsPreserveToolApprovalMode(t *testing.T) {
 	}
 }
 
+func TestConnectionChannelConfigsCarrySessionMappingsOnlyPerConnection(t *testing.T) {
+	connections := []config.BotConnectionConfig{
+		{
+			ID:            "weixin-weixin",
+			Provider:      "weixin",
+			Domain:        "weixin",
+			Enabled:       true,
+			WorkspaceRoot: "/connection",
+			SessionMappings: []config.BotConnectionSessionMapping{{
+				RemoteID:      "wx-group-1",
+				ChatType:      string(bot.ChatGroup),
+				UserID:        "wx-user-1",
+				Scope:         "project",
+				WorkspaceRoot: "/mapped",
+			}},
+		},
+	}
+
+	byConnection := ConnectionChannelConfigs(connections, true, true)
+	mappings := byConnection["weixin-weixin"].SessionMappings
+	if len(mappings) != 1 {
+		t.Fatalf("connection mappings = %+v, want one mapping", mappings)
+	}
+	if got := mappings[0]; got.RemoteID != "wx-group-1" || got.ChatType != string(bot.ChatGroup) || got.UserID != "wx-user-1" || got.WorkspaceRoot != "/mapped" {
+		t.Fatalf("connection mapping = %+v, want copied routing fields", got)
+	}
+
+	byPlatform := ChannelConfigs(connections, true, true)
+	if got := byPlatform[bot.PlatformWeixin].SessionMappings; len(got) != 0 {
+		t.Fatalf("platform mappings = %+v, want none to avoid cross-connection routing", got)
+	}
+
+	noWorkspace := ConnectionChannelConfigs(connections, true, false)
+	if got := noWorkspace["weixin-weixin"].SessionMappings; len(got) != 0 {
+		t.Fatalf("connection mappings with includeWorkspaceRoot=false = %+v, want none", got)
+	}
+}
+
 func isolateUserConfig(t *testing.T) {
 	t.Helper()
 	home := t.TempDir()

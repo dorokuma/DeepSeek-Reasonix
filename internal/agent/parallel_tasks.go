@@ -183,7 +183,7 @@ func (p *ParallelTasksTool) Execute(ctx context.Context, args json.RawMessage) (
 			}
 
 			sess := NewSession(DefaultReadOnlyTaskSystemPrompt)
-			output, runErr := RunSubAgentWithSession(ctx, prov, subReg, sess, t.Prompt, Options{
+			output, runErr := RunSubAgentWithSession(ctx, prov, subReg, sess, p.taskTool.withWorkspaceContext(t.Prompt), Options{
 				MaxSteps:            max,
 				Temperature:         p.taskTool.temperature,
 				Pricing:             pricing,

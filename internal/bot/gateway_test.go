@@ -815,6 +815,84 @@ func TestGatewaySessionOptionsPreferConnectionOverride(t *testing.T) {
 	}
 }
 
+func TestGatewaySessionOptionsPreferConnectionSessionMappingWorkspace(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	gw := NewGateway(GatewayConfig{
+		Model:         "global-model",
+		WorkspaceRoot: "/global",
+		ConnectionChannels: map[string]ChannelConfig{
+			"weixin-main": {
+				WorkspaceRoot: "/connection",
+				SessionMappings: []SessionMapping{
+					{RemoteID: "group-1", ChatType: string(ChatGroup), UserID: "other", Scope: "project", WorkspaceRoot: "/other"},
+					{RemoteID: "group-1", ChatType: string(ChatGroup), UserID: "user-1", Scope: "project", WorkspaceRoot: "/mapped"},
+				},
+			},
+		},
+	}, nil, logger)
+
+	model, root, mode := gw.sessionOptionsForMessage(InboundMessage{
+		Platform:     PlatformWeixin,
+		ConnectionID: "weixin-main",
+		ChatType:     ChatGroup,
+		ChatID:       "group-1",
+		UserID:       "user-1",
+	})
+	if model != "global-model" || root != "/mapped" || mode != "ask" {
+		t.Fatalf("mapped options = %q,%q,%q; want global model, mapped workspace, ask", model, root, mode)
+	}
+
+	_, root, _ = gw.sessionOptionsForMessage(InboundMessage{
+		Platform:     PlatformWeixin,
+		ConnectionID: "weixin-main",
+		ChatType:     ChatGroup,
+		ChatID:       "group-1",
+		UserID:       "new-user",
+	})
+	if root != "/connection" {
+		t.Fatalf("unmapped group user workspace = %q, want connection default", root)
+	}
+}
+
+func TestGatewaySessionOptionsAllowSessionMappingGlobalWorkspace(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	gw := NewGateway(GatewayConfig{
+		WorkspaceRoot: "/global-default",
+		ConnectionChannels: map[string]ChannelConfig{
+			"weixin-main": {
+				WorkspaceRoot:   "/connection",
+				SessionMappings: []SessionMapping{{RemoteID: "dm-1", Scope: "global"}},
+			},
+		},
+	}, nil, logger)
+
+	_, root, _ := gw.sessionOptionsForMessage(InboundMessage{
+		Platform:     PlatformWeixin,
+		ConnectionID: "weixin-main",
+		ChatType:     ChatDM,
+		ChatID:       "dm-1",
+	})
+	if root != "" {
+		t.Fatalf("global mapping workspace = %q, want empty global workspace", root)
+	}
+}
+
+func TestSessionStateMatchesRuntimeRejectsWorkspaceOrModelMismatch(t *testing.T) {
+	ctrl := control.New(control.Options{WorkspaceRoot: "/old"})
+	defer ctrl.Close()
+	state := &sessionState{ctrl: ctrl, model: "model-a"}
+
+	if !sessionStateMatchesRuntime(state, sessionRuntimeProfile{model: "model-a", workspaceRoot: "/old"}) {
+		t.Fatal("session should match the controller workspace and model")
+	}
+	if sessionStateMatchesRuntime(state, sessionRuntimeProfile{model: "model-a", workspaceRoot: "/new"}) {
+		t.Fatal("session matched a different workspace root")
+	}
+	if sessionStateMatchesRuntime(state, sessionRuntimeProfile{model: "model-b", workspaceRoot: "/old"}) {
+		t.Fatal("session matched a different model")
+	}
+}
+
 func TestBotSessionDirUsesProjectWorkspaceRoot(t *testing.T) {
 	root := t.TempDir()
 	got := botSessionDir(root)

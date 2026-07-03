@@ -48,6 +48,18 @@ type ChannelConfig struct {
 	Model            string
 	ToolApprovalMode string
 	WorkspaceRoot    string
+	SessionMappings  []SessionMapping
+}
+
+// SessionMapping is the runtime subset of a saved bot connection mapping used
+// to route a remote chat/user/thread back to its intended workspace.
+type SessionMapping struct {
+	RemoteID      string
+	ChatType      string
+	UserID        string
+	ThreadID      string
+	Scope         string
+	WorkspaceRoot string
 }
 
 // AdapterBinding attaches an adapter instance to one saved bot connection.
@@ -99,6 +111,9 @@ type sessionState struct {
 	sink             *sessionEventSink
 	platform         Platform
 	connectionID     string
+	model            string
+	workspaceRoot    string
+	toolApprovalMode string
 	cancel           context.CancelFunc
 	pendingAsks      map[string][]event.AskQuestion
 	pendingApprovals map[string]event.Approval
@@ -106,6 +121,12 @@ type sessionState struct {
 	lastAskID        string
 	createdAt        time.Time
 	lastActive       time.Time
+}
+
+type sessionRuntimeProfile struct {
+	model            string
+	workspaceRoot    string
+	toolApprovalMode string
 }
 
 type sessionEventSink struct {
@@ -857,32 +878,37 @@ func (gw *BotGateway) runTurn(ctx context.Context, adapter Adapter, key string, 
 }
 
 func (gw *BotGateway) getOrCreateSession(ctx context.Context, key string, msg InboundMessage) *sessionState {
+	profile := gw.sessionProfileForMessage(msg)
+	var stale *sessionState
 	gw.mu.Lock()
 	if state, ok := gw.controllers[key]; ok {
-		if state.connectionID == "" {
-			state.connectionID = strings.TrimSpace(msg.ConnectionID)
+		if !sessionStateMatchesRuntime(state, profile) {
+			delete(gw.controllers, key)
+			stale = state
+			gw.mu.Unlock()
+			closeBotSessionState(stale)
+			gw.logger.Warn("bot session runtime changed; rebuilding", "platform", msg.Platform, "chat_type", msg.ChatType, "chat", hashID(msg.ChatID), "session", key[:8], "old_workspace_set", strings.TrimSpace(stale.workspaceRoot) != "", "new_workspace_set", profile.workspaceRoot != "", "old_model", stale.model, "new_model", profile.model)
+		} else {
+			updateSessionStateRuntime(state, msg, profile)
+			gw.mu.Unlock()
+			safeBotSetToolApprovalMode(state.ctrl, profile.toolApprovalMode)
+			gw.logger.Info("bot session reused", "platform", msg.Platform, "chat_type", msg.ChatType, "chat", hashID(msg.ChatID), "session", key[:8])
+			return state
 		}
-		if state.platform == "" {
-			state.platform = msg.Platform
-		}
-		state.lastActive = time.Now()
+	} else {
 		gw.mu.Unlock()
-		gw.logger.Info("bot session reused", "platform", msg.Platform, "chat_type", msg.ChatType, "chat", hashID(msg.ChatID), "session", key[:8])
-		return state
 	}
-	gw.mu.Unlock()
 
 	// 创建新 Controller
 	sessionSink := &sessionEventSink{}
-	model, workspaceRoot, toolApprovalMode := gw.sessionOptionsForMessage(msg)
-	gw.logger.Info("bot session creating", "platform", msg.Platform, "chat_type", msg.ChatType, "chat", hashID(msg.ChatID), "session", key[:8], "model", model, "workspace_set", strings.TrimSpace(workspaceRoot) != "", "tool_approval_mode", normalizeBotToolApprovalMode(toolApprovalMode))
+	gw.logger.Info("bot session creating", "platform", msg.Platform, "chat_type", msg.ChatType, "chat", hashID(msg.ChatID), "session", key[:8], "model", profile.model, "workspace_set", profile.workspaceRoot != "", "tool_approval_mode", profile.toolApprovalMode)
 	ctrl, err := boot.Build(ctx, boot.Options{
-		Model:           model,
+		Model:           profile.model,
 		MaxSteps:        gw.cfg.MaxSteps,
 		RequireKey:      true,
 		Sink:            sessionSink,
-		WorkspaceRoot:   workspaceRoot,
-		SessionDir:      botSessionDir(workspaceRoot),
+		WorkspaceRoot:   profile.workspaceRoot,
+		SessionDir:      botSessionDir(profile.workspaceRoot),
 		ApprovalTimeout: gw.approvalTimeout(),
 	})
 	if err != nil {
@@ -890,36 +916,124 @@ func (gw *BotGateway) getOrCreateSession(ctx context.Context, key string, msg In
 		return nil
 	}
 	ctrl.EnableInteractiveApproval()
-	ctrl.SetToolApprovalMode(toolApprovalMode)
+	ctrl.SetToolApprovalMode(profile.toolApprovalMode)
 	ctrl.EnsureSessionPath()
 
+	var replace *sessionState
 	gw.mu.Lock()
 	// Re-check under the lock: while we were off-lock in boot.Build, a second
 	// message for the same key may have built and registered its own session.
-	// The first writer wins; close the controller we just built (releasing its
-	// jobs/plugin host) and reuse the existing one, so a near-simultaneous pair
-	// of opening messages can't leak a controller.
+	// Reuse it only when it still targets this message's runtime profile.
 	if existing, ok := gw.controllers[key]; ok {
-		existing.lastActive = time.Now()
-		gw.mu.Unlock()
-		ctrl.Close()
-		gw.logger.Info("bot session built concurrently; discarding duplicate", "platform", msg.Platform, "chat", hashID(msg.ChatID), "session", key[:8])
-		return existing
+		if sessionStateMatchesRuntime(existing, profile) {
+			updateSessionStateRuntime(existing, msg, profile)
+			gw.mu.Unlock()
+			ctrl.Close()
+			safeBotSetToolApprovalMode(existing.ctrl, profile.toolApprovalMode)
+			gw.logger.Info("bot session built concurrently; discarding duplicate", "platform", msg.Platform, "chat", hashID(msg.ChatID), "session", key[:8])
+			return existing
+		}
+		delete(gw.controllers, key)
+		replace = existing
 	}
 	state := &sessionState{
-		ctrl:         ctrl,
-		sink:         sessionSink,
-		platform:     msg.Platform,
-		connectionID: strings.TrimSpace(msg.ConnectionID),
-		pendingAsks:  make(map[string][]event.AskQuestion),
-		createdAt:    time.Now(),
-		lastActive:   time.Now(),
+		ctrl:             ctrl,
+		sink:             sessionSink,
+		platform:         msg.Platform,
+		connectionID:     strings.TrimSpace(msg.ConnectionID),
+		model:            profile.model,
+		workspaceRoot:    profile.workspaceRoot,
+		toolApprovalMode: profile.toolApprovalMode,
+		pendingAsks:      make(map[string][]event.AskQuestion),
+		createdAt:        time.Now(),
+		lastActive:       time.Now(),
 	}
 	gw.controllers[key] = state
 	gw.mu.Unlock()
+	closeBotSessionState(replace)
 
 	gw.logger.Info("bot session created", "platform", msg.Platform, "chat_type", msg.ChatType, "chat", hashID(msg.ChatID), "session", key[:8])
 	return state
+}
+
+func updateSessionStateRuntime(state *sessionState, msg InboundMessage, profile sessionRuntimeProfile) {
+	if state == nil {
+		return
+	}
+	if state.connectionID == "" {
+		state.connectionID = strings.TrimSpace(msg.ConnectionID)
+	}
+	if state.platform == "" {
+		state.platform = msg.Platform
+	}
+	state.model = profile.model
+	state.workspaceRoot = profile.workspaceRoot
+	state.toolApprovalMode = profile.toolApprovalMode
+	state.lastActive = time.Now()
+}
+
+func closeBotSessionState(state *sessionState) {
+	if state == nil {
+		return
+	}
+	if state.cancel != nil {
+		state.cancel()
+	}
+	if state.ctrl != nil {
+		state.ctrl.Close()
+	}
+}
+
+func (gw *BotGateway) sessionProfileForMessage(msg InboundMessage) sessionRuntimeProfile {
+	model, workspaceRoot, toolApprovalMode := gw.sessionOptionsForMessage(msg)
+	return sessionRuntimeProfile{
+		model:            strings.TrimSpace(model),
+		workspaceRoot:    strings.TrimSpace(workspaceRoot),
+		toolApprovalMode: normalizeBotToolApprovalMode(toolApprovalMode),
+	}
+}
+
+func sessionStateMatchesRuntime(state *sessionState, profile sessionRuntimeProfile) bool {
+	if state == nil || state.ctrl == nil {
+		return false
+	}
+	if stateModel := strings.TrimSpace(state.model); stateModel != "" && profile.model != "" && stateModel != profile.model {
+		return false
+	}
+	stateRoot := strings.TrimSpace(state.workspaceRoot)
+	wantRoot := strings.TrimSpace(profile.workspaceRoot)
+	if stateRoot == "" {
+		root, ok := safeBotControllerWorkspaceRoot(state.ctrl)
+		if ok {
+			stateRoot = strings.TrimSpace(root)
+		} else if wantRoot != "" {
+			return false
+		}
+	}
+	return stateRoot == wantRoot
+}
+
+func safeBotControllerWorkspaceRoot(ctrl botController) (root string, ok bool) {
+	if ctrl == nil {
+		return "", false
+	}
+	defer func() {
+		if recover() != nil {
+			root = ""
+			ok = false
+		}
+	}()
+	return ctrl.WorkspaceRoot(), true
+}
+
+func safeBotSetToolApprovalMode(ctrl botController, mode string) {
+	if ctrl == nil {
+		return
+	}
+	defer func() {
+		_ = recover()
+	}()
+	ctrl.SetToolApprovalMode(mode)
 }
 
 // defaultBotApprovalTimeout caps how long a bot session waits for a remote
@@ -976,37 +1090,91 @@ func (gw *BotGateway) sessionOptionsForMessage(msg InboundMessage) (model string
 	model = gw.cfg.Model
 	workspaceRoot = gw.cfg.WorkspaceRoot
 	toolApprovalMode = normalizeBotToolApprovalMode(gw.cfg.ToolApprovalMode)
+	var mappings []SessionMapping
 	if gw.cfg.ConnectionChannels != nil && msg.ConnectionID != "" {
 		if channel, ok := gw.cfg.ConnectionChannels[msg.ConnectionID]; ok {
-			if value := strings.TrimSpace(channel.Model); value != "" {
-				model = value
-			}
-			if value := strings.TrimSpace(channel.WorkspaceRoot); value != "" {
-				workspaceRoot = value
-			}
-			if value := normalizeOptionalBotToolApprovalMode(channel.ToolApprovalMode); value != "" {
-				toolApprovalMode = value
+			applyBotChannelOptions(channel, &model, &workspaceRoot, &toolApprovalMode)
+			mappings = channel.SessionMappings
+			if mapping, ok := matchingSessionMapping(mappings, msg); ok {
+				workspaceRoot = workspaceRootForSessionMapping(mapping, workspaceRoot)
 			}
 			return model, workspaceRoot, toolApprovalMode
 		}
 	}
-	if gw.cfg.Channels == nil {
-		return model, workspaceRoot, toolApprovalMode
+	if gw.cfg.Channels != nil {
+		if channel, ok := gw.cfg.Channels[msg.Platform]; ok {
+			applyBotChannelOptions(channel, &model, &workspaceRoot, &toolApprovalMode)
+			mappings = channel.SessionMappings
+		}
 	}
-	channel, ok := gw.cfg.Channels[msg.Platform]
-	if !ok {
-		return model, workspaceRoot, toolApprovalMode
-	}
-	if value := strings.TrimSpace(channel.Model); value != "" {
-		model = value
-	}
-	if value := strings.TrimSpace(channel.WorkspaceRoot); value != "" {
-		workspaceRoot = value
-	}
-	if value := normalizeOptionalBotToolApprovalMode(channel.ToolApprovalMode); value != "" {
-		toolApprovalMode = value
+	if mapping, ok := matchingSessionMapping(mappings, msg); ok {
+		workspaceRoot = workspaceRootForSessionMapping(mapping, workspaceRoot)
 	}
 	return model, workspaceRoot, toolApprovalMode
+}
+
+func applyBotChannelOptions(channel ChannelConfig, model *string, workspaceRoot *string, toolApprovalMode *string) {
+	if value := strings.TrimSpace(channel.Model); value != "" {
+		*model = value
+	}
+	if value := strings.TrimSpace(channel.WorkspaceRoot); value != "" {
+		*workspaceRoot = value
+	}
+	if value := normalizeOptionalBotToolApprovalMode(channel.ToolApprovalMode); value != "" {
+		*toolApprovalMode = value
+	}
+}
+
+func matchingSessionMapping(mappings []SessionMapping, msg InboundMessage) (SessionMapping, bool) {
+	for i := range mappings {
+		if sessionMappingMatches(mappings[i], msg) {
+			return mappings[i], true
+		}
+	}
+	return SessionMapping{}, false
+}
+
+func sessionMappingMatches(mapping SessionMapping, msg InboundMessage) bool {
+	if strings.TrimSpace(mapping.RemoteID) != strings.TrimSpace(msg.ChatID) {
+		return false
+	}
+	chatType, userID, threadID := sessionMappingIdentity(msg)
+	mappingChatType := strings.TrimSpace(mapping.ChatType)
+	if mappingChatType == "" {
+		return chatType == ""
+	}
+	if mappingChatType != chatType {
+		return false
+	}
+	if strings.TrimSpace(mapping.UserID) != userID {
+		return false
+	}
+	return strings.TrimSpace(mapping.ThreadID) == threadID
+}
+
+func sessionMappingIdentity(msg InboundMessage) (chatType string, userID string, threadID string) {
+	switch msg.ChatType {
+	case ChatGroup, ChatGuild:
+		chatType = string(msg.ChatType)
+		userID = strings.TrimSpace(msg.UserID)
+	case ChatThread:
+		chatType = string(msg.ChatType)
+		threadID = strings.TrimSpace(msg.ThreadID)
+		if threadID == "" {
+			threadID = strings.TrimSpace(msg.ChatID)
+		}
+	}
+	return chatType, userID, threadID
+}
+
+func workspaceRootForSessionMapping(mapping SessionMapping, fallback string) string {
+	if root := strings.TrimSpace(mapping.WorkspaceRoot); root != "" {
+		return root
+	}
+	if strings.EqualFold(strings.TrimSpace(mapping.Scope), "global") {
+		return ""
+	}
+	return fallback
 }
 
 func normalizeBotToolApprovalMode(mode string) string {
