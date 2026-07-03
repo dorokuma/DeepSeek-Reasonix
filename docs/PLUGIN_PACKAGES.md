@@ -184,10 +184,20 @@ third-party install scripts during plugin installation.
 ## Codex Compatibility
 
 Reasonix also reads Codex plugin manifests at `.codex-plugin/plugin.json`.
-For packages such as Superpowers, Reasonix maps:
+For packages such as Superpowers and Claude-style skill packs, Reasonix maps:
 
 - `skills` to Reasonix skill roots.
 - `hooks/session-start-codex` to the Reasonix `SessionStart` hook when present.
+- A plugin-root `CLAUDE.md` file to a built-in `SessionStart` context hook. The
+  file is read directly by Reasonix, without spawning a shell command.
+- `.claude/settings.json` command hooks to Reasonix hook events when the event
+  names match. Claude's `matcher` field maps to Reasonix `match`; hook commands
+  run as shell commands with the plugin root as `cwd`; Claude `timeout` values
+  are interpreted as seconds.
+
+Unsupported Claude hook item types are skipped with a warning. Reasonix does not
+run third-party install scripts or implement marketplace-specific install
+protocols.
 
 Plugin hooks receive these environment variables:
 
@@ -196,6 +206,7 @@ Plugin hooks receive these environment variables:
 - `REASONIX_PLUGIN_VERSION`
 - `REASONIX_HOME`
 - `REASONIX_WORKSPACE_ROOT`
+- `CLAUDE_PROJECT_DIR`
 
 ## Desktop Backend Methods
 

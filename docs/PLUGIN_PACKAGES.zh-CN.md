@@ -170,11 +170,19 @@ Reasonix 原生插件在根目录声明 `reasonix-plugin.json`：
 
 ## Codex 兼容
 
-Reasonix 也会读取 `.codex-plugin/plugin.json`。对于 Superpowers 这类插件，
-Reasonix 会映射：
+Reasonix 也会读取 `.codex-plugin/plugin.json`。对于 Superpowers 和 Claude 风格
+skill 包，Reasonix 会映射：
 
 - `skills` 到 Reasonix skill root。
 - 如果存在 `hooks/session-start-codex`，映射为 Reasonix `SessionStart` hook。
+- 插件根目录的 `CLAUDE.md` 会映射为内置的 `SessionStart` 上下文 hook。
+  Reasonix 会直接读取该文件，不通过 shell 命令。
+- `.claude/settings.json` 里的 command hooks 会按同名事件映射到 Reasonix hooks。
+  Claude 的 `matcher` 字段会映射到 Reasonix `match`；hook 命令以插件根目录作为
+  `cwd` 执行；Claude `timeout` 按秒解析。
+
+不支持的 Claude hook item type 会跳过并产生 warning。Reasonix 不会执行第三方安装脚本，
+也不会实现 marketplace 专用安装协议。
 
 插件 hook 会收到这些环境变量：
 
@@ -183,6 +191,7 @@ Reasonix 会映射：
 - `REASONIX_PLUGIN_VERSION`
 - `REASONIX_HOME`
 - `REASONIX_WORKSPACE_ROOT`
+- `CLAUDE_PROJECT_DIR`
 
 ## 桌面端后端方法
 
