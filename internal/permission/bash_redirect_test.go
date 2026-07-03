@@ -43,6 +43,24 @@ func TestNormalizeBashSafeRedirectsForMatch(t *testing.T) {
 			ok:   true,
 		},
 		{
+			name: "powershell null sink",
+			in:   "git log >$null",
+			want: "git log",
+			ok:   true,
+		},
+		{
+			name: "powershell null sink is case-insensitive",
+			in:   "git log 2> $NULL",
+			want: "git log",
+			ok:   true,
+		},
+		{
+			name: "windows nul sink",
+			in:   "git log > NUL",
+			want: "git log",
+			ok:   true,
+		},
+		{
 			name: "fd duplication",
 			in:   "git log 2>&1",
 			want: "git log",
@@ -72,6 +90,16 @@ func TestNormalizeBashSafeRedirectsForMatch(t *testing.T) {
 		{
 			name: "dev null prefix is not enough",
 			in:   "git log >/dev/null.log",
+			ok:   false,
+		},
+		{
+			name: "powershell null prefix is not enough",
+			in:   "git log >$nullish",
+			ok:   false,
+		},
+		{
+			name: "windows nul prefix is not enough",
+			in:   "git log >nul.txt",
 			ok:   false,
 		},
 		{

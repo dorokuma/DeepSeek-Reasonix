@@ -7,10 +7,11 @@ import "strings"
 // for permission matching, never for execution.
 //
 // Supported safe forms are fd duplication/close (`2>&1`, `>&2`, `2>&-`,
-// `0<&1`) and output redirects to /dev/null (`>/dev/null`,
-// `2> /dev/null`, `>>/dev/null`, `&>/dev/null`, `&>>/dev/null`). Other
-// redirections are left unnormalized so the usual shell-syntax guard keeps
-// prefix/read-only matching conservative.
+// `0<&1`) and output redirects to a null sink (`>/dev/null`, `>$null`,
+// `>nul`, `2> /dev/null`, `>>/dev/null`, `&>/dev/null`, `&>>/dev/null`).
+// The shell execution layer normalizes these null-sink spellings to the actual
+// sink for the resolved shell. Other redirections are left unnormalized so the
+// usual shell-syntax guard keeps prefix/read-only matching conservative.
 func normalizeBashSafeRedirectsForMatch(subject string) (string, bool) {
 	var (
 		out        strings.Builder
@@ -155,13 +156,13 @@ func consumeSafeBashRedirect(s string, start int) (int, bool) {
 	case strings.HasPrefix(s[i:], ">&"), strings.HasPrefix(s[i:], "<&"):
 		return consumeBashFDDup(s, i+2)
 	case strings.HasPrefix(s[i:], "&>>"):
-		return consumeBashDevNullRedirect(s, i+3)
+		return consumeBashNullRedirect(s, i+3)
 	case strings.HasPrefix(s[i:], "&>"):
-		return consumeBashDevNullRedirect(s, i+2)
+		return consumeBashNullRedirect(s, i+2)
 	case strings.HasPrefix(s[i:], ">>"):
-		return consumeBashDevNullRedirect(s, i+2)
+		return consumeBashNullRedirect(s, i+2)
 	case s[i] == '>':
-		return consumeBashDevNullRedirect(s, i+1)
+		return consumeBashNullRedirect(s, i+1)
 	default:
 		return start, false
 	}
@@ -192,13 +193,30 @@ func consumeBashFDDup(s string, i int) (int, bool) {
 	return i, true
 }
 
-func consumeBashDevNullRedirect(s string, i int) (int, bool) {
+func consumeBashNullRedirect(s string, i int) (int, bool) {
 	i = skipBashMatchHorizontalSpace(s, i)
-	const devNull = "/dev/null"
-	if !strings.HasPrefix(s[i:], devNull) {
+	for _, sink := range []string{"/dev/null", "$null", "nul"} {
+		next, ok := consumeBashNullSink(s, i, sink)
+		if ok {
+			return next, true
+		}
+	}
+	return i, false
+}
+
+func consumeBashNullSink(s string, i int, sink string) (int, bool) {
+	if i+len(sink) > len(s) {
 		return i, false
 	}
-	next := i + len(devNull)
+	got := s[i : i+len(sink)]
+	if sink == "/dev/null" {
+		if got != sink {
+			return i, false
+		}
+	} else if !strings.EqualFold(got, sink) {
+		return i, false
+	}
+	next := i + len(sink)
 	if next < len(s) && !isBashRedirectWordEnd(s[next]) {
 		return next, false
 	}

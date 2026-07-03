@@ -206,6 +206,8 @@ func TestBashPrefixRulesMatchSafeRedirectsOnly(t *testing.T) {
 		"git log >/dev/null",
 		"git log >>/dev/null",
 		"git log &>/dev/null",
+		"git log >$null",
+		"git log >NUL",
 		"git log 2>&1",
 		"git log >&2",
 	}
@@ -219,6 +221,8 @@ func TestBashPrefixRulesMatchSafeRedirectsOnly(t *testing.T) {
 		"git log > out.txt",
 		"git log 2>out.txt",
 		"git log < input.txt",
+		"git log >$nullish",
+		"git log >nul.txt",
 		"git log 2>&1rm",
 		"git log >/dev/null && rm -rf /tmp/x",
 		"git log 2>&1 && rm -rf /tmp/x",
