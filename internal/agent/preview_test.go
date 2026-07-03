@@ -68,6 +68,11 @@ func TestStripTransientUserBlocksUnwrapsMemoryCompilerExecution(t *testing.T) {
 			in:   "<hook-context event=\"SessionStart\">\nLoad conventions.\n</hook-context>\n\nship it",
 			want: "ship it",
 		},
+		{
+			name: "capability route prefix is stripped",
+			in:   "<capability-route version=\"1\">\nRelevant capabilities:\n- skill:review prefer\n</capability-route>\n\nreview this",
+			want: "review this",
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

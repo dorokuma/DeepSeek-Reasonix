@@ -1319,6 +1319,7 @@ func (c *Controller) Run(ctx context.Context, input string) error {
 	ctx = agent.WithParentSession(ctx, parentSession)
 	ctx = jobs.WithSession(ctx, parentSession)
 	ctx = agent.WithUserImages(ctx, c.inputImages(input))
+	rawInput := input
 	input = c.Compose(input)
 	startMessages := c.messageCount()
 	defer c.snapshotActivityIfChanged(startMessages)
@@ -1334,7 +1335,7 @@ func (c *Controller) Run(ctx context.Context, input string) error {
 	}
 	c.markInFlightTurn(startMessages, true)
 	defer c.clearInFlightTurn()
-	return c.runner.Run(ctx, input)
+	return c.runner.Run(ctx, c.withCapabilityRoute(input, rawInput))
 }
 
 // Cancel aborts the in-flight turn. A goroutine blocked awaiting approval

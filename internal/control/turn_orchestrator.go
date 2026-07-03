@@ -102,7 +102,11 @@ func (o *turnOrchestrator) runOrchestratedTurn(ctx context.Context, turn orchest
 	autoResearchTaskID := c.goals.currentAutoResearchTaskID()
 	autoResearchAcceptedBefore := c.autoResearchAcceptedEvidenceIDs(autoResearchTaskID)
 	c.appendAutoResearchHeartbeat(autoResearchTaskID, autoresearch.HeartbeatStartingTurn, "")
-	err := c.runner.Run(ctx, input)
+	modelInput := input
+	if !turn.synthetic {
+		modelInput = c.withCapabilityRoute(input, turn.raw)
+	}
+	err := c.runner.Run(ctx, modelInput)
 	if err == nil {
 		c.recordAutoResearchEvidenceFromAssistant(autoResearchTaskID, lastAssistantText(c.History()))
 		c.recordAutoResearchTurnProgress(autoResearchTaskID, autoResearchAcceptedBefore)
