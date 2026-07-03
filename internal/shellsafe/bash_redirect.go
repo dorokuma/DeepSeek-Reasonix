@@ -1,6 +1,13 @@
 package shellsafe
 
-import "strings"
+import (
+	"sort"
+	"strings"
+
+	"mvdan.cc/sh/v3/syntax"
+
+	"reasonix/internal/shellparse"
+)
 
 // NormalizeBashSafeRedirectsForMatch returns a copy of subject with redirect
 // syntax removed only when the redirect cannot write to a real file. It is used
@@ -13,239 +20,124 @@ import "strings"
 // sink for the resolved shell. Other redirections are left unnormalized so the
 // usual shell-syntax guard keeps prefix/read-only matching conservative.
 func NormalizeBashSafeRedirectsForMatch(subject string) (string, bool) {
-	var (
-		out        strings.Builder
-		quote      byte
-		parenDepth int
-		backtick   bool
-		tokenStart = true
-		removed    bool
-	)
-
-	write := func(c byte) {
-		out.WriteByte(c)
-		tokenStart = isBashMatchSpace(c)
+	file, err := shellparse.ParseBash(subject)
+	if err != nil || shellparse.HasHereDoc(file) {
+		return "", false
 	}
-	noteRemoved := func() {
-		removed = true
-		if out.Len() > 0 && !lastByteIsHorizontalSpace(out.String()) {
-			out.WriteByte(' ')
-		}
-		tokenStart = true
+	spans, ok := safeRedirectSpans(subject, file.Stmts)
+	if !ok {
+		return "", false
 	}
-
-	for i := 0; i < len(subject); {
-		c := subject[i]
-
-		switch {
-		case quote != 0:
-			write(c)
-			i++
-			if c == '\\' && quote == '"' && i < len(subject) {
-				write(subject[i])
-				i++
-				continue
-			}
-			if c == quote {
-				quote = 0
-			}
-			continue
-		case parenDepth > 0:
-			write(c)
-			i++
-			switch c {
-			case '(':
-				parenDepth++
-			case ')':
-				parenDepth--
-			}
-			continue
-		case backtick:
-			write(c)
-			i++
-			if c == '`' {
-				backtick = false
-			}
-			continue
-		}
-
-		switch c {
-		case '\'', '"':
-			quote = c
-			write(c)
-			i++
-		case '`':
-			backtick = true
-			write(c)
-			i++
-		case '\\':
-			write(c)
-			i++
-			if i < len(subject) {
-				write(subject[i])
-				i++
-			}
-		case '$':
-			if i+1 < len(subject) && subject[i+1] == '(' {
-				parenDepth = 1
-				write(c)
-				write('(')
-				i += 2
-				continue
-			}
-			write(c)
-			i++
-		case '&':
-			if next, ok := consumeSafeBashRedirect(subject, i); ok {
-				noteRemoved()
-				i = next
-				continue
-			}
-			write(c)
-			i++
-		case '>', '<':
-			if c == '<' && i+1 < len(subject) && subject[i+1] == '(' {
-				parenDepth = 1
-				write(c)
-				write('(')
-				i += 2
-				continue
-			}
-			if c == '>' && i+1 < len(subject) && subject[i+1] == '(' {
-				parenDepth = 1
-				write(c)
-				write('(')
-				i += 2
-				continue
-			}
-			if next, ok := consumeSafeBashRedirect(subject, i); ok {
-				noteRemoved()
-				i = next
-				continue
-			}
-			return "", false
-		default:
-			if tokenStart && isBashMatchDigit(c) {
-				if next, ok := consumeSafeBashRedirect(subject, i); ok {
-					noteRemoved()
-					i = next
-					continue
-				}
-			}
-			write(c)
-			i++
-		}
-	}
-
-	if !removed {
+	if len(spans) == 0 {
 		return subject, true
 	}
+	sort.Slice(spans, func(i, j int) bool { return spans[i].start < spans[j].start })
+
+	var out strings.Builder
+	last := 0
+	for _, span := range spans {
+		if span.start < last || span.end > len(subject) {
+			return "", false
+		}
+		out.WriteString(subject[last:span.start])
+		last = span.end
+	}
+	out.WriteString(subject[last:])
 	return strings.TrimSpace(out.String()), true
 }
 
-func consumeSafeBashRedirect(s string, start int) (int, bool) {
-	i := start
-	for i < len(s) && isBashMatchDigit(s[i]) {
-		i++
-	}
-	if i >= len(s) {
-		return start, false
-	}
+type redirectSpan struct {
+	start int
+	end   int
+}
 
-	switch {
-	case strings.HasPrefix(s[i:], ">&"), strings.HasPrefix(s[i:], "<&"):
-		return consumeBashFDDup(s, i+2)
-	case strings.HasPrefix(s[i:], "&>>"):
-		return consumeBashNullRedirect(s, i+3)
-	case strings.HasPrefix(s[i:], "&>"):
-		return consumeBashNullRedirect(s, i+2)
-	case strings.HasPrefix(s[i:], ">>"):
-		return consumeBashNullRedirect(s, i+2)
-	case s[i] == '>':
-		return consumeBashNullRedirect(s, i+1)
+func safeRedirectSpans(source string, stmts []*syntax.Stmt) ([]redirectSpan, bool) {
+	var spans []redirectSpan
+	for _, stmt := range stmts {
+		if !appendSafeRedirectSpans(source, stmt, &spans) {
+			return nil, false
+		}
+	}
+	return spans, true
+}
+
+func appendSafeRedirectSpans(source string, stmt *syntax.Stmt, spans *[]redirectSpan) bool {
+	if stmt == nil {
+		return true
+	}
+	for _, redir := range stmt.Redirs {
+		span, ok := safeRedirectSpan(source, redir)
+		if !ok {
+			return false
+		}
+		*spans = append(*spans, span)
+	}
+	if binary, ok := stmt.Cmd.(*syntax.BinaryCmd); ok {
+		return appendSafeRedirectSpans(source, binary.X, spans) &&
+			appendSafeRedirectSpans(source, binary.Y, spans)
+	}
+	return true
+}
+
+func safeRedirectSpan(source string, redir *syntax.Redirect) (redirectSpan, bool) {
+	if redir == nil {
+		return redirectSpan{}, false
+	}
+	switch redir.Op {
+	case syntax.DplOut, syntax.DplIn:
+		if !isSafeFDDupWord(source, redir.Word) {
+			return redirectSpan{}, false
+		}
+	case syntax.RdrOut, syntax.AppOut, syntax.RdrClob, syntax.AppClob, syntax.RdrAll, syntax.AppAll, syntax.RdrAllClob, syntax.AppAllClob:
+		if !isNullRedirectWord(source, redir.Word) {
+			return redirectSpan{}, false
+		}
 	default:
-		return start, false
+		return redirectSpan{}, false
 	}
+	start := int(redir.OpPos.Offset())
+	if redir.N != nil && redir.N.Pos().IsValid() {
+		start = int(redir.N.Pos().Offset())
+	}
+	end := int(redir.End().Offset())
+	if start < 0 || end < start || end > len(source) {
+		return redirectSpan{}, false
+	}
+	return redirectSpan{start: start, end: end}, true
 }
 
-func consumeBashFDDup(s string, i int) (int, bool) {
-	i = skipBashMatchHorizontalSpace(s, i)
-	if i >= len(s) {
-		return i, false
+func isSafeFDDupWord(source string, word *syntax.Word) bool {
+	value := redirectWordSource(source, word)
+	if value == "-" {
+		return true
 	}
-	if s[i] == '-' {
-		next := i + 1
-		if next < len(s) && !isBashRedirectWordEnd(s[next]) {
-			return next, false
-		}
-		return next, true
-	}
-	start := i
-	for i < len(s) && isBashMatchDigit(s[i]) {
-		i++
-	}
-	if i == start {
-		return i, false
-	}
-	if i < len(s) && !isBashRedirectWordEnd(s[i]) {
-		return i, false
-	}
-	return i, true
-}
-
-func consumeBashNullRedirect(s string, i int) (int, bool) {
-	i = skipBashMatchHorizontalSpace(s, i)
-	for _, sink := range []string{"/dev/null", "$null", "nul"} {
-		next, ok := consumeBashNullSink(s, i, sink)
-		if ok {
-			return next, true
-		}
-	}
-	return i, false
-}
-
-func consumeBashNullSink(s string, i int, sink string) (int, bool) {
-	if i+len(sink) > len(s) {
-		return i, false
-	}
-	got := s[i : i+len(sink)]
-	if sink == "/dev/null" {
-		if got != sink {
-			return i, false
-		}
-	} else if !strings.EqualFold(got, sink) {
-		return i, false
-	}
-	next := i + len(sink)
-	if next < len(s) && !isBashRedirectWordEnd(s[next]) {
-		return next, false
-	}
-	return next, true
-}
-
-func skipBashMatchHorizontalSpace(s string, i int) int {
-	for i < len(s) && (s[i] == ' ' || s[i] == '\t') {
-		i++
-	}
-	return i
-}
-
-func isBashRedirectWordEnd(c byte) bool {
-	return isBashMatchSpace(c) || strings.ContainsRune(";|&<>", rune(c))
-}
-
-func isBashMatchSpace(c byte) bool {
-	return c == ' ' || c == '\t' || c == '\n' || c == '\r'
-}
-
-func isBashMatchDigit(c byte) bool {
-	return c >= '0' && c <= '9'
-}
-
-func lastByteIsHorizontalSpace(s string) bool {
-	if s == "" {
+	if value == "" {
 		return false
 	}
-	c := s[len(s)-1]
-	return c == ' ' || c == '\t'
+	for i := 0; i < len(value); i++ {
+		if value[i] < '0' || value[i] > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+func isNullRedirectWord(source string, word *syntax.Word) bool {
+	value := redirectWordSource(source, word)
+	if value == "/dev/null" {
+		return true
+	}
+	return strings.EqualFold(value, "$null") || strings.EqualFold(value, "nul")
+}
+
+func redirectWordSource(source string, word *syntax.Word) string {
+	if word == nil || !word.Pos().IsValid() || !word.End().IsValid() {
+		return ""
+	}
+	start := int(word.Pos().Offset())
+	end := int(word.End().Offset())
+	if start < 0 || end < start || end > len(source) {
+		return ""
+	}
+	return strings.TrimSpace(source[start:end])
 }
