@@ -1,10 +1,31 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import type { KeyboardEvent as ReactKeyboardEvent } from "react";
 import gsap from "gsap";
 import { useT } from "../lib/i18n";
-import type { WireApproval } from "../lib/types";
+import type { ComposerInsertRequest, DirEntry, WireApproval } from "../lib/types";
 import { PromptAction, PromptBadge, PromptHeaderAction, PromptShelf } from "./PromptShelf";
 import { playAttentionChime } from "../lib/sound";
 import { DUR_FAST } from "../lib/gsapAnimations";
+import {
+  FileReferenceMenu,
+  insertTextAtSelection,
+  pickInlineFileReference,
+  useFileReferenceMenu,
+} from "./FileReferenceMenu";
+
+function animateShelfExit(
+  el: HTMLDivElement,
+  options: { opacity: number; y: number; duration: number; ease: string; onComplete: () => void },
+) {
+  const animator = typeof gsap.to === "function"
+    ? gsap
+    : (gsap as unknown as { default?: typeof gsap }).default;
+  if (animator && typeof animator.to === "function") {
+    animator.to(el, options);
+    return;
+  }
+  options.onComplete();
+}
 
 export function ApprovalModal({
   approval,
@@ -12,33 +33,46 @@ export function ApprovalModal({
   onRevisePlan,
   onExitPlan,
   onStop,
+  cwd,
+  insertRequest,
+  onRevisionActiveChange,
 }: {
   approval: WireApproval;
   onAnswer: (allow: boolean, session: boolean, persist: boolean) => void;
   onRevisePlan?: (text: string) => void;
   onExitPlan?: () => void;
   onStop: () => void;
+  cwd?: string;
+  insertRequest?: ComposerInsertRequest | null;
+  onRevisionActiveChange?: (active: boolean) => void;
 }) {
   const t = useT();
   const isPlanApproval = approval.tool === "exit_plan_mode";
+  const subject = approval.subject.trim();
+  const subjectSummary = subject.split(/\r?\n/).find((line) => line.trim())?.trim() ?? "";
+  const toolMeta = approval.reason?.trim() || subjectSummary || approval.tool;
+  const hasToolDetails = Boolean(approval.reason || subject);
+  const showToolDetailsByDefault = !isPlanApproval && hasToolDetails;
   const [revisionOpen, setRevisionOpen] = useState(false);
   const [revisionText, setRevisionText] = useState("");
+  const [detailsOpen, setDetailsOpen] = useState(() => showToolDetailsByDefault);
   const [selectedIndex, setSelectedIndex] = useState(() => (isPlanApproval ? 1 : 0));
   const cardRef = useRef<HTMLDivElement | null>(null);
   const shelfRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
+  const consumedInsertIdRef = useRef(0);
   // When consecutive approvals arrive, animate the old card out before
   // the new one slides in.  GSAP fromTo on the shelf wrapper avoids the
   // jarring pop when the API cycles through 4+ pending approvals.
   const closingRef = useRef(false);
-  const subject = approval.subject.trim();
+  const fileMenu = useFileReferenceMenu(revisionText, cwd);
 
   const answerWithExit = (fn: () => void) => {
     if (closingRef.current) return;
     closingRef.current = true;
     const el = shelfRef.current;
     if (el) {
-      gsap.to(el, {
+      animateShelfExit(el, {
         opacity: 0,
         y: 8,
         duration: DUR_FAST,
@@ -69,9 +103,10 @@ export function ApprovalModal({
     cardRef.current?.focus();
     setRevisionOpen(false);
     setRevisionText("");
+    setDetailsOpen(showToolDetailsByDefault);
     setSelectedIndex(isPlanApproval ? 1 : 0);
     playAttentionChime();
-  }, [approval.id, isPlanApproval]);
+  }, [approval.id, isPlanApproval, showToolDetailsByDefault]);
 
   const actionCount = isPlanApproval ? 3 : 4;
   const selectedIndexRef = useRef(selectedIndex);
@@ -106,8 +141,75 @@ export function ApprovalModal({
   }, [isPlanApproval, onAnswer, onExitPlan, onStop, actionCount]);
 
   useEffect(() => {
-    if (revisionOpen) inputRef.current?.focus();
-  }, [revisionOpen]);
+    if (revisionOpen) {
+      onRevisionActiveChange?.(true);
+      inputRef.current?.focus();
+      return () => onRevisionActiveChange?.(false);
+    }
+    onRevisionActiveChange?.(false);
+  }, [revisionOpen, onRevisionActiveChange]);
+
+  const focusRevisionInput = (caret = revisionText.length) => {
+    requestAnimationFrame(() => {
+      const input = inputRef.current;
+      if (!input) return;
+      input.focus();
+      input.setSelectionRange(caret, caret);
+    });
+  };
+
+  const insertRevisionText = useCallback((text: string) => {
+    const input = inputRef.current;
+    const start = input?.selectionStart ?? revisionText.length;
+    const end = input?.selectionEnd ?? start;
+    const next = insertTextAtSelection(revisionText, text, start, end);
+    setRevisionText(next.value);
+    focusRevisionInput(next.caret);
+  }, [revisionText]);
+
+  useEffect(() => {
+    if (!insertRequest || insertRequest.id === consumedInsertIdRef.current) return;
+    consumedInsertIdRef.current = insertRequest.id;
+    insertRevisionText(insertRequest.text);
+  }, [insertRequest, insertRevisionText]);
+
+  const pickRevisionFile = (entry: DirEntry) => {
+    const next = pickInlineFileReference(revisionText, fileMenu.atRaw, fileMenu.atDir, entry);
+    setRevisionText(next);
+    focusRevisionInput(next.length);
+  };
+
+  const onRevisionKeyDown = (event: ReactKeyboardEvent<HTMLTextAreaElement>) => {
+    if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
+      submitRevision();
+      event.stopPropagation();
+      return;
+    }
+    if (fileMenu.open) {
+      if (event.key === "ArrowDown" && fileMenu.count > 0) {
+        event.preventDefault();
+        fileMenu.setActive((index) => (index + 1) % fileMenu.count);
+        return;
+      }
+      if (event.key === "ArrowUp" && fileMenu.count > 0) {
+        event.preventDefault();
+        fileMenu.setActive((index) => (index - 1 + fileMenu.count) % fileMenu.count);
+        return;
+      }
+      if ((event.key === "Enter" || event.key === "Tab") && fileMenu.count > 0) {
+        event.preventDefault();
+        const entry = fileMenu.items[fileMenu.active];
+        if (entry) pickRevisionFile(entry);
+        return;
+      }
+      if (event.key === "Escape") {
+        event.preventDefault();
+        fileMenu.dismiss();
+        return;
+      }
+    }
+    event.stopPropagation();
+  };
 
   const submitRevision = () => {
     const text = revisionText.trim();
@@ -123,6 +225,7 @@ export function ApprovalModal({
     return (
       <div ref={shelfRef}>
         <PromptShelf
+          className="prompt-shelf--compact prompt-shelf--plan-approval"
           barRef={cardRef}
           titleId="plan-approval-title"
           title={t("approval.planReady")}
@@ -155,11 +258,17 @@ export function ApprovalModal({
                 rows={3}
                 placeholder={t("approval.revisePlanPlaceholder")}
                 onChange={(event) => setRevisionText(event.target.value)}
-                onKeyDown={(event) => {
-                  if ((event.metaKey || event.ctrlKey) && event.key === "Enter") submitRevision();
-                  event.stopPropagation();
-                }}
+                onFocus={() => onRevisionActiveChange?.(true)}
+                onKeyDown={onRevisionKeyDown}
               />
+              {fileMenu.open && (
+                <FileReferenceMenu
+                  items={fileMenu.items}
+                  activeIndex={fileMenu.active}
+                  onPick={pickRevisionFile}
+                  onHover={fileMenu.setActive}
+                />
+              )}
               <div className="plan-revision__actions">
                 <button className="btn" onClick={() => setRevisionOpen(false)}>
                   {t("common.cancel")}
@@ -178,14 +287,23 @@ export function ApprovalModal({
   return (
     <div ref={shelfRef}>
       <PromptShelf
+        className="prompt-shelf--compact prompt-shelf--tool-approval"
         barRef={cardRef}
         titleId="tool-approval-title"
         title={t("approval.toolPending")}
         badges={<PromptBadge>{approval.tool}</PromptBadge>}
+        meta={toolMeta}
         headerActions={
-          <PromptHeaderAction onClick={() => answerWithExit(onStop)} ariaLabel={t("composer.stopShort")}>
-            Esc
-          </PromptHeaderAction>
+          <>
+            {hasToolDetails && (
+              <PromptHeaderAction onClick={() => setDetailsOpen((open) => !open)}>
+                {t(detailsOpen ? "approval.hideDetails" : "approval.details")}
+              </PromptHeaderAction>
+            )}
+            <PromptHeaderAction onClick={() => answerWithExit(onStop)} ariaLabel={t("composer.stopShort")}>
+              Esc
+            </PromptHeaderAction>
+          </>
         }
         actions={
           <>
@@ -196,8 +314,13 @@ export function ApprovalModal({
           </>
         }
       >
-        {subject && (
-          <pre className="approval-subject">{subject}</pre>
+        {detailsOpen && (
+          <div className="approval-details">
+            {approval.reason && <div className="approval-reason">{approval.reason}</div>}
+            {subject && (
+              <pre className="approval-subject">{subject}</pre>
+            )}
+          </div>
         )}
       </PromptShelf>
     </div>

@@ -179,7 +179,7 @@ func TestProviderViewFromEntryExposesNoAuthAvailability(t *testing.T) {
 	}
 }
 
-func TestSetProviderKeyWarnsWhenProjectEnvWillShadowSavedKey(t *testing.T) {
+func TestSetProviderKeyDoesNotWarnWhenProjectEnvAlsoDefinesSavedKey(t *testing.T) {
 	isolateDesktopUserDirs(t)
 	project := t.TempDir()
 	if err := os.WriteFile(filepath.Join(project, ".env"), []byte("TEST_PROVIDER_SHADOW=old-key\n"), 0o600); err != nil {
@@ -196,8 +196,8 @@ func TestSetProviderKeyWarnsWhenProjectEnvWillShadowSavedKey(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SetProviderKey: %v", err)
 	}
-	if !strings.Contains(warning, "project .env") {
-		t.Fatalf("SetProviderKey warning = %q, want project .env shadow warning", warning)
+	if warning != "" {
+		t.Fatalf("SetProviderKey warning = %q, want no warning because provider keys use global credentials only", warning)
 	}
 	data, readErr := os.ReadFile(config.UserCredentialsPath())
 	if readErr != nil {
@@ -208,7 +208,7 @@ func TestSetProviderKeyWarnsWhenProjectEnvWillShadowSavedKey(t *testing.T) {
 	}
 }
 
-func TestSetProviderKeyWarnsWhenEmptyEnvironmentWillShadowSavedKey(t *testing.T) {
+func TestSetProviderKeyDoesNotWarnWhenEnvironmentAlsoDefinesSavedKey(t *testing.T) {
 	isolateDesktopUserDirs(t)
 	t.Setenv("TEST_PROVIDER_EMPTY_ENV", "")
 
@@ -217,8 +217,8 @@ func TestSetProviderKeyWarnsWhenEmptyEnvironmentWillShadowSavedKey(t *testing.T)
 	if err != nil {
 		t.Fatalf("SetProviderKey: %v", err)
 	}
-	if !strings.Contains(warning, "environment variable") {
-		t.Fatalf("SetProviderKey warning = %q, want environment variable shadow warning", warning)
+	if warning != "" {
+		t.Fatalf("SetProviderKey warning = %q, want no warning because provider keys use global credentials only", warning)
 	}
 	data, readErr := os.ReadFile(config.UserCredentialsPath())
 	if readErr != nil {
@@ -229,7 +229,7 @@ func TestSetProviderKeyWarnsWhenEmptyEnvironmentWillShadowSavedKey(t *testing.T)
 	}
 }
 
-func TestSetProviderKeyWarnsWhenEmptyProjectEnvWillShadowSavedKey(t *testing.T) {
+func TestSetProviderKeyDoesNotWarnWhenEmptyProjectEnvAlsoDefinesSavedKey(t *testing.T) {
 	isolateDesktopUserDirs(t)
 	project := t.TempDir()
 	if err := os.WriteFile(filepath.Join(project, ".env"), []byte("TEST_PROVIDER_EMPTY_PROJECT=\n"), 0o600); err != nil {
@@ -246,13 +246,16 @@ func TestSetProviderKeyWarnsWhenEmptyProjectEnvWillShadowSavedKey(t *testing.T) 
 	if err != nil {
 		t.Fatalf("SetProviderKey: %v", err)
 	}
-	if !strings.Contains(warning, "project .env") {
-		t.Fatalf("SetProviderKey warning = %q, want project .env shadow warning", warning)
+	if warning != "" {
+		t.Fatalf("SetProviderKey warning = %q, want no warning because provider keys use global credentials only", warning)
 	}
 }
 
 func TestFetchProviderModelsFiltersNonChatModels(t *testing.T) {
-	t.Setenv("TEST_PROVIDER_KEY", "test-key")
+	isolateDesktopUserDirs(t)
+	if _, err := config.SetCredential("TEST_PROVIDER_KEY", "test-key"); err != nil {
+		t.Fatalf("SetCredential: %v", err)
+	}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/models" {
 			http.NotFound(w, r)
@@ -284,6 +287,48 @@ func TestFetchProviderModelsFiltersNonChatModels(t *testing.T) {
 	want := []string{"mimo-v2.5-pro"}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("FetchProviderModels = %v, want %v", got, want)
+	}
+}
+
+func TestFetchProviderModelsUsesSavedCredentialBeforeEnvironment(t *testing.T) {
+	isolateDesktopUserDirs(t)
+	const keyEnv = "TEST_PROVIDER_FETCH_KEY"
+	if _, err := config.SetCredential(keyEnv, "saved-key"); err != nil {
+		t.Fatalf("SetCredential: %v", err)
+	}
+	t.Setenv(keyEnv, "stale-env-key")
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/models" {
+			http.NotFound(w, r)
+			return
+		}
+		if r.Header.Get("Authorization") != "Bearer saved-key" {
+			http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"object": "list",
+			"data": []map[string]string{
+				{"id": "model-a", "object": "model"},
+			},
+		})
+	}))
+	defer srv.Close()
+
+	got, err := NewApp().FetchProviderModels(ProviderView{
+		Name:      "custom",
+		BaseURL:   srv.URL,
+		APIKeyEnv: keyEnv,
+	})
+	if err != nil {
+		t.Fatalf("FetchProviderModels: %v", err)
+	}
+	if want := []string{"model-a"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("FetchProviderModels = %v, want %v", got, want)
+	}
+	if got := os.Getenv(keyEnv); got != "stale-env-key" {
+		t.Fatalf("process env = %q, want stale env left untouched", got)
 	}
 }
 
@@ -369,6 +414,114 @@ func TestSaveProviderPersistsThinkingOverride(t *testing.T) {
 	}
 	if got.Thinking != "disabled" {
 		t.Fatalf("saved provider thinking = %q, want disabled", got.Thinking)
+	}
+}
+
+func TestSaveProviderPersistsCustomEndpointURLs(t *testing.T) {
+	isolateDesktopUserDirs(t)
+
+	app := NewApp()
+	if err := app.SaveProvider(ProviderView{
+		Name:      "sub2api",
+		Kind:      "openai",
+		BaseURL:   "https://proxy.example.com/v1",
+		ChatURL:   " https://proxy.example.com/custom/chat/completions ",
+		ModelsURL: " https://proxy.example.com/v1/models ",
+		Models:    []string{"model-a"},
+		Default:   "model-a",
+		APIKeyEnv: "SUB2API_KEY",
+	}); err != nil {
+		t.Fatalf("SaveProvider: %v", err)
+	}
+
+	cfg := config.LoadForEdit(config.UserConfigPath())
+	got, ok := cfg.Provider("sub2api")
+	if !ok {
+		t.Fatal("saved provider not found")
+	}
+	if got.ChatURL != "https://proxy.example.com/custom/chat/completions" {
+		t.Fatalf("saved chat_url = %q", got.ChatURL)
+	}
+	if got.ModelsURL != "https://proxy.example.com/v1/models" {
+		t.Fatalf("saved models_url = %q", got.ModelsURL)
+	}
+
+	view := app.Settings()
+	for _, provider := range view.Providers {
+		if provider.Name != "sub2api" {
+			continue
+		}
+		if provider.ChatURL != "https://proxy.example.com/custom/chat/completions" {
+			t.Fatalf("Settings chatUrl = %q", provider.ChatURL)
+		}
+		if provider.ModelsURL != "https://proxy.example.com/v1/models" {
+			t.Fatalf("Settings modelsUrl = %q", provider.ModelsURL)
+		}
+		return
+	}
+	t.Fatalf("Settings providers missing sub2api: %+v", view.Providers)
+}
+
+func TestSaveProviderPreservesHiddenProviderFields(t *testing.T) {
+	isolateDesktopUserDirs(t)
+
+	cfg := config.LoadForEdit(config.UserConfigPath())
+	cfg.Providers = []config.ProviderEntry{{
+		Name:         "custom",
+		Kind:         "openai",
+		BaseURL:      "https://proxy.example.com/v1",
+		Models:       []string{"model-a", "model-b"},
+		Default:      "model-a",
+		APIKeyEnv:    "CUSTOM_API_KEY",
+		Price:        &provider.Pricing{Input: 1, Output: 2, Currency: "$"},
+		Prices:       map[string]*provider.Pricing{"model-b": {Input: 3, Output: 4, Currency: "$"}},
+		Thinking:     "adaptive",
+		Effort:       "high",
+		VisionDetail: "low",
+		NoProxy:      true,
+	}}
+	if err := cfg.SaveTo(config.UserConfigPath()); err != nil {
+		t.Fatalf("SaveTo: %v", err)
+	}
+
+	app := NewApp()
+	settings := app.Settings()
+	var view ProviderView
+	found := false
+	for _, p := range settings.Providers {
+		if p.Name == "custom" {
+			view = p
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("Settings providers missing custom: %+v", settings.Providers)
+	}
+
+	if err := app.SaveProvider(view); err != nil {
+		t.Fatalf("SaveProvider: %v", err)
+	}
+
+	gotCfg := config.LoadForEdit(config.UserConfigPath())
+	got, ok := gotCfg.Provider("custom")
+	if !ok {
+		t.Fatal("saved provider not found")
+	}
+	if got.Price == nil || got.Price.Input != 1 || got.Price.Output != 2 || got.Price.Currency != "$" {
+		t.Fatalf("provider-wide price = %+v, want preserved", got.Price)
+	}
+	if got.Prices["model-b"] == nil || got.Prices["model-b"].Input != 3 || got.Prices["model-b"].Output != 4 || got.Prices["model-b"].Currency != "$" {
+		t.Fatalf("per-model prices = %+v, want model-b price preserved", got.Prices)
+	}
+	if got.Thinking != "adaptive" || got.Effort != "high" {
+		t.Fatalf("thinking/effort = %q/%q, want adaptive/high", got.Thinking, got.Effort)
+	}
+	if got.VisionDetail != "low" {
+		t.Fatalf("vision_detail = %q, want low", got.VisionDetail)
+	}
+	if !got.NoProxy {
+		t.Fatal("no_proxy = false, want preserved true")
 	}
 }
 
@@ -519,6 +672,53 @@ func TestSetReasoningLanguagePersistsToUserConfig(t *testing.T) {
 	cfg := config.LoadForEdit(config.UserConfigPath())
 	if cfg.Agent.ReasoningLanguage != "zh" || cfg.ReasoningLanguage() != "zh" {
 		t.Fatalf("saved reasoning language = %q/%q, want zh", cfg.Agent.ReasoningLanguage, cfg.ReasoningLanguage())
+	}
+}
+
+func TestSetDesktopLanguagePersistsResponseLanguageAndUpdatesLiveTabs(t *testing.T) {
+	isolateDesktopUserDirs(t)
+	projectRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(projectRoot, "reasonix.toml"), []byte("language = \"zh\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	app := NewApp()
+	userCtrl := control.New(control.Options{})
+	projectCtrl := control.New(control.Options{})
+	app.tabs = map[string]*WorkspaceTab{
+		"user": {
+			ID:          "user",
+			Scope:       "global",
+			Ctrl:        userCtrl,
+			Ready:       true,
+			disabledMCP: map[string]ServerView{},
+		},
+		"project": {
+			ID:            "project",
+			Scope:         "project",
+			WorkspaceRoot: projectRoot,
+			Ctrl:          projectCtrl,
+			Ready:         true,
+			disabledMCP:   map[string]ServerView{},
+		},
+	}
+	app.activeTabID = "user"
+
+	if err := app.SetDesktopLanguage("en"); err != nil {
+		t.Fatalf("SetDesktopLanguage: %v", err)
+	}
+
+	cfg := config.LoadForEdit(config.UserConfigPath())
+	if cfg.DesktopLanguage() != "en" || cfg.Language != "en" {
+		t.Fatalf("saved language prefs = desktop:%q response:%q, want en/en", cfg.DesktopLanguage(), cfg.Language)
+	}
+	got := userCtrl.Compose("解释这个函数")
+	if !strings.Contains(got, "<response-language>") || !strings.Contains(got, "use English") {
+		t.Fatalf("live controller Compose = %q, want English response language", got)
+	}
+	projectComposed := projectCtrl.Compose("explain this function")
+	if !strings.Contains(projectComposed, "use Simplified Chinese") {
+		t.Fatalf("project controller Compose = %q, want project zh response language", projectComposed)
 	}
 }
 
@@ -737,6 +937,29 @@ func TestSetDesktopCheckUpdatesPersistsToUserConfig(t *testing.T) {
 	}
 }
 
+func TestSetDefaultToolApprovalModePersistsToUserConfig(t *testing.T) {
+	isolateDesktopUserDirs(t)
+
+	app := NewApp()
+	if app.Settings().DefaultToolApprovalMode != control.ToolApprovalAsk {
+		t.Fatalf("Settings().DefaultToolApprovalMode = %q, want ask", app.Settings().DefaultToolApprovalMode)
+	}
+	if err := app.SetDefaultToolApprovalMode(control.ToolApprovalAuto); err != nil {
+		t.Fatalf("SetDefaultToolApprovalMode: %v", err)
+	}
+	view := app.Settings()
+	if view.DefaultToolApprovalMode != control.ToolApprovalAuto {
+		t.Fatalf("Settings().DefaultToolApprovalMode = %q, want auto", view.DefaultToolApprovalMode)
+	}
+	cfg := config.LoadForEdit(config.UserConfigPath())
+	if cfg.Desktop.DefaultToolApprovalMode != control.ToolApprovalAuto {
+		t.Fatalf("desktop.default_tool_approval_mode = %q, want auto", cfg.Desktop.DefaultToolApprovalMode)
+	}
+	if cfg.DesktopDefaultToolApprovalMode() != control.ToolApprovalAuto {
+		t.Fatalf("DesktopDefaultToolApprovalMode() = %q, want auto", cfg.DesktopDefaultToolApprovalMode())
+	}
+}
+
 func TestSetDesktopMetricsDefaultsOnAndPersistsOff(t *testing.T) {
 	isolateDesktopUserDirs(t)
 
@@ -757,6 +980,51 @@ func TestSetDesktopMetricsDefaultsOnAndPersistsOff(t *testing.T) {
 	}
 	if cfg.DesktopMetrics() {
 		t.Fatal("DesktopMetrics() = true, want false")
+	}
+}
+
+func TestSetMemoryCompilerDefaultsOnAndPersistsOff(t *testing.T) {
+	isolateDesktopUserDirs(t)
+
+	app := NewApp()
+	if !app.Settings().MemoryCompiler {
+		t.Fatal("Settings().MemoryCompiler default = false, want true")
+	}
+	if err := app.SetMemoryCompilerEnabled(false); err != nil {
+		t.Fatalf("SetMemoryCompilerEnabled: %v", err)
+	}
+	view := app.Settings()
+	if view.MemoryCompiler {
+		t.Fatal("Settings().MemoryCompiler = true, want false")
+	}
+	cfg := config.LoadForEdit(config.UserConfigPath())
+	if cfg.Agent.MemoryCompiler.Enabled == nil || *cfg.Agent.MemoryCompiler.Enabled {
+		t.Fatalf("agent.memory_compiler.enabled = %+v, want false", cfg.Agent.MemoryCompiler.Enabled)
+	}
+	if cfg.MemoryCompilerEnabled() {
+		t.Fatal("MemoryCompilerEnabled() = true, want false")
+	}
+}
+
+type memoryCompilerTargetFake struct {
+	calls []bool
+}
+
+func (f *memoryCompilerTargetFake) SetMemoryCompilerEnabled(enabled bool) {
+	f.calls = append(f.calls, enabled)
+}
+
+func TestApplyMemoryCompilerToControllersBroadcastsToAllTargets(t *testing.T) {
+	first := &memoryCompilerTargetFake{}
+	second := &memoryCompilerTargetFake{}
+
+	applyMemoryCompilerToControllers(false, []memoryCompilerTarget{first, nil, second})
+
+	if !reflect.DeepEqual(first.calls, []bool{false}) {
+		t.Fatalf("first calls = %v, want [false]", first.calls)
+	}
+	if !reflect.DeepEqual(second.calls, []bool{false}) {
+		t.Fatalf("second calls = %v, want [false]", second.calls)
 	}
 }
 
