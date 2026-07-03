@@ -2,7 +2,6 @@ package config
 
 import (
 	"path/filepath"
-	"reflect"
 	"testing"
 )
 
@@ -90,12 +89,19 @@ func TestWriteRootsForRootExpandsMavenAllowWrite(t *testing.T) {
 	}
 
 	got := cfg.WriteRootsForRoot(project)
+	// WriteRootsForRoot expands variables but leaves configured separators intact;
+	// the writer confiner normalizes roots later.
 	want := []string{
 		project,
-		filepath.Join(home, ".m2"),
-		filepath.Join(home, ".m2", "repository"),
+		home + "/.m2",
+		home + "/.m2/repository",
 	}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("WriteRootsForRoot() = %v, want %v", got, want)
+	if len(got) != len(want) {
+		t.Fatalf("WriteRootsForRoot() returned %d roots, want %d: %v", len(got), len(want), got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("root %d = %q, want %q (all roots: %v)", i, got[i], want[i], got)
+		}
 	}
 }

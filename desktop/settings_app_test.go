@@ -152,10 +152,12 @@ func TestSettingsExposesEffectiveSandboxWriteRoots(t *testing.T) {
 	if got.EffectiveWorkspaceRoot != project {
 		t.Fatalf("EffectiveWorkspaceRoot = %q, want %q", got.EffectiveWorkspaceRoot, project)
 	}
+	// Settings expose expanded configured roots; the writer confiner normalizes
+	// separators later when enforcing them.
 	want := []string{
 		project,
-		filepath.Join(home, ".m2"),
-		filepath.Join(home, ".m2", "repository"),
+		home + "/.m2",
+		home + "/.m2/repository",
 	}
 	if !reflect.DeepEqual(got.EffectiveWriteRoots, want) {
 		t.Fatalf("EffectiveWriteRoots = %v, want %v", got.EffectiveWriteRoots, want)
