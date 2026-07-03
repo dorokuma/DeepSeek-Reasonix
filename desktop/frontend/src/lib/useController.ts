@@ -355,6 +355,18 @@ type Action =
   | { type: "clearAsk" }
   | { type: "reset" };
 
+function backendStatusFromRuntimeMeta(meta: RuntimeMetaSnapshot): Extract<Action, { type: "backend_status" }> {
+  const foregroundRunning = foregroundRunningFromRuntimeMeta(meta);
+  return {
+    type: "backend_status",
+    running: foregroundRunning,
+    pendingPrompt: Boolean(meta.pendingPrompt),
+    backgroundJobs: meta.backgroundJobs ?? 0,
+    cancelRequested: Boolean(meta.cancelRequested),
+    cancellable: foregroundRunning,
+  };
+}
+
 // ---- reducer helpers (unchanged logic) ----
 
 export function historyMessagesToItems(messages: HistoryMessage[], idPrefix: string, startSeq = 0): { items: Item[]; seq: number } {
@@ -1783,11 +1795,25 @@ export function useController() {
     dispatchTo(tabId, { type: "backend_activation_start" });
     if (optimisticTab) {
       dispatchTo(tabId, { type: "optimistic_meta", meta: metaFromTab(optimisticTab, statesRef.current.get(tabId)?.meta) });
+      const optimisticStatus = backendStatusFromRuntimeMeta(optimisticTab);
+      if (optimisticStatus.running) dispatchTo(tabId, optimisticStatus);
     }
     dispatchTo(tabId, { type: "hydrate_start", reason: "switch-tab" });
     addBreadcrumb("tab.switch", `active-rendered ${tabId} ms=${Date.now() - startedAt}`);
     const backendActivation = app.SetActiveTab(tabId)
-      .then(() => {
+      .then(async () => {
+        if (activeTabIdRef.current !== tabId) {
+          const currentTabId = activeTabIdRef.current;
+          if (currentTabId) {
+            await app.SetActiveTab(currentTabId).then(() => {
+              if (activeTabIdRef.current === currentTabId) confirmBackendActiveTab(currentTabId);
+            }).catch((err) => {
+              addBreadcrumb("tab.switch", `set-active-stale-reassert-failed ${currentTabId}: ${errorMessage(err)}`);
+            });
+          }
+          addBreadcrumb("tab.switch", `set-active-stale ${tabId} current=${currentTabId ?? ""} ms=${Date.now() - startedAt}`);
+          return false;
+        }
         confirmBackendActiveTab(tabId);
         addBreadcrumb("tab.switch", `set-active-done ${tabId} ms=${Date.now() - startedAt}`);
         return true;

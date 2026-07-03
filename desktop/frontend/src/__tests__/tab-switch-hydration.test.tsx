@@ -131,25 +131,33 @@ const tabB = tabMeta("tab-b");
 const tabC = tabMeta("tab-c");
 const tabD = tabMeta("tab-d");
 const tabE = tabMeta("tab-e");
+const tabF = tabMeta("tab-f");
+const tabG = tabMeta("tab-g");
 let backendActiveId = "tab-a";
 const historyB = deferred<HistoryMessage[]>();
 const historyD = deferred<HistoryMessage[]>();
 const contextDGate = deferred<ContextInfo>();
 const setActiveBGate = deferred<void>();
+const setActiveEGate = deferred<void>();
+const setActiveFGate = deferred<void>();
 const submitTabCGate = deferred<void>();
 const historyCalls: string[] = [];
+const cancelCalls: string[] = [];
 let contextDCalls = 0;
 let holdNextContextForD = false;
 let setActiveCalls = 0;
 let newSessionCalls = 0;
 let failSetActiveFor = "";
 const runningTabs = new Set<string>();
-const tabsById = new Map([tabA, tabB, tabC, tabD].map((tab) => [tab.id, tab]));
+const tabsById = new Map([tabA, tabB, tabC, tabD, tabE, tabF, tabG].map((tab) => [tab.id, tab]));
 const eventHandlers: Array<(e: WireEvent) => void> = [];
 const readyHandlers: Array<(tabId?: string) => void> = [];
 
 function currentTabs(): TabMeta[] {
-  return Array.from(tabsById.values()).map((tab) => ({ ...tab, active: tab.id === backendActiveId, running: runningTabs.has(tab.id) }));
+  return Array.from(tabsById.values()).map((tab) => {
+    const running = runningTabs.has(tab.id);
+    return { ...tab, active: tab.id === backendActiveId, running, cancellable: running };
+  });
 }
 
 window.runtime = {
@@ -207,8 +215,14 @@ window.go = {
       SetActiveTab: async (tabID: string) => {
         setActiveCalls += 1;
         if (tabID === "tab-b") await setActiveBGate.promise;
+        if (tabID === "tab-e") await setActiveEGate.promise;
+        if (tabID === "tab-f") await setActiveFGate.promise;
         if (tabID === failSetActiveFor) throw new Error("persist failed");
         backendActiveId = tabID;
+      },
+      CancelTab: async (tabID: string) => {
+        cancelCalls.push(tabID);
+        runningTabs.delete(tabID);
       },
       SubmitToTab: async (tabID: string) => {
         runningTabs.add(tabID);
@@ -307,6 +321,61 @@ await act(async () => {
   await flushPromises();
 });
 await waitFor("tab-a restored after fallback sync", () => controller?.activeTabId === "tab-a" && controller.state.items.some((item) => item.kind === "user" && item.text === "cached A"));
+
+runningTabs.add("tab-e");
+let switchToE: Promise<TabMeta[] | undefined> | undefined;
+await act(async () => {
+  switchToE = controller?.switchTab("tab-e", { ...tabE, running: true, cancellable: true });
+  await flushPromises();
+});
+eq(controller?.activeTabId, "tab-e", "switching to a backend-running tab updates the active tab immediately");
+eq(controller?.state.running, true, "backend-running tab restores the stop state before backend activation settles");
+eq(controller?.state.cancellable, true, "backend-running tab remains cancellable before backend activation settles");
+await act(async () => {
+  controller?.cancel();
+  await flushPromises();
+});
+eq(cancelCalls.join(","), "tab-e", "cancel targets the backend-running tab while activation is pending");
+await act(async () => {
+  setActiveEGate.resolve();
+  await switchToE;
+  await flushPromises();
+});
+eq(controller?.state.running, false, "cancelled backend-running tab reconciles to idle after activation");
+await act(async () => {
+  await controller?.switchTab("tab-a", tabA);
+  await flushPromises();
+});
+await waitFor("tab-a restored after backend-running switch", () => controller?.activeTabId === "tab-a" && controller.state.items.some((item) => item.kind === "user" && item.text === "cached A"));
+
+let switchToF: Promise<TabMeta[] | undefined> | undefined;
+await act(async () => {
+  switchToF = controller?.switchTab("tab-f", tabF);
+  await flushPromises();
+});
+eq(controller?.activeTabId, "tab-f", "first rapid switch activates the slow target optimistically");
+let switchToG: Promise<TabMeta[] | undefined> | undefined;
+await act(async () => {
+  switchToG = controller?.switchTab("tab-g", tabG);
+  await switchToG;
+  await flushPromises();
+});
+eq(controller?.activeTabId, "tab-g", "second rapid switch wins immediately");
+eq(backendActiveId, "tab-g", "second rapid switch activates the backend");
+await act(async () => {
+  setActiveFGate.resolve();
+  await switchToF;
+  await flushPromises();
+});
+eq(controller?.activeTabId, "tab-g", "late completion from the first rapid switch does not replace the visible tab");
+eq(backendActiveId, "tab-g", "late completion from the first rapid switch reasserts the last-clicked backend tab");
+ok(!historyCalls.includes("tab-f"), "late completion from the first rapid switch does not hydrate the stale target");
+
+await act(async () => {
+  await controller?.switchTab("tab-a", tabA);
+  await flushPromises();
+});
+await waitFor("tab-a restored after rapid switch", () => controller?.activeTabId === "tab-a" && controller.state.items.some((item) => item.kind === "user" && item.text === "cached A"));
 
 failSetActiveFor = "tab-b";
 const historyCallsBeforeFailedSwitch = historyCalls.length;
