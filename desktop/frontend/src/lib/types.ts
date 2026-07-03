@@ -878,6 +878,7 @@ export interface ProviderView {
   apiKeyEnv: string;
   headers?: Record<string, string> | null; // optional extra request headers for compatible gateways
   extraBody?: Record<string, unknown> | null; // optional extra top-level request body fields for compatible gateways
+  authHeader?: boolean; // Anthropic-compatible: send Authorization: Bearer instead of x-api-key
   keySet: boolean; // the env var currently resolves to a value
   requiresKey?: boolean; // false for explicit no-auth providers
   configured?: boolean; // selectable: key is set or no key is required
@@ -890,6 +891,21 @@ export interface ProviderView {
   supportedEfforts: string[]; // custom /effort levels; empty = use built-in Kind/BaseURL default
   defaultEffort: string; // /effort level when user picks "auto" or unset; "" = supportedEfforts[0]
   modelOverrides?: ProviderModelOverrideView[] | null;
+}
+
+export interface ProviderPresetView {
+  id: string;
+  label: string;
+  description: string;
+  keyEnv: string;
+  providerNames: string[];
+  models: string[];
+  added: boolean;
+  keySet: boolean;
+  requiresKey?: boolean;
+  configured?: boolean;
+  keySource?: string;
+  keySourcePath?: string;
 }
 
 export interface ProviderModelOverrideView {
@@ -1117,6 +1133,7 @@ export interface SettingsView {
   autoPlan: string;
   providers: ProviderView[];
   officialProviders: ProviderView[];
+  providerPresets: ProviderPresetView[];
   permissions: PermissionsView;
   sandbox: SandboxView;
   network: NetworkView;

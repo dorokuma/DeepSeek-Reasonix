@@ -44,9 +44,7 @@ func FetchModels(ctx context.Context, baseURL, apiKey string, headers map[string
 	if err != nil {
 		return nil, fmt.Errorf("fetch models: build request: %w", err)
 	}
-	if strings.TrimSpace(apiKey) != "" {
-		req.Header.Set("Authorization", "Bearer "+apiKey)
-	}
+	applyAPIKeyHeader(req.Header, baseURL, apiKey)
 	req.Header.Set("Accept", "application/json")
 	applyCustomHeaders(req.Header, headers)
 

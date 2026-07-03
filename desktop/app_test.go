@@ -1231,6 +1231,140 @@ api_key_env = "DEEPSEEK_API_KEY"
 	}
 }
 
+func TestSettingsSurfacesCuratedProviderPresets(t *testing.T) {
+	isolateDesktopUserDirs(t)
+
+	view := NewApp().Settings()
+	if len(view.ProviderPresets) < 18 {
+		t.Fatalf("Settings().ProviderPresets length = %d, want curated custom presets", len(view.ProviderPresets))
+	}
+	got := map[string]ProviderPresetView{}
+	for _, preset := range view.ProviderPresets {
+		got[preset.ID] = preset
+	}
+	for _, curated := range config.CuratedProviderPresets() {
+		id := curated.ID
+		preset, ok := got[id]
+		if !ok {
+			t.Fatalf("Settings().ProviderPresets missing %q: %+v", id, view.ProviderPresets)
+		}
+		if preset.KeyEnv == "" || len(preset.ProviderNames) == 0 || len(preset.Models) == 0 {
+			t.Fatalf("preset %q view has missing fields: %+v", id, preset)
+		}
+	}
+}
+
+func TestAddProviderPresetAccessSavesEditableProviderAndKey(t *testing.T) {
+	isolateDesktopUserDirs(t)
+	t.Setenv("MIMO_API_KEY", "")
+	os.Unsetenv("MIMO_API_KEY")
+
+	if warning, err := NewApp().AddProviderPresetAccess("mimo-api", "sk-mimo"); err != nil {
+		t.Fatalf("AddProviderPresetAccess: %v", err)
+	} else if warning != "" {
+		t.Fatalf("AddProviderPresetAccess warning = %q, want none", warning)
+	}
+
+	cfg := config.LoadForEdit(config.UserConfigPath())
+	p, ok := cfg.Provider("mimo-api")
+	if !ok {
+		t.Fatal("mimo-api provider not saved")
+	}
+	if p.Kind != "openai" || p.BaseURL != "https://api.xiaomimimo.com/v1" || p.Default != "mimo-v2.5-pro" {
+		t.Fatalf("mimo-api provider after preset add = %+v", p)
+	}
+	if !p.NoProxy {
+		t.Fatal("mimo-api preset should save no_proxy = true")
+	}
+	if !p.HasVisionModel("mimo-v2.5") || p.HasVisionModel("mimo-v2.5-pro") {
+		t.Fatalf("mimo vision_models = %+v, want only vision-capable MiMo models", p.VisionModels)
+	}
+	if price := p.PriceForModel("mimo-v2.5-pro"); price == nil || price.Currency != "¥" {
+		t.Fatalf("mimo-v2.5-pro price = %+v, want RMB pricing", price)
+	}
+	if !providerAccessSet(cfg.Desktop.ProviderAccess)["mimo-api"] {
+		t.Fatalf("provider_access missing mimo-api: %+v", cfg.Desktop.ProviderAccess)
+	}
+	data, err := os.ReadFile(config.UserCredentialsPath())
+	if err != nil {
+		t.Fatalf("read saved credentials: %v", err)
+	}
+	if !strings.Contains(string(data), "MIMO_API_KEY=sk-mimo") {
+		t.Fatalf("saved credentials missing MiMo key:\n%s", data)
+	}
+
+	view := NewApp().Settings()
+	var presetView *ProviderPresetView
+	var providerView *ProviderView
+	for i := range view.ProviderPresets {
+		if view.ProviderPresets[i].ID == "mimo-api" {
+			presetView = &view.ProviderPresets[i]
+		}
+	}
+	for i := range view.Providers {
+		if view.Providers[i].Name == "mimo-api" {
+			providerView = &view.Providers[i]
+		}
+	}
+	if presetView == nil || !presetView.Added || !presetView.KeySet {
+		t.Fatalf("mimo-api preset view = %+v, want added and key-set", presetView)
+	}
+	if providerView == nil || providerView.BuiltIn || !providerView.Added || !providerView.KeySet {
+		t.Fatalf("mimo provider view = %+v, want editable added custom provider with key", providerView)
+	}
+}
+
+func TestAddEveryProviderPresetAccessInstallsTemplate(t *testing.T) {
+	for _, preset := range config.CuratedProviderPresets() {
+		preset := preset
+		t.Run(preset.ID, func(t *testing.T) {
+			isolateDesktopUserDirs(t)
+
+			if warning, err := NewApp().AddProviderPresetAccess(preset.ID, "sk-test"); err != nil {
+				t.Fatalf("AddProviderPresetAccess(%q): %v", preset.ID, err)
+			} else if warning != "" {
+				t.Fatalf("AddProviderPresetAccess(%q) warning = %q, want none", preset.ID, warning)
+			}
+
+			cfg := config.LoadForEdit(config.UserConfigPath())
+			access := providerAccessSet(cfg.Desktop.ProviderAccess)
+			for _, entry := range preset.Entries {
+				got, ok := cfg.Provider(entry.Name)
+				if !ok {
+					t.Fatalf("provider %q from preset %q was not saved", entry.Name, preset.ID)
+				}
+				if !access[entry.Name] {
+					t.Fatalf("provider_access for preset %q missing %q: %+v", preset.ID, entry.Name, cfg.Desktop.ProviderAccess)
+				}
+				if got.Kind != entry.Kind || got.BaseURL != entry.BaseURL || got.DefaultModel() != entry.DefaultModel() || got.APIKeyEnv != entry.APIKeyEnv || got.AuthHeader != entry.AuthHeader || got.NoProxy != entry.NoProxy {
+					t.Fatalf("provider %q core fields = %+v, want template %+v", entry.Name, got, entry)
+				}
+				if got.ContextWindow != entry.ContextWindow || got.Thinking != entry.Thinking || got.DefaultEffort != entry.DefaultEffort || got.ReasoningProtocol != entry.ReasoningProtocol {
+					t.Fatalf("provider %q capability fields = %+v, want template %+v", entry.Name, got, entry)
+				}
+				if !reflect.DeepEqual(got.ModelList(), entry.ModelList()) || !reflect.DeepEqual(got.VisionModels, entry.VisionModels) || !reflect.DeepEqual(got.SupportedEfforts, entry.SupportedEfforts) {
+					t.Fatalf("provider %q models/capabilities = %+v, want template %+v", entry.Name, got, entry)
+				}
+				if !reflect.DeepEqual(got.Headers, entry.Headers) || !reflect.DeepEqual(got.ExtraBody, entry.ExtraBody) {
+					t.Fatalf("provider %q request extras = %+v, want template %+v", entry.Name, got, entry)
+				}
+			}
+
+			view := NewApp().Settings()
+			var presetView *ProviderPresetView
+			for i := range view.ProviderPresets {
+				if view.ProviderPresets[i].ID == preset.ID {
+					presetView = &view.ProviderPresets[i]
+					break
+				}
+			}
+			if presetView == nil || !presetView.Added || !presetView.KeySet || !presetView.Configured {
+				t.Fatalf("preset view for %q = %+v, want added/key-set/configured", preset.ID, presetView)
+			}
+		})
+	}
+}
+
 func TestAddOfficialProviderAccessRejectsBackgroundJobsBeforeSavingKey(t *testing.T) {
 	isolateDesktopUserDirs(t)
 	t.Setenv("DEEPSEEK_API_KEY", "")
@@ -1540,6 +1674,13 @@ func TestModelsForTabListsMimoAPIPaidAccess(t *testing.T) {
 	setDesktopTestCredential(t, "MIMO_API_KEY", "sk-test")
 
 	cfg := config.Default()
+	preset, ok := config.CuratedProviderPreset("mimo-api")
+	if !ok || len(preset.Entries) == 0 {
+		t.Fatal("mimo-api preset missing")
+	}
+	if err := cfg.UpsertProvider(preset.Entries[0]); err != nil {
+		t.Fatalf("upsert mimo-api preset: %v", err)
+	}
 	cfg.DefaultModel = "mimo-api/mimo-v2.5-pro"
 	cfg.Desktop.ProviderAccess = []string{"mimo-api"}
 	if err := cfg.SaveTo(config.UserConfigPath()); err != nil {
@@ -1551,14 +1692,13 @@ func TestModelsForTabListsMimoAPIPaidAccess(t *testing.T) {
 	for _, want := range []string{
 		"mimo-api/mimo-v2.5-pro",
 		"mimo-api/mimo-v2.5",
-		"mimo-api/mimo-v2-omni",
 	} {
 		if !refs[want] {
 			t.Fatalf("Models() refs = %+v, missing %s", models, want)
 		}
 	}
-	if len(models) != 3 {
-		t.Fatalf("Models() len = %d, want 3: %+v", len(models), models)
+	if len(models) != 2 {
+		t.Fatalf("Models() len = %d, want 2: %+v", len(models), models)
 	}
 }
 

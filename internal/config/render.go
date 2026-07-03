@@ -307,6 +307,9 @@ func RenderTOMLForScope(c *Config, scope RenderScope) string {
 			if len(p.ExtraBody) > 0 {
 				fmt.Fprintf(&b, "extra_body  = %s   # extra top-level JSON request body fields for compatible gateways\n", renderAnyMap(p.ExtraBody))
 			}
+			if p.AuthHeader {
+				b.WriteString("auth_header = true   # Anthropic-compatible: send Authorization: Bearer <api_key> instead of x-api-key\n")
+			}
 			if p.BalanceURL != "" {
 				fmt.Fprintf(&b, "balance_url = %q   # optional; wallet-balance endpoint shown in the status bar\n", p.BalanceURL)
 			}
@@ -801,6 +804,9 @@ func RenderTOMLProjectDelta(c *Config) string {
 			}
 			if len(p.ExtraBody) > 0 {
 				fmt.Fprintf(&b, "extra_body  = %s\n", renderAnyMap(p.ExtraBody))
+			}
+			if p.AuthHeader {
+				b.WriteString("auth_header = true\n")
 			}
 			if p.BalanceURL != "" {
 				fmt.Fprintf(&b, "balance_url = %q\n", p.BalanceURL)

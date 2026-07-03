@@ -1458,6 +1458,7 @@ func NewProviderWithProxy(e *config.ProviderEntry, proxy netclient.ProxySpec) (p
 			"chat_url":           e.ChatURL,
 			"headers":            e.Headers,
 			"extra_body":         e.ExtraBody,
+			"auth_header":        e.AuthHeader,
 			"proxy_spec":         proxy,
 			"vision":             config.EffectiveVision(e),
 			"vision_detail":      e.VisionDetail,

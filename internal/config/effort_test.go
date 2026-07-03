@@ -59,6 +59,25 @@ func TestIsZhipuEntry(t *testing.T) {
 	}
 }
 
+func TestIsOllamaCloudEntry(t *testing.T) {
+	for _, tc := range []struct {
+		baseURL string
+		want    bool
+	}{
+		{"https://ollama.com/v1", true},
+		{"https://api.ollama.com/v1", true},
+		{"https://localhost:11434/v1", false},
+		{"http://127.0.0.1:11434/v1", false},
+		{"https://api.openai.com/v1", false},
+		{"", false},
+	} {
+		e := &ProviderEntry{Kind: "openai", BaseURL: tc.baseURL}
+		if got := isOllamaCloudEntry(e); got != tc.want {
+			t.Errorf("baseURL=%q: isOllamaCloudEntry=%v, want %v", tc.baseURL, got, tc.want)
+		}
+	}
+}
+
 func TestEffortCapabilityZhipu(t *testing.T) {
 	e := &ProviderEntry{Kind: "openai", BaseURL: "https://open.bigmodel.cn/api/paas/v4", Model: "glm-4.5-air"}
 	cap := EffortCapabilityForEntry(e)
@@ -76,6 +95,53 @@ func TestEffortCapabilityZhipu(t *testing.T) {
 	}
 	if cap.Default != "enabled" {
 		t.Errorf("default = %q, want enabled (GLM ships with thinking on)", cap.Default)
+	}
+}
+
+func TestEffortCapabilityOllamaCloud(t *testing.T) {
+	e := &ProviderEntry{Kind: "openai", BaseURL: "https://ollama.com/v1", Model: "nemotron-3-nano:30b"}
+	cap := EffortCapabilityForEntry(e)
+	if !cap.Supported {
+		t.Fatalf("Ollama Cloud entry should expose /effort, got %+v", cap)
+	}
+	wantLevels := []string{"auto", "none", "low", "medium", "high", "max"}
+	if len(cap.Levels) != len(wantLevels) {
+		t.Fatalf("levels = %v, want %v", cap.Levels, wantLevels)
+	}
+	for i, l := range wantLevels {
+		if cap.Levels[i] != l {
+			t.Errorf("levels[%d] = %q, want %q", i, cap.Levels[i], l)
+		}
+	}
+	if cap.Default != "auto" {
+		t.Errorf("default = %q, want auto", cap.Default)
+	}
+}
+
+func TestNormalizeEffortOllamaCloud(t *testing.T) {
+	e := &ProviderEntry{Kind: "openai", BaseURL: "https://ollama.com/v1", Model: "nemotron-3-nano:30b"}
+	cases := []struct {
+		in, want string
+	}{
+		{"auto", ""},
+		{"none", "none"},
+		{"disabled", "none"},
+		{"off", "none"},
+		{"low", "low"},
+		{"medium", "medium"},
+		{"high", "high"},
+		{"xhigh", "max"},
+		{"max", "max"},
+	}
+	for _, tc := range cases {
+		got, err := NormalizeEffort(e, tc.in)
+		if err != nil {
+			t.Errorf("NormalizeEffort(%q) returned error: %v", tc.in, err)
+			continue
+		}
+		if got != tc.want {
+			t.Errorf("NormalizeEffort(%q) = %q, want %q", tc.in, got, tc.want)
+		}
 	}
 }
 

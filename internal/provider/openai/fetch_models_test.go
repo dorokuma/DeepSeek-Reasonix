@@ -64,6 +64,26 @@ func TestFetchModelsSendsCustomHeaders(t *testing.T) {
 	}
 }
 
+func TestApplyAPIKeyHeaderUsesMiMoAPIKeyHeader(t *testing.T) {
+	h := http.Header{}
+	applyAPIKeyHeader(h, "https://api.xiaomimimo.com/v1", "mimo-key")
+	if got := h.Get("api-key"); got != "mimo-key" {
+		t.Fatalf("api-key = %q, want mimo-key", got)
+	}
+	if got := h.Get("Authorization"); got != "" {
+		t.Fatalf("Authorization = %q, want omitted for MiMo", got)
+	}
+
+	h = http.Header{}
+	applyAPIKeyHeader(h, "https://api.deepseek.com", "deepseek-key")
+	if got := h.Get("Authorization"); got != "Bearer deepseek-key" {
+		t.Fatalf("Authorization = %q, want Bearer deepseek-key", got)
+	}
+	if got := h.Get("api-key"); got != "" {
+		t.Fatalf("api-key = %q, want omitted for standard OpenAI-compatible providers", got)
+	}
+}
+
 func TestFetchModelsAuthError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":{"message":"invalid key"}}`, http.StatusUnauthorized)

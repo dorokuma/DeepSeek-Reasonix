@@ -45,6 +45,13 @@ func IsMiniMax(baseURL string) bool {
 	return matchesVendorHost(baseURL, "minimaxi.com", "api.minimaxi.com")
 }
 
+// IsMiMo reports whether baseURL points at Xiaomi MiMo's OpenAI-compatible API.
+// MiMo follows the OpenAI chat shape but authenticates with an `api-key` header
+// instead of the usual Authorization bearer header.
+func IsMiMo(baseURL string) bool {
+	return matchesVendorHost(baseURL, "xiaomimimo.com", "api.xiaomimimo.com")
+}
+
 // IsZhipu reports whether baseURL points at Zhipu's OpenAI-compatible endpoint
 // for GLM models — either the China host (open.bigmodel.cn, *.bigmodel.cn) or
 // the international Z.ai host (api.z.ai, *.z.ai). Both speak the same wire shape,
@@ -54,4 +61,12 @@ func IsMiniMax(baseURL string) bool {
 func IsZhipu(baseURL string) bool {
 	return matchesVendorHost(baseURL, "bigmodel.cn", "open.bigmodel.cn") ||
 		matchesVendorHost(baseURL, "z.ai", "api.z.ai")
+}
+
+// IsOllamaCloud reports whether baseURL points at Ollama Cloud's hosted
+// OpenAI-compatible endpoint. Local Ollama servers intentionally do not match:
+// the hosted API accepts the reasoning_effort=max extension, while localhost
+// deployments vary by model/version.
+func IsOllamaCloud(baseURL string) bool {
+	return matchesVendorHost(baseURL, "ollama.com", "ollama.com")
 }

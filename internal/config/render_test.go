@@ -862,6 +862,7 @@ func TestRenderTOMLRoundTripsProviderHeadersAndModelOverrides(t *testing.T) {
 				"mode": "fast",
 			},
 		},
+		AuthHeader: true,
 		ModelOverrides: map[string]ProviderModelOverride{
 			"deepseek-v4-flash": {
 				ReasoningProtocol: ReasoningProtocolDeepSeek,
@@ -878,6 +879,9 @@ func TestRenderTOMLRoundTripsProviderHeadersAndModelOverrides(t *testing.T) {
 	}
 	if !strings.Contains(rendered, `extra_body`) || !strings.Contains(rendered, `"enable_thinking" = true`) {
 		t.Fatalf("rendered TOML missing extra_body:\n%s", rendered)
+	}
+	if !strings.Contains(rendered, `auth_header = true`) {
+		t.Fatalf("rendered TOML missing auth_header:\n%s", rendered)
 	}
 	if !strings.Contains(rendered, `model_overrides`) || !strings.Contains(rendered, `reasoning_protocol = "deepseek"`) {
 		t.Fatalf("rendered TOML missing model overrides:\n%s", rendered)
@@ -896,6 +900,9 @@ func TestRenderTOMLRoundTripsProviderHeadersAndModelOverrides(t *testing.T) {
 	}
 	if p.ExtraBody["enable_thinking"] != true || p.ExtraBody["top_p"] != 0.8 {
 		t.Fatalf("extra_body after round trip = %+v", p.ExtraBody)
+	}
+	if !p.AuthHeader {
+		t.Fatal("auth_header after round trip = false, want true")
 	}
 	metadata, ok := p.ExtraBody["metadata"].(map[string]any)
 	if !ok || metadata["mode"] != "fast" {

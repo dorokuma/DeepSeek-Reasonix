@@ -43,6 +43,7 @@ type ProviderView struct {
 	APIKeyEnv         string                      `json:"apiKeyEnv"`
 	Headers           map[string]string           `json:"headers"`
 	ExtraBody         map[string]any              `json:"extraBody"`
+	AuthHeader        bool                        `json:"authHeader"`
 	KeySet            bool                        `json:"keySet"` // the env var currently resolves to a non-empty value
 	RequiresKey       bool                        `json:"requiresKey"`
 	Configured        bool                        `json:"configured"` // selectable: either key is present or no key is required
@@ -55,6 +56,21 @@ type ProviderView struct {
 	SupportedEfforts  []string                    `json:"supportedEfforts"`
 	DefaultEffort     string                      `json:"defaultEffort"`
 	ModelOverrides    []ProviderModelOverrideView `json:"modelOverrides"`
+}
+
+type ProviderPresetView struct {
+	ID            string   `json:"id"`
+	Label         string   `json:"label"`
+	Description   string   `json:"description"`
+	KeyEnv        string   `json:"keyEnv"`
+	ProviderNames []string `json:"providerNames"`
+	Models        []string `json:"models"`
+	Added         bool     `json:"added"`
+	KeySet        bool     `json:"keySet"`
+	RequiresKey   bool     `json:"requiresKey"`
+	Configured    bool     `json:"configured"`
+	KeySource     string   `json:"keySource,omitempty"`
+	KeySourcePath string   `json:"keySourcePath,omitempty"`
 }
 
 type ProviderModelOverrideView struct {
@@ -162,33 +178,34 @@ type BotSettingsView struct {
 
 // SettingsView is the whole Settings panel payload.
 type SettingsView struct {
-	DefaultModel            string          `json:"defaultModel"`
-	PlannerModel            string          `json:"plannerModel"`
-	SubagentModel           string          `json:"subagentModel"`
-	SubagentEffort          string          `json:"subagentEffort"`
-	AutoPlan                string          `json:"autoPlan"`
-	Providers               []ProviderView  `json:"providers"`
-	OfficialProviders       []ProviderView  `json:"officialProviders"`
-	Permissions             PermissionsView `json:"permissions"`
-	Sandbox                 SandboxView     `json:"sandbox"`
-	Network                 NetworkView     `json:"network"`
-	Agent                   AgentView       `json:"agent"`
-	Bot                     BotSettingsView `json:"bot"`
-	DesktopLanguage         string          `json:"desktopLanguage"`
-	DesktopLayoutStyle      string          `json:"desktopLayoutStyle"`
-	DesktopTheme            string          `json:"desktopTheme"`
-	DesktopThemeStyle       string          `json:"desktopThemeStyle"`
-	CloseBehavior           string          `json:"closeBehavior"`
-	DisplayMode             string          `json:"displayMode"`
-	StatusBarStyle          string          `json:"statusBarStyle"`
-	StatusBarItems          []string        `json:"statusBarItems"`
-	DefaultToolApprovalMode string          `json:"defaultToolApprovalMode"`
-	CheckUpdates            bool            `json:"checkUpdates"`
-	Telemetry               bool            `json:"telemetry"`
-	Metrics                 bool            `json:"metrics"`
-	MemoryCompiler          bool            `json:"memoryCompilerEnabled"`
-	ExpandThinking          bool            `json:"expandThinking"`
-	ConfigPath              string          `json:"configPath"`
+	DefaultModel            string               `json:"defaultModel"`
+	PlannerModel            string               `json:"plannerModel"`
+	SubagentModel           string               `json:"subagentModel"`
+	SubagentEffort          string               `json:"subagentEffort"`
+	AutoPlan                string               `json:"autoPlan"`
+	Providers               []ProviderView       `json:"providers"`
+	OfficialProviders       []ProviderView       `json:"officialProviders"`
+	ProviderPresets         []ProviderPresetView `json:"providerPresets"`
+	Permissions             PermissionsView      `json:"permissions"`
+	Sandbox                 SandboxView          `json:"sandbox"`
+	Network                 NetworkView          `json:"network"`
+	Agent                   AgentView            `json:"agent"`
+	Bot                     BotSettingsView      `json:"bot"`
+	DesktopLanguage         string               `json:"desktopLanguage"`
+	DesktopLayoutStyle      string               `json:"desktopLayoutStyle"`
+	DesktopTheme            string               `json:"desktopTheme"`
+	DesktopThemeStyle       string               `json:"desktopThemeStyle"`
+	CloseBehavior           string               `json:"closeBehavior"`
+	DisplayMode             string               `json:"displayMode"`
+	StatusBarStyle          string               `json:"statusBarStyle"`
+	StatusBarItems          []string             `json:"statusBarItems"`
+	DefaultToolApprovalMode string               `json:"defaultToolApprovalMode"`
+	CheckUpdates            bool                 `json:"checkUpdates"`
+	Telemetry               bool                 `json:"telemetry"`
+	Metrics                 bool                 `json:"metrics"`
+	MemoryCompiler          bool                 `json:"memoryCompilerEnabled"`
+	ExpandThinking          bool                 `json:"expandThinking"`
+	ConfigPath              string               `json:"configPath"`
 	// ProviderKinds lists the provider implementations the kernel actually
 	// registered (provider.Kinds()), so the editor's "kind" picker offers only
 	// kinds that resolve — selecting an unregistered one would fail the rebuild.
@@ -409,6 +426,7 @@ func providerViewFromEntryForRootWithResolver(p config.ProviderEntry, builtIn, a
 		APIKeyEnv:         p.APIKeyEnv,
 		Headers:           nonNilStringMap(p.Headers),
 		ExtraBody:         nonNilAnyMap(p.ExtraBody),
+		AuthHeader:        p.AuthHeader,
 		KeySet:            key.Set,
 		RequiresKey:       requiresKey,
 		Configured:        !requiresKey || key.Set,
@@ -455,6 +473,61 @@ func officialProviderViewsForRootWithResolver(added map[string]bool, pricingLang
 		for _, entry := range entries {
 			out = append(out, providerViewFromEntryForRootWithResolver(entry, true, added[entry.Name], root, resolver))
 		}
+	}
+	return out
+}
+
+func providerPresetViewsForRootWithResolver(added map[string]bool, root string, resolver *config.CredentialResolver) []ProviderPresetView {
+	if resolver == nil {
+		resolver = config.NewCredentialResolverForRoot(root)
+	}
+	presets := config.CuratedProviderPresets()
+	out := make([]ProviderPresetView, 0, len(presets))
+	for _, preset := range presets {
+		keyEnv := strings.TrimSpace(preset.KeyEnv)
+		names := make([]string, 0, len(preset.Entries))
+		models := make([]string, 0)
+		modelSeen := map[string]bool{}
+		requiresKey := false
+		addedAll := len(preset.Entries) > 0
+		for _, entry := range preset.Entries {
+			if keyEnv == "" {
+				keyEnv = strings.TrimSpace(entry.APIKeyEnv)
+			}
+			if entry.RequiresAPIKey() {
+				requiresKey = true
+			}
+			name := strings.TrimSpace(entry.Name)
+			if name != "" {
+				names = append(names, name)
+				addedAll = addedAll && added[name]
+			}
+			for _, model := range chatProviderModels(entry.ChatModelList()) {
+				if modelSeen[model] {
+					continue
+				}
+				modelSeen[model] = true
+				models = append(models, model)
+			}
+		}
+		key := config.CredentialResolution{}
+		if keyEnv != "" {
+			key = resolver.ResolveGlobalFirst(keyEnv)
+		}
+		out = append(out, ProviderPresetView{
+			ID:            preset.ID,
+			Label:         preset.Label,
+			Description:   preset.Description,
+			KeyEnv:        keyEnv,
+			ProviderNames: nonNil(names),
+			Models:        nonNil(models),
+			Added:         addedAll,
+			KeySet:        key.Set,
+			RequiresKey:   requiresKey,
+			Configured:    !requiresKey || key.Set,
+			KeySource:     key.Source.Label,
+			KeySourcePath: key.Source.Path,
+		})
 	}
 	return out
 }
@@ -521,6 +594,7 @@ func (a *App) Settings() SettingsView {
 		return SettingsView{
 			Providers:         []ProviderView{},
 			OfficialProviders: officialProviderViews(map[string]bool{}, ""),
+			ProviderPresets:   providerPresetViewsForRootWithResolver(map[string]bool{}, a.activeWorkspaceRoot(), nil),
 			ProviderKinds:     nonNil(provider.Kinds()),
 			Permissions: PermissionsView{
 				Mode:  "ask",
@@ -570,6 +644,7 @@ func (a *App) Settings() SettingsView {
 		AutoPlan:          desktopAutoPlanMode(cfg.Agent.AutoPlan),
 		Providers:         []ProviderView{},
 		OfficialProviders: []ProviderView{},
+		ProviderPresets:   []ProviderPresetView{},
 		Permissions: PermissionsView{
 			Mode:  orDefault(cfg.Permissions.Mode, "ask"),
 			Allow: nonNil(cfg.Permissions.Allow),
@@ -618,6 +693,7 @@ func (a *App) Settings() SettingsView {
 	added := providerAccessSet(cfg.Desktop.ProviderAccess)
 	resolver := config.NewCredentialResolverForRoot(root)
 	v.OfficialProviders = officialProviderViewsForRootWithResolver(officialProviderAddedSet(cfg), cfg.DeepSeekOfficialPricingLanguage(), root, resolver)
+	v.ProviderPresets = providerPresetViewsForRootWithResolver(added, root, resolver)
 	for i := range cfg.Providers {
 		p := &cfg.Providers[i]
 		v.Providers = append(v.Providers, providerViewFromEntryForRootWithResolver(*p, isOfficialBuiltInProvider(*p), added[p.Name], root, resolver))
@@ -1361,6 +1437,7 @@ func (a *App) SaveProvider(p ProviderView) error {
 		e.APIKeyEnv = p.APIKeyEnv
 		e.Headers = p.Headers
 		e.ExtraBody = p.ExtraBody
+		e.AuthHeader = p.AuthHeader
 		e.BalanceURL = strings.TrimSpace(p.BalanceURL)
 		e.ContextWindow = p.ContextWindow
 		e.ReasoningProtocol = p.ReasoningProtocol
@@ -1422,6 +1499,53 @@ func (a *App) AddOfficialProviderAccess(kind, key string) (string, error) {
 	if err := a.applyConfigChange(func(c *config.Config) error {
 		names := make([]string, 0, len(entries))
 		for _, e := range entries {
+			if err := c.UpsertProvider(e); err != nil {
+				return err
+			}
+			names = append(names, e.Name)
+		}
+		addProviderAccess(c, names...)
+		return nil
+	}); err != nil {
+		return "", err
+	}
+	return keyWarning, nil
+}
+
+// AddProviderPresetAccess installs one editable custom-provider preset. Unlike
+// official built-ins, these entries are saved as normal providers so users can
+// tweak endpoints, model lists, and capability overrides after the one-click
+// setup path.
+func (a *App) AddProviderPresetAccess(id, key string) (string, error) {
+	preset, ok := config.CuratedProviderPreset(id)
+	if !ok {
+		return "", fmt.Errorf("unknown provider preset %q", id)
+	}
+	if len(preset.Entries) == 0 {
+		return "", fmt.Errorf("provider preset %q has no provider entries", id)
+	}
+	if err := a.ensureActiveTabRebuildAllowed("provider access"); err != nil {
+		return "", err
+	}
+	keyEnv := strings.TrimSpace(preset.KeyEnv)
+	if keyEnv == "" {
+		for _, e := range preset.Entries {
+			if keyEnv = strings.TrimSpace(e.APIKeyEnv); keyEnv != "" {
+				break
+			}
+		}
+	}
+	keyWarning := ""
+	if strings.TrimSpace(key) != "" && keyEnv != "" {
+		var err error
+		keyWarning, err = a.saveProviderCredential(keyEnv, key)
+		if err != nil {
+			return "", err
+		}
+	}
+	if err := a.applyConfigChange(func(c *config.Config) error {
+		names := make([]string, 0, len(preset.Entries))
+		for _, e := range preset.Entries {
 			if err := c.UpsertProvider(e); err != nil {
 				return err
 			}

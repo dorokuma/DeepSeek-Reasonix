@@ -60,6 +60,7 @@ function baseSettings(displayMode: "standard" | "compact" = "standard"): Setting
     autoPlan: "off",
     providers: [],
     officialProviders: [],
+    providerPresets: [],
     permissions: { mode: "ask", allow: [], ask: [], deny: [] },
     sandbox: { bash: "enforce", network: false, workspaceRoot: "", allowWrite: [], effectiveWorkspaceRoot: "/work", effectiveWriteRoots: ["/work"], shell: "auto" },
     network: { proxyMode: "auto", proxyUrl: "", noProxy: "", proxy: { type: "socks5", server: "", port: 0, username: "", password: "" } },
@@ -98,7 +99,7 @@ function baseSettings(displayMode: "standard" | "compact" = "standard"): Setting
 
 console.log("\nsettings refresh snapshot");
 
-eq(providerEditorEffectiveKind(true, "anthropic", ["anthropic", "openai"]), "openai", "new custom providers ignore sorted providerKinds and default to OpenAI");
+eq(providerEditorEffectiveKind(true, "anthropic", ["anthropic", "openai"]), "anthropic", "new custom providers keep the selected Anthropic-compatible kind");
 eq(providerEditorEffectiveKind(false, "anthropic", ["anthropic", "openai"]), "anthropic", "existing providers preserve their stored kind");
 eq(providerChatURLPreview("https://proxy.example.com/v1", "", false), "https://proxy.example.com/v1/chat/completions", "base URL mode previews chat completions URL");
 eq(providerChatURLPreview("", "https://proxy.example.com/custom/chat", true), "https://proxy.example.com/custom/chat", "full URL mode previews configured URL");

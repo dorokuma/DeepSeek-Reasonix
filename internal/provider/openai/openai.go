@@ -8,6 +8,8 @@
 //     knob) instead of reasoning_effort, since M3 has no level scale.
 //   - open.bigmodel.cn / api.z.ai (Zhipu GLM) → emits thinking.type=enabled|
 //     disabled instead of reasoning_effort, which Zhipu silently ignores.
+//   - ollama.com → accepts hosted Ollama Cloud's reasoning_effort scale,
+//     including max, and omits the field for none/disabled.
 //   - everything else (MiMo and other OpenAI-compatible gateways) uses the
 //     vanilla reasoning_effort scale (low/medium/high).
 //
@@ -79,6 +81,7 @@ func New(cfg provider.Config) (provider.Provider, error) {
 	deepseek := protocol == "deepseek" || (protocol == "" && IsDeepSeek(cfg.BaseURL))
 	minimax := protocol == "" && IsMiniMax(cfg.BaseURL)
 	zhipu := protocol == "" && IsZhipu(cfg.BaseURL)
+	ollamaCloud := protocol == "" && IsOllamaCloud(cfg.BaseURL)
 	// Optional explicit `thinking` config field — a vendor-agnostic escape hatch
 	// (credit @eghrhegpe, #5063) for OpenAI-compatible providers we don't
 	// auto-detect (e.g. opencode.ai). "enabled"/"disabled" drive thinking.type;
@@ -130,6 +133,20 @@ func New(cfg provider.Config) (provider.Provider, error) {
 		case "", "enabled", "disabled":
 		default:
 			return nil, fmt.Errorf("openai: provider %q uses Zhipu thinking; effort must be enabled or disabled", name)
+		}
+	case ollamaCloud:
+		// Hosted Ollama Cloud uses top-level reasoning_effort. "none" and the
+		// legacy/off aliases intentionally omit the field, which lets the model
+		// run without thinking. Local Ollama is not auto-detected because its
+		// model/version support varies.
+		switch effort {
+		case "", "none", "disabled", "off":
+			effort = ""
+		case "xhigh", "max":
+			effort = "max"
+		case "low", "medium", "high":
+		default:
+			return nil, fmt.Errorf("openai: provider %q uses Ollama Cloud thinking; effort must be none, low, medium, high, or max", name)
 		}
 	case effort != "":
 		// Non-DeepSeek backends use OpenAI's reasoning_effort scale (low/medium/
@@ -254,6 +271,18 @@ func applyCustomHeaders(h http.Header, headers map[string]string) {
 	}
 }
 
+func applyAPIKeyHeader(h http.Header, baseURL, apiKey string) {
+	apiKey = strings.TrimSpace(apiKey)
+	if apiKey == "" {
+		return
+	}
+	if IsMiMo(baseURL) {
+		h.Set("api-key", apiKey)
+		return
+	}
+	h.Set("Authorization", "Bearer "+apiKey)
+}
+
 func cleanExtraBody(in map[string]any) map[string]any {
 	if len(in) == 0 {
 		return nil
@@ -315,9 +344,7 @@ func (c *client) Stream(ctx context.Context, req provider.Request) (<-chan provi
 			return nil, err
 		}
 		httpReq.Header.Set("Content-Type", "application/json")
-		if c.apiKey != "" {
-			httpReq.Header.Set("Authorization", "Bearer "+c.apiKey)
-		}
+		applyAPIKeyHeader(httpReq.Header, c.baseURL, c.apiKey)
 		httpReq.Header.Set("Accept", "text/event-stream")
 		applyCustomHeaders(httpReq.Header, c.headers)
 		return httpReq, nil

@@ -454,6 +454,35 @@ func TestSaveProviderPersistsThinkingOverride(t *testing.T) {
 	}
 }
 
+func TestSaveProviderPersistsAuthHeader(t *testing.T) {
+	isolateDesktopUserDirs(t)
+
+	app := NewApp()
+	if err := app.SaveProvider(ProviderView{
+		Name:       "minimax-global-anthropic",
+		Kind:       "anthropic",
+		BaseURL:    "https://api.minimax.io/anthropic",
+		Models:     []string{"MiniMax-M3"},
+		APIKeyEnv:  "MINIMAX_API_KEY",
+		AuthHeader: true,
+	}); err != nil {
+		t.Fatalf("SaveProvider: %v", err)
+	}
+
+	cfg := config.LoadForEdit(config.UserConfigPath())
+	got, ok := cfg.Provider("minimax-global-anthropic")
+	if !ok {
+		t.Fatal("saved provider not found")
+	}
+	if !got.AuthHeader {
+		t.Fatal("saved provider auth_header = false, want true")
+	}
+	view := providerViewFromEntry(*got, false, true)
+	if !view.AuthHeader {
+		t.Fatal("provider view authHeader = false, want true")
+	}
+}
+
 func TestSaveProviderPersistsCustomEndpointURLs(t *testing.T) {
 	isolateDesktopUserDirs(t)
 

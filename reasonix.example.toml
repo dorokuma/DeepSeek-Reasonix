@@ -53,6 +53,12 @@ compact_force_ratio = 0.9   # force compacting at this high-water mark
 # A provider is a vendor endpoint (one base_url + key) that offers one or more
 # models. Use `models = [...]` to expose several under a single entry — switching
 # models reuses the same connection; no need to re-declare base_url/api_key.
+# In the desktop app, Settings -> Model -> Access -> Add provider includes
+# recommended editable presets for Kimi CN/Global, Kimi Coding Plan, MiMo API
+# and Anthropic/token-plan regions, MiniMax CN/Global API and Anthropic routes,
+# GLM/Z.AI CN/Global API and coding-plan routes, OpenCode Go/Zen, Qwen/DashScope
+# CN/Global API and coding-plan routes, StepFun, NovitaAI, GMI, Vercel AI
+# Gateway, HuggingFace, NVIDIA, KiloCode, and Ollama Cloud.
 [[providers]]
 name        = "deepseek"
 kind        = "openai"
@@ -92,6 +98,8 @@ effort      = "high"
 # OpenAI shim). base_url is optional (defaults to https://api.anthropic.com). Note:
 # this provider does not enable extended thinking and does not send temperature —
 # current Claude models reject sampling params (see internal/provider/anthropic).
+# Some Anthropic-compatible gateways use Bearer auth instead of x-api-key; set
+# auth_header = true for those (for example MiniMax Global or Vercel AI Gateway).
 [[providers]]
 name           = "claude"
 kind           = "anthropic"
