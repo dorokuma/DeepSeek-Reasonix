@@ -3,6 +3,7 @@ package control
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -605,6 +606,43 @@ func TestSnapshotDoesNotRefreshSessionActivity(t *testing.T) {
 	}
 	if second.Model != "provider/model-a" {
 		t.Fatalf("snapshot model = %q, want provider/model-a", second.Model)
+	}
+}
+
+func TestSnapshotRejectsStaleControllerOverwrite(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "session.jsonl")
+
+	staleSess := agent.NewSession("sys")
+	staleSess.Add(provider.Message{Role: provider.RoleUser, Content: "first"})
+	staleSess.Add(provider.Message{Role: provider.RoleAssistant, Content: "one"})
+	staleExec := agent.New(nil, nil, staleSess, agent.Options{}, event.Discard)
+	stale := New(Options{Executor: staleExec, SessionDir: dir, SessionPath: path, Label: "test"})
+
+	currentSess := agent.NewSession("sys")
+	currentSess.Add(provider.Message{Role: provider.RoleUser, Content: "first"})
+	currentSess.Add(provider.Message{Role: provider.RoleAssistant, Content: "one"})
+	currentSess.Add(provider.Message{Role: provider.RoleUser, Content: "second"})
+	currentSess.Add(provider.Message{Role: provider.RoleAssistant, Content: "two"})
+	currentExec := agent.New(nil, nil, currentSess, agent.Options{}, event.Discard)
+	current := New(Options{Executor: currentExec, SessionDir: dir, SessionPath: path, Label: "test"})
+	if err := current.SnapshotActivity(); err != nil {
+		t.Fatalf("SnapshotActivity current: %v", err)
+	}
+
+	if err := stale.Snapshot(); !errors.Is(err, agent.ErrSessionSnapshotConflict) {
+		t.Fatalf("Snapshot stale err = %v, want ErrSessionSnapshotConflict", err)
+	}
+
+	loaded, err := agent.LoadSession(path)
+	if err != nil {
+		t.Fatalf("LoadSession: %v", err)
+	}
+	if got := len(loaded.Messages); got != 5 {
+		t.Fatalf("message count after stale snapshot = %d, want 5", got)
+	}
+	if got := loaded.Messages[4].Content; got != "two" {
+		t.Fatalf("last message after stale snapshot = %q, want %q", got, "two")
 	}
 }
 
