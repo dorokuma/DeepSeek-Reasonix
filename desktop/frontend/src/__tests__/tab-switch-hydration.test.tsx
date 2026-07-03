@@ -383,12 +383,19 @@ eq(controller?.state.hydratePlaceholderItems?.length ?? 0, 0, "topic history cle
 
 const historyCallsBeforeReopenD = historyCalls.length;
 await act(async () => {
+  for (const handler of eventHandlers) handler({ kind: "approval_request", tabId: "tab-d", approval: { id: "stale-approval", tool: "bash", subject: "stale approval" } });
+  await controller?.switchTab("tab-a", tabA);
+  await flushPromises();
+});
+await act(async () => {
   await controller?.openProjectTab(tabD.workspaceRoot, tabD.topicId || "");
   await flushPromises();
 });
 eq(controller?.activeTabId, "tab-d", "reopening an already hydrated topic keeps it active");
 ok(controller?.state.items.some((item) => item.kind === "user" && item.text === "history D") ?? false, "reopened cached topic keeps its transcript");
 eq(historyCalls.length, historyCallsBeforeReopenD, "reopening an already hydrated topic skips history hydration");
+eq(controller?.state.approval?.id, undefined, "reopening a topic reconciles stale approval state");
+eq(controller?.state.running, false, "reopening a topic reconciles stale running state");
 
 const contextCallsBeforeInactiveD = contextDCalls;
 await act(async () => {

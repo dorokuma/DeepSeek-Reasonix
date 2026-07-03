@@ -1820,13 +1820,14 @@ export function useController() {
     activeTabIdRef.current = meta.id;
     confirmBackendActiveTab(meta.id);
     dispatchTo(meta.id, { type: "optimistic_meta", meta: metaFromTab(meta, statesRef.current.get(meta.id)?.meta) });
+    void reconcileTabRuntime(meta.id, { hydrateSessionData: false });
     void loadSessionDataForTab(meta.id, isNewTab, "open-topic", {
       placeholderItems: isNewTab ? prevItems : undefined,
       preserveCachedHistory,
       sessionPath: meta.sessionPath,
     });
     return meta;
-  }, [confirmBackendActiveTab, dispatchTo, loadSessionDataForTab]);
+  }, [confirmBackendActiveTab, dispatchTo, loadSessionDataForTab, reconcileTabRuntime]);
 
   const openGlobalTab = useCallback(async (topicId: string): Promise<TabMeta> => {
     const meta = await app.OpenGlobalTab(topicId);
@@ -1838,13 +1839,14 @@ export function useController() {
     activeTabIdRef.current = meta.id;
     confirmBackendActiveTab(meta.id);
     dispatchTo(meta.id, { type: "optimistic_meta", meta: metaFromTab(meta, statesRef.current.get(meta.id)?.meta) });
+    void reconcileTabRuntime(meta.id, { hydrateSessionData: false });
     void loadSessionDataForTab(meta.id, isNewTab, "open-topic", {
       placeholderItems: isNewTab ? prevItems : undefined,
       preserveCachedHistory,
       sessionPath: meta.sessionPath,
     });
     return meta;
-  }, [confirmBackendActiveTab, dispatchTo, loadSessionDataForTab]);
+  }, [confirmBackendActiveTab, dispatchTo, loadSessionDataForTab, reconcileTabRuntime]);
 
   const openTopicSession = useCallback(async (scope: string, workspaceRoot: string, topicId: string, sessionPath: string): Promise<TabMeta> => {
     const meta = await app.OpenTopicSession(scope, workspaceRoot, topicId, sessionPath);
@@ -1856,13 +1858,14 @@ export function useController() {
     activeTabIdRef.current = meta.id;
     confirmBackendActiveTab(meta.id);
     dispatchTo(meta.id, { type: "optimistic_meta", meta: metaFromTab(meta, statesRef.current.get(meta.id)?.meta) });
+    void reconcileTabRuntime(meta.id, { hydrateSessionData: false });
     void loadSessionDataForTab(meta.id, isNewTab, "open-topic", {
       placeholderItems: isNewTab ? prevItems : undefined,
       preserveCachedHistory,
       sessionPath: meta.sessionPath,
     });
     return meta;
-  }, [confirmBackendActiveTab, dispatchTo, loadSessionDataForTab]);
+  }, [confirmBackendActiveTab, dispatchTo, loadSessionDataForTab, reconcileTabRuntime]);
 
   const activateTopic = useCallback(async (scope: string, workspaceRoot: string, topicId: string, sessionPath = ""): Promise<TabMeta> => {
     const meta = await app.ActivateTopic(scope, workspaceRoot, topicId, sessionPath);
@@ -1876,9 +1879,10 @@ export function useController() {
     activeTabIdRef.current = meta.id;
     confirmBackendActiveTab(meta.id);
     dispatchTo(meta.id, { type: "optimistic_meta", meta: metaFromTab(meta, statesRef.current.get(meta.id)?.meta) });
+    void reconcileTabRuntime(meta.id, { hydrateSessionData: false });
     void loadSessionDataForTab(meta.id, true, "open-topic", { placeholderItems: prevItems });
     return meta;
-  }, [confirmBackendActiveTab, dispatchTo, loadSessionDataForTab]);
+  }, [confirmBackendActiveTab, dispatchTo, loadSessionDataForTab, reconcileTabRuntime]);
 
   // Ensure a blank tab exists for the given scope — reuses an existing one
   // or creates a new tab, then loads its session data.
@@ -1888,9 +1892,10 @@ export function useController() {
     activeTabIdRef.current = meta.id;
     confirmBackendActiveTab(meta.id);
     dispatchTo(meta.id, { type: "optimistic_meta", meta: metaFromTab(meta, statesRef.current.get(meta.id)?.meta) });
+    void reconcileTabRuntime(meta.id, { hydrateSessionData: false });
     void loadSessionDataForTab(meta.id, !statesRef.current.has(meta.id), "open-topic");
     return meta;
-  }, [confirmBackendActiveTab, dispatchTo, loadSessionDataForTab]);
+  }, [confirmBackendActiveTab, dispatchTo, loadSessionDataForTab, reconcileTabRuntime]);
 
   const ensureBlankSurface = useCallback(async (scope: string, workspaceRoot: string): Promise<TabMeta> => {
     const meta = await app.EnsureBlankSurface(scope, workspaceRoot);
@@ -1901,9 +1906,10 @@ export function useController() {
     activeTabIdRef.current = meta.id;
     confirmBackendActiveTab(meta.id);
     dispatchTo(meta.id, { type: "optimistic_meta", meta: metaFromTab(meta, statesRef.current.get(meta.id)?.meta) });
+    void reconcileTabRuntime(meta.id, { hydrateSessionData: false });
     void loadSessionDataForTab(meta.id, true, "open-topic");
     return meta;
-  }, [confirmBackendActiveTab, dispatchTo, loadSessionDataForTab]);
+  }, [confirmBackendActiveTab, dispatchTo, loadSessionDataForTab, reconcileTabRuntime]);
 
   const closeTab = useCallback(async (tabId: string) => {
     try {
