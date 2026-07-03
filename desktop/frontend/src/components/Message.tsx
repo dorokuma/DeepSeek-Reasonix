@@ -86,9 +86,9 @@ type PastedBlockInfo = {
   content: string;
 };
 
-const PASTE_LABEL_RE = /\[(?:已粘贴文本|Pasted text) #\d+ · \d+ (?:行|lines)\]/g;
+const PASTE_LABEL_RE = /\[(?:已粘贴文本|已貼上文字|Pasted text) #\d+ · \d+ (?:行|lines)\]/g;
 
-function parsePastedBlocks(text: string, submitText?: string): PastedBlockInfo[] {
+export function parsePastedBlocks(text: string, submitText?: string): PastedBlockInfo[] {
   const labels = text.match(PASTE_LABEL_RE);
   if (!labels || labels.length === 0 || !submitText) return [];
   const unique = [...new Set(labels)];
