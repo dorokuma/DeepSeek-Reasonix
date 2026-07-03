@@ -570,14 +570,14 @@ func (a *adapter) sendSDKContent(ctx context.Context, msg bot.OutboundMessage, m
 	return bot.SendResult{MessageID: stringPtrValue(resp.Data.MessageId)}, nil
 }
 
-func (a *adapter) AddPendingReaction(ctx context.Context, messageID string) error {
+func (a *adapter) AddPendingReaction(ctx context.Context, messageID string) (func(), error) {
 	messageID = strings.TrimSpace(messageID)
 	if messageID == "" {
-		return nil
+		return nil, nil
 	}
 	client, err := a.sdkClient()
 	if err != nil {
-		return err
+		return nil, err
 	}
 	req := larkim.NewCreateMessageReactionReqBuilder().
 		MessageId(messageID).
@@ -587,15 +587,31 @@ func (a *adapter) AddPendingReaction(ctx context.Context, messageID string) erro
 		Build()
 	resp, err := client.Im.MessageReaction.Create(ctx, req)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	if resp == nil {
-		return fmt.Errorf("feishu reaction error: empty response")
+	if resp == nil || !resp.Success() {
+		if resp != nil {
+			return nil, fmt.Errorf("feishu reaction error: %s", feishuCodeError(resp.Code, resp.Msg))
+		}
+		return nil, fmt.Errorf("feishu reaction error: empty response")
 	}
-	if !resp.Success() {
-		return fmt.Errorf("feishu reaction error: %s", feishuCodeError(resp.Code, resp.Msg))
+	reactionID := ""
+	if resp.Data != nil && resp.Data.ReactionId != nil {
+		reactionID = *resp.Data.ReactionId
 	}
-	return nil
+	if reactionID == "" {
+		return nil, nil
+	}
+	cleanup := func() {
+		delReq := larkim.NewDeleteMessageReactionReqBuilder().
+			MessageId(messageID).
+			ReactionId(reactionID).
+			Build()
+		if _, err := client.Im.MessageReaction.Delete(context.Background(), delReq); err != nil {
+			a.logger.Warn("feishu reaction cleanup failed", "message", logHash(messageID), "err", err)
+		}
+	}
+	return cleanup, nil
 }
 
 // sendCard 发送 interactive card 消息（用于审批/问答）。
