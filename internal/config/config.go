@@ -103,7 +103,7 @@ type DesktopConfig struct {
 	ExpandThinking          bool     `toml:"expand_thinking"`            // true = show reasoning text expanded by default; false = collapsed
 }
 
-// NotificationsConfig controls optional system notifications for CLI and desktop turns.
+// NotificationsConfig controls optional system notifications for CLI chat/run.
 type NotificationsConfig struct {
 	Enabled         bool `toml:"enabled"`
 	TurnDone        bool `toml:"turn_done"`
