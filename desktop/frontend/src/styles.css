@@ -13436,7 +13436,9 @@ body > .mermaid-diagram--fullscreen {
 }
 .provider-template-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(260px, 100%), 1fr));
+  grid-auto-rows: 112px;
+  align-items: stretch;
   gap: 10px;
 }
 .provider-template-card {
@@ -13444,6 +13446,7 @@ body > .mermaid-diagram--fullscreen {
   flex-direction: column;
   align-items: flex-start;
   gap: 5px;
+  height: 100%;
   min-width: 0;
   padding: 12px;
   border: 1px solid var(--border);
@@ -13464,12 +13467,25 @@ body > .mermaid-diagram--fullscreen {
     0 0 0 2px color-mix(in srgb, var(--accent) 18%, transparent);
 }
 .provider-template-card strong {
+  display: -webkit-box;
+  max-width: 100%;
+  overflow: hidden;
+  line-height: 1.25;
   font-size: var(--font-control);
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
 }
 .provider-template-card span {
+  display: -webkit-box;
+  max-width: 100%;
+  overflow: hidden;
   color: var(--fg-dim);
   font-size: var(--font-control-small);
   line-height: 1.4;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
 }
 .provider-access-card {
   display: flex;
