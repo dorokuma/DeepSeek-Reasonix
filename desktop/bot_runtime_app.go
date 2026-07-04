@@ -82,7 +82,11 @@ func (a *App) refreshBotRuntime() {
 }
 
 func (a *App) loadDesktopBotConfig() (*config.Config, error) {
-	cfg, _, err := a.loadDesktopUserConfigForEdit()
+	// Read-only load feeding the bot runtime and connection diagnostics. It
+	// must load credentials: the runtime resolves app secrets and control
+	// tokens from the process env (AppSecretEnv, Control.TokenEnv), which the
+	// credential-free view load would leave unset on a fresh process.
+	cfg, _, err := a.loadDesktopUserConfigForViewWithCredentials()
 	if err != nil {
 		return nil, err
 	}
