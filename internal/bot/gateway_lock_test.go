@@ -1,6 +1,9 @@
 package bot
 
 import (
+	"io"
+	"log/slog"
+	"sync"
 	"testing"
 	"time"
 
@@ -52,5 +55,60 @@ func TestBotGatewayStopClosesSessionsWithoutGatewayLock(t *testing.T) {
 	}
 	if len(gw.controllers) != 0 {
 		t.Fatalf("controllers retained after Stop: %d", len(gw.controllers))
+	}
+}
+
+// Guards the gw.cfg.Channels / gw.cfg.ConnectionChannels / gw.cfg.ToolApprovalMode
+// snapshot locking: approval-mode writers mutate those under gw.mu while
+// sessionOptionsForMessage and the project/session index builders read them.
+// Run with -race; a lock-free read is a concurrent map read/write crash.
+func TestBotGatewayToolApprovalModeConcurrentWithConfigReaders(t *testing.T) {
+	t.Setenv("REASONIX_HOME", t.TempDir())
+	gw := &BotGateway{
+		cfg: GatewayConfig{
+			WorkspaceRoot: t.TempDir(),
+			Channels: map[Platform]ChannelConfig{
+				PlatformFeishu: {ToolApprovalMode: control.ToolApprovalAsk},
+			},
+			ConnectionChannels: map[string]ChannelConfig{
+				"feishu-lark": {ToolApprovalMode: control.ToolApprovalAsk},
+			},
+		},
+		controllers:      map[string]*sessionState{},
+		sessionOverrides: map[string]sessionRuntimeOverride{},
+		logger:           slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+
+	stop := make(chan struct{})
+	var wg sync.WaitGroup
+	defer func() {
+		close(stop)
+		wg.Wait()
+	}()
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		modes := []string{control.ToolApprovalYolo, control.ToolApprovalAsk, control.ToolApprovalAuto}
+		for i := 0; ; i++ {
+			select {
+			case <-stop:
+				return
+			default:
+			}
+			mode := modes[i%len(modes)]
+			gw.UpdateConnectionToolApprovalMode("feishu-lark", mode)
+			gw.mu.Lock()
+			gw.updateToolApprovalModeDefaultLocked(InboundMessage{Platform: PlatformFeishu}, mode)
+			gw.updateToolApprovalModeDefaultLocked(InboundMessage{}, mode)
+			gw.mu.Unlock()
+		}
+	}()
+
+	connMsg := InboundMessage{Platform: PlatformFeishu, ConnectionID: "feishu-lark", ChatType: ChatDM, ChatID: "chat", UserID: "user"}
+	for i := 0; i < 200; i++ {
+		gw.sessionOptionsForMessage(connMsg)
+		gw.sessionOptionsForMessage(InboundMessage{Platform: PlatformFeishu})
+		projects := gw.buildProjectIndex()
+		gw.buildSessionIndex(projects)
 	}
 }

@@ -355,8 +355,12 @@ func (gw *BotGateway) Start(ctx context.Context) error {
 		gw.markAdapterStarted(binding)
 		started = append(started, binding)
 	}
+	// SendToAdapter reads gw.adapters under gw.mu; publish the started set under
+	// the same lock.
+	gw.mu.Lock()
 	gw.adapters = started
 	gw.startErr = startErr
+	gw.mu.Unlock()
 	if len(started) == 0 && len(startErr) > 0 {
 		return errors.Join(startErr...)
 	}
@@ -685,14 +689,20 @@ func (gw *BotGateway) steerActiveSession(ctx context.Context, adapter Adapter, k
 }
 
 func (gw *BotGateway) cancelActiveSession(key string) {
+	// state.cancel is rewritten under gw.mu on every turn (runTurn), so copy it
+	// inside the lock and invoke it outside.
+	var cancel context.CancelFunc
 	gw.mu.Lock()
 	state, ok := gw.controllers[key]
+	if ok && state != nil {
+		cancel = state.cancel
+	}
 	gw.mu.Unlock()
 	if !ok || state == nil {
 		return
 	}
-	if state.cancel != nil {
-		state.cancel()
+	if cancel != nil {
+		cancel()
 		return
 	}
 	if state.ctrl != nil {
@@ -1092,22 +1102,29 @@ func (gw *BotGateway) currentPendingAskIDForReply(key string) string {
 func (gw *BotGateway) handleSlashCommand(ctx context.Context, adapter Adapter, key string, msg InboundMessage) {
 	switch {
 	case strings.HasPrefix(msg.Text, "/stop"):
+		var cancel context.CancelFunc
 		gw.mu.Lock()
-		state, ok := gw.controllers[key]
+		if state, ok := gw.controllers[key]; ok {
+			cancel = state.cancel
+		}
 		gw.mu.Unlock()
-		if ok && state.cancel != nil {
-			state.cancel()
+		if cancel != nil {
+			cancel()
 		}
 		gw.sessions.ForceRelease(key)
 		_ = gw.sendText(ctx, adapter, msg, "已停止当前任务。")
 
 	case strings.HasPrefix(msg.Text, "/new") || strings.HasPrefix(msg.Text, "/reset"):
+		var cancel context.CancelFunc
 		gw.mu.Lock()
 		state, ok := gw.controllers[key]
+		if ok {
+			cancel = state.cancel
+		}
 		gw.mu.Unlock()
 		if ok {
-			if state.cancel != nil {
-				state.cancel()
+			if cancel != nil {
+				cancel()
 			}
 			if err := state.ctrl.NewSession(); err != nil {
 				gw.logger.Warn("new session failed", "err", err)
@@ -1985,27 +2002,37 @@ func botSessionTarget(sessionPath string) string {
 }
 
 func (gw *BotGateway) sessionOptionsForMessage(msg InboundMessage) (model string, workspaceRoot string, toolApprovalMode string) {
+	// cfg.ToolApprovalMode / Channels / ConnectionChannels are rewritten under
+	// gw.mu at runtime (/yolo, UpdateConnectionToolApprovalMode), so snapshot them
+	// under a short lock and resolve outside it — applyRuntimeOverrideOptions
+	// takes gw.mu itself. Copying the ChannelConfig value is enough: writers
+	// replace whole map entries and never mutate SessionMappings in place.
+	gw.mu.Lock()
 	model = gw.cfg.Model
 	workspaceRoot = gw.cfg.WorkspaceRoot
 	toolApprovalMode = normalizeBotToolApprovalMode(gw.cfg.ToolApprovalMode)
-	var mappings []SessionMapping
-	if gw.cfg.ConnectionChannels != nil && msg.ConnectionID != "" {
-		if channel, ok := gw.cfg.ConnectionChannels[msg.ConnectionID]; ok {
-			applyBotChannelOptions(channel, &model, &workspaceRoot, &toolApprovalMode)
-			mappings = channel.SessionMappings
-			if mapping, ok := matchingSessionMapping(mappings, msg); ok {
-				workspaceRoot = workspaceRootForSessionMapping(mapping, workspaceRoot)
-			}
-			model, workspaceRoot, toolApprovalMode = gw.applyRouteOptions(msg, model, workspaceRoot, toolApprovalMode)
-			model, workspaceRoot, toolApprovalMode = gw.applyRuntimeOverrideOptions(msg, model, workspaceRoot, toolApprovalMode)
-			return model, workspaceRoot, toolApprovalMode
-		}
+	var connChannel ChannelConfig
+	connOK := false
+	if msg.ConnectionID != "" {
+		connChannel, connOK = gw.cfg.ConnectionChannels[msg.ConnectionID]
 	}
-	if gw.cfg.Channels != nil {
-		if channel, ok := gw.cfg.Channels[msg.Platform]; ok {
-			applyBotChannelOptions(channel, &model, &workspaceRoot, &toolApprovalMode)
-			mappings = channel.SessionMappings
+	platChannel, platOK := gw.cfg.Channels[msg.Platform]
+	gw.mu.Unlock()
+
+	var mappings []SessionMapping
+	if connOK {
+		applyBotChannelOptions(connChannel, &model, &workspaceRoot, &toolApprovalMode)
+		mappings = connChannel.SessionMappings
+		if mapping, ok := matchingSessionMapping(mappings, msg); ok {
+			workspaceRoot = workspaceRootForSessionMapping(mapping, workspaceRoot)
 		}
+		model, workspaceRoot, toolApprovalMode = gw.applyRouteOptions(msg, model, workspaceRoot, toolApprovalMode)
+		model, workspaceRoot, toolApprovalMode = gw.applyRuntimeOverrideOptions(msg, model, workspaceRoot, toolApprovalMode)
+		return model, workspaceRoot, toolApprovalMode
+	}
+	if platOK {
+		applyBotChannelOptions(platChannel, &model, &workspaceRoot, &toolApprovalMode)
+		mappings = platChannel.SessionMappings
 	}
 	if mapping, ok := matchingSessionMapping(mappings, msg); ok {
 		workspaceRoot = workspaceRootForSessionMapping(mapping, workspaceRoot)
