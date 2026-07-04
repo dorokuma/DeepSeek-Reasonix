@@ -6608,11 +6608,8 @@ func (a *App) SetModelForTab(tabID, name string) error {
 	if prevPath == "" {
 		prevPath = strings.TrimSpace(tab.currentSessionPath())
 	}
-	if tab.Ctrl == nil && prevPath != "" && a.attachExistingSessionRuntime(tab, prevPath, a.ctx) {
-		prevPath = a.reconciledSessionPathForTab(tab)
-		if prevPath == "" {
-			prevPath = strings.TrimSpace(tab.currentSessionPath())
-		}
+	if tab.Ctrl == nil && prevPath != "" {
+		a.attachExistingSessionRuntime(tab, prevPath, a.ctx)
 	}
 	if controllerHasActiveRuntimeWork(tab.Ctrl) {
 		return rebuildControllerActiveWorkError("model")
