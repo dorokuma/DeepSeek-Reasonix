@@ -168,12 +168,15 @@ type acpSession struct {
 	done    chan struct{}
 	running bool
 	deleted bool
+	// maintenanceDone is non-nil while session-owned maintenance, such as an
+	// idle config rebuild, is in flight outside mu.
+	maintenanceDone chan struct{}
 }
 
 func (s *acpSession) begin(ctx context.Context) (context.Context, context.CancelFunc, bool) {
 	runCtx, cancel := context.WithCancel(ctx)
 	s.mu.Lock()
-	if s.running || s.deleted {
+	if s.running || s.deleted || s.maintenanceDone != nil {
 		s.mu.Unlock()
 		cancel()
 		return nil, nil, false
@@ -210,12 +213,16 @@ func (s *acpSession) abortAndWait() {
 	s.mu.Lock()
 	c := s.cancel
 	done := s.done
+	maintenanceDone := s.maintenanceDone
 	s.mu.Unlock()
 	if c != nil {
 		c()
 	}
 	if done != nil {
 		<-done
+	}
+	if maintenanceDone != nil {
+		<-maintenanceDone
 	}
 }
 
@@ -224,12 +231,32 @@ func (s *acpSession) deleteAndWait() {
 	s.deleted = true
 	c := s.cancel
 	done := s.done
+	maintenanceDone := s.maintenanceDone
 	s.mu.Unlock()
 	if c != nil {
 		c()
 	}
 	if done != nil {
 		<-done
+	}
+	if maintenanceDone != nil {
+		<-maintenanceDone
+	}
+}
+
+func (s *acpSession) finishMaintenance(done chan struct{}) {
+	if done == nil {
+		return
+	}
+	closeDone := false
+	s.mu.Lock()
+	if s.maintenanceDone == done {
+		s.maintenanceDone = nil
+		closeDone = true
+	}
+	s.mu.Unlock()
+	if closeDone {
+		close(done)
 	}
 }
 
@@ -672,7 +699,7 @@ func (s *service) rebuildSession(ctx context.Context, sess *acpSession, cfgState
 		sess.mu.Unlock()
 		return sessionConfigActiveWorkError("stop background jobs before switching config")
 	}
-	if sess.running || status.Running {
+	if sess.running || status.Running || sess.maintenanceDone != nil {
 		pending := cloneSessionConfigState(cfgState)
 		sess.pendingConfig = &pending
 		sess.mu.Unlock()
@@ -683,14 +710,18 @@ func (s *service) rebuildSession(ctx context.Context, sess *acpSession, cfgState
 
 	cur := sess.ctrl
 	prevPath := cur.SessionPath()
-	if err := cur.Snapshot(); err != nil {
-		sess.mu.Unlock()
-		return &RPCError{Code: ErrInternal, Message: "session config: snapshot before switch: " + err.Error()}
-	}
-	carried := cur.History()
 	sink := sess.sink
 	mcpServers := clonePluginSpecs(sess.mcpServers)
 	cwd := sess.cwd
+	maintenanceDone := make(chan struct{})
+	sess.maintenanceDone = maintenanceDone
+	sess.mu.Unlock()
+	defer sess.finishMaintenance(maintenanceDone)
+
+	if err := cur.Snapshot(); err != nil {
+		return &RPCError{Code: ErrInternal, Message: "session config: snapshot before switch: " + err.Error()}
+	}
+	carried := cur.History()
 
 	newCtrl, err := s.factory.NewSession(ctx, SessionParams{
 		Cwd:            cwd,
@@ -700,7 +731,6 @@ func (s *service) rebuildSession(ctx context.Context, sess *acpSession, cfgState
 		EffortOverride: cloneStringPtr(cfgState.EffortOverride),
 	})
 	if err != nil {
-		sess.mu.Unlock()
 		return &RPCError{Code: ErrInternal, Message: "session config: " + err.Error()}
 	}
 	newCtrl.EnableInteractiveApproval()
@@ -714,6 +744,17 @@ func (s *service) rebuildSession(ctx context.Context, sess *acpSession, cfgState
 		newCtrl.InheritLifecycleFrom(prev)
 	}
 
+	sess.mu.Lock()
+	if sess.deleted {
+		sess.mu.Unlock()
+		newCtrl.Close()
+		return &RPCError{Code: ErrInvalidRequest, Message: "session config: session is deleted"}
+	}
+	if sess.ctrl != cur {
+		sess.mu.Unlock()
+		newCtrl.Close()
+		return sessionConfigActiveWorkError("session changed while switching config; retry")
+	}
 	sess.ctrl = newCtrl
 	sess.model = cfgState.Model
 	sess.effortOverride = cloneStringPtr(cfgState.EffortOverride)
@@ -1087,11 +1128,20 @@ func (s *service) closeAll() {
 
 func (s *acpSession) persistAfterTurn(prompt string) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	if s.deleted {
+		s.mu.Unlock()
 		return
 	}
-	_ = s.ctrl.Snapshot()
+	ctrl := s.ctrl
+	s.mu.Unlock()
+
+	_ = ctrl.Snapshot()
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.deleted || s.ctrl != ctrl {
+		return
+	}
 	if s.title == "" {
 		s.title = previewTitle(prompt)
 	}

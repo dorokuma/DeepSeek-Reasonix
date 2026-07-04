@@ -505,15 +505,16 @@ func (gw *BotGateway) ensureAdapterHealthLocked(binding AdapterBinding) *Adapter
 
 // Stop 停止所有适配器并关闭所有 session。
 func (gw *BotGateway) Stop() {
+	var states []*sessionState
 	gw.mu.Lock()
 	for key, state := range gw.controllers {
-		if state.cancel != nil {
-			state.cancel()
-		}
-		state.ctrl.Close()
+		states = append(states, state)
 		delete(gw.controllers, key)
 	}
 	gw.mu.Unlock()
+	for _, state := range states {
+		closeBotSessionState(state)
+	}
 
 	for _, binding := range gw.adapters {
 		if err := binding.Adapter.Stop(); err != nil {

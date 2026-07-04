@@ -326,7 +326,10 @@ func (lt *lazyTool) Execute(ctx context.Context, args json.RawMessage) (string, 
 		if r == nil {
 			return "", fmt.Errorf("MCP server %q did not expose tool %q (the cached schema may be stale)", sp.spec.Name, lt.name)
 		}
-		return r.Execute(ctx, args)
+		sp.mu.Unlock()
+		result, execErr := r.Execute(ctx, args)
+		sp.mu.Lock()
+		return result, execErr
 	}
 
 	sp.mu.Unlock()

@@ -74,6 +74,30 @@ func (s *snapshotObservingSession) Snapshot() error {
 	return nil
 }
 
+func expectAppMutexAvailableDuringSnapshot(t *testing.T, app *App, checks chan<- struct{}) func() {
+	t.Helper()
+	return func() {
+		acquired := make(chan struct{})
+		go func() {
+			app.mu.Lock()
+			app.mu.Unlock()
+			close(acquired)
+		}()
+		select {
+		case <-acquired:
+		case <-time.After(500 * time.Millisecond):
+			t.Error("Snapshot ran while holding app mutex")
+		}
+		if checks == nil {
+			return
+		}
+		select {
+		case checks <- struct{}{}:
+		default:
+		}
+	}
+}
+
 func TestListTabsKeepsExplicitOrderWhenActiveChanges(t *testing.T) {
 	app := testAppWithOrderedTabs(t, "b", "a", "b", "c")
 
@@ -180,6 +204,90 @@ func TestKeepOnlyVisibleTabDetachesRunningHiddenTab(t *testing.T) {
 	close(runner.release)
 	waitNotRunning(t, ctrl)
 	ctrl.Close()
+}
+
+func TestKeepOnlyVisibleTabSnapshotsHiddenTabWithoutAppLock(t *testing.T) {
+	isolateDesktopUserDirs(t)
+	app := &App{
+		tabs:        map[string]*WorkspaceTab{},
+		tabOrder:    []string{"hidden", "target"},
+		activeTabID: "hidden",
+	}
+	snapshotChecks := make(chan struct{}, 2)
+	hiddenCtrl := &snapshotObservingSession{
+		SessionAPI: control.New(control.Options{Label: "hidden"}),
+		onSnapshot: expectAppMutexAvailableDuringSnapshot(t, app, snapshotChecks),
+	}
+	hidden := &WorkspaceTab{
+		ID:            "hidden",
+		Scope:         "global",
+		WorkspaceRoot: globalTabWorkspaceRoot(),
+		TopicID:       "topic-hidden",
+		Ctrl:          hiddenCtrl,
+		Ready:         true,
+		sink:          &tabEventSink{tabID: "hidden"},
+		disabledMCP:   map[string]ServerView{},
+	}
+	target := &WorkspaceTab{
+		ID:          "target",
+		Scope:       "global",
+		Ready:       true,
+		disabledMCP: map[string]ServerView{},
+	}
+	app.tabs["hidden"] = hidden
+	app.tabs["target"] = target
+
+	if _, err := app.keepOnlyVisibleTab("target"); err != nil {
+		t.Fatalf("keepOnlyVisibleTab: %v", err)
+	}
+	select {
+	case <-snapshotChecks:
+	case <-time.After(time.Second):
+		t.Fatal("hidden tab was not snapshotted before pruning")
+	}
+	assertTabIDs(t, app.ListTabs(), "target")
+}
+
+func TestCloseTabSnapshotsWithoutAppLock(t *testing.T) {
+	isolateDesktopUserDirs(t)
+	app := &App{
+		tabs:        map[string]*WorkspaceTab{},
+		tabOrder:    []string{"closing", "survivor"},
+		activeTabID: "closing",
+	}
+	snapshotChecks := make(chan struct{}, 1)
+	closingCtrl := &snapshotObservingSession{
+		SessionAPI: control.New(control.Options{Label: "closing"}),
+		onSnapshot: expectAppMutexAvailableDuringSnapshot(t, app, snapshotChecks),
+	}
+	closing := &WorkspaceTab{
+		ID:            "closing",
+		Scope:         "global",
+		WorkspaceRoot: globalTabWorkspaceRoot(),
+		TopicID:       "topic-closing",
+		Ctrl:          closingCtrl,
+		Ready:         true,
+		sink:          &tabEventSink{tabID: "closing"},
+		disabledMCP:   map[string]ServerView{},
+	}
+	survivor := &WorkspaceTab{
+		ID:          "survivor",
+		Scope:       "global",
+		Ready:       true,
+		disabledMCP: map[string]ServerView{},
+	}
+	app.tabs["closing"] = closing
+	app.tabs["survivor"] = survivor
+
+	if err := app.CloseTab("closing"); err != nil {
+		t.Fatalf("CloseTab: %v", err)
+	}
+	select {
+	case <-snapshotChecks:
+	case <-time.After(time.Second):
+		t.Fatal("closing tab was not snapshotted")
+	}
+	assertTabIDs(t, app.ListTabs(), "survivor")
 }
 
 func TestKeepOnlyVisibleTabCancelsBuildingHiddenTab(t *testing.T) {
@@ -397,6 +505,38 @@ func TestRemoveWorkspaceSnapshotsProjectTabBeforeRemovingBinding(t *testing.T) {
 	if !sawBindingDuringSnapshot {
 		t.Fatal("project tab was removed from app.tabs before Snapshot")
 	}
+}
+
+func TestRemoveWorkspaceSnapshotsProjectTabWithoutAppLock(t *testing.T) {
+	isolateDesktopUserDirs(t)
+	projectRoot := t.TempDir()
+	if err := addProject(projectRoot, "Project"); err != nil {
+		t.Fatalf("add project: %v", err)
+	}
+	app := &App{
+		tabs: map[string]*WorkspaceTab{
+			"project": {ID: "project", Scope: "project", WorkspaceRoot: projectRoot, TopicID: "topic-project", Ready: true, disabledMCP: map[string]ServerView{}},
+			"global":  {ID: "global", Scope: "global", WorkspaceRoot: globalTabWorkspaceRoot(), TopicID: "topic-global", Ready: true, disabledMCP: map[string]ServerView{}},
+		},
+		tabOrder:         []string{"project", "global"},
+		activeTabID:      "project",
+		detachedSessions: map[string]*WorkspaceTab{},
+	}
+	snapshotChecks := make(chan struct{}, 1)
+	app.tabs["project"].Ctrl = &snapshotObservingSession{
+		SessionAPI: control.New(control.Options{Label: "project"}),
+		onSnapshot: expectAppMutexAvailableDuringSnapshot(t, app, snapshotChecks),
+	}
+
+	if err := app.RemoveWorkspace(projectRoot); err != nil {
+		t.Fatalf("RemoveWorkspace: %v", err)
+	}
+	select {
+	case <-snapshotChecks:
+	case <-time.After(time.Second):
+		t.Fatal("project tab was not snapshotted before removing workspace")
+	}
+	assertTabIDs(t, app.ListTabs(), "global")
 }
 
 func TestRemoveWorkspaceRejectsRunningProjectRuntime(t *testing.T) {

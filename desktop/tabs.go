@@ -1906,6 +1906,9 @@ func (a *App) ReorderTabs(tabIDs []string) error {
 // background work, the controller is detached so closing a view does not destroy
 // the session runtime.
 func (a *App) CloseTab(tabID string) error {
+	a.sessionRemovalMu.Lock()
+	defer a.sessionRemovalMu.Unlock()
+
 	a.mu.Lock()
 	tab, ok := a.tabs[tabID]
 	if !ok {
@@ -1916,19 +1919,32 @@ func (a *App) CloseTab(tabID string) error {
 		a.mu.Unlock()
 		return fmt.Errorf("cannot close the last tab")
 	}
-	// Snapshot the session state before removing the tab from a.tabs.
-	// This closes a race window with DeleteSession: if Snapshot runs
-	// after delete(a.tabs, tabID), a concurrent DeleteSession can delete
-	// the session files, and the deferred Snapshot recreates them.
+	a.mu.Unlock()
+
+	// Snapshot while the tab binding is still present, but outside a.mu because
+	// snapshot recovery can re-enter App and acquire a.mu. sessionRemovalMu keeps
+	// DeleteSession/topic/workspace removal from trashing the same files while
+	// this save is in flight.
 	if err := snapshotTabDirect(tab); err != nil {
-		a.mu.Unlock()
 		slog.Warn("desktop: snapshot before closing tab failed", "tab", tabID, "err", err)
 		return fmt.Errorf("save current session before closing tab: %w", err)
 	}
 	if err := saveTabSessionMetaForCurrentSession(tab); err != nil {
-		a.mu.Unlock()
 		slog.Warn("desktop: session metadata before closing tab failed", "tab", tabID, "err", err)
 		return fmt.Errorf("save current session metadata before closing tab: %w", err)
+	}
+
+	a.mu.Lock()
+	if current := a.tabs[tabID]; current != tab {
+		a.mu.Unlock()
+		if current == nil {
+			return fmt.Errorf("tab %q not found", tabID)
+		}
+		return fmt.Errorf("tab %q changed while closing", tabID)
+	}
+	if len(a.tabs) <= 1 {
+		a.mu.Unlock()
+		return fmt.Errorf("cannot close the last tab")
 	}
 	if tab.Ctrl == nil || !tab.hasActiveRuntimeWork() {
 		a.markTabRemovedLocked(tab)
@@ -1989,27 +2005,64 @@ func (a *App) CloseTab(tabID string) error {
 }
 
 func (a *App) keepOnlyVisibleTab(tabID string) (TabMeta, error) {
+	type pruneCandidate struct {
+		id  string
+		tab *WorkspaceTab
+	}
+
+	a.sessionRemovalMu.Lock()
+	defer a.sessionRemovalMu.Unlock()
+
 	a.mu.Lock()
 	active := a.tabs[tabID]
 	if active == nil {
 		a.mu.Unlock()
 		return TabMeta{}, fmt.Errorf("tab %q not found", tabID)
 	}
-	a.activeTabID = tabID
-	removed := make([]*WorkspaceTab, 0, len(a.tabs)-1)
+	candidates := make([]pruneCandidate, 0, len(a.tabs)-1)
 	for id, tab := range a.tabs {
 		if id == tabID {
 			continue
 		}
+		candidates = append(candidates, pruneCandidate{id: id, tab: tab})
+	}
+	a.mu.Unlock()
+
+	// Keep tab bindings in a.tabs while saving so DeleteSession still sees
+	// them, but do not hold a.mu: Snapshot can run recovery callbacks that
+	// re-enter App and need the same lock.
+	snapshotted := make(map[string]*WorkspaceTab, len(candidates))
+	for _, candidate := range candidates {
+		id, tab := candidate.id, candidate.tab
+		snapshotted[id] = tab
 		if err := snapshotTabDirect(tab); err != nil {
-			a.mu.Unlock()
 			slog.Warn("desktop: snapshot before pruning hidden tab failed", "tab", id, "err", err)
 			return TabMeta{}, fmt.Errorf("save current session before switching tabs: %w", err)
 		}
 		if err := saveTabSessionMetaForCurrentSession(tab); err != nil {
-			a.mu.Unlock()
 			slog.Warn("desktop: session metadata before pruning hidden tab failed", "tab", id, "err", err)
 			return TabMeta{}, fmt.Errorf("save current session metadata before switching tabs: %w", err)
+		}
+	}
+
+	a.mu.Lock()
+	active = a.tabs[tabID]
+	if active == nil {
+		a.mu.Unlock()
+		return TabMeta{}, fmt.Errorf("tab %q not found", tabID)
+	}
+	for id, tab := range a.tabs {
+		if id != tabID && snapshotted[id] != tab {
+			a.mu.Unlock()
+			return TabMeta{}, fmt.Errorf("visible tabs changed while switching; retry")
+		}
+	}
+	a.activeTabID = tabID
+	removed := make([]*WorkspaceTab, 0, len(candidates))
+	for _, candidate := range candidates {
+		id, tab := candidate.id, candidate.tab
+		if tab == nil || a.tabs[id] != tab {
+			continue
 		}
 		if tab.Ctrl == nil || !tab.hasActiveRuntimeWork() {
 			a.markTabRemovedLocked(tab)
@@ -5333,46 +5386,53 @@ func (a *App) TrashTopic(topicID string) error {
 		return fmt.Errorf("topicID is required")
 	}
 
-	targets, err := a.topicTrashTargets(topicID)
-	if err != nil {
-		return err
-	}
-	removed, fallback := a.removeTopicRuntimeBindings(topicID)
-	if err := a.prepareRemovedSessionRuntimes(removed); err != nil {
-		a.closeRemovedSessionRuntimes(removed)
-		return err
-	}
-	destroyBegun := false
-	closedRemoved := map[control.SessionAPI]bool{}
-	defer func() {
-		if destroyBegun {
-			a.closeRemainingRemovedSessionRuntimesAfterDestroy(removed, closedRemoved)
-			return
-		}
-		a.closeRemovedSessionRuntimes(removed)
-	}()
+	var fallback fallbackRuntimeTarget
+	if err := func() error {
+		a.sessionRemovalMu.Lock()
+		defer a.sessionRemovalMu.Unlock()
 
-	for _, target := range targets {
-		destroys := a.destroyHandlesForSession(target.dir, target.sessionPath, removed)
-		if len(destroys) > 0 {
-			destroyBegun = true
+		targets, err := a.topicTrashTargets(topicID)
+		if err != nil {
+			return err
 		}
-		teardownTimedOut := waitDestroyHandles(destroys)
-		a.closeRemovedSessionRuntimesForSessionAfterDestroy(removed, target.dir, target.sessionPath, closedRemoved)
-		if teardownTimedOut {
-			if err := agent.MarkCleanupPending(target.sessionPath, "delete"); err != nil {
-				return err
+		removed, nextFallback := a.removeTopicRuntimeBindings(topicID)
+		fallback = nextFallback
+		if err := a.prepareRemovedSessionRuntimes(removed); err != nil {
+			a.closeRemovedSessionRuntimes(removed)
+			return err
+		}
+		destroyBegun := false
+		closedRemoved := map[control.SessionAPI]bool{}
+		defer func() {
+			if destroyBegun {
+				a.closeRemainingRemovedSessionRuntimesAfterDestroy(removed, closedRemoved)
+				return
 			}
-			go delayedDesktopSessionTrash(target.dir, target.sessionPath, target.key, destroys)
-		} else {
-			err := trashSessionArtifacts(target.dir, target.sessionPath, target.key)
-			finishDestroyHandles(destroys)
-			if err != nil {
-				return err
+			a.closeRemovedSessionRuntimes(removed)
+		}()
+
+		for _, target := range targets {
+			destroys := a.destroyHandlesForSession(target.dir, target.sessionPath, removed)
+			if len(destroys) > 0 {
+				destroyBegun = true
+			}
+			teardownTimedOut := waitDestroyHandles(destroys)
+			a.closeRemovedSessionRuntimesForSessionAfterDestroy(removed, target.dir, target.sessionPath, closedRemoved)
+			if teardownTimedOut {
+				if err := agent.MarkCleanupPending(target.sessionPath, "delete"); err != nil {
+					return err
+				}
+				go delayedDesktopSessionTrash(target.dir, target.sessionPath, target.key, destroys)
+			} else {
+				err := trashSessionArtifacts(target.dir, target.sessionPath, target.key)
+				finishDestroyHandles(destroys)
+				if err != nil {
+					return err
+				}
 			}
 		}
-	}
-	if err := a.DeleteTopic(topicID); err != nil {
+		return a.DeleteTopic(topicID)
+	}(); err != nil {
 		return err
 	}
 	if fallback.needs {
