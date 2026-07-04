@@ -1,7 +1,10 @@
 package pluginpkg
 
 import (
+	"encoding/json"
+	"errors"
 	"fmt"
+	"runtime"
 	"sync"
 	"testing"
 )
@@ -85,7 +88,10 @@ func TestStateConcurrentRemove(t *testing.T) {
 
 // TestStateLoadDuringSaveNeverSeesTornFile pins the atomic write: a reader
 // racing a writer sees either the old state or the new one, never a truncated
-// or half-written file (which would surface as a JSON parse error).
+// or half-written file (which would surface as a JSON parse error). On Windows
+// the rename that publishes a new state file can make a concurrent open fail
+// with a transient sharing violation — that is the platform's locking
+// behavior, not a torn file, so such reads are retried instead of failed.
 func TestStateLoadDuringSaveNeverSeesTornFile(t *testing.T) {
 	home := t.TempDir()
 	if err := Upsert(home, InstalledPlugin{Name: "seed", Root: "plugins/seed", Enabled: true}); err != nil {
@@ -102,11 +108,23 @@ func TestStateLoadDuringSaveNeverSeesTornFile(t *testing.T) {
 			}
 		}
 	}()
+	// Keep the writer's lifetime inside the test body: a t.Fatalf below must
+	// not let TempDir cleanup race the still-running writer goroutine.
+	defer func() { <-done }()
 
 	for {
 		st, err := LoadState(home)
 		if err != nil {
-			t.Fatalf("LoadState saw a torn state file: %v", err)
+			var jsonErr *json.SyntaxError
+			if errors.As(err, &jsonErr) {
+				t.Fatalf("LoadState saw a torn state file: %v", err)
+			}
+			if runtime.GOOS == "windows" {
+				// Transient sharing violation while the writer renames the
+				// new state into place — retry, it is not a torn file.
+				continue
+			}
+			t.Fatalf("LoadState: %v", err)
 		}
 		if len(st.Plugins) != 1 || st.Plugins[0].Name != "seed" {
 			t.Fatalf("state = %+v, want the single seed plugin", st.Plugins)

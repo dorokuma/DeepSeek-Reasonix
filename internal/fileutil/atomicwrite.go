@@ -41,13 +41,18 @@ func AtomicWriteFile(path string, data []byte, perm os.FileMode) error {
 		os.Remove(tmpPath)
 		return fmt.Errorf("fsync tmp for %s: %w", path, err)
 	}
+	// Chmod the still-open handle, before Close, so there is no window between
+	// close and a path-based chmod for another process (Windows AV / search
+	// indexer) to grab or move the tmp and make the chmod fail with "file not
+	// found". CreateTemp makes a 0600 file, so this only widens when perm asks.
+	if err := tmp.Chmod(perm); err != nil {
+		tmp.Close()
+		os.Remove(tmpPath)
+		return fmt.Errorf("chmod tmp for %s: %w", path, err)
+	}
 	if err := tmp.Close(); err != nil {
 		os.Remove(tmpPath)
 		return fmt.Errorf("close tmp for %s: %w", path, err)
-	}
-	if err := os.Chmod(tmpPath, perm); err != nil {
-		os.Remove(tmpPath)
-		return fmt.Errorf("chmod tmp for %s: %w", path, err)
 	}
 	if err := ReplaceFile(tmpPath, path); err != nil {
 		os.Remove(tmpPath)
