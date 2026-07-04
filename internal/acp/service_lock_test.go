@@ -173,3 +173,59 @@ func TestACPRebuildSessionAppliesPendingConfigAfterMaintenance(t *testing.T) {
 		t.Fatalf("factory builds = %d, want 2", got)
 	}
 }
+
+// TestACPCtrlReadPathsDoNotRaceWithRebuild drives the lock-free read surfaces
+// that used to read sess.ctrl outside sess.mu — info(), service.sessionDir(),
+// sendAvailableCommands, and resolveSlashPrompt — while a rebuild goroutine
+// keeps swapping the controller. Under -race this fails without currentCtrl().
+func TestACPCtrlReadPathsDoNotRaceWithRebuild(t *testing.T) {
+	sink := newUpdateSink(&fakeNotifier{}, "sess-race")
+	sess := &acpSession{
+		id:    "sess-race",
+		sink:  sink,
+		cwd:   t.TempDir(),
+		model: "fast",
+		ctrl:  control.New(control.Options{}),
+	}
+	factory := &configurableFactory{}
+	svc := &service{
+		factory:  factory,
+		sessions: map[string]*acpSession{sess.id: sess},
+	}
+
+	const rebuilds = 50
+	models := [...]string{"pro", "fast"}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for i := 0; i < rebuilds; i++ {
+			if err := svc.rebuildSession(context.Background(), sess, SessionConfigState{Model: models[i%len(models)]}); err != nil {
+				t.Errorf("rebuildSession %d: %v", i, err)
+				return
+			}
+		}
+	}()
+
+	for rebuilding := true; rebuilding; {
+		select {
+		case <-done:
+			rebuilding = false
+		default:
+		}
+		if got := sess.info().SessionID; got != sess.id {
+			t.Fatalf("info().SessionID = %q, want %q", got, sess.id)
+		}
+		_ = svc.sessionDir()
+		svc.sendAvailableCommands(sess)
+		if got := svc.resolveSlashPrompt(context.Background(), sess, "/no-such-command args"); got != "/no-such-command args" {
+			t.Fatalf("resolveSlashPrompt rewrote unknown command to %q", got)
+		}
+	}
+
+	if sess.currentCtrl() == nil {
+		t.Fatal("session controller is nil after rebuilds")
+	}
+	if got := factory.buildCount(); got != rebuilds {
+		t.Fatalf("factory builds = %d, want %d", got, rebuilds)
+	}
+}

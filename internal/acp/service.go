@@ -260,6 +260,16 @@ func (s *acpSession) finishMaintenance(done chan struct{}) {
 	}
 }
 
+// currentCtrl returns the session's controller under mu. rebuildSession swaps
+// ctrl while holding mu, so any read of the field outside mu races with a
+// concurrent config rebuild; always go through this accessor unless mu is
+// already held.
+func (s *acpSession) currentCtrl() acpController {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.ctrl
+}
+
 // initialize advertises the agent's capability set: persisted load plus ACP v1
 // list/resume/close/delete lifecycle helpers, prompts carrying inline resource
 // text (embeddedContext) but not image/audio, and stdio / Streamable HTTP MCP
@@ -433,7 +443,8 @@ func (s *service) openExistingSession(ctx context.Context, method, id, cwdParam 
 			return SessionConfigState{}, &RPCError{Code: ErrInvalidParams, Message: method + ": unknown session " + id}
 		}
 		if replay {
-			newUpdateSink(s.conn, id).replay(sess.ctrl.History())
+			ctrl := sess.currentCtrl()
+			newUpdateSink(s.conn, id).replay(ctrl.History())
 		}
 		cfgState, err := s.configStateForSession(ctx, sess)
 		if err != nil {
@@ -984,7 +995,7 @@ func (s *service) sessionDir() string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for _, sess := range s.sessions {
-		if dir := sess.ctrl.SessionDir(); dir != "" {
+		if dir := sess.currentCtrl().SessionDir(); dir != "" {
 			return dir
 		}
 	}
@@ -1131,8 +1142,8 @@ func (s *service) closeAll() {
 	s.sessions = make(map[string]*acpSession)
 	s.mu.Unlock()
 	for _, sess := range sessions {
-		sess.abort()
-		sess.ctrl.Close()
+		sess.abortAndWait()
+		sess.currentCtrl().Close()
 	}
 }
 
@@ -1184,8 +1195,9 @@ func (s *acpSession) metaLocked() acpSessionMeta {
 
 func (s *acpSession) info() SessionInfo {
 	meta := s.meta()
+	ctrl := s.currentCtrl()
 	extra := map[string]any{}
-	if n := len(s.ctrl.History()); n > 0 {
+	if n := len(ctrl.History()); n > 0 {
 		extra["messageCount"] = n
 	}
 	if len(extra) == 0 {
@@ -1195,10 +1207,14 @@ func (s *acpSession) info() SessionInfo {
 }
 
 func (s *service) sendAvailableCommands(sess *acpSession) {
-	if sess == nil || sess.ctrl == nil {
+	if sess == nil {
 		return
 	}
-	cmds := availableCommandsFor(sess.ctrl)
+	ctrl := sess.currentCtrl()
+	if ctrl == nil {
+		return
+	}
+	cmds := availableCommandsFor(ctrl)
 	if len(cmds) == 0 {
 		return
 	}
@@ -1273,16 +1289,20 @@ func availableCommandsFor(ctrl acpController) []AvailableCommand {
 
 func (s *service) resolveSlashPrompt(ctx context.Context, sess *acpSession, text string) string {
 	line := strings.TrimSpace(text)
-	if sess == nil || sess.ctrl == nil || !strings.HasPrefix(line, "/") {
+	if sess == nil || !strings.HasPrefix(line, "/") {
 		return text
 	}
-	if sent, ok := sess.ctrl.CustomCommand(line); ok {
+	ctrl := sess.currentCtrl()
+	if ctrl == nil {
+		return text
+	}
+	if sent, ok := ctrl.CustomCommand(line); ok {
 		return sent
 	}
-	if sent, ok := sess.ctrl.RunSkill(line); ok {
+	if sent, ok := ctrl.RunSkill(line); ok {
 		return sent
 	}
-	if sent, ok, err := sess.ctrl.MCPPrompt(ctx, line); err == nil && ok {
+	if sent, ok, err := ctrl.MCPPrompt(ctx, line); err == nil && ok {
 		return sent
 	}
 	return text
