@@ -26,7 +26,7 @@ func expectACPSessionMutexAvailableDuringSnapshot(t *testing.T, sess *acpSession
 		acquired := make(chan struct{})
 		go func() {
 			sess.mu.Lock()
-			sess.mu.Unlock()
+			sess.mu.Unlock() //nolint:staticcheck // probe: lock must be immediately acquirable
 			close(acquired)
 		}()
 		select {

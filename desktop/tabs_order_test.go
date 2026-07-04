@@ -80,7 +80,7 @@ func expectAppMutexAvailableDuringSnapshot(t *testing.T, app *App, checks chan<-
 		acquired := make(chan struct{})
 		go func() {
 			app.mu.Lock()
-			app.mu.Unlock()
+			app.mu.Unlock() //nolint:staticcheck // probe: lock must be immediately acquirable
 			close(acquired)
 		}()
 		select {

@@ -31,7 +31,7 @@ func TestBotGatewayStopClosesSessionsWithoutGatewayLock(t *testing.T) {
 			Controller: control.New(control.Options{}),
 			onClose: func() {
 				gw.mu.Lock()
-				gw.mu.Unlock()
+				gw.mu.Unlock() //nolint:staticcheck // probe: lock must be immediately acquirable
 				closed <- struct{}{}
 			},
 		},

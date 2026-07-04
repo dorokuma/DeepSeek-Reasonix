@@ -42,7 +42,7 @@ func expectServerMutexAvailable(t *testing.T, s *Server, checks chan<- struct{})
 		acquired := make(chan struct{})
 		go func() {
 			s.mu.Lock()
-			s.mu.Unlock()
+			s.mu.Unlock() //nolint:staticcheck // probe: lock must be immediately acquirable
 			close(acquired)
 		}()
 		select {
