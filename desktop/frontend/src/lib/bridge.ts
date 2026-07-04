@@ -867,6 +867,7 @@ function makeMockApp(): AppBindings {
   let cwd = freshMock ? globalWorkspaceRoot : "~/projects/joyquant-db"; // mutable so PickWorkspace is visible in dev
   let workspaces = freshMock ? [] : ["~/projects/joyquant-db", "~/projects/joyquant-sys", "~/projects/reasonix", "~/projects/blade"];
   let mockEffort = "auto";
+  let mockDesktopZoomFactor = 1.0;
   const day = 86_400_000;
   const t0 = Date.now();
   // Mutable so MCP add/remove/retry are observable in browser dev.
@@ -3172,11 +3173,11 @@ function makeMockApp(): AppBindings {
         async SetDesktopLayoutStyle(style: string) {
           settings.desktopLayoutStyle = style === "workbench" || style === "creation" ? style : "classic";
         },
-        async SetDesktopZoomFactor(_factor: number) {
-          // no-op in mock; in production this writes desktop-zoom.json via Go
+        async SetDesktopZoomFactor(factor: number) {
+          mockDesktopZoomFactor = Math.min(2.0, Math.max(0.5, Number.isFinite(factor) ? factor : 1.0));
         },
         async GetDesktopZoomFactor() {
-          return 1.0; // default in mock
+          return mockDesktopZoomFactor;
         },
         async RestartApplication() {
           // no-op in mock
