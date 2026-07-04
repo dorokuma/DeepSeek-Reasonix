@@ -6730,11 +6730,7 @@ function AppearanceSection({
                   className="slider-track__fill"
                   style={{ width: `calc(${zoomProgressPct}% + 15px)` }}
                 />
-                <div className="slider-thumb" style={{ left: `${zoomProgressPct}%` }}>
-                  <div className="slider-thumb__left" />
-                  <div className="slider-thumb__mid" />
-                  <div className="slider-thumb__right" />
-                </div>
+                <div className="slider-thumb" style={{ left: `${zoomProgressPct}%` }} />
                 <input
                   aria-label={t("settings.displayZoom")}
                   type="range"

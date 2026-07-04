@@ -14390,40 +14390,17 @@ body > .mermaid-diagram--fullscreen {
   position: absolute;
   top: 50%;
   transform: translate(-50%, -50%);
-  width: 28px;
-  height: 18px;
+  width: 26px;
+  height: 16px;
   pointer-events: none;
   z-index: var(--z-local-raised);
-  box-shadow: 0 0 0 1px var(--accent);
+  background: #fff;
+  border: 1px solid var(--accent);
   border-radius: 10px;
+  box-sizing: border-box;
 }
 
-.slider-thumb__left {
-  position: absolute;
-  left: 0;
-  top: 0;
-  width: 9px;
-  height: 18px;
-  background: #fff;
-  border-radius: 9px 0 0 9px;
-}
-.slider-thumb__mid {
-  position: absolute;
-  left: 9px;
-  top: 0;
-  width: 10px;
-  height: 18px;
-  background: #fff;
-}
-.slider-thumb__right {
-  position: absolute;
-  right: 0;
-  top: 0;
-  width: 9px;
-  height: 18px;
-  background: #fff;
-  border-radius: 0 9px 9px 0;
-}
+/* slider-thumb is now a single element; child segments were removed. */
 
 /* 透明 input range — 事件捕获 */
 .slider-track input[type="range"] {
