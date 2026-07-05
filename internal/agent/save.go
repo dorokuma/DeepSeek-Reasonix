@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -53,7 +54,14 @@ type sessionPersistState struct {
 	digest   [sha256.Size]byte
 	version  uint64
 	revision int64
-	ok       bool
+	// revisionKnown marks revision as a real ledger value. It is false when
+	// the baseline was established while the meta sidecar was unreadable
+	// (torn or corrupt): the session must still open, but revision 0 must not
+	// pose as a baseline or every honest on-disk revision would read as a
+	// stale-runtime conflict. CAS checks fall back to digest+version until a
+	// successful save re-learns the revision.
+	revisionKnown bool
+	ok            bool
 }
 
 type sessionSaveMode int
@@ -73,6 +81,11 @@ type snapshotWriteDecision struct {
 	// a lost suffix, or nothing decodable): the safe write shape is a full
 	// rewrite that also compacts the log back to a healthy single event.
 	repairLog bool
+	// ledgerStale is set when the on-disk transcript already matches the
+	// snapshot but the meta ledger still describes older content — the
+	// aftermath of a save whose bytes landed and whose revision record then
+	// failed. The up-to-date path must heal the ledger instead of skipping it.
+	ledgerStale bool
 }
 
 type SessionSnapshotConflictKind string
@@ -160,11 +173,6 @@ func (s *Session) save(path string, mode sessionSaveMode) error {
 	if path == "" {
 		return fmt.Errorf("empty session path")
 	}
-	msgs, version := s.snapshotWithVersion()
-	digest, contentBytes, err := digestAndSizeSessionMessages(msgs)
-	if err != nil {
-		return err
-	}
 	baseRevision := int64(0)
 	unlock := lockSessionSavePath(path)
 	defer unlock()
@@ -176,6 +184,16 @@ func (s *Session) save(path string, mode sessionSaveMode) error {
 		return fmt.Errorf("lock session file: %w", err)
 	}
 	defer unlockFile()
+	// Capture the snapshot only while holding the save locks. Concurrent
+	// in-process savers (turn-end snapshot, periodic autosave, shutdown
+	// snapshot) that captured before locking could land out of order: the
+	// stalest capture written last would then read the newer transcript it
+	// lost the race to as a bogus stale-prefix conflict.
+	msgs, version := s.snapshotWithVersion()
+	digest, contentBytes, err := digestAndSizeSessionMessages(msgs)
+	if err != nil {
+		return err
+	}
 	probe, err := probeSessionEventLog(path)
 	if err != nil {
 		return err
@@ -202,6 +220,27 @@ func (s *Session) save(path string, mode sessionSaveMode) error {
 			// other runtime resumed on this file and turning their next
 			// legitimate save into a stale-runtime conflict. Skip the write and
 			// adopt the current on-disk revision as this session's baseline.
+			if decision.ledgerStale {
+				// ...unless the ledger never learned about this transcript: a
+				// prior save landed its bytes and then failed to record the
+				// revision. Same-content retries are exactly the "later save"
+				// that failure deferred to, and skipping here would strand the
+				// ledger on the old digest forever. Record now, reproducing
+				// the state the interrupted save would have left.
+				revision, err := recordSessionContentRevision(path, digest, decision.revision)
+				if err != nil {
+					return err
+				}
+				if probe.native {
+					if err := writeSessionEventIndex(path, msgs, digest, revision); err != nil {
+						// See the append path below: index loss must not fail a
+						// save whose transcript and revision already landed.
+						slog.Warn("session: keeping save after event index write failure", "path", path, "err", err)
+					}
+				}
+				s.markPersisted(path, digest, version, revision)
+				return nil
+			}
 			s.markPersisted(path, digest, version, decision.revision)
 			return nil
 		}
@@ -232,7 +271,12 @@ func (s *Session) save(path string, mode sessionSaveMode) error {
 				return err
 			}
 			if err := writeSessionEventIndex(path, msgs, digest, revision); err != nil {
-				return err
+				// The event index is only a listing accelerator; the transcript
+				// and its revision are already durable above. Failing the save
+				// here would skip markPersisted and leave the in-memory baseline
+				// behind the disk state it just wrote, misreading the next save
+				// as a stale-runtime conflict.
+				slog.Warn("session: keeping save after event index write failure", "path", path, "err", err)
 			}
 			s.markPersisted(path, digest, version, revision)
 			return nil
@@ -291,7 +335,9 @@ func (s *Session) save(path string, mode sessionSaveMode) error {
 	}
 	if probe.native {
 		if err := writeSessionEventIndex(path, msgs, digest, revision); err != nil {
-			return err
+			// See the append path above: index loss must not fail a save whose
+			// transcript and revision already landed.
+			slog.Warn("session: keeping save after event index write failure", "path", path, "err", err)
 		}
 	}
 	s.markPersisted(path, digest, version, revision)
@@ -341,7 +387,7 @@ func (s *Session) checkSnapshotWrite(path string, next []provider.Message, nextD
 		}
 		return snapshotWriteDecision{}, err
 	}
-	currentRevision, _, err := sessionContentRevision(path)
+	currentRevision, currentLedgerDigest, err := sessionContentRevision(path)
 	if err != nil {
 		return snapshotWriteDecision{}, err
 	}
@@ -354,7 +400,10 @@ func (s *Session) checkSnapshotWrite(path string, next []provider.Message, nextD
 	contentUnchanged := bytes.Equal(existingDigest[:], nextDigest[:])
 	exactAppend := messagesHavePrefix(next, existing)
 	if contentUnchanged || exactAppend || messagesHavePrefixWithCompatibleSystem(next, existing) {
-		if baseState.ok && currentRevision != baseState.revision && !contentUnchanged {
+		// An unknown-revision baseline (meta sidecar unreadable at load) cannot
+		// vouch for revision equality; the digest/prefix checks above already
+		// vouch for the content, so only a known baseline arms the CAS check.
+		if baseState.ok && baseState.revisionKnown && currentRevision != baseState.revision && !contentUnchanged {
 			return snapshotWriteDecision{}, snapshotConflict(path, existing, next, baseState.revision, currentRevision)
 		}
 		// A normalized-dirty load means LoadSession repaired the history on the
@@ -366,6 +415,15 @@ func (s *Session) checkSnapshotWrite(path string, next []provider.Message, nextD
 			revision:  currentRevision,
 			upToDate:  contentUnchanged && !current.normalizedDirty && !current.eventLogDamaged,
 			repairLog: current.eventLogDamaged,
+		}
+		// A ledger digest that describes different content than the transcript
+		// on disk is the aftermath of a save whose bytes landed and whose
+		// revision record then failed (crash or fail-closed record between the
+		// two writes). Only a non-empty mismatch counts: a missing sidecar or
+		// a legacy one without a digest is a legitimate state, and stamping it
+		// here would bump revisions other runtimes still hold as baselines.
+		if decision.upToDate && currentLedgerDigest != "" && currentLedgerDigest != digestString(nextDigest) {
+			decision.ledgerStale = true
 		}
 		if exactAppend && !contentUnchanged && len(existing) < len(next) && !current.eventLogDamaged {
 			decision.appendOnly = true
@@ -607,10 +665,14 @@ func firstNonEmpty(values ...string) string {
 
 func (s *Session) ownsPersistedState(path string, existingDigest [sha256.Size]byte, existingRevision int64, nextVersion uint64) bool {
 	state := s.persistState(path)
-	return state.ok &&
-		state.version <= nextVersion &&
-		state.revision == existingRevision &&
-		bytes.Equal(existingDigest[:], state.digest[:])
+	if !state.ok || state.version > nextVersion || !bytes.Equal(existingDigest[:], state.digest[:]) {
+		return false
+	}
+	// An unknown-revision baseline still owns the transcript it loaded — the
+	// digest+version match proves it. Requiring revision equality here would
+	// make every rewrite from such a baseline a permanent conflict, because
+	// the revision can only be re-learned by a successful save.
+	return !state.revisionKnown || state.revision == existingRevision
 }
 
 func (s *Session) persistState(path string) sessionPersistState {
@@ -624,21 +686,39 @@ func (s *Session) persistState(path string) sessionPersistState {
 }
 
 func (s *Session) markPersisted(path string, digest [sha256.Size]byte, version uint64, revision int64) {
+	s.setPersistedBaseline(path, digest, version, revision, true)
+}
+
+// markPersistedRevisionUnknown records a baseline whose ledger revision could
+// not be learned because the meta sidecar was unreadable. The digest and
+// version still anchor ownership checks; revision-based CAS stays disarmed
+// until a successful save records the real revision via markPersisted.
+func (s *Session) markPersistedRevisionUnknown(path string, digest [sha256.Size]byte, version uint64) {
+	s.setPersistedBaseline(path, digest, version, 0, false)
+}
+
+func (s *Session) setPersistedBaseline(path string, digest [sha256.Size]byte, version uint64, revision int64, revisionKnown bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.persisted = sessionPersistState{
-		path:     canonicalSessionSavePath(path),
-		digest:   digest,
-		version:  version,
-		revision: revision,
-		ok:       true,
+		path:          canonicalSessionSavePath(path),
+		digest:        digest,
+		version:       version,
+		revision:      revision,
+		revisionKnown: revisionKnown,
+		ok:            true,
 	}
 }
 
+// sessionContentRevision reads the CAS ledger (revision + content digest) from
+// the branch-meta sidecar. A missing sidecar is revision 0 — a session that
+// has never recorded one. An unreadable sidecar is an error: reporting it as
+// revision 0 would desync every runtime baseline from the ledger and turn the
+// next honest save into a bogus conflict (and a recovery branch).
 func sessionContentRevision(path string) (int64, string, error) {
-	meta, ok, err := LoadBranchMeta(path)
+	meta, ok, err := loadBranchMetaRetry(path)
 	if err != nil {
-		return 0, "", nil
+		return 0, "", err
 	}
 	if !ok {
 		return 0, "", nil
@@ -647,9 +727,14 @@ func sessionContentRevision(path string) (int64, string, error) {
 }
 
 func recordSessionContentRevision(path string, digest [sha256.Size]byte, baseRevision int64) (int64, error) {
-	meta, ok, err := LoadBranchMeta(path)
+	meta, ok, err := loadBranchMetaRetry(path)
 	if err != nil {
-		return baseRevision, nil
+		// Fail the save instead of rebuilding the ledger from a bad read: the
+		// transcript bytes already landed, so a later save can record the
+		// revision once the sidecar reads cleanly again — a content-bearing
+		// save lands here again, and a same-content retry heals through the
+		// up-to-date ledgerStale path in save().
+		return 0, err
 	}
 	if !ok {
 		meta = BranchMeta{ID: BranchID(path)}
@@ -663,7 +748,7 @@ func recordSessionContentRevision(path string, digest [sha256.Size]byte, baseRev
 	if err := SaveBranchMetaPreserveUpdated(path, meta); err != nil {
 		return 0, err
 	}
-	stored, ok, err := LoadBranchMeta(path)
+	stored, ok, err := loadBranchMetaRetry(path)
 	if err != nil {
 		return 0, err
 	}
@@ -841,11 +926,21 @@ func LoadSession(path string) (*Session, error) {
 	}
 	s.Messages = normalized
 	if digest, err := digestSessionMessages(s.Messages); err == nil {
-		revision := int64(0)
-		if meta, ok, metaErr := LoadBranchMeta(path); metaErr == nil && ok {
-			revision = meta.Revision
+		if meta, ok, metaErr := loadBranchMetaRetry(path); metaErr != nil {
+			// The sidecar exists but is unreadable even after retries (torn or
+			// corrupt). The session must still open, but revision 0 must not
+			// pose as a real baseline: the next save would misread the honest
+			// on-disk revision as another runtime's write and fork a recovery
+			// branch. Anchor the baseline on digest+version only until a
+			// successful save re-learns the revision.
+			s.markPersistedRevisionUnknown(path, digest, s.version)
+		} else {
+			revision := int64(0)
+			if ok {
+				revision = meta.Revision
+			}
+			s.markPersisted(path, digest, s.version, revision)
 		}
-		s.markPersisted(path, digest, s.version, revision)
 	}
 	return s, nil
 }
