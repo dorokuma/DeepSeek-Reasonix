@@ -4,6 +4,8 @@ package sandbox
 
 import (
 	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -88,4 +90,58 @@ func TestWindowsSandboxAvailableOnCI(t *testing.T) {
 	if !winsandbox.Available() {
 		t.Fatal("external windows sandbox APIs unavailable on CI")
 	}
+}
+
+func TestRunWindowsSandboxHelperRunsExternalSandbox(t *testing.T) {
+	if !Available() {
+		t.Skip("windows sandbox APIs unavailable")
+	}
+	sh := powershellArgvForWindowsSandboxTest(t, "")
+	if sh == nil {
+		t.Skip("PowerShell unavailable")
+	}
+	workspace := t.TempDir()
+	outside := t.TempDir()
+	insideFile := filepath.Join(workspace, "inside.txt")
+	outsideFile := filepath.Join(outside, "outside.txt")
+	payload, err := encodeWindowsSandboxPayload(windowsSandboxPayload{
+		Spec:     Spec{Mode: "enforce", WriteRoots: []string{workspace}, Network: true},
+		Writable: true,
+	})
+	if err != nil {
+		t.Fatalf("encode helper payload: %v", err)
+	}
+	script := "$ErrorActionPreference='Stop'; " +
+		"Set-Content -LiteralPath " + psQuoteWindowsSandboxTest(insideFile) + " -Value ok; " +
+		"try { Set-Content -LiteralPath " + psQuoteWindowsSandboxTest(outsideFile) + " -Value nope; exit 9 } catch { exit 0 }"
+	helperArgs := append([]string{payload, "--"}, append(sh, script)...)
+	if code := RunWindowsSandboxHelper(helperArgs, os.Stdin, os.Stdout, os.Stderr); code != 0 {
+		t.Fatalf("helper exit code = %d, want 0", code)
+	}
+	if got, err := os.ReadFile(insideFile); err != nil || !strings.Contains(string(got), "ok") {
+		t.Fatalf("inside write missing: %q err=%v", got, err)
+	}
+	if _, err := os.Stat(outsideFile); err == nil {
+		t.Fatalf("outside write unexpectedly succeeded: %s", outsideFile)
+	}
+}
+
+func powershellArgvForWindowsSandboxTest(t *testing.T, command string) []string {
+	t.Helper()
+	for _, name := range []string{"pwsh", "powershell"} {
+		path, err := exec.LookPath(name)
+		if err != nil {
+			continue
+		}
+		args := []string{path, "-NoProfile", "-NonInteractive", "-Command"}
+		if command != "" {
+			args = append(args, command)
+		}
+		return args
+	}
+	return nil
+}
+
+func psQuoteWindowsSandboxTest(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", "''") + "'"
 }
