@@ -494,6 +494,9 @@ type AgentConfig struct {
 	// ReasoningLanguage sets the language the model should use for chain-of-thought
 	// reasoning (e.g. "zh" for Chinese, "en" for English). Empty = no preference.
 	ReasoningLanguage string `toml:"reasoning_language"`
+	// LogLevel controls the agent's diagnostic log verbosity: debug|info|warn|error.
+	// Default "info" — debug logs are only visible when explicitly set.
+	LogLevel string `toml:"log_level"`
 }
 
 // ProviderEntry declares a model provider instance. ContextWindow is the model's

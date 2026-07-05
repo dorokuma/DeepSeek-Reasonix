@@ -784,13 +784,17 @@ func chatREPL(args []string) int {
 // the cache dir can't be resolved or the file can't be opened.
 
 func initSlog() {
-	switch strings.ToLower(strings.TrimSpace(os.Getenv("REASONIX_LOG_LEVEL"))) {
-	case "debug":
-		slogLevelVar.Set(slog.LevelDebug)
-	case "warn":
-		slogLevelVar.Set(slog.LevelWarn)
-	case "error":
-		slogLevelVar.Set(slog.LevelError)
+	// Read log_level from config (config.Load caches, so this works if config
+	// was already loaded earlier in Run; otherwise it loads fresh).
+	if cfg, err := config.Load(); err == nil {
+		switch strings.ToLower(strings.TrimSpace(cfg.Agent.LogLevel)) {
+		case "debug":
+			slogLevelVar.Set(slog.LevelDebug)
+		case "warn":
+			slogLevelVar.Set(slog.LevelWarn)
+		case "error":
+			slogLevelVar.Set(slog.LevelError)
+		}
 	}
 	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slogLevelVar})))
 }
