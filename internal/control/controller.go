@@ -102,6 +102,7 @@ type Controller struct {
 	shell                             sandbox.Shell // interpreter for user-invoked "!" commands; zero = auto
 	classifier                        autoPlanClassifier
 	startedOnce                       bool                             // guards the one-shot SessionStart hook on first turn
+	closeOnce                         sync.Once                        // makes close idempotent under racing teardown paths
 	onRemember                        func(rule string) RememberResult // set via Options; invoked when user picks "always allow"
 	onRememberMCPReadOnlyTrust        func(serverName, rawToolName string) MCPReadOnlyTrustResult
 	onRememberPlanModeReadOnlyCommand func(prefix string) PlanModeReadOnlyCommandTrustResult
@@ -3503,23 +3504,28 @@ const (
 )
 
 func (c *Controller) close(fireSessionEnd bool, jobsMode closeJobsMode) {
-	c.mu.Lock()
-	started := c.startedOnce
-	c.mu.Unlock()
-	if fireSessionEnd && started {
-		c.hooks.SessionEnd(context.Background())
-	}
-	if c.jobs != nil {
-		switch jobsMode {
-		case closeJobsAsync:
-			c.jobs.CloseAsync()
-		default:
-			c.jobs.Close() // cancel any still-running background jobs
+	// Desktop tab lifecycles can race a rebind/model-switch/close on the same
+	// controller; make teardown idempotent so a duplicate Close cannot re-fire
+	// SessionEnd hooks or re-run cleanup. The first caller's jobsMode wins.
+	c.closeOnce.Do(func() {
+		c.mu.Lock()
+		started := c.startedOnce
+		c.mu.Unlock()
+		if fireSessionEnd && started {
+			c.hooks.SessionEnd(context.Background())
 		}
-	}
-	if c.cleanup != nil {
-		c.cleanup()
-	}
+		if c.jobs != nil {
+			switch jobsMode {
+			case closeJobsAsync:
+				c.jobs.CloseAsync()
+			default:
+				c.jobs.Close() // cancel any still-running background jobs
+			}
+		}
+		if c.cleanup != nil {
+			c.cleanup()
+		}
+	})
 }
 
 // Jobs returns the still-running background jobs for the status bar (nil when
