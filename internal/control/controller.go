@@ -1961,6 +1961,30 @@ func (c *Controller) Jobs() []jobs.View {
 	return c.jobs.Running()
 }
 
+// SteerBackgroundJob sends a steer message to one session background job (task/bash).
+func (c *Controller) SteerBackgroundJob(jobID, message string) error {
+	if c.jobs == nil {
+		return fmt.Errorf("background jobs are not enabled")
+	}
+	return c.jobs.Steer(jobID, message)
+}
+
+// KillBackgroundJob cancels one background job by id.
+func (c *Controller) KillBackgroundJob(jobID string) bool {
+	if c.jobs == nil {
+		return false
+	}
+	return c.jobs.Kill(jobID)
+}
+
+// PeekBackgroundJob returns a non-blocking snapshot of one background job.
+func (c *Controller) PeekBackgroundJob(jobID string) (jobs.JobStatus, error) {
+	if c.jobs == nil {
+		return jobs.JobStatus{}, fmt.Errorf("background jobs are not enabled")
+	}
+	return c.jobs.Peek(jobID)
+}
+
 // SetBypass turns YOLO/bypass mode on or off for the session: while on, every
 // approval prompt is auto-allowed (writers and bash run without asking). Deny
 // rules still block. Runtime-only — never written to config.

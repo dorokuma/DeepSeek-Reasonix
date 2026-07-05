@@ -402,6 +402,9 @@ func (m *Manager) resolve(ids []string) []*Job {
 	if len(ids) == 0 {
 		for _, id := range m.order {
 			j := m.jobs[id]
+			if j == nil {
+				continue
+			}
 			j.mu.Lock()
 			running := j.status == Running
 			j.mu.Unlock()
@@ -426,6 +429,9 @@ func (m *Manager) Running() []View {
 	var out []View
 	for _, id := range m.order {
 		j := m.jobs[id]
+		if j == nil {
+			continue
+		}
 		j.mu.Lock()
 		if j.status == Running {
 			out = append(out, View{ID: j.ID, Kind: j.Kind, Label: j.Label, Status: string(j.status), StartedAt: j.startedAt})
@@ -597,8 +603,14 @@ func (m *Manager) CompletedResult(jobID string) (JobNotify, bool) {
 // RemoveJob deletes a job from the map. Called by drainNotify after consuming resultCh.
 func (m *Manager) RemoveJob(jobID string) {
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	delete(m.jobs, jobID)
+	for i, id := range m.order {
+		if id == jobID {
+			m.order = append(m.order[:i], m.order[i+1:]...)
+			break
+		}
+	}
+	m.mu.Unlock()
 }
 
 // --- call-context injection (mirrors agent.CallContext) ---
