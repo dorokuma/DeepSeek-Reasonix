@@ -1,0 +1,53 @@
+#!/bin/bash
+# Secret scan for staged commits. Broad heuristics skip *_test.go to avoid
+# false positives on long Go test names (e.g. TestCommitBackgroundJobResultWithoutRegisterJobMeta).
+
+RED="\033[0;31m"
+NC="\033[0m"
+
+FILES=$(git diff --cached --name-only --diff-filter=ACM)
+
+if [ -z "$FILES" ]; then
+	exit 0
+fi
+
+FOUND=0
+
+check_pattern() {
+	local pattern="$1"
+	local description="$2"
+	local fileset="$3"
+	[ -z "$fileset" ] && return
+	local matches
+	matches=$(git diff --cached -U0 -- $fileset | /usr/bin/grep -v '^+++' | /usr/bin/grep -nE "^\+.*${pattern}" || true)
+	if [ -n "$matches" ]; then
+		echo -e "${RED}[BLOCKED] ${description}${NC}"
+		echo "$matches"
+		echo ""
+		FOUND=1
+	fi
+}
+
+NON_TEST=$(echo "$FILES" | grep -vE '_test\.go$' || true)
+
+# High-confidence secrets: scan all staged files (including tests).
+check_pattern "sk-[a-zA-Z0-9]{20,}" "OpenAI/OpenCode-style API key (sk-...)" "$FILES"
+check_pattern "AKIA[0-9A-Z]{16}" "AWS Access Key ID" "$FILES"
+check_pattern "ghp_[a-zA-Z0-9]{36}" "GitHub Personal Access Token (classic)" "$FILES"
+check_pattern "github_pat_[a-zA-Z0-9_]{22,}" "GitHub Personal Access Token (fine-grained)" "$FILES"
+check_pattern "ya29\.[a-zA-Z0-9_-]{50,}" "Google OAuth Token" "$FILES"
+check_pattern "eyJ[a-zA-Z0-9_-]{50,}\.[a-zA-Z0-9_-]{20,}\.[a-zA-Z0-9_-]{20,}" "JWT Token" "$FILES"
+check_pattern "-----BEGIN (RSA |EC )?PRIVATE KEY-----" "Private Key Block" "$FILES"
+
+# Broad heuristics: production/sources only (tests embed long fixtures and names).
+check_pattern "[a-zA-Z0-9+/]{60,}={0,2}" "Base64 string (possible encoded secret, check manually)" "$NON_TEST"
+check_pattern "[0-9a-fA-F]{64,}" "Long hex string" "$NON_TEST"
+
+if [ $FOUND -eq 1 ]; then
+	echo ""
+	echo -e "${RED}Commit blocked: sensitive data detected.${NC}"
+	echo "If this is a false positive, use: git commit --no-verify"
+	exit 1
+fi
+
+exit 0

@@ -84,3 +84,5 @@ func TestToolCallIDForStartedTaskLine(t *testing.T) {
 		t.Fatalf("got %q", got)
 	}
 }
+
+// hook-regression: long test name anchor TestCommitBackgroundJobResultWithoutRegisterJobMeta
