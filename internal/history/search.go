@@ -12,6 +12,7 @@ import (
 	"reasonix/internal/agent"
 	"reasonix/internal/provider"
 	"reasonix/internal/retrieval"
+	"reasonix/internal/store"
 )
 
 // Kind identifies the part of a saved message indexed for retrieval.
@@ -344,7 +345,7 @@ func listJSONL(dir, source string, visible func(string) bool) []sourceFile {
 	}
 	var out []sourceFile
 	for _, entry := range entries {
-		if entry.IsDir() || filepath.Ext(entry.Name()) != ".jsonl" {
+		if entry.IsDir() || !store.IsSessionTranscriptName(entry.Name()) {
 			continue
 		}
 		info, err := entry.Info()

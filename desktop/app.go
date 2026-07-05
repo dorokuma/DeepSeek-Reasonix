@@ -48,6 +48,7 @@ import (
 	"reasonix/internal/pluginpkg"
 	"reasonix/internal/provider"
 	"reasonix/internal/skill"
+	"reasonix/internal/store"
 )
 
 // eventChannel is the Wails runtime event name the frontend subscribes to for the
@@ -1594,6 +1595,9 @@ func removeDesktopSessionArtifacts(path string) error {
 			return err
 		}
 	}
+	if err := removeSessionDisplay(filepath.Dir(path), path); err != nil {
+		return err
+	}
 	if err := agent.DeleteSubagentsByParent(filepath.Dir(path), agent.BranchID(path)); err != nil {
 		return err
 	}
@@ -1952,9 +1956,16 @@ func (a *App) ListSessions() []SessionMeta {
 	if err != nil {
 		return []SessionMeta{}
 	}
+	open := a.openSessionPaths(dir)
+	protectedDisplays := make(map[string]struct{}, len(open))
+	for path := range open {
+		if key := filepath.Base(path); store.IsSessionTranscriptName(key) {
+			protectedDisplays[key] = struct{}{}
+		}
+	}
+	_ = pruneSessionDisplays(dir, protectedDisplays)
 	titles := loadSessionTitles(dir)
 	channelRoutes := channelSessionRoutesForDir(dir)
-	open := a.openSessionPaths(dir)
 	active := a.activeSessionPath(dir)
 	out := make([]SessionMeta, 0, len(infos))
 	for _, s := range infos {

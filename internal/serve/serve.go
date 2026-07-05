@@ -27,6 +27,7 @@ import (
 	"reasonix/internal/jobs"
 	"reasonix/internal/nilutil"
 	"reasonix/internal/provider"
+	"reasonix/internal/store"
 )
 
 //go:embed index.html
@@ -823,7 +824,7 @@ func (s *Server) resume(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	absPath, err := filepath.Abs(strings.TrimSpace(body.Path))
-	if err != nil || filepath.Ext(absPath) != ".jsonl" {
+	if err != nil || !store.IsSessionTranscriptName(filepath.Base(absPath)) {
 		http.Error(w, "invalid session path", http.StatusBadRequest)
 		return
 	}
@@ -999,7 +1000,7 @@ func (s *Server) sessions(w http.ResponseWriter, r *http.Request) {
 	current := filepath.Clean(s.ctl().SessionPath())
 	var out []sessionEntry
 	for _, e := range entries {
-		if e.IsDir() || !strings.HasSuffix(e.Name(), ".jsonl") {
+		if e.IsDir() || !store.IsSessionTranscriptName(e.Name()) {
 			continue
 		}
 		path := filepath.Join(dir, e.Name())

@@ -13,6 +13,7 @@ import (
 	"reasonix/internal/config"
 	"reasonix/internal/netclient"
 	"reasonix/internal/sandbox"
+	"reasonix/internal/store"
 )
 
 type Options struct {
@@ -265,7 +266,7 @@ func collectSessions(dir string) SessionsReport {
 	}
 	r.Count = len(sessions)
 	if err := filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
-		if err != nil || d.IsDir() || filepath.Ext(path) != ".jsonl" {
+		if err != nil || d.IsDir() || !store.IsSessionTranscriptName(filepath.Base(path)) {
 			return nil
 		}
 		if info, statErr := d.Info(); statErr == nil {

@@ -144,21 +144,33 @@ func sessionTrashArtifacts(sessionPath, key string) []sessionTrashArtifact {
 		{src: sessionPath, name: key},
 		{src: store.SessionMeta(sessionPath), name: key + ".meta"},
 		{src: store.SessionGoalState(sessionPath), name: stem + ".goal-state.json"},
+		{src: store.SessionEventLog(sessionPath), name: stem + ".events.jsonl"},
+		{src: store.SessionEventIndex(sessionPath), name: stem + ".event-index.json"},
 		{src: sessionTelemetryPath(sessionPath), name: key + ".telemetry.json"},
 		{src: store.SessionCheckpointDir(sessionPath), name: stem + ".ckpt"},
 		{src: store.SessionJobsDir(sessionPath), name: stem + ".jobs"},
 	}
 }
 
+func sessionEphemeralArtifactPaths(sessionPath string) []string {
+	return []string{
+		store.SessionLockFile(sessionPath),
+		store.SessionLeaseLock(sessionPath),
+		store.SessionLeaseInfo(sessionPath),
+	}
+}
+
 func sessionOwnedArtifactPaths(sessionPath string) []string {
 	key := filepath.Base(sessionPath)
 	artifacts := sessionTrashArtifacts(sessionPath, key)
-	paths := make([]string, 0, len(artifacts))
+	ephemeral := sessionEphemeralArtifactPaths(sessionPath)
+	paths := make([]string, 0, len(artifacts)+len(ephemeral))
 	for _, artifact := range artifacts {
 		if strings.TrimSpace(artifact.src) != "" {
 			paths = append(paths, artifact.src)
 		}
 	}
+	paths = append(paths, ephemeral...)
 	return paths
 }
 
@@ -190,6 +202,9 @@ func reconcileDesktopTrashSessionArtifacts(dir, sessionPath, key string) error {
 		}
 	}
 	if err := trashSubagentArtifacts(dir, sessionPath, itemDir); err != nil {
+		return err
+	}
+	if err := removeEphemeralSessionArtifacts(sessionPath); err != nil {
 		return err
 	}
 	meta := trashedSessionMeta{Key: key, DeletedAt: time.Now().UnixMilli()}
@@ -370,6 +385,9 @@ func trashSessionArtifactsBeforeMove(dir, sessionPath, key string, beforeMove fu
 	if err := trashSubagentArtifacts(dir, sessionPath, itemDir); err != nil {
 		return err
 	}
+	if err := removeEphemeralSessionArtifacts(sessionPath); err != nil {
+		return err
+	}
 	meta := trashedSessionMeta{Key: key, DeletedAt: time.Now().UnixMilli()}
 	b, err := json.MarshalIndent(meta, "", "  ")
 	if err != nil {
@@ -463,6 +481,18 @@ func restoreTrashedSessionFile(dir, path string) error {
 	return os.RemoveAll(itemDir)
 }
 
+func removeEphemeralSessionArtifacts(sessionPath string) error {
+	for _, path := range sessionEphemeralArtifactPaths(sessionPath) {
+		if strings.TrimSpace(path) == "" {
+			continue
+		}
+		if err := os.RemoveAll(path); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+	}
+	return nil
+}
+
 func purgeTrashedSessionFile(dir, path string) error {
 	_, key, itemDir, err := validateTrashedSessionPath(dir, path)
 	if err != nil {
@@ -481,11 +511,8 @@ func purgeTrashedSessionFile(dir, path string) error {
 			return err
 		}
 	}
-	if dm := loadSessionDisplays(dir); dm[key] != nil {
-		delete(dm, key)
-		if err := saveSessionDisplays(dir, dm); err != nil {
-			return err
-		}
+	if err := removeSessionDisplayKey(dir, key); err != nil {
+		return err
 	}
 	return nil
 }
@@ -687,7 +714,7 @@ func validateSessionPath(dir, sessionPath string) (string, string, error) {
 	if err != nil {
 		return "", "", err
 	}
-	if filepath.Ext(absPath) != ".jsonl" {
+	if !store.IsSessionTranscriptName(filepath.Base(absPath)) {
 		return "", "", fmt.Errorf("not a session file: %s", sessionPath)
 	}
 	rel, err := filepath.Rel(absDir, absPath)
@@ -732,7 +759,7 @@ func validateTrashedSessionPath(dir, sessionPath string) (string, string, string
 	if err != nil {
 		return "", "", "", err
 	}
-	if filepath.Ext(absPath) != ".jsonl" {
+	if !store.IsSessionTranscriptName(filepath.Base(absPath)) {
 		return "", "", "", fmt.Errorf("not a session file: %s", sessionPath)
 	}
 	rel, err := filepath.Rel(root, absPath)
@@ -889,6 +916,77 @@ func saveSessionDisplays(dir string, m sessionDisplayMap) error {
 		return err
 	}
 	return fileutil.ReplaceFile(tmpPath, sessionDisplayPath(dir))
+}
+
+func saveOrRemoveSessionDisplays(dir string, m sessionDisplayMap) error {
+	if len(m) == 0 {
+		err := os.Remove(sessionDisplayPath(dir))
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	return saveSessionDisplays(dir, m)
+}
+
+func removeSessionDisplayKey(dir, key string) error {
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return nil
+	}
+	m := loadSessionDisplays(dir)
+	if m[key] == nil {
+		return nil
+	}
+	delete(m, key)
+	return saveOrRemoveSessionDisplays(dir, m)
+}
+
+func removeSessionDisplay(dir, sessionPath string) error {
+	if strings.TrimSpace(sessionPath) == "" {
+		return nil
+	}
+	return removeSessionDisplayKey(dir, filepath.Base(sessionPath))
+}
+
+func pruneSessionDisplays(dir string, protected map[string]struct{}) error {
+	m := loadSessionDisplays(dir)
+	if len(m) == 0 {
+		return nil
+	}
+	changed := false
+	for key := range m {
+		if sessionDisplayKeyStillOwned(dir, key, protected) {
+			continue
+		}
+		delete(m, key)
+		changed = true
+	}
+	if !changed {
+		return nil
+	}
+	return saveOrRemoveSessionDisplays(dir, m)
+}
+
+func sessionDisplayKeyStillOwned(dir, key string, protected map[string]struct{}) bool {
+	key = strings.TrimSpace(key)
+	if key == "" || filepath.Base(key) != key || !store.IsSessionTranscriptName(key) {
+		return false
+	}
+	if protected != nil {
+		if _, ok := protected[key]; ok {
+			return true
+		}
+	}
+	sessionPath := filepath.Join(dir, key)
+	if info, err := os.Stat(sessionPath); err == nil && !info.IsDir() {
+		return true
+	}
+	trashPath := filepath.Join(sessionTrashPath(dir), key, key)
+	if info, err := os.Stat(trashPath); err == nil && !info.IsDir() {
+		return true
+	}
+	return false
 }
 
 func recordSessionDisplay(dir, sessionPath, content, display string) error {

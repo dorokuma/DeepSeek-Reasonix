@@ -4335,17 +4335,6 @@ func forkTopicTitle(title string) string {
 	return base + " · 分叉"
 }
 
-func recoveryTopicTitle(title string) string {
-	base := strings.TrimSpace(title)
-	if base == "" || base == defaultTopicTitle || base == "Global" {
-		return "恢复分支"
-	}
-	if strings.HasSuffix(base, " · 恢复") {
-		return base
-	}
-	return base + " · 恢复"
-}
-
 type sessionRecoveryEvent struct {
 	OriginalPath     string `json:"originalPath,omitempty"`
 	RecoveryPath     string `json:"recoveryPath"`
@@ -4376,6 +4365,7 @@ func (a *App) tabSessionRecoveryMeta(tab *WorkspaceTab) func(control.SessionReco
 		ctrl := tab.Ctrl
 		scope := strings.TrimSpace(tab.Scope)
 		workspaceRoot := strings.TrimSpace(tab.WorkspaceRoot)
+		topicID := tab.TopicID
 		topicTitle := tab.TopicTitle
 		model := strings.TrimSpace(tab.model)
 		tokenMode := persistedTabTokenMode(boot.NormalizeTokenMode(tab.tokenMode))
@@ -4402,8 +4392,8 @@ func (a *App) tabSessionRecoveryMeta(tab *WorkspaceTab) func(control.SessionReco
 			Name:             agent.RecoveryBranchDefaultName,
 			Scope:            scope,
 			WorkspaceRoot:    workspaceRoot,
-			TopicID:          newTopicID(),
-			TopicTitle:       recoveryTopicTitle(topicTitle),
+			TopicID:          topicID,
+			TopicTitle:       topicTitle,
 			Model:            model,
 			TokenMode:        tokenMode,
 			Mode:             persistedTabMode(mode),
@@ -4438,14 +4428,6 @@ func (a *App) handleTabSessionRecovered(tab *WorkspaceTab) func(control.SessionR
 		if scope == "global" {
 			workspaceRoot = ""
 		}
-		if strings.TrimSpace(meta.TopicID) != "" {
-			title := strings.TrimSpace(meta.TopicTitle)
-			if title == "" {
-				title = recoveryTopicTitle("")
-			}
-			_ = setTopicTitleWithSource(workspaceRoot, meta.TopicID, title, topicTitleSourceManual)
-			_ = ensureTopicIndexed(scope, workspaceRoot, meta.TopicID, title, topicTitleSourceManual)
-		}
 		invalidateTopicSessionIndexForPath(info.RecoveryPath)
 		a.mu.Lock()
 		if tab != nil && !tab.removed {
@@ -4457,12 +4439,6 @@ func (a *App) handleTabSessionRecovered(tab *WorkspaceTab) func(control.SessionR
 				a.detachedSessions[newKey] = tab
 			}
 			tab.SessionPath = canonicalTabSessionPath(info.RecoveryPath)
-			if strings.TrimSpace(meta.TopicID) != "" {
-				tab.Scope = scope
-				tab.WorkspaceRoot = workspaceRoot
-				tab.TopicID = meta.TopicID
-				tab.TopicTitle = meta.TopicTitle
-			}
 			if a.tabs[tab.ID] == tab {
 				a.saveTabsLocked()
 			}
@@ -4755,7 +4731,7 @@ func topicMigrationDone(dir string) bool {
 			continue
 		}
 		name := entry.Name()
-		if filepath.Ext(name) != ".jsonl" && !strings.HasSuffix(name, ".jsonl.meta") {
+		if !store.IsSessionTranscriptName(name) && !strings.HasSuffix(name, ".jsonl.meta") {
 			continue
 		}
 		info, err := entry.Info()
@@ -5614,6 +5590,8 @@ type topicSummary struct {
 	recoveryReason   string
 	recoveryDigest   string
 	recoveryParentID string
+	hasNormalSession bool
+	hasRecoveryOnly  bool
 }
 
 var listProjectTreeMu sync.Mutex
@@ -5816,6 +5794,9 @@ func (a *App) ListProjectTree() []ProjectNode {
 			title := globalTitleMap[id]
 			summary := topicSummaries[topicSummaryKey("global", "", id)]
 			open, running, status := topicRuntimeStatus(topicSummaryKey("global", "", id))
+			if summary.hasRecoveryOnly && !summary.hasNormalSession && !open && !running {
+				continue
+			}
 			pinned := containsDesktopString(f.GlobalPinnedTopics, id)
 			children = append(children, ProjectNode{
 				Key:              "global_topic_" + id,
@@ -5894,6 +5875,9 @@ func (a *App) ListProjectTree() []ProjectNode {
 			}
 			summary := topicSummaries[topicSummaryKey("project", p.Root, tid)]
 			open, running, status := topicRuntimeStatus(topicSummaryKey("project", p.Root, tid))
+			if summary.hasRecoveryOnly && !summary.hasNormalSession && !open && !running {
+				continue
+			}
 			pinned := containsDesktopString(p.PinnedTopics, tid)
 			children = append(children, ProjectNode{
 				Key:              "topic_" + tid,
@@ -6851,13 +6835,8 @@ func mergeSessionInfos(dir string, infos []agent.SessionInfo, titles map[string]
 		}
 		key := topicSummaryKey(info.Scope, info.WorkspaceRoot, info.TopicID)
 		summary := topicSummaries[key]
-		summary.turns += info.Turns
-		lastActivityAt := info.LastActivityAt.UnixMilli()
-		if lastActivityAt > summary.lastActivityAt {
-			summary.lastActivityAt = lastActivityAt
-		}
 		if info.Recovered {
-			summary.recovered = true
+			summary.hasRecoveryOnly = true
 			if summary.recoveryReason == "" {
 				summary.recoveryReason = info.RecoveryReason
 			}
@@ -6867,6 +6846,14 @@ func mergeSessionInfos(dir string, infos []agent.SessionInfo, titles map[string]
 			if summary.recoveryParentID == "" {
 				summary.recoveryParentID = string(info.ParentID)
 			}
+			topicSummaries[key] = summary
+			continue
+		}
+		summary.hasNormalSession = true
+		summary.turns += info.Turns
+		lastActivityAt := info.LastActivityAt.UnixMilli()
+		if lastActivityAt > summary.lastActivityAt {
+			summary.lastActivityAt = lastActivityAt
 		}
 		topicSummaries[key] = summary
 	}
@@ -6900,7 +6887,7 @@ func topicSessionDirSnapshot(dir string) ([]topicSessionFileSignature, []string,
 		if entry.IsDir() {
 			continue
 		}
-		isSession := filepath.Ext(name) == ".jsonl"
+		isSession := store.IsSessionTranscriptName(name)
 		isMeta := strings.HasSuffix(name, ".jsonl.meta")
 		if !isSession && !isMeta {
 			continue

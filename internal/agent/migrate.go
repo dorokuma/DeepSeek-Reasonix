@@ -132,7 +132,7 @@ func migrateLegacySessionsWithMarkers(srcDir, globalDest, marker, jsonlMarker st
 	hasEvents := map[string]bool{}
 	for _, e := range entries {
 		name := e.Name()
-		if !e.IsDir() && strings.HasSuffix(name, ".events.jsonl") {
+		if !e.IsDir() && strings.HasSuffix(name, ".events.jsonl") && !isNativeSessionEventLog(filepath.Join(srcDir, name)) {
 			hasEvents[strings.TrimSuffix(name, ".events.jsonl")] = true
 		}
 	}
@@ -146,6 +146,9 @@ func migrateLegacySessionsWithMarkers(srcDir, globalDest, marker, jsonlMarker st
 	for _, e := range entries {
 		name := e.Name()
 		if e.IsDir() || !strings.HasSuffix(name, ".events.jsonl") {
+			continue
+		}
+		if isNativeSessionEventLog(filepath.Join(srcDir, name)) {
 			continue
 		}
 		base := strings.TrimSuffix(name, ".events.jsonl")
@@ -329,7 +332,11 @@ func importJsonlSessions(entries []os.DirEntry, srcDir, globalDest string, hasEv
 			continue
 		}
 		srcInfo, _ := e.Info()
-		if err := transformAndCopyJsonl(jsonlPath, dest); err != nil {
+		if isNativeSessionEventLog(SessionEventLogPath(jsonlPath)) {
+			if err := saveNativeSessionCopy(jsonlPath, dest); err != nil {
+				continue
+			}
+		} else if err := transformAndCopyJsonl(jsonlPath, dest); err != nil {
 			continue
 		}
 		if srcInfo != nil {
@@ -384,7 +391,7 @@ func migrateSubDirectory(subDir, globalDest string, projectDir func(string) stri
 	hasEvents := map[string]bool{}
 	for _, e := range entries {
 		name := e.Name()
-		if !e.IsDir() && strings.HasSuffix(name, ".events.jsonl") {
+		if !e.IsDir() && strings.HasSuffix(name, ".events.jsonl") && !isNativeSessionEventLog(filepath.Join(subDir, name)) {
 			hasEvents[strings.TrimSuffix(name, ".events.jsonl")] = true
 		}
 	}
@@ -399,6 +406,9 @@ func migrateSubDirectory(subDir, globalDest string, projectDir func(string) stri
 		reconstruct := false
 		switch {
 		case strings.HasSuffix(name, ".events.jsonl"):
+			if isNativeSessionEventLog(filepath.Join(subDir, name)) {
+				continue
+			}
 			base = strings.TrimSuffix(name, ".events.jsonl")
 			srcPath = filepath.Join(subDir, name)
 			// Prefer .jsonl sidecar if it's newer.
@@ -451,6 +461,10 @@ func migrateSubDirectory(subDir, globalDest string, projectDir func(string) stri
 			if err := s.Save(dest); err != nil {
 				return imported, err
 			}
+		} else if isNativeSessionEventLog(SessionEventLogPath(srcPath)) {
+			if err := saveNativeSessionCopy(srcPath, dest); err != nil {
+				continue
+			}
 		} else {
 			if err := transformAndCopyJsonl(srcPath, dest); err != nil {
 				continue
@@ -478,6 +492,31 @@ func isMessageFormat(path string) bool {
 	n, _ := f.Read(buf[:])
 	s := strings.TrimLeft(string(buf[:n]), " \t\r\n")
 	return strings.HasPrefix(s, `{"role":`)
+}
+
+func isNativeSessionEventLog(path string) bool {
+	f, err := os.Open(path)
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+	var rec struct {
+		SchemaVersion int    `json:"schema_version"`
+		Type          string `json:"type"`
+	}
+	if err := json.NewDecoder(f).Decode(&rec); err != nil {
+		return false
+	}
+	return rec.SchemaVersion == sessionEventSchemaVersion &&
+		(rec.Type == sessionEventTypeReplace || rec.Type == sessionEventTypeAppend)
+}
+
+func saveNativeSessionCopy(src, dst string) error {
+	session, err := LoadSession(src)
+	if err != nil {
+		return err
+	}
+	return session.Save(dst)
 }
 
 func fileExists(path string) bool {

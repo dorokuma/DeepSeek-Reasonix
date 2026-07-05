@@ -12,6 +12,11 @@ func TestSessionSidecarLayout(t *testing.T) {
 		// .meta appends to the full path (historical layout); the rest replace .jsonl.
 		{"meta", SessionMeta(p), p + ".meta"},
 		{"goal-state", SessionGoalState(p), "/home/u/.reasonix/sessions/abc.goal-state.json"},
+		{"event-log", SessionEventLog(p), "/home/u/.reasonix/sessions/abc.events.jsonl"},
+		{"event-index", SessionEventIndex(p), "/home/u/.reasonix/sessions/abc.event-index.json"},
+		{"lock", SessionLockFile(p), p + ".lock"},
+		{"lease-lock", SessionLeaseLock(p), p + ".lease.lock"},
+		{"lease-info", SessionLeaseInfo(p), p + ".lease.json"},
 		{"checkpoint", SessionCheckpointDir(p), "/home/u/.reasonix/sessions/abc.ckpt"},
 		{"jobs", SessionJobsDir(p), "/home/u/.reasonix/sessions/abc.jobs"},
 		{"cleanup-pending", SessionCleanupPending(p), "/home/u/.reasonix/sessions/abc.cleanup-pending.json"},
@@ -30,12 +35,35 @@ func TestSessionSidecarEmptyPath(t *testing.T) {
 	}{
 		{"meta", SessionMeta},
 		{"goal-state", SessionGoalState},
+		{"event-log", SessionEventLog},
+		{"event-index", SessionEventIndex},
+		{"lock", SessionLockFile},
+		{"lease-lock", SessionLeaseLock},
+		{"lease-info", SessionLeaseInfo},
 		{"checkpoint", SessionCheckpointDir},
 		{"jobs", SessionJobsDir},
 		{"cleanup-pending", SessionCleanupPending},
 	} {
 		if got := fn.f(""); got != "" {
 			t.Errorf("%s(\"\") = %q, want empty", fn.name, got)
+		}
+	}
+}
+
+func TestIsSessionTranscriptName(t *testing.T) {
+	cases := []struct {
+		name string
+		want bool
+	}{
+		{"session.jsonl", true},
+		{"session.events.jsonl", false},
+		{"session.jsonl.meta", false},
+		{"notes.txt", false},
+		{"", false},
+	}
+	for _, c := range cases {
+		if got := IsSessionTranscriptName(c.name); got != c.want {
+			t.Errorf("IsSessionTranscriptName(%q) = %v, want %v", c.name, got, c.want)
 		}
 	}
 }
