@@ -85,4 +85,3 @@ func TestToolCallIDForStartedTaskLine(t *testing.T) {
 	}
 }
 
-// hook-regression: long test name anchor TestCommitBackgroundJobResultWithoutRegisterJobMeta
