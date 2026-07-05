@@ -2,6 +2,9 @@
 set -euo pipefail
 
 root="$(git rev-parse --show-toplevel)"
+if [[ "$(git config --get core.hooksPath 2>/dev/null)" != ".githooks" ]]; then
+  make -C "$root" hooks >/dev/null
+fi
 desktop_dir="$root/desktop"
 
 vite_port="${REASONIX_DESKTOP_VITE_PORT:-}"

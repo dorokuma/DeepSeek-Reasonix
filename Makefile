@@ -18,7 +18,7 @@ test:
 
 hooks:
 	@git config core.hooksPath .githooks
-	@echo "installed: core.hooksPath -> .githooks (pre-push runs go vet)"
+	@echo "installed: core.hooksPath -> .githooks (pre-commit secret scan; pre-push: go vet)"
 
 cross:
 	@mkdir -p dist
