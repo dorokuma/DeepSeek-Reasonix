@@ -171,6 +171,10 @@ type Controller struct {
 	autosaveWG  sync.WaitGroup
 	planMode    bool
 	sessionPath string
+	// savedRewriteVersion is the session rewrite generation that has been
+	// durably persisted for sessionPath. Auto-compaction rewrites history inside
+	// a normal turn; the next autosave must use SaveRewrite, not SaveSnapshot.
+	savedRewriteVersion int
 	// turn counts model turns this session, passed to hooks in their payload.
 	turn int
 
@@ -428,6 +432,7 @@ func New(opts Options) *Controller {
 	cmdsInit := opts.Commands
 	c.commands.Store(&cmdsInit)
 	if c.executor != nil {
+		c.savedRewriteVersion = c.executor.Session().RewriteVersion()
 		c.executor.SetPreEditHook(func(ch diff.Change) {
 			c.checkpoints.snapshot(ch)
 		})
@@ -2033,6 +2038,7 @@ func (c *Controller) NewSession() error {
 	}
 	c.setActiveJobSession(c.SessionPath())
 	c.executor.SetSession(agent.NewSession(c.systemPrompt))
+	c.markSessionRewritePersisted(c.executor.Session())
 	if c.guardianSess != nil {
 		c.guardianSess.Reset()
 	}
@@ -2081,6 +2087,7 @@ func (c *Controller) ClearSession() error {
 	}
 	c.setActiveJobSession(c.SessionPath())
 	c.executor.SetSession(agent.NewSession(c.systemPrompt))
+	c.markSessionRewritePersisted(c.executor.Session())
 	if c.guardianSess != nil {
 		c.guardianSess.Reset()
 	}
@@ -2304,6 +2311,7 @@ func (c *Controller) forkNamed(turn int, name string, switchToFork bool) (string
 	}
 	if switchToFork {
 		c.executor.SetSession(sess)
+		c.markSessionRewritePersisted(sess)
 		c.ResetPlannerSession()
 		c.mu.Lock()
 		c.sessionPath = newPath
@@ -2377,6 +2385,7 @@ func (c *Controller) Branch(name string) (string, error) {
 		return "", c.rewindFail(err)
 	}
 	c.executor.SetSession(sess)
+	c.markSessionRewritePersisted(sess)
 	c.ResetPlannerSession()
 	c.mu.Lock()
 	c.sessionPath = newPath
@@ -2431,6 +2440,7 @@ func (c *Controller) SwitchBranch(ref string) (agent.BranchInfo, error) {
 	}
 	if c.executor != nil {
 		c.executor.SetSession(loaded)
+		c.markSessionRewritePersisted(loaded)
 	}
 	c.ResetPlannerSession()
 	c.mu.Lock()
@@ -2529,6 +2539,7 @@ func (c *Controller) summarizeAt(ctx context.Context, turn int, from bool) error
 func (c *Controller) Resume(s *agent.Session, path string) {
 	if c.executor != nil {
 		c.executor.SetSession(s)
+		c.markSessionRewritePersisted(s)
 	}
 	c.ResetPlannerSession()
 	c.mu.Lock()
@@ -2631,6 +2642,60 @@ func (c *Controller) SnapshotRewrite() error {
 	return c.snapshot(false, true)
 }
 
+// snapshotRewriteDecision reports whether the next save must be an owned
+// rewrite, and returns the rewrite version the decision was based on. After a
+// successful save the caller records that same captured version via
+// markSessionRewriteVersionPersisted: re-reading RewriteVersion() after the
+// write would let a compaction that landed mid-save be recorded as persisted
+// when it never reached disk, turning the next autosave into a spurious
+// snapshot conflict and a recovery branch.
+func (c *Controller) snapshotRewriteDecision(s *agent.Session, forceRewrite bool) (bool, int) {
+	if s == nil {
+		return forceRewrite, 0
+	}
+	rewriteVersion := s.RewriteVersion()
+	if forceRewrite {
+		return true, rewriteVersion
+	}
+	c.mu.Lock()
+	saved := c.savedRewriteVersion
+	c.mu.Unlock()
+	return rewriteVersion > saved, rewriteVersion
+}
+
+// markSessionRewritePersisted resets the persisted-rewrite baseline to s's
+// current rewrite version. Only session-swap paths (new/clear/fork/branch/
+// switch/resume/adopt) may use it: they install a session whose in-memory
+// history is exactly what disk holds, so its current version is persisted by
+// construction. Save paths must record their captured decision version via
+// markSessionRewriteVersionPersisted instead.
+func (c *Controller) markSessionRewritePersisted(s *agent.Session) {
+	if s == nil {
+		return
+	}
+	rewriteVersion := s.RewriteVersion()
+	c.mu.Lock()
+	c.savedRewriteVersion = rewriteVersion
+	c.mu.Unlock()
+}
+
+// markSessionRewriteVersionPersisted records version as durably saved for s.
+// It never lowers the baseline (a concurrent save may have persisted a newer
+// rewrite already), and it leaves the counter alone when s is no longer the
+// executor's session: the swap that raced this save owns the baseline now,
+// and an old session's version leaking onto a fresh session could exceed that
+// session's own rewrite version, making its next compaction look persisted.
+func (c *Controller) markSessionRewriteVersionPersisted(s *agent.Session, version int) {
+	if s == nil || c.executor == nil || c.executor.Session() != s {
+		return
+	}
+	c.mu.Lock()
+	if version > c.savedRewriteVersion {
+		c.savedRewriteVersion = version
+	}
+	c.mu.Unlock()
+}
+
 // midTurnSnapshotInterval is atomic (nanoseconds) so a test shrinking it
 // cannot race a previous test's still-parking autosave goroutine.
 var midTurnSnapshotInterval atomic.Int64
@@ -2690,12 +2755,24 @@ func (c *Controller) snapshot(markActivity, forceRewrite bool) error {
 			"label", c.Label(), "session_dir", c.SessionDir())
 		return errNoSessionPath
 	}
+	forceRewrite, rewriteVersion := c.snapshotRewriteDecision(s, forceRewrite)
 	var err error
 	if forceRewrite {
 		err = s.SaveRewrite(path)
 	} else {
 		err = s.SaveSnapshot(path)
+		if errors.Is(err, agent.ErrSessionSnapshotConflict) {
+			// The no-rewrite decision may already be stale: auto-compaction
+			// can rewrite history between the decision and the write. Re-decide
+			// and retry once as an owned rewrite before treating the failure as
+			// a real cross-runtime conflict.
+			if retry, retryVersion := c.snapshotRewriteDecision(s, false); retry {
+				forceRewrite, rewriteVersion = true, retryVersion
+				err = s.SaveRewrite(path)
+			}
+		}
 	}
+	adoptedDiskSession := false
 	if err != nil {
 		if !errors.Is(err, agent.ErrSessionSnapshotConflict) {
 			return err
@@ -2707,6 +2784,10 @@ func (c *Controller) snapshot(markActivity, forceRewrite bool) error {
 		if !recovered {
 			return nil
 		}
+		// Adoption swaps in a freshly loaded session whose rewrite baseline
+		// adoptDiskSession already set; the version captured above belongs to
+		// the replaced session and must not be re-applied to the new one.
+		adoptedDiskSession = recoveredPath == path
 		path = recoveredPath
 		s = c.executor.Session()
 	}
@@ -2726,7 +2807,13 @@ func (c *Controller) snapshot(markActivity, forceRewrite bool) error {
 	// like SetBranchModelPreserveUpdated. The single write subsumes the old
 	// EnsureBranchMeta / SetBranchModel / TouchBranchMeta sequence.
 	preview, turns := agent.SessionPreviewFromMessages(s.Snapshot())
-	return agent.UpdateSessionMeta(path, modelRef, preview, turns, markActivity)
+	if err := agent.UpdateSessionMeta(path, modelRef, preview, turns, markActivity); err != nil {
+		return err
+	}
+	if !adoptedDiskSession {
+		c.markSessionRewriteVersionPersisted(s, rewriteVersion)
+	}
+	return nil
 }
 
 func (c *Controller) recoverSnapshotConflict(path string, saveErr error, forceRewrite bool) (string, bool, error) {
@@ -2796,6 +2883,7 @@ func (c *Controller) adoptDiskSession(path string) bool {
 		return false
 	}
 	c.executor.SetSession(loaded)
+	c.markSessionRewritePersisted(loaded)
 	c.ResetPlannerSession()
 	c.rebindCheckpoints(path)
 	c.setActiveJobSession(path)
