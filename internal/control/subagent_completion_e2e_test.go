@@ -437,16 +437,18 @@ func TestAutoReentryPatchesStartedToolPlaceholder(t *testing.T) {
 	_ = ag.Run(ctx, "")
 
 	var toolRows int
+	var lastContent string
 	for _, m := range sess.Messages {
 		if m.Role == provider.RoleTool && m.ToolCallID == "tool-call-1" {
 			toolRows++
-			if m.Content != "explore-result" {
-				t.Fatalf("tool content = %q, want explore-result", m.Content)
-			}
+			lastContent = m.Content
 		}
 	}
-	if toolRows != 1 {
-		t.Fatalf("want exactly one tool row for tool-call-1, got %d tool messages", toolRows)
+	if toolRows != 2 {
+		t.Fatalf("want exactly two tool rows for tool-call-1, got %d tool messages", toolRows)
+	}
+	if lastContent != "explore-result" {
+		t.Fatalf("last tool content = %q, want explore-result", lastContent)
 	}
 }
 

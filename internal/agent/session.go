@@ -49,12 +49,16 @@ func (s *Session) ToolCallIDForStartedTaskLine(jobID string) string {
 		return ""
 	}
 	marker := "Started task " + jobID
+	bgPattern := `Started background job "` + regexp.QuoteMeta(jobID) + `"`
+	bgRe, _ := regexp.Compile(bgPattern)
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	for i := len(s.Messages) - 1; i >= 0; i-- {
 		m := s.Messages[i]
-		if m.Role == provider.RoleTool && strings.Contains(m.Content, marker) && m.ToolCallID != "" {
-			return m.ToolCallID
+		if m.Role == provider.RoleTool && m.ToolCallID != "" {
+			if strings.Contains(m.Content, marker) || (bgRe != nil && bgRe.MatchString(m.Content)) {
+				return m.ToolCallID
+			}
 		}
 	}
 	return ""

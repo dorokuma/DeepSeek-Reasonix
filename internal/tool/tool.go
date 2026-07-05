@@ -137,6 +137,28 @@ func Builtins() []Tool {
 	return out
 }
 
+type ctrlKey struct{}
+
+func WithCtrl(ctx context.Context, ctrl any) context.Context {
+	return context.WithValue(ctx, ctrlKey{}, ctrl)
+}
+
+func CtrlFromContext(ctx context.Context) (any, bool) {
+	c := ctx.Value(ctrlKey{})
+	return c, c != nil
+}
+
+type callIDKey struct{}
+
+func WithCallID(ctx context.Context, id string) context.Context {
+	return context.WithValue(ctx, callIDKey{}, id)
+}
+
+func CallIDFromContext(ctx context.Context) (string, bool) {
+	id, ok := ctx.Value(callIDKey{}).(string)
+	return id, ok
+}
+
 // LookupBuiltin returns a registered built-in by name.
 func LookupBuiltin(name string) (Tool, bool) {
 	builtinsMu.RLock()

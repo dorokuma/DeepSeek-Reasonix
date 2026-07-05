@@ -4,8 +4,8 @@ GOEXE := $(shell go env GOEXE)
 .PHONY: build vet fmt test hooks cross clean install
 
 build:
-	CGO_ENABLED=0 go build -ldflags "$(LDFLAGS)" -o reasonix$(GOEXE) ./cmd/reasonix
-	CGO_ENABLED=0 go build -ldflags "$(LDFLAGS)" -o bin/reasonix-plugin-example$(GOEXE) ./cmd/reasonix-plugin-example
+	CGO_ENABLED=0 go build -ldflags "$(LDFLAGS)" -o /usr/local/bin/reasonix$(GOEXE) ./cmd/reasonix
+	CGO_ENABLED=0 go build -ldflags "$(LDFLAGS)" -o /dev/null ./cmd/reasonix-plugin-example
 
 vet:
 	go vet ./...
@@ -29,10 +29,10 @@ cross:
 	done
 
 clean:
-	rm -rf bin dist
+	rm -rf dist
 
-install: build
+install:
 	rm -f /usr/local/bin/reasonix$(GOEXE)
-	cp reasonix$(GOEXE) /usr/local/bin/reasonix$(GOEXE)
+	$(MAKE) build
 	@echo "installed to /usr/local/bin/reasonix$(GOEXE)"
 

@@ -166,6 +166,19 @@ func (b bash) Execute(ctx context.Context, args json.RawMessage) (string, error)
 		workDir := b.workDir
 		// The job runs under the manager's session context (no foreground timeout), so it
 		// survives this turn; its combined output streams to the job buffer.
+		var beforeRuns []jobs.BeforeRunFunc
+		if ctrlVal, ok := tool.CtrlFromContext(ctx); ok {
+			if toolCallID, ok := tool.CallIDFromContext(ctx); ok {
+				type jobMetaRegisterer interface {
+					RegisterJobMeta(jobID, toolCallID string)
+				}
+				if reg, ok := ctrlVal.(jobMetaRegisterer); ok {
+					beforeRuns = append(beforeRuns, func(jobID string) {
+						reg.RegisterJobMeta(jobID, toolCallID)
+					})
+				}
+			}
+		}
 		job, err := jm.Start(ctx, "bash", commandPreview(p.Command), func(jobCtx context.Context, out io.Writer) (string, error) {
 			// Cap background output at 16 MB to prevent OOM from runaway commands.
 			const bgMaxOutput = 16 << 20
@@ -178,7 +191,7 @@ func (b bash) Execute(ctx context.Context, args json.RawMessage) (string, error)
 			cmd.Stdout = limitedOut
 			cmd.Stderr = limitedOut
 			return "", cmd.Run()
-		}, nil)
+		}, nil, beforeRuns...)
 		if err != nil {
 			return "", err
 		}

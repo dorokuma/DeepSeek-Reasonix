@@ -290,9 +290,6 @@ func New(opts Options) *Controller {
 					slog.Warn("background job finished but result not committed to session", "job", id)
 				}
 			}
-			c.mu.Lock()
-			c.autoReentryDepth = 0
-			c.mu.Unlock()
 			c.autoReenter()
 		})
 	}

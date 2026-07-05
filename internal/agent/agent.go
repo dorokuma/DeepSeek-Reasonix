@@ -61,7 +61,8 @@ type ctrlKey struct{}
 // withCtrl stamps ctx with the ControllerBridge so tools (notably the `task`
 // tool) can register job metadata during Execute.
 func withCtrl(ctx context.Context, c ControllerBridge) context.Context {
-	return context.WithValue(ctx, ctrlKey{}, c)
+	cctx := context.WithValue(ctx, ctrlKey{}, c)
+	return tool.WithCtrl(cctx, c)
 }
 
 // CtrlFromContext extracts the ControllerBridge from the context, if any.
@@ -86,7 +87,8 @@ type callContext struct {
 // the asker. executeOne sets this before every Execute; `task` reads it (via
 // CallContext) to nest sub-agent events, and `ask` reads the asker to prompt.
 func withCallContext(ctx context.Context, parentID string, sink event.Sink, asker Asker) context.Context {
-	return context.WithValue(ctx, callContextKey{}, callContext{parentID: parentID, sink: sink, asker: asker})
+	cctx := context.WithValue(ctx, callContextKey{}, callContext{parentID: parentID, sink: sink, asker: asker})
+	return tool.WithCallID(cctx, parentID)
 }
 
 // CallContext returns the executing call's ID, the agent's sink, and the asker,

@@ -78,6 +78,9 @@ func (a *Agent) tryDeliverJobResult(jobID string) (id, output string, ok bool) {
 func (a *Agent) commitBackgroundJobResult(jobID, output string) bool {
 	output = strings.TrimSpace(output)
 	if output == "" || a.jobs == nil {
+		if a.jobs != nil {
+			a.jobs.RemoveJob(jobID)
+		}
 		return false
 	}
 	toolCallID := ""
@@ -89,6 +92,9 @@ func (a *Agent) commitBackgroundJobResult(jobID, output string) bool {
 	}
 	if toolCallID == "" {
 		slog.Warn("background job result without tool call correlation", "job", jobID, "output_len", len(output))
+		if a.jobs != nil {
+			a.jobs.RemoveJob(jobID)
+		}
 		return false
 	}
 	a.deliverBackgroundToolResult(toolCallID, output)
