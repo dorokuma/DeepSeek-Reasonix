@@ -1825,6 +1825,7 @@ export const en = {
   "rewind.disabledNoBoundary": "Conversation boundary is unavailable for this message",
   "rewind.disabledNoCode": "No code changes were captured after this message",
   "rewind.disabledNoEarlier": "There is nothing before this message to summarize",
+  "rewind.disabledNoLater": "There is nothing after this message to summarize",
   "rewind.filesChanged": "{count} files",
   "rewind.turnFiles": "{count} this turn",
   "rewind.both": "Rewind code and conversation",

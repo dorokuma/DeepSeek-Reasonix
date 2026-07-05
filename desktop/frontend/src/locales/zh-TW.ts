@@ -1170,6 +1170,7 @@ export const zhTW: Record<DictKey, string> = {
   "rewind.disabledNoBoundary": "這條訊息的會話邊界不可用",
   "rewind.disabledNoCode": "這條訊息之後沒有捕獲到程式碼變更",
   "rewind.disabledNoEarlier": "這條訊息之前沒有可總結內容",
+  "rewind.disabledNoLater": "這條訊息之後沒有可總結內容",
   "rewind.filesChanged": "{count} 個檔案",
   "rewind.turnFiles": "本輪 {count} 個",
   "rewind.both": "回滾程式碼和對話",
