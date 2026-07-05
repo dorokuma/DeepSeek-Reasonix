@@ -69,3 +69,20 @@ func TestServeJobCancelAndPeek(t *testing.T) {
 		}
 	}
 }
+
+func TestServeJobCancelNotFound(t *testing.T) {
+	bc := NewBroadcaster()
+	jm := jobs.NewManager(event.Discard)
+	ctrl := control.New(control.Options{Sink: bc, Jobs: jm, Runner: fakeRunner{got: make(chan string, 1)}})
+	srv := httptest.NewServer(New(ctrl, bc, config.ServeConfig{}).Handler())
+	defer srv.Close()
+
+	resp, err := http.Post(srv.URL+"/jobs/cancel", "application/json", strings.NewReader(`{"job_id":"task-9999"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("cancel unknown status=%d", resp.StatusCode)
+	}
+}

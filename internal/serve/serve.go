@@ -526,6 +526,14 @@ func (s *Server) jobCancel(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "job_id is required", http.StatusBadRequest)
 		return
 	}
+	if _, err := s.ctl().PeekBackgroundJob(body.JobID); err != nil {
+		if err == jobs.ErrJobNotFound {
+			http.Error(w, "job not found", http.StatusNotFound)
+			return
+		}
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 	ok := s.ctl().KillBackgroundJob(body.JobID)
 	writeJSON(w, map[string]any{"cancelled": ok})
 }
