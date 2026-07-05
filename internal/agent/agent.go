@@ -942,11 +942,9 @@ func (a *Agent) drainSteer() string {
 }
 
 func (a *Agent) deliverBackgroundToolResult(toolCallID, output string) {
-	if a.session.PatchToolResult(toolCallID, output) {
-		return
-	}
 	a.session.Add(provider.Message{
 		Role:       provider.RoleTool,
+		Name:       "task",
 		Content:    output,
 		ToolCallID: toolCallID,
 	})

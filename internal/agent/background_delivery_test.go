@@ -41,8 +41,14 @@ func TestCommitBackgroundJobResultWithoutRegisterJobMeta(t *testing.T) {
 	if !ag.CompleteBackgroundJob(job.ID) {
 		t.Fatal("CompleteBackgroundJob should commit via Started line fallback")
 	}
-	if sess.Messages[1].Content != "ANSWER-7" {
-		t.Fatalf("patched tool = %q", sess.Messages[1].Content)
+	if sess.Messages[1].Content == "ANSWER-7" {
+		t.Fatal("old 'Started task' message should NOT be patched in place")
+	}
+	if sess.Messages[2].Content != "ANSWER-7" {
+		t.Fatalf("appended tool message = %q, want ANSWER-7", sess.Messages[2].Content)
+	}
+	if sess.Messages[2].Name != "task" {
+		t.Fatalf("appended tool message Name = %q, want task", sess.Messages[2].Name)
 	}
 	foundEnvelope := false
 	for _, m := range sess.Messages {

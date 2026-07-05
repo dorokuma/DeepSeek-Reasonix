@@ -146,7 +146,7 @@ func extractJobID(result string) string {
 }
 
 func taskPostCallGuidance(jobID string) string {
-	rule := `Background job results auto-deliver when finished.`
+	rule := `Background job results auto-deliver. The result is appended as a new tool message (name=task) at the conversation tail when finished — see the tailmost tool message for your job_id.`
 	idClause := " job_id=task-N (from the Started line above)"
 	if jobID != "" {
 		idClause = fmt.Sprintf(" job_id=%q (from the Started line above)", jobID)
