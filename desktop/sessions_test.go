@@ -579,6 +579,51 @@ func TestRestoreTrashedSessionFileWithEmptyLiveStub(t *testing.T) {
 	}
 }
 
+func TestRestoreTrashedSessionFileFromUniqueTrashItem(t *testing.T) {
+	dir := t.TempDir()
+	sessionPath := filepath.Join(dir, "restore-unique.jsonl")
+	if err := os.WriteFile(sessionPath, []byte(`{"role":"user","content":"old"}`+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := deleteSessionFile(dir, sessionPath); err != nil {
+		t.Fatalf("trash old: %v", err)
+	}
+	fixedTrashPath := filepath.Join(dir, sessionTrashDir, filepath.Base(sessionPath), filepath.Base(sessionPath))
+	if err := os.WriteFile(sessionPath, []byte(`{"role":"user","content":"new"}`+"\n"), 0o644); err != nil {
+		t.Fatalf("write new live session: %v", err)
+	}
+	if err := deleteSessionFile(dir, sessionPath); err != nil {
+		t.Fatalf("trash new with fixed trash conflict: %v", err)
+	}
+
+	trashed, err := listTrashedSessionFiles(dir)
+	if err != nil {
+		t.Fatalf("list trash: %v", err)
+	}
+	var uniqueTrashPath string
+	for _, candidate := range trashed {
+		if candidate != fixedTrashPath && filepath.Base(candidate) == filepath.Base(sessionPath) {
+			uniqueTrashPath = candidate
+			break
+		}
+	}
+	if uniqueTrashPath == "" {
+		t.Fatalf("unique trash path not listed, got %#v", trashed)
+	}
+	if err := restoreTrashedSessionFile(dir, uniqueTrashPath); err != nil {
+		t.Fatalf("restore unique trash item: %v", err)
+	}
+	if got, err := os.ReadFile(sessionPath); err != nil || !strings.Contains(string(got), "new") {
+		t.Fatalf("restored session = %q err=%v, want new content", string(got), err)
+	}
+	if _, err := os.Stat(filepath.Dir(uniqueTrashPath)); !os.IsNotExist(err) {
+		t.Fatalf("unique trash item should be removed after restore, stat err = %v", err)
+	}
+	if _, err := os.Stat(fixedTrashPath); err != nil {
+		t.Fatalf("original fixed trash item should remain: %v", err)
+	}
+}
+
 func TestValidateSessionTrashTargetKeepsDiscardableLiveStub(t *testing.T) {
 	dir := t.TempDir()
 	sessionPath := filepath.Join(dir, "discardable-live.jsonl")

@@ -5289,7 +5289,7 @@ func TestRestoreSessionRejectsOpenEmptyLiveStub(t *testing.T) {
 	}
 }
 
-func TestDeleteSessionValidTrashRejectsNonEmptyLive(t *testing.T) {
+func TestDeleteSessionValidTrashRenamesDifferentLiveConflict(t *testing.T) {
 	isolateDesktopUserDirs(t)
 
 	dir := config.SessionDir()
@@ -5313,15 +5313,34 @@ func TestDeleteSessionValidTrashRejectsNonEmptyLive(t *testing.T) {
 	app := NewApp()
 	app.setTestCtrl(activeCtrl, "")
 
-	err := app.DeleteSession(filepath.Base(path))
-	if err == nil || !strings.Contains(err.Error(), "already exists in trash") {
-		t.Fatalf("DeleteSession conflict error = %v, want valid trash conflict", err)
+	if err := app.DeleteSession(filepath.Base(path)); err != nil {
+		t.Fatalf("DeleteSession should move different live session to a unique trash item: %v", err)
 	}
-	if _, err := os.Stat(path); err != nil {
-		t.Fatalf("non-empty live session should remain: %v", err)
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("live session should be moved out of active history, stat err = %v", err)
 	}
-	if _, err := os.Stat(trashPath); err != nil {
-		t.Fatalf("trash session should remain: %v", err)
+	if got, err := os.ReadFile(trashPath); err != nil || !strings.Contains(string(got), "trashed") {
+		t.Fatalf("original trash session should remain, got %q err=%v", string(got), err)
+	}
+	trashed, err := listTrashedSessionFiles(dir)
+	if err != nil {
+		t.Fatalf("list trash: %v", err)
+	}
+	var renamedPath string
+	for _, candidate := range trashed {
+		if candidate != trashPath && filepath.Base(candidate) == filepath.Base(path) {
+			renamedPath = candidate
+			break
+		}
+	}
+	if renamedPath == "" {
+		t.Fatalf("renamed trash copy not found in %#v", trashed)
+	}
+	if filepath.Base(filepath.Dir(renamedPath)) == filepath.Base(path) {
+		t.Fatalf("renamed trash copy reused fixed trash item dir: %s", renamedPath)
+	}
+	if got, err := os.ReadFile(renamedPath); err != nil || !strings.Contains(string(got), "new work") {
+		t.Fatalf("renamed trash session = %q err=%v, want live content", string(got), err)
 	}
 }
 
