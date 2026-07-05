@@ -53,6 +53,9 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.ref_name }}
+          HAS_R2: ${{ secrets.R2_ACCESS_KEY_ID != '' && secrets.R2_SECRET_ACCESS_KEY != '' && secrets.R2_ACCOUNT_ID != '' && secrets.R2_BUCKET != '' }}
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
         run: |
           set -euo pipefail
           case "$TAG" in
@@ -61,7 +64,18 @@ jobs:
               exit 0
               ;;
           esac
-          curl --retry 5 --retry-delay 2 -fsSL https://dl.reasonix.io/latest/latest.json -o latest.raw.json
+          if [ "$HAS_R2" != "true" ]; then
+            echo "R2 secrets not configured; skipping desktop manifest compatibility asset"
+            exit 0
+          fi
+          # dl.reasonix.io serves 403 to GitHub Actions egress IPs (Cloudflare bot
+          # protection), so read the manifest over the authenticated S3 API instead
+          # of the public edge.
+          aws configure set aws_access_key_id "${{ secrets.R2_ACCESS_KEY_ID }}"
+          aws configure set aws_secret_access_key "${{ secrets.R2_SECRET_ACCESS_KEY }}"
+          aws configure set region auto
+          aws s3 cp "s3://${R2_BUCKET}/latest/latest.json" latest.raw.json \
+            --endpoint-url "https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com"
           jq '.download_page = "https://reasonix.io/#start"' latest.raw.json > latest.json
           jq -e '
             ([.platforms[] | (.url, .sig)] |
