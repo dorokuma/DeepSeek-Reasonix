@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -171,10 +171,10 @@ func writeTasksAndClose(f *os.File, tasks []*CronTask) error {
 func closeFile(f *os.File) {
 	if f != nil {
 		if err := syscall.Flock(int(f.Fd()), syscall.LOCK_UN); err != nil {
-			log.Printf("cron: closeFile flock unlock failed: %v", err)
+			slog.Warn("cron: closeFile flock unlock failed", "err", err)
 		}
 		if err := f.Close(); err != nil {
-			log.Printf("cron: closeFile Close failed: %v", err)
+			slog.Warn("cron: closeFile Close failed", "err", err)
 		}
 	}
 }

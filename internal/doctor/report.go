@@ -266,7 +266,7 @@ func RenderText(r Report) string {
 	if r.RTK.ReadLimit > 0 && r.RTK.ReadLimit != 2000 {
 		fmt.Fprintf(&b, "  read_limit   %d lines (rtk mode)\n", r.RTK.ReadLimit)
 	}
-	for _, key := range []string{"REASONIX_RTK", "REASONIX_RTK_TIMEOUT", "REASONIX_RTK_READ_LIMIT", "REASONIX_RTK_LOG"} {
+	for _, key := range []string{"REASONIX_RTK", "REASONIX_RTK_TIMEOUT", "REASONIX_RTK_READ_LIMIT"} {
 		if r.RTK.Env == nil {
 			break
 		}
@@ -289,7 +289,7 @@ func RenderText(r Report) string {
 	if r.Ctx.OrphansPruned > 0 {
 		fmt.Fprintf(&b, "  pruned       %d orphan cache dirs\n", r.Ctx.OrphansPruned)
 	}
-	for _, key := range []string{"REASONIX_CTX", "REASONIX_CTX_THRESHOLD", "REASONIX_CTX_LOG"} {
+	for _, key := range []string{"REASONIX_CTX", "REASONIX_CTX_THRESHOLD"} {
 		if r.Ctx.Env == nil {
 			break
 		}

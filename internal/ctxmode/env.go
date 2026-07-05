@@ -7,7 +7,6 @@ func EnvSnapshot() map[string]string {
 	return map[string]string{
 		"REASONIX_CTX":           envActive(),
 		"REASONIX_CTX_THRESHOLD": strconv.Itoa(ThresholdBytes()),
-		"REASONIX_CTX_LOG":       logEnv(),
 	}
 }
 
@@ -18,16 +17,7 @@ func envActive() string {
 	return "off"
 }
 
-func logEnv() string {
-	switch LogLevelFromEnv() {
-	case LogMiss:
-		return "miss"
-	case LogAll:
-		return "all"
-	default:
-		return "off"
-	}
-}
+
 
 // Probe is a doctor smoke result for ctxmode.
 type Probe struct {

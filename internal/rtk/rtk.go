@@ -4,7 +4,7 @@ package rtk
 import (
 	"context"
 	"errors"
-	"log"
+	"log/slog"
 	"os"
 	"os/exec"
 	"strconv"
@@ -119,7 +119,7 @@ func rewriteWithMode(ctx context.Context, cmd string, mode Mode) string {
 		s, _ := v.(string)
 		if mode == ModeSuggest {
 			if s != "" && s != cmd {
-				log.Printf("rtk suggest: %q → %q", cmd, s)
+				slog.Debug("rtk suggest", "cmd", cmd, "rewritten", s)
 			}
 			return ""
 		}
@@ -145,7 +145,7 @@ func rewriteWithMode(ctx context.Context, cmd string, mode Mode) string {
 	rewriteCache.Store(cmd, result)
 	if mode == ModeSuggest {
 		if result != "" && result != cmd {
-			log.Printf("rtk suggest: %q → %q", cmd, result)
+			slog.Debug("rtk suggest", "cmd", cmd, "rewritten", result)
 		}
 		return ""
 	}

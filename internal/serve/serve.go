@@ -10,7 +10,6 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
-	"log"
 	"log/slog"
 	"net/http"
 	"os"
@@ -292,11 +291,9 @@ func (s *Server) RunGraceful(ctx context.Context, addr string) error {
 		IdleTimeout:       120 * time.Second,
 	}
 	if s.AuthMode() == "none" {
-		log.Printf("⚠  WARNING: Reasonix serve is running WITHOUT authentication.\n"+
-			"    Anyone with access to %s can control the agent.\n"+
-			"    Set auth.mode = \"token\" in your config to enable authentication.", addr)
+		slog.Warn("⚠  WARNING: Reasonix serve is running WITHOUT authentication.\n    Anyone with access to " + addr + " can control the agent.\n    Set auth.mode = \"token\" in your config to enable authentication.")
 	} else {
-		log.Printf("agent API listening on %s", addr)
+		slog.Info("agent API listening", "addr", addr)
 	}
 	errCh := make(chan error, 1)
 	go func() {
@@ -405,7 +402,7 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 			if eventType == "" {
 				eventType = "unknown"
 			}
-			log.Printf("SSE %s event sent (%d bytes)", eventType, len(data))
+			slog.Debug("SSE event sent", "type", eventType, "bytes", len(data))
 			flusher.Flush()
 		case <-keepalive.C:
 			// SSE comment lines start with `:` and are ignored by the

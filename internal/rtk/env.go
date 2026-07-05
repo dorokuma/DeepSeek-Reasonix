@@ -29,11 +29,7 @@ func EnvDocs() []EnvDoc {
 			Default:     "800 (rewrite mode) / 2000 (off)",
 			Description: "Default read_file line cap when limit is unset. Only applies in rewrite mode unless explicitly set while off.",
 		},
-		{
-			Name:        "REASONIX_RTK_LOG",
-			Default:     "all",
-			Description: "all (default, for review of hits/misses), miss (fallbacks only), or off. Legacy 1/true/on maps to all.",
-		},
+		
 	}
 }
 
@@ -42,20 +38,10 @@ func EnvSnapshot() map[string]string {
 	mode := ModeFromEnv().String()
 	timeout := rewriteTimeout().String()
 	readLimit := strconv.Itoa(ReadFileDefaultLimit())
-	var logVal string
-	switch LogLevelFromEnv() {
-	case LogMiss:
-		logVal = "miss"
-	case LogAll:
-		logVal = "all"
-	default:
-		logVal = "off"
-	}
 	snap := map[string]string{
 		"REASONIX_RTK":          mode,
 		"REASONIX_RTK_TIMEOUT":  timeout,
 		"REASONIX_RTK_READ_LIMIT": readLimit,
-		"REASONIX_RTK_LOG":      logVal,
 	}
 	return snap
 }

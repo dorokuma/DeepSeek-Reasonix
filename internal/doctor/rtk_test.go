@@ -20,7 +20,6 @@ func TestRenderTextRTKSection(t *testing.T) {
 				"REASONIX_RTK":          "rewrite",
 				"REASONIX_RTK_TIMEOUT":  "3s",
 				"REASONIX_RTK_READ_LIMIT": "800",
-				"REASONIX_RTK_LOG":      "miss",
 			},
 			Sample: "git status → rtk git status",
 		},

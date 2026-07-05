@@ -46,6 +46,12 @@ var runInteractiveSession = chatREPL
 // terminal. Exposed as a variable so tests can override it.
 var cliIsInteractive = isInteractive
 
+var slogLevelVar = new(slog.LevelVar)
+
+func init() {
+	slogLevelVar.Set(slog.LevelInfo)
+}
+
 func Run(args []string, version string) int {
 	// Pick the UI language up front so even pre-config paths (the first-run
 	// welcome banner) come through localized. Env-only first; if a config
@@ -70,6 +76,7 @@ func Run(args []string, version string) int {
 	}
 
 	rest := args[1:]
+	initSlog()
 	switch cmd {
 	case "run":
 		return runAgent(rest)
@@ -740,7 +747,7 @@ func chatREPL(args []string) int {
 
 	// The default handler writes directly to stderr, which bypasses Bubble
 	// Tea's alt-screen rendering and corrupts the display.
-	slg := slog.New(slog.NewTextHandler(slogFile(), nil))
+	slg := slog.New(slog.NewTextHandler(slogFile(), &slog.HandlerOptions{Level: slogLevelVar}))
 	slog.SetDefault(slg)
 
 	// Both modes use alt-screen now. Native-scrollback (Conduit/Android) keeps
@@ -775,6 +782,19 @@ func chatREPL(args []string) int {
 // slogFile returns a writer for TUI-mode log output: a temp file
 // `reasonix-tui-*.log` in the cache dir. Falls back to io.Discard when
 // the cache dir can't be resolved or the file can't be opened.
+
+func initSlog() {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("REASONIX_LOG_LEVEL"))) {
+	case "debug":
+		slogLevelVar.Set(slog.LevelDebug)
+	case "warn":
+		slogLevelVar.Set(slog.LevelWarn)
+	case "error":
+		slogLevelVar.Set(slog.LevelError)
+	}
+	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slogLevelVar})))
+}
+
 func slogFile() io.Writer {
 	dir := config.CacheDir()
 	if dir == "" {
