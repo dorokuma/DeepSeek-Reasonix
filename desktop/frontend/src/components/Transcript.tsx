@@ -373,6 +373,7 @@ export function Transcript({
 
   const hotZoneNodes = useMemo<ReactNode[]>(() => {
     const out: ReactNode[] = [];
+    const maxTurn = questions.length - 1;
     let actionText = "";
     let actionReady = false;
     let activeTurn: number | undefined;
@@ -391,6 +392,7 @@ export function Transcript({
           actionPending={actionPending}
           rewindDisabled={rewindDisabled}
           hoverMenus={actionHoverMenus}
+          isLastTurn={turn === maxTurn}
           onRewind={(targetTurn, scope) => {
             onRewind?.(targetTurn, scope);
             setOpenAction(null);
@@ -594,7 +596,7 @@ export function Transcript({
       if (!running) pushTurnActions();
     }
     return out;
-  }, [hotStartIdx, items, openAction, actionPending, rewindDisabled, running, onEditPrompt, onRewind, subcallsByParent, userTurn, checkpointsByTurn, displayMode, stepGroups, tabId, actionHoverMenus, creationMode]);
+  }, [hotStartIdx, items, openAction, actionPending, rewindDisabled, running, onEditPrompt, onRewind, subcallsByParent, userTurn, checkpointsByTurn, displayMode, stepGroups, tabId, actionHoverMenus, creationMode, questions.length]);
 
   // ── Assemble rendered output ──────────────────────────────────────────────
   // Warm/cold zone is a separate memo'd WarmZone component so streaming tokens
@@ -774,6 +776,7 @@ const WarmZone = memo(function WarmZone({
               onEdit={warmOnEdit}
               tabId={tabId}
               creationMode={creationMode}
+              totalTurns={turnGroups.length}
             />
           </WarmTurnCard>,
         );
@@ -821,6 +824,7 @@ function WarmTurnItems({
   onEdit,
   tabId,
   creationMode = false,
+  totalTurns = 0,
 }: {
   startIdx: number;
   endIdx: number;
@@ -837,8 +841,11 @@ function WarmTurnItems({
   onEdit?: (turn: number, displayText: string, submitText?: string) => boolean | void | Promise<boolean | void>;
   tabId?: string;
   creationMode?: boolean;
+  /** total number of user turns in the conversation */
+  totalTurns?: number;
 }) {
   const nodes: React.ReactNode[] = [];
+  const maxTurn = totalTurns - 1;
   let actionText = "";
   let actionReady = false;
   let activeTurn: number | undefined;
@@ -857,6 +864,7 @@ function WarmTurnItems({
         actionPending={actionPending}
         rewindDisabled={rewindDisabled}
         hoverMenus={actionHoverMenus}
+        isLastTurn={turn === maxTurn}
         onRewind={(targetTurn, scope) => {
           onRewind?.(targetTurn, scope);
           setOpenAction(null);
