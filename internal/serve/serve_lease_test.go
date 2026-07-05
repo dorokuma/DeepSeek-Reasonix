@@ -7,7 +7,10 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"reasonix/internal/agent"
 	"reasonix/internal/config"
@@ -129,4 +132,210 @@ func readAll(resp *http.Response) (string, error) {
 	defer resp.Body.Close()
 	b, err := io.ReadAll(resp.Body)
 	return strings.TrimSpace(string(b)), err
+}
+
+// TestConcurrentResumesKeepControllerAndLeaseAligned hammers POST /resume from
+// two goroutines bouncing between different targets and asserts the invariant
+// this PR exists for: whatever session the controller ends up writing is the
+// session the lease keeper guards. Without bindMu serializing the
+// snapshot→rebind→resume sequence, interleaved handlers split the two (the
+// controller on one path, the lease on another), leaving the written session
+// unprotected and a foreign one wrongly occupied.
+func TestConcurrentResumesKeepControllerAndLeaseAligned(t *testing.T) {
+	dir := t.TempDir()
+	active := filepath.Join(dir, "active.jsonl")
+	targetB := filepath.Join(dir, "target-b.jsonl")
+	targetC := filepath.Join(dir, "target-c.jsonl")
+	for _, p := range []string{active, targetB, targetC} {
+		saveServeTestSession(t, p)
+	}
+
+	bc := NewBroadcaster()
+	ctrl := control.New(control.Options{Sink: bc, SessionDir: dir, SessionPath: active})
+	defer ctrl.Close()
+	server := New(ctrl, bc, config.ServeConfig{})
+	leases := control.NewSessionLeaseKeeper()
+	defer leases.Release()
+	if err := leases.Rebind(active); err != nil {
+		t.Fatalf("seed lease on active: %v", err)
+	}
+	server.SetSessionLeases(leases)
+	srv := httptest.NewServer(server.Handler())
+	defer srv.Close()
+
+	post := func(target string) {
+		body, _ := json.Marshal(map[string]string{"path": target})
+		resp, err := http.Post(srv.URL+"/resume", "application/json", strings.NewReader(string(body)))
+		if err != nil {
+			return
+		}
+		_, _ = io.Copy(io.Discard, resp.Body)
+		resp.Body.Close()
+	}
+
+	const rounds = 25
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		for range rounds {
+			post(targetB)
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		for range rounds {
+			post(targetC)
+		}
+	}()
+	wg.Wait()
+
+	got := agent.CanonicalSessionPath(server.ctl().SessionPath())
+	held := leases.HeldPath()
+	if got != held {
+		t.Fatalf("controller/lease split after concurrent resumes:\n  controller writes %q\n  lease guards      %q", got, held)
+	}
+}
+
+// TestConcurrentResumeAndForkKeepAlignment interleaves /resume with /fork —
+// the two handlers rotate the active path through different code paths — and
+// asserts the same controller/lease alignment invariant.
+func TestConcurrentResumeAndForkKeepAlignment(t *testing.T) {
+	dir := t.TempDir()
+	active := filepath.Join(dir, "active.jsonl")
+	target := filepath.Join(dir, "target.jsonl")
+	saveServeTestSession(t, active)
+	saveServeTestSession(t, target)
+
+	bc := NewBroadcaster()
+	ctrl := control.New(control.Options{Sink: bc, SessionDir: dir, SessionPath: active})
+	defer ctrl.Close()
+	server := New(ctrl, bc, config.ServeConfig{})
+	leases := control.NewSessionLeaseKeeper()
+	defer leases.Release()
+	if err := leases.Rebind(active); err != nil {
+		t.Fatalf("seed lease on active: %v", err)
+	}
+	server.SetSessionLeases(leases)
+	srv := httptest.NewServer(server.Handler())
+	defer srv.Close()
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		for range 15 {
+			body, _ := json.Marshal(map[string]string{"path": target})
+			if resp, err := http.Post(srv.URL+"/resume", "application/json", strings.NewReader(string(body))); err == nil {
+				_, _ = io.Copy(io.Discard, resp.Body)
+				resp.Body.Close()
+			}
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		for range 15 {
+			body, _ := json.Marshal(map[string]any{"turn": 0, "name": ""})
+			if resp, err := http.Post(srv.URL+"/fork", "application/json", strings.NewReader(string(body))); err == nil {
+				_, _ = io.Copy(io.Discard, resp.Body)
+				resp.Body.Close()
+			}
+		}
+	}()
+	wg.Wait()
+
+	got := agent.CanonicalSessionPath(server.ctl().SessionPath())
+	held := leases.HeldPath()
+	if got != held {
+		t.Fatalf("controller/lease split after resume×fork interleave:\n  controller writes %q\n  lease guards      %q", got, held)
+	}
+}
+
+// TestInterleavedResumesForcedThroughBindWindow deterministically forces the
+// interleaving bindMu prevents: request 1 is parked between its lease rebind
+// and its controller Resume while request 2 tries to resume a different
+// session. With bindMu, request 2 waits and both requests land aligned;
+// without it, request 2 completes inside request 1's window and request 1
+// then rebinds the controller to a session the lease no longer guards.
+func TestInterleavedResumesForcedThroughBindWindow(t *testing.T) {
+	dir := t.TempDir()
+	active := filepath.Join(dir, "active.jsonl")
+	targetB := filepath.Join(dir, "target-b.jsonl")
+	targetC := filepath.Join(dir, "target-c.jsonl")
+	for _, p := range []string{active, targetB, targetC} {
+		saveServeTestSession(t, p)
+	}
+
+	bc := NewBroadcaster()
+	ctrl := control.New(control.Options{Sink: bc, SessionDir: dir, SessionPath: active})
+	defer ctrl.Close()
+	server := New(ctrl, bc, config.ServeConfig{})
+	leases := control.NewSessionLeaseKeeper()
+	defer leases.Release()
+	if err := leases.Rebind(active); err != nil {
+		t.Fatalf("seed lease on active: %v", err)
+	}
+	server.SetSessionLeases(leases)
+	srv := httptest.NewServer(server.Handler())
+	defer srv.Close()
+
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	// Park only the FIRST request through the hook. A sync.Once would not do:
+	// Once.Do holds an internal mutex while f runs, so the second request
+	// would block on the Once itself and accidentally reproduce bindMu's
+	// serialization even with the guard removed.
+	var first atomic.Bool
+	first.Store(true)
+	resumeBindHookForTest = func() {
+		if first.CompareAndSwap(true, false) {
+			close(entered)
+			<-release
+		}
+	}
+	defer func() { resumeBindHookForTest = nil }()
+
+	post := func(target string) {
+		body, _ := json.Marshal(map[string]string{"path": target})
+		resp, err := http.Post(srv.URL+"/resume", "application/json", strings.NewReader(string(body)))
+		if err != nil {
+			return
+		}
+		_, _ = io.Copy(io.Discard, resp.Body)
+		resp.Body.Close()
+	}
+
+	done1 := make(chan struct{})
+	go func() { defer close(done1); post(targetB) }()
+	<-entered // request 1 parked inside its bind window, lease moved to B
+
+	done2 := make(chan struct{})
+	go func() { defer close(done2); post(targetC) }()
+	// Request 2 must not complete while request 1 owns the bind window.
+	select {
+	case <-done2:
+		// Unpark request 1 before failing, or httptest's Close would wait the
+		// full package timeout on the parked handler.
+		close(release)
+		<-done1
+		t.Fatal("second resume completed inside the first resume's bind window")
+	case <-time.After(150 * time.Millisecond):
+	}
+
+	close(release)
+	<-done1
+	<-done2
+
+	got := agent.CanonicalSessionPath(server.ctl().SessionPath())
+	held := leases.HeldPath()
+	if got != held {
+		t.Fatalf("controller/lease split after forced interleave:\n  controller writes %q\n  lease guards      %q", got, held)
+	}
+	wantC := targetC
+	if resolved, err := filepath.EvalSymlinks(targetC); err == nil {
+		wantC = resolved // serve resolves the request path; match its form
+	}
+	if got != agent.CanonicalSessionPath(wantC) {
+		t.Fatalf("last resume should win: controller on %q, want %q", got, wantC)
+	}
 }
