@@ -2468,6 +2468,14 @@ func (c *Controller) SwitchBranch(ref string) (agent.BranchInfo, error) {
 	return match, nil
 }
 
+// ResolveBranchRef resolves a /switch-style branch reference (id, unique
+// prefix, name, or path) against a branch listing, using the same matching
+// rules as SwitchBranch. Frontends use it to learn the target session path
+// before switching — e.g. to move their session lease first.
+func ResolveBranchRef(branches []agent.BranchInfo, ref string) (agent.BranchInfo, error) {
+	return resolveBranch(branches, strings.TrimSpace(ref))
+}
+
 func resolveBranch(branches []agent.BranchInfo, ref string) (agent.BranchInfo, error) {
 	refLower := strings.ToLower(ref)
 	var matches []agent.BranchInfo

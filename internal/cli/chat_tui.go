@@ -289,6 +289,12 @@ type chatTUI struct {
 	modelRef        string
 	effortLevel     string // "" when the current provider/model has no configurable effort
 
+	// leases owns the session lease guarding the TUI's active session file (set
+	// by chatREPL; nil in tests and when persistence is disabled). Every in-TUI
+	// operation that rebinds the controller to another session file must move
+	// the lease first — see rebindSessionLease / followSessionLease.
+	leases *control.SessionLeaseKeeper
+
 	// outputStyle is the active output-style name (config agent.output_style),
 	// shown as the current entry in the /output-style listing. "" = default.
 	outputStyle string
@@ -3479,6 +3485,7 @@ func (m *chatTUI) runSlashCommand(input string) tea.Cmd {
 			m.notice(fmt.Sprintf("%s: %v", i18n.M.SlashNewFailed, err))
 			return nil
 		}
+		m.followSessionLease()
 		// Native scrollback keeps the old transcript; mark the fork with a fresh banner.
 		m.resetFreshContextView(false)
 		m.notice(i18n.M.SlashNewDone)
