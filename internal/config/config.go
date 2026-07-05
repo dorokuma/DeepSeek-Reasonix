@@ -48,14 +48,14 @@ type Config struct {
 	Agent         AgentConfig         `toml:"agent"`
 	Providers     []ProviderEntry     `toml:"providers"`
 	Tools         ToolsConfig         `toml:"tools"`
-	Permissions      PermissionsConfig       `toml:"permissions"`
-	Network          NetworkConfig           `toml:"network"`
+	Permissions   PermissionsConfig   `toml:"permissions"`
+	Network       NetworkConfig       `toml:"network"`
 	Plugins       []PluginEntry       `toml:"plugins"`
 	Skills        SkillsConfig        `toml:"skills"`
 	Statusline    StatuslineConfig    `toml:"statusline"`
 	LSP           LSPConfig           `toml:"lsp"`
-	Codegraph     CodegraphConfig      `toml:"codegraph"`
-	Serve         ServeConfig          `toml:"serve"`
+	Codegraph     CodegraphConfig     `toml:"codegraph"`
+	Serve         ServeConfig         `toml:"serve"`
 	// UsdCnyRate is the exchange rate used to convert OpenCode Go USD pricing
 	// to CNY for display and cost calculation. 0 means use the built-in default
 	// (7.0). Only meaningful when a provider with usd-denominated pricing (e.g.
@@ -434,7 +434,6 @@ func (c *Config) IsSkillDisabled(name string) bool {
 // dir). Both support ${VAR} / ${VAR:-default} expansion. Reads are unrestricted;
 // confining `bash` is Phase 1 (OS-level sandbox).
 
-
 // WriteRoots returns the directories file-writer tools may modify: the
 // workspace root (defaulting to the current working directory when unset) plus
 // any AllowWrite extras, with ${VAR} expanded. The roots are returned as given
@@ -468,17 +467,17 @@ func (c *Config) BashMode() string {
 // each model's prompt prefix stays cache-stable). SubagentModel is the optional
 // default for runAs=subagent skills; SubagentModels overrides it per skill name.
 type AgentConfig struct {
-	SystemPrompt     string            `toml:"system_prompt"`
-	SystemPromptFile string            `toml:"system_prompt_file"`
-	MaxSteps         int               `toml:"max_steps"`         // tool-call rounds per turn; 0 = unlimited
-	PlannerMaxSteps  int               `toml:"planner_max_steps"` // planner read-only tool-call rounds; 0 = unlimited
-	Temperature      float64           `toml:"temperature"`
-	PlannerModel     string            `toml:"planner_model"`
-	SubagentModel    string            `toml:"subagent_model"`
-	SubagentModels   map[string]string `toml:"subagent_models"`
-	SubagentEffort   string            `toml:"subagent_effort"`
-	SubagentEfforts  map[string]string `toml:"subagent_efforts"`
-	MaxMainAgentReadonlyCalls int      `toml:"max_main_agent_readonly_calls"`
+	SystemPrompt              string            `toml:"system_prompt"`
+	SystemPromptFile          string            `toml:"system_prompt_file"`
+	MaxSteps                  int               `toml:"max_steps"`         // tool-call rounds per turn; 0 = unlimited
+	PlannerMaxSteps           int               `toml:"planner_max_steps"` // planner read-only tool-call rounds; 0 = unlimited
+	Temperature               float64           `toml:"temperature"`
+	PlannerModel              string            `toml:"planner_model"`
+	SubagentModel             string            `toml:"subagent_model"`
+	SubagentModels            map[string]string `toml:"subagent_models"`
+	SubagentEffort            string            `toml:"subagent_effort"`
+	SubagentEfforts           map[string]string `toml:"subagent_efforts"`
+	MaxMainAgentReadonlyCalls int               `toml:"max_main_agent_readonly_calls"`
 	// OutputStyle selects a persona/tone block folded into the system prompt at
 	// startup (a built-in like "explanatory"/"learning"/"concise", or a custom
 	// .reasonix/output-styles/<name>.md). Empty = the unmodified prompt.
@@ -501,19 +500,19 @@ type AgentConfig struct {
 // token budget; the harness compacts older history as a turn's prompt approaches
 // it (see agent compaction). 0 disables compaction for the instance.
 type ProviderEntry struct {
-	Name          string            `toml:"name"`
-	Kind          string            `toml:"kind"`
-	BaseURL       string            `toml:"base_url"`
-	Model         string            `toml:"model"`      // a single model (back-compat)
-	Models        []string          `toml:"models"`     // a vendor's model list (one base_url/key, many models); fallback when live fetch is unavailable
-	ModelsURL     string            `toml:"models_url"` // auto-fetch models from this URL on startup
+	Name      string   `toml:"name"`
+	Kind      string   `toml:"kind"`
+	BaseURL   string   `toml:"base_url"`
+	Model     string   `toml:"model"`      // a single model (back-compat)
+	Models    []string `toml:"models"`     // a vendor's model list (one base_url/key, many models); fallback when live fetch is unavailable
+	ModelsURL string   `toml:"models_url"` // auto-fetch models from this URL on startup
 
 	// fetchedModels holds the live model list retrieved from the provider API at
 	// startup/refresh. When non-nil and non-empty, ModelList returns this instead
 	// of the static Models/Model field, so the system uses the provider's current
 	// SKUs for the lifetime of the process. Refresh only happens at boot or on
 	// explicit doctor --json; provider additions require a restart.
-	fetchedModels []string `toml:"-" json:"-"` // live-fetched model list; non-nil = use instead of Models
+	fetchedModels []string          `toml:"-" json:"-"` // live-fetched model list; non-nil = use instead of Models
 	Default       string            `toml:"default"`    // default model when Models is set (else Models[0])
 	APIKeyEnv     string            `toml:"api_key_env"`
 	BalanceURL    string            `toml:"balance_url"` // optional; a provider-specific wallet-balance endpoint (DeepSeek: https://api.deepseek.com/user/balance). Empty = no balance readout.
@@ -625,6 +624,7 @@ type PermissionsConfig struct {
 	Ask              []string `toml:"ask"`
 	Deny             []string `toml:"deny"`
 	MainAgentAllowed []string `toml:"main_agent_allowed"`
+	ToolsDynamic     []string `toml:"tools_dynamic"`
 }
 
 // PluginEntry declares an external MCP server. Type selects the transport:
@@ -637,7 +637,7 @@ type PermissionsConfig struct {
 type PluginEntry struct {
 	Name    string            `toml:"name"`
 	Hash    string            `toml:"hash,omitempty"` // sha256:<hex> content integrity hash for remote sources
-	Type    string            `toml:"type"` // "stdio" (default) | "http" | "sse"
+	Type    string            `toml:"type"`           // "stdio" (default) | "http" | "sse"
 	Command string            `toml:"command"`
 	Args    []string          `toml:"args"`
 	Env     map[string]string `toml:"env"`
@@ -765,9 +765,9 @@ func Default() *Config {
 		// wrongly deny it).
 		// LSP tools on by default, but dormant until a language server is on PATH;
 		// a missing server yields an install hint rather than an error.
-		LSP:              LSPConfig{Enabled: true},
-		Network:           NetworkConfig{ProxyMode: netclient.ModeAuto},
-		UsdCnyRate:        7.0,
+		LSP:        LSPConfig{Enabled: true},
+		Network:    NetworkConfig{ProxyMode: netclient.ModeAuto},
+		UsdCnyRate: 7.0,
 		Providers: []ProviderEntry{
 			{Name: "deepseek-flash", Kind: "openai", BaseURL: "https://api.deepseek.com", Model: "deepseek-v4-flash", APIKeyEnv: "DEEPSEEK_API_KEY", BalanceURL: "https://api.deepseek.com/user/balance", ContextWindow: 1_000_000, Price: &provider.Pricing{CacheHit: 0.02, Input: 1, Output: 2, Currency: "¥"}},
 			{Name: "deepseek-pro", Kind: "openai", BaseURL: "https://api.deepseek.com", Model: "deepseek-v4-pro", APIKeyEnv: "DEEPSEEK_API_KEY", BalanceURL: "https://api.deepseek.com/user/balance", ContextWindow: 1_000_000, Price: &provider.Pricing{CacheHit: 0.025, Input: 3, Output: 6, Currency: "¥"}},
@@ -1338,4 +1338,3 @@ func BuildModelFetchURLs(baseURL, apiVersion string) ([]string, error) {
 	}
 	return []string{root + "/models", root + "/v1/models"}, nil
 }
-

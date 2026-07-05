@@ -2,9 +2,9 @@ package config
 
 import (
 	"bufio"
-	"regexp"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 )
 

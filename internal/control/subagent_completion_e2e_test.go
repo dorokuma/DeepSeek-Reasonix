@@ -32,6 +32,9 @@ func waitJobDone(t *testing.T, jm *jobs.Manager, id string) {
 	deadline := time.After(3 * time.Second)
 	for {
 		st, err := jm.Peek(id)
+		if err == jobs.ErrJobNotFound {
+			return // result flushed and job removed from manager
+		}
 		if err == nil && st.Status != "running" {
 			return
 		}
@@ -102,18 +105,18 @@ func TestSubagentCompletionNoticeAndAutoReentry(t *testing.T) {
 		}
 	}
 
-if !ctrl.PendingToolResultCAS(true, false) {
-	t.Fatal("pendingToolResult not set after job completion")
-}
+	if !ctrl.PendingToolResultCAS(true, false) {
+		t.Fatal("pendingToolResult not set after job completion")
+	}
 
-// autoReenter should have been invoked via SetOnCompletion; drain runner input.
-time.Sleep(50 * time.Millisecond)
-runner.mu.Lock()
-n := len(runner.inputs)
-runner.mu.Unlock()
-if n == 0 {
-	t.Fatal("autoReenter did not schedule a turn via Send")
-}
+	// autoReenter should have been invoked via SetOnCompletion; drain runner input.
+	time.Sleep(50 * time.Millisecond)
+	runner.mu.Lock()
+	n := len(runner.inputs)
+	runner.mu.Unlock()
+	if n == 0 {
+		t.Fatal("autoReenter did not schedule a turn via Send")
+	}
 }
 
 // TestSubagentCompletionChainNoPanic exercises the full auto-reentry chain:
@@ -163,7 +166,6 @@ func TestSubagentCompletionChainNoPanic(t *testing.T) {
 		t.Fatal("expected Run to fail with nil provider, got nil error")
 	}
 }
-
 
 // TestAutoReenterDefaultsRunnerNoPanic verifies SetOnCompletion autoReenter does not
 // panic when Options omitted Runner but provided Executor (regression for nil runner).
@@ -257,7 +259,6 @@ func TestAutoReentryDrainsToolResultIntoSession(t *testing.T) {
 		t.Fatalf("expected 1 tool result message, got %d; messages=%d", toolMsgs, len(sess.Messages))
 	}
 }
-
 
 // phasedBlockingRunner blocks the first Run call until ReleaseFirst is invoked,
 // then delegates to the wrapped runner so auto-reentry exercises the real agent path.
@@ -357,18 +358,14 @@ func TestAutoReenterDeferredWhileMainTurnBusy(t *testing.T) {
 	waitJobDone(t, jm, job.ID)
 
 	ctrl.mu.Lock()
-	gotPending := ctrl.pendingReentry
+	queueLen := len(ctrl.pendingReentryQueue)
 	gotRunning := ctrl.running
-	gotInput := ctrl.pendingInput
 	ctrl.mu.Unlock()
-	if !gotPending {
-		t.Fatal("pendingReentry should be true while main turn is busy")
+	if queueLen == 0 {
+		t.Fatal("pendingReentryQueue should have deferred auto-reentry while main turn is busy")
 	}
 	if !gotRunning {
 		t.Fatal("main turn should still be running when job completes")
-	}
-	if gotInput != "" {
-		t.Fatalf("pendingInput should be empty for deferred auto-reentry, got %q", gotInput)
 	}
 	if !ctrl.pendingToolResult.Load() {
 		t.Fatal("pendingToolResult should be set after job completion")

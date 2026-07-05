@@ -103,4 +103,3 @@ func estimateTokens(s string) int {
 	}
 	return len(s) / 4
 }
-

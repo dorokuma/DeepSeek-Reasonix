@@ -37,8 +37,8 @@ import (
 	"reasonix/internal/permission"
 	"reasonix/internal/plugin"
 	"reasonix/internal/provider"
-	"reasonix/internal/skill"
 	"reasonix/internal/shell"
+	"reasonix/internal/skill"
 	"reasonix/internal/tool"
 	"reasonix/internal/tool/builtin"
 	"reasonix/internal/tool/sessiontool"
@@ -520,6 +520,13 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 			mainAgentAllowed[name] = true
 		}
 	}
+	var toolsDynamic map[string]bool
+	if len(cfg.Permissions.ToolsDynamic) > 0 {
+		toolsDynamic = make(map[string]bool)
+		for _, name := range cfg.Permissions.ToolsDynamic {
+			toolsDynamic[name] = true
+		}
+	}
 
 	agentOpts := agent.Options{
 		MaxSteps:                  maxSteps,
@@ -535,6 +542,7 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 		CompactForceRatio:         cfg.Agent.CompactForceRatio,
 		ArchiveDir:                config.ArchiveDir(),
 		MainAgentAllowed:          mainAgentAllowed,
+		ToolsDynamic:              toolsDynamic,
 		MaxMainAgentReadonlyCalls: cfg.Agent.MaxMainAgentReadonlyCalls,
 	}
 
@@ -703,14 +711,17 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 			plannerSess := agent.NewSession(agent.PlannerPromptWithContext(mem.Block()))
 			plannerTools := agent.PlannerToolRegistry(reg)
 			runner = agent.NewCoordinator(plannerProv, plannerSess, pe.Price, plannerTools, agent.Options{
-				MaxSteps:          cfg.Agent.PlannerMaxSteps,
-				MaxStepsKey:       "agent.planner_max_steps",
-				Gate:              nil,
-				ContextWindow:     pe.ContextWindow,
-				SoftCompactRatio:  cfg.Agent.SoftCompactRatio,
-				CompactRatio:      cfg.Agent.CompactRatio,
-				CompactForceRatio: cfg.Agent.CompactForceRatio,
-				ArchiveDir:        config.ArchiveDir(),
+				MaxSteps:                  cfg.Agent.PlannerMaxSteps,
+				MaxStepsKey:               "agent.planner_max_steps",
+				Gate:                      nil,
+				ContextWindow:             pe.ContextWindow,
+				SoftCompactRatio:          cfg.Agent.SoftCompactRatio,
+				CompactRatio:              cfg.Agent.CompactRatio,
+				CompactForceRatio:         cfg.Agent.CompactForceRatio,
+				ArchiveDir:                config.ArchiveDir(),
+				MainAgentAllowed:          mainAgentAllowed,
+				ToolsDynamic:              toolsDynamic,
+				MaxMainAgentReadonlyCalls: cfg.Agent.MaxMainAgentReadonlyCalls,
 			}, executor, cfg.Agent.Temperature, sink, nil)
 			label = entry.Model + " + planner " + pe.Model
 		}

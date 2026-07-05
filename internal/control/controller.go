@@ -51,11 +51,11 @@ import (
 // Controller drives one chat session. Construct with New; drive with the command
 // methods; observe through the Sink passed in Options.
 type Controller struct {
-	runner        agent.Runner
+	runner       agent.Runner
 	executor     *agent.Agent
 	subAgentGate *permission.Gate
-	sink          event.Sink
-	policy        permission.Policy
+	sink         event.Sink
+	policy       permission.Policy
 
 	label         string
 	systemPrompt  string
@@ -122,17 +122,17 @@ type Controller struct {
 
 	// mu guards the run state and approval bookkeeping; every critical section
 	// under it is short and non-blocking.
-	mu          sync.Mutex
-	cancel      context.CancelFunc
-	running     bool
-	sessionPath string
-	approvals   map[string]chan approvalReply
-	asks        map[string]chan []event.AskAnswer
-	granted     map[string]bool
-	taskResults    map[string]jobMeta // jobID → creation-time tool call metadata
-	taskResultsMu  sync.Mutex         // guards taskResults
-	pendingToolResult atomic.Bool     // sub-agent completion auto-reentry flag
-	nextID      int
+	mu                sync.Mutex
+	cancel            context.CancelFunc
+	running           bool
+	sessionPath       string
+	approvals         map[string]chan approvalReply
+	asks              map[string]chan []event.AskAnswer
+	granted           map[string]bool
+	taskResults       map[string]jobMeta // jobID → creation-time tool call metadata
+	taskResultsMu     sync.Mutex         // guards taskResults
+	pendingToolResult atomic.Bool        // sub-agent completion auto-reentry flag
+	nextID            int
 	// turn counts model turns this session, passed to hooks in their payload.
 	turn int
 
@@ -152,8 +152,7 @@ type Controller struct {
 
 	autoReentryDepth int
 
-	pendingReentry bool
-	pendingInput   string
+	pendingReentryQueue []string
 
 	wg        sync.WaitGroup
 	closeOnce sync.Once
@@ -181,7 +180,7 @@ type Options struct {
 	Executor      *agent.Agent
 	Sink          event.Sink
 	Policy        permission.Policy
-	SubAgentGate *permission.Gate // 子代理门，EnableInteractiveApproval 时注入 Approver
+	SubAgentGate  *permission.Gate // 子代理门，EnableInteractiveApproval 时注入 Approver
 	Label         string
 	SystemPrompt  string
 	SessionDir    string
@@ -282,14 +281,20 @@ func New(opts Options) *Controller {
 		})
 		c.executor.SetMemoryQueue(c)
 		c.executor.SetControllerBridge(c)
-}
-if c.jobs != nil {
-	c.jobs.SetOnCompletion(func(id string) {
-		// Always mark pending before autoReenter so completion activates the main
-		// agent even when per-job onComplete was not wired (e.g. missing provider).
-		c.pendingToolResult.Store(true)
-		c.autoReenter()
-	})
+	}
+	if c.jobs != nil {
+		c.jobs.SetOnCompletion(func(id string) {
+			c.pendingToolResult.Store(true)
+			if c.executor != nil {
+				if !c.executor.CompleteBackgroundJob(id) {
+					slog.Warn("background job finished but result not committed to session", "job", id)
+				}
+			}
+			c.mu.Lock()
+			c.autoReentryDepth = 0
+			c.mu.Unlock()
+			c.autoReenter()
+		})
 	}
 	return c
 }
@@ -342,8 +347,7 @@ func (c *Controller) beginCheckpoint(input string) {
 func (c *Controller) runGuarded(input string, body func(ctx context.Context) error) {
 	c.mu.Lock()
 	if c.running {
-		c.pendingReentry = true
-		c.pendingInput = input
+		c.pendingReentryQueue = append(c.pendingReentryQueue, input)
 		c.mu.Unlock()
 		return
 	}
@@ -359,19 +363,28 @@ func (c *Controller) runGuarded(input string, body func(ctx context.Context) err
 		c.mu.Lock()
 		c.running = false
 		c.cancel = nil
-		shouldReenter := c.pendingReentry
-		reentryInput := c.pendingInput
-		c.pendingReentry = false
-		c.pendingInput = ""
 		if input == "" && c.autoReentryDepth > 0 {
 			c.autoReentryDepth--
 		}
 		c.mu.Unlock()
 		c.sink.Emit(event.Event{Kind: event.TurnDone, Err: explainError(err)})
-		if shouldReenter {
-			c.Send(reentryInput)
-		}
+		c.drainReentryQueue()
 	}()
+}
+
+func (c *Controller) drainReentryQueue() {
+	for {
+		c.mu.Lock()
+		if c.running || len(c.pendingReentryQueue) == 0 {
+			c.mu.Unlock()
+			return
+		}
+		next := c.pendingReentryQueue[0]
+		c.pendingReentryQueue = c.pendingReentryQueue[1:]
+		c.mu.Unlock()
+		c.Send(next)
+		return
+	}
 }
 
 // MakeOnComplete returns an onComplete callback for jobs.Manager.Start() that
@@ -395,9 +408,9 @@ func (c *Controller) MakeOnMessage() func(jobID string) {
 // report results without waiting for the user's next message.
 func (c *Controller) autoReenter() {
 	c.mu.Lock()
-	if c.autoReentryDepth >= 2 {
+	if c.autoReentryDepth >= 10 {
 		c.mu.Unlock()
-		slog.Warn("auto-reentry depth cap reached; background completion pending user input")
+		slog.Warn("auto-reentry depth cap reached; background completion waits for user input")
 		return
 	}
 	if !c.pendingToolResult.Load() {
@@ -413,8 +426,17 @@ func (c *Controller) autoReenter() {
 // metadata for a background task job.
 func (c *Controller) RegisterJobMeta(jobID string, toolCallID string) {
 	c.taskResultsMu.Lock()
-	defer c.taskResultsMu.Unlock()
 	c.taskResults[jobID] = jobMeta{ToolCallID: toolCallID}
+	c.taskResultsMu.Unlock()
+	if c.jobs != nil && c.executor != nil {
+		if _, ok := c.jobs.CompletedResult(jobID); ok {
+			c.pendingToolResult.Store(true)
+			if !c.executor.CompleteBackgroundJob(jobID) {
+				slog.Warn("late RegisterJobMeta: job completed but delivery failed", "job", jobID)
+			}
+			c.autoReenter()
+		}
+	}
 }
 
 // GetJobMeta retrieves the stored metadata for a job without removing it.
@@ -502,6 +524,16 @@ func (c *Controller) runTurnWithRaw(ctx context.Context, input, raw string) erro
 			return nil // the hook's notify callback already surfaced the reason
 		}
 		defer func() { c.hooks.Stop(ctx, lastAssistantText(c.History()), turn) }()
+	}
+	if raw != "" && c.executor != nil && c.jobs != nil && len(c.jobs.Running()) > 0 {
+		lo := strings.ToLower(raw)
+		containsPeek := strings.Contains(lo, "peek")
+		negated := strings.Contains(lo, "别peek") || strings.Contains(lo, "不要peek") ||
+			strings.Contains(lo, "不准peek") || strings.Contains(lo, "stop peek") ||
+			strings.Contains(lo, "don't peek") || strings.Contains(lo, "no peek")
+		if containsPeek && !negated {
+			c.executor.SetDiagnosticRequested(true)
+		}
 	}
 	if err := c.runner.Run(ctx, input); err != nil {
 		return err

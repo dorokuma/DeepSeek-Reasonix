@@ -109,5 +109,3 @@ func skipWalkDir(root, path, name string) bool {
 	}
 	return vendorDirs[name] || isProtectedDir(absClean(path))
 }
-
-

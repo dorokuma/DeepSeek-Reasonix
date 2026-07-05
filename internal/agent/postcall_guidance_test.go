@@ -12,9 +12,10 @@ import (
 
 // testPGTool implements PostCallGuidance.
 type testPGTool struct{}
+
 func (testPGTool) Name() string        { return "test_pg_tool" }
-func (testPGTool) Description() string  { return "mock with PG" }
-func (testPGTool) ReadOnly() bool       { return true }
+func (testPGTool) Description() string { return "mock with PG" }
+func (testPGTool) ReadOnly() bool      { return true }
 func (testPGTool) Schema() json.RawMessage {
 	return json.RawMessage(`{"type":"object","properties":{}}`)
 }
@@ -27,13 +28,15 @@ func (testPGTool) PostCallGuidance(_ json.RawMessage) string {
 
 // testPGTPrefixTool also implements GuidancePrefixer.
 type testPGTPrefixTool struct{ testPGTool }
+
 func (testPGTPrefixTool) GuidancePrefix() string { return "CUSTOM:" }
 
 // simpleTool is a bare tool without PostCallGuidance.
 type simpleTool struct{}
+
 func (simpleTool) Name() string        { return "simple_tool" }
-func (simpleTool) Description() string  { return "simple no PG" }
-func (simpleTool) ReadOnly() bool       { return true }
+func (simpleTool) Description() string { return "simple no PG" }
+func (simpleTool) ReadOnly() bool      { return true }
 func (simpleTool) Schema() json.RawMessage {
 	return json.RawMessage(`{"type":"object","properties":{}}`)
 }

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -66,7 +67,7 @@ type TaskTool struct {
 	sysPrompt         string
 	gate              Gate
 	resolveProvider   func(modelRef, effort string) (provider.Provider, *provider.Pricing, int, error)
-	hooks ToolHooks
+	hooks             ToolHooks
 }
 
 // NewTaskTool wires a task tool to the parent agent's environment so its
@@ -103,7 +104,7 @@ func NewTaskTool(prov provider.Provider, pricing *provider.Pricing, parentReg *t
 func (t *TaskTool) Name() string { return "task" }
 
 func (t *TaskTool) Description() string {
-	return "Spawn a sub-agent for a focused sub-task. The sub-agent runs in its own session with the same provider and a filtered tool list (all 53 tools by default; meta-tools that enable recursive nesting are still excluded). Only its final answer is returned. Use this to (a) keep long exploration sequences out of the parent's context budget, or (b) delegate self-contained work like 'find every place that calls X and summarise the patterns'."
+	return "Spawn a sub-agent as a background job for a focused sub-task. Returns immediately with Started task <id>. When the sub-agent finishes, the runtime patches that tool result and may auto-continue the turn with the delivered answer — no polling tools on the main agent. The sub-agent runs in its own session with a filtered tool list."
 }
 
 func (t *TaskTool) Schema() json.RawMessage {
@@ -126,6 +127,33 @@ func (t *TaskTool) ReadOnly() bool { return false }
 // each sub-agent operates in an isolated session.
 func (t *TaskTool) Concurrent() bool { return true }
 
+// PostCallGuidance implements tool.PostCallGuidance.
+func (t *TaskTool) PostCallGuidance(args json.RawMessage) string {
+	return taskPostCallGuidance("")
+}
+
+// PostCallGuidanceAfter implements tool.PostCallGuidanceWithResult.
+func (t *TaskTool) PostCallGuidanceAfter(args json.RawMessage, result string) string {
+	return taskPostCallGuidance(extractJobID(result))
+}
+
+func extractJobID(result string) string {
+	m := startedJobLine.FindStringSubmatch(strings.TrimSpace(result))
+	if len(m) < 2 {
+		return ""
+	}
+	return m[1]
+}
+
+func taskPostCallGuidance(jobID string) string {
+	rule := `Background job results auto-deliver when finished.`
+	idClause := " job_id=task-N (from the Started line above)"
+	if jobID != "" {
+		idClause = fmt.Sprintf(" job_id=%q (from the Started line above)", jobID)
+	}
+	return rule + "\n" + idClause
+}
+
 func (t *TaskTool) Execute(ctx context.Context, args json.RawMessage) (string, error) {
 	// Depth guard: enforce nesting limit from Agent Options.
 	depth := NestingDepthFrom(ctx)
@@ -139,8 +167,8 @@ func (t *TaskTool) Execute(ctx context.Context, args json.RawMessage) (string, e
 	}
 
 	var p struct {
-		Prompt          string   `json:"prompt"`
-		Description     string   `json:"description"`
+		Prompt      string `json:"prompt"`
+		Description string `json:"description"`
 	}
 	if err := json.Unmarshal(args, &p); err != nil {
 		return "", fmt.Errorf("invalid args: %w", err)
@@ -181,7 +209,7 @@ func (t *TaskTool) Execute(ctx context.Context, args json.RawMessage) (string, e
 		registerMeta = func(jobID string) { ctrl.RegisterJobMeta(jobID, parentID) }
 	}
 	job, err := jm.Start(ctx, "task", label, func(jobCtx context.Context, _ io.Writer) (string, error) {
-		// Heartbeat: keep lastActive fresh so the stale monitor (30s timeout)
+		// Heartbeat: keep lastActive fresh so the stale monitor (120s inactivity)
 		// won't kill a busy task sub-agent whose output doesn't flow through the writer.
 		heartbeatDone := make(chan struct{})
 		defer close(heartbeatDone)
@@ -249,12 +277,14 @@ func FilterRegistry(parent *tool.Registry, names []string, exclude ...string) *t
 			sub.Add(tl)
 		}
 	}
+	if sm, ok := parent.Get("send_message"); ok {
+		sub.Add(sm)
+	}
 	return sub
 }
 
 var plannerNonResearchTools = []string{
 	"ask",
-	"bash_output",
 	"slash_command",
 	"todo_write",
 }
@@ -342,10 +372,18 @@ func RunSubAgent(ctx context.Context, prov provider.Provider, reg *tool.Registry
 	// without sharing state with the parent.
 	subJobs := jobs.NewManager(sink)
 	subCtrl := newSubControllerBridge()
+	subCtrl.jobs = subJobs
 	subJobs.SetOnCompletion(func(id string) {
 		subCtrl.pendingToolResult.Store(true)
 	})
-	defer subJobs.Close()
+	defer func() {
+		waitCtx, cancel := context.WithTimeout(context.Background(), 24*time.Hour)
+		defer cancel()
+		if err := subJobs.WaitRunning(waitCtx); err != nil {
+			slog.Warn("sub-agent background jobs still running at shutdown", "err", err)
+		}
+		subJobs.Close()
+	}()
 
 	opts.Jobs = subJobs
 	opts.Ctrl = subCtrl

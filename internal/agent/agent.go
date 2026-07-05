@@ -176,6 +176,7 @@ type subControllerBridge struct {
 	taskResults       map[string]string
 	taskResultsMu     sync.Mutex
 	pendingToolResult atomic.Bool
+	jobs              *jobs.Manager
 }
 
 func newSubControllerBridge() *subControllerBridge {
@@ -208,8 +209,13 @@ func (c *subControllerBridge) TakeJobMeta(jobID string) (toolCallID string, foun
 
 func (c *subControllerBridge) RegisterJobMeta(jobID string, toolCallID string) {
 	c.taskResultsMu.Lock()
-	defer c.taskResultsMu.Unlock()
 	c.taskResults[jobID] = toolCallID
+	c.taskResultsMu.Unlock()
+	if c.jobs != nil {
+		if _, ok := c.jobs.CompletedResult(jobID); ok {
+			c.pendingToolResult.Store(true)
+		}
+	}
 }
 
 // MakeOnComplete implements OnCompleteProvider. It returns a callback that sets
@@ -270,12 +276,12 @@ type Agent struct {
 	// reset on compaction (compaction only rewrites session.Messages), so the
 	// aggregate never craters when the prefix is summarized away. Atomic: the run
 	// loop accumulates them while the status line reads them.
-	sessCacheHit  atomic.Int64
-	sessCacheMiss atomic.Int64
-	sessCostInfo  atomic.Value // stores sessionCostInfo{cost, currency}
-	sessCostMu    sync.Mutex   // guards sessCostInfo Load-Modify-Store sequences
-	sessPromptTokens  atomic.Int64 // cumulative prompt tokens across all API calls
-	sessTotalTokens   atomic.Int64 // cumulative total tokens across all API calls
+	sessCacheHit     atomic.Int64
+	sessCacheMiss    atomic.Int64
+	sessCostInfo     atomic.Value // stores sessionCostInfo{cost, currency}
+	sessCostMu       sync.Mutex   // guards sessCostInfo Load-Modify-Store sequences
+	sessPromptTokens atomic.Int64 // cumulative prompt tokens across all API calls
+	sessTotalTokens  atomic.Int64 // cumulative total tokens across all API calls
 
 	// lastPrefixShape records the previous provider request's cacheable prefix
 	// so usage events can explain prefix churn on the next request.
@@ -303,7 +309,7 @@ type Agent struct {
 
 	// jobs, when non-nil, is the session's background-job manager. executeOne
 	// stamps it onto each tool call's context so the background tools (bash
-	// run_in_background, task run_in_background, bash_output/kill_shell) can
+	// run_in_background, task run_in_background, peek-job/cancel-job) can
 	// reach it. nil leaves those tools to degrade gracefully.
 	jobs *jobs.Manager
 
@@ -371,6 +377,10 @@ type Agent struct {
 	// is executing. Buffered 8; drops when full.
 	steerCh chan string
 
+	toolsDynamic map[string]bool
+
+	// diagnosticRequested exposes dynamic tools (e.g. peek-job) for one turn.
+	diagnosticRequested atomic.Bool
 }
 
 // SetGate installs the per-call permission gate. Used by `reasonix chat` to swap the
@@ -398,6 +408,36 @@ func (a *Agent) SetPreEditHook(fn func(diff.Change)) { a.onPreEdit = fn }
 // SetControllerBridge wires a ControllerBridge for auto-reentry and job metadata
 // lookup. Must be called before Run if auto-reentry is desired.
 func (a *Agent) SetControllerBridge(c ControllerBridge) { a.ctrl = c }
+
+// SetDiagnosticRequested enables dynamic tools (e.g. peek-job) for the next call.
+func (a *Agent) SetDiagnosticRequested(v bool) { a.diagnosticRequested.Store(v) }
+
+// DiagnosticRequested reports whether dynamic tools should be visible.
+func (a *Agent) DiagnosticRequested() bool { return a.diagnosticRequested.Load() }
+
+// FlushBackgroundJobResults delivers finished background job answers into the
+// session. The controller calls this from the jobs completion hook so results
+// survive auto-reentry depth limits and run-loop races.
+func (a *Agent) FlushBackgroundJobResults() (jobID, output string, ok bool) {
+	return a.deliverPendingJobResultsWithRetry(12, 20*time.Millisecond)
+}
+
+// AppendBackgroundTaskResultDelivery records the sub-agent final answer in a
+// machine-readable envelope (no prompt rules). The next model turn consumes it.
+func (a *Agent) AppendBackgroundTaskResultDelivery(jobID, output string) {
+	output = strings.TrimSpace(output)
+	if output == "" {
+		return
+	}
+	const max = 12000
+	if len(output) > max {
+		output = output[:max] + "\n…[truncated]"
+	}
+	a.session.Add(provider.Message{
+		Role:    provider.RoleUser,
+		Content: fmt.Sprintf("<background-task-result job=%q>\n%s\n</background-task-result>", jobID, output),
+	})
+}
 
 // Session returns the agent's current conversation, useful for persistence
 // hooks that need to read the message log between turns. sessMu serialises this
@@ -611,6 +651,9 @@ type Options struct {
 	// available. Set a custom map to restrict which tools the root agent sees.
 	MainAgentAllowed map[string]bool
 
+	// ToolsDynamic lists tools hidden until diagnosticRequested (e.g. peek-job).
+	ToolsDynamic map[string]bool
+
 	// MaxMainAgentReadonlyCalls limits the maximum number of readonly tool calls
 	// the main agent (nesting depth 0) can make. 0 or negative means unlimited.
 	MaxMainAgentReadonlyCalls int
@@ -664,29 +707,30 @@ func New(prov provider.Provider, tools *tool.Registry, session *Session, opts Op
 		maxStepsKey = "agent.max_steps"
 	}
 	return &Agent{
-		prov:                 prov,
-		tools:                tools,
-		session:              session,
-		maxSteps:             opts.MaxSteps,
-		maxStepsKey:          maxStepsKey,
-		temperature:          opts.Temperature,
-		pricing:              opts.Pricing,
-		sink:                 sink,
-		gate:                 gate,
-		hooks:                hooks,
-		jobs:                 opts.Jobs,
-		ctrl:                 opts.Ctrl,
-		ctxStore:             ctxStore,
-		sentFragments:        make(map[string]string),
-		projectChecks:        append([]instruction.VerifyCheck(nil), opts.ProjectChecks...),
-		writeFailureVerifier: true,
-		contextWindow:        opts.ContextWindow,
-		softCompactRatio:     opts.SoftCompactRatio,
-		compactRatio:         opts.CompactRatio,
-		compactForceRatio:    opts.CompactForceRatio,
-		recentKeep:           opts.RecentKeep,
-		archiveDir:           opts.ArchiveDir,
-		mainAgentAllowed:     opts.MainAgentAllowed,
+		prov:                      prov,
+		tools:                     tools,
+		session:                   session,
+		maxSteps:                  opts.MaxSteps,
+		maxStepsKey:               maxStepsKey,
+		temperature:               opts.Temperature,
+		pricing:                   opts.Pricing,
+		sink:                      sink,
+		gate:                      gate,
+		hooks:                     hooks,
+		jobs:                      opts.Jobs,
+		ctrl:                      opts.Ctrl,
+		ctxStore:                  ctxStore,
+		sentFragments:             make(map[string]string),
+		projectChecks:             append([]instruction.VerifyCheck(nil), opts.ProjectChecks...),
+		writeFailureVerifier:      true,
+		contextWindow:             opts.ContextWindow,
+		softCompactRatio:          opts.SoftCompactRatio,
+		compactRatio:              opts.CompactRatio,
+		compactForceRatio:         opts.CompactForceRatio,
+		recentKeep:                opts.RecentKeep,
+		archiveDir:                opts.ArchiveDir,
+		mainAgentAllowed:          opts.MainAgentAllowed,
+		toolsDynamic:              opts.ToolsDynamic,
 		maxMainAgentReadonlyCalls: opts.MaxMainAgentReadonlyCalls,
 	}
 }
@@ -706,8 +750,8 @@ func (a *Agent) Run(ctx context.Context, input string) error {
 	// Parse multimodal data URLs embedded in the input text (e.g.
 	// [REASONIX_IMAGE:data:image/jpeg;base64,...]) and convert them to
 	// ContentPart objects so the model can "see" images directly.
-	autoReentryTurn := input == "" && a.ctrl != nil && a.ctrl.PendingToolResultCAS(true, false)
-	if !autoReentryTurn {
+	wakeForBackground := input == "" && a.ctrl != nil && a.ctrl.PendingToolResult()
+	if input != "" || !wakeForBackground {
 		cleanInput, parts := parseMultimodalInput(input)
 		a.session.Add(provider.Message{Role: provider.RoleUser, Content: cleanInput, Parts: parts})
 		if a.ctxStore != nil {
@@ -728,15 +772,17 @@ func (a *Agent) Run(ctx context.Context, input string) error {
 		default:
 		}
 
-		// Auto-reentry: first loop iteration drains the completed sub-agent result
-		// without injecting steer input (there is no new user message).
-		if autoReentryTurn && step == 0 {
-			if !a.drainNotify() {
-				if a.ctrl != nil {
-					a.ctrl.SetPendingToolResult(true)
-				}
-				return nil
-			}
+		if parentSteer := jobs.DrainJobSteer(ctx); parentSteer != "" {
+			jobs.RecordAck(ctx, "received: "+parentSteer)
+			a.session.Add(provider.Message{Role: provider.RoleUser, Content: "[Parent steer]: " + parentSteer})
+		}
+
+		// Background wake: drain finished sub-agent results before streaming. Do not
+		// clear pendingToolResult until delivery catches up (see clearBackgroundWakeIfCaughtUp).
+		if wakeForBackground && step == 0 {
+			_, _, _ = a.deliverPendingJobResultsWithRetry(16, 25*time.Millisecond)
+			a.drainSubagentReports()
+			a.clearBackgroundWakeIfCaughtUp()
 		} else {
 			if userInput := a.drainSteer(); userInput != "" {
 				a.session.Add(provider.Message{Role: provider.RoleUser, Content: userInput})
@@ -791,9 +837,9 @@ func (a *Agent) Run(ctx context.Context, input string) error {
 			a.sink.Emit(event.Event{Kind: event.Usage, Usage: usage, Pricing: a.pricing,
 				CacheDiagnostics: &cacheDiagnostics,
 				SessionHit:       int(a.sessCacheHit.Load()), SessionMiss: int(a.sessCacheMiss.Load()),
-				SessionCost:      sCost, SessionCurrency: sCurrency,
-				SessionPrompt:    int(a.sessPromptTokens.Load()),
-				SessionTotal:     int(a.sessTotalTokens.Load())})
+				SessionCost: sCost, SessionCurrency: sCurrency,
+				SessionPrompt: int(a.sessPromptTokens.Load()),
+				SessionTotal:  int(a.sessTotalTokens.Load())})
 		}
 		if msg, ok := finishReasonMessage(usage); ok {
 			a.sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelWarn, Text: msg})
@@ -808,6 +854,7 @@ func (a *Agent) Run(ctx context.Context, input string) error {
 		}
 
 		if len(calls) == 0 {
+			text = a.surfaceBackgroundHandoffIfNeeded(wakeForBackground, text)
 			if !hasVisibleFinalAnswer(text) {
 				emptyFinalBlocks++
 				if emptyFinalBlocks >= maxEmptyFinalBlocks {
@@ -835,6 +882,11 @@ func (a *Agent) Run(ctx context.Context, input string) error {
 			if readiness.applies {
 				event.RecordReadinessAudit(a.sink, readiness.audit(evidence.ReadinessAllowed, finalReadinessBlocks > 0))
 			}
+			// Do not finalize while session-scoped background jobs are still running.
+			if a.jobs != nil && len(a.jobs.Running()) > 0 {
+				a.session.Add(assistantMsg)
+				return nil
+			}
 			a.session.Add(assistantMsg)
 			return nil // model gave a normal final answer
 		}
@@ -851,6 +903,9 @@ func (a *Agent) Run(ctx context.Context, input string) error {
 				ToolCallID: call.ID,
 				Name:       call.Name,
 			})
+		}
+		if len(calls) > 0 {
+			jobs.RecordProgress(ctx, step+1, calls[len(calls)-1].Name)
 		}
 
 		// The prompt only grows from here; compact before the next turn so it
@@ -897,60 +952,64 @@ func (a *Agent) deliverBackgroundToolResult(toolCallID, output string) {
 	})
 }
 
-// drainNotify 消费所有活跃 job 的通知通道，返回是否消费到 result
-func (a *Agent) drainNotify() bool {
-	jm := a.jobs // jobs.Manager 引用
-	if jm == nil || a.ctrl == nil {
+// deliverPendingJobResults writes finished background job answers into the session
+// (patching the Started placeholder or appending a tool row).
+func (a *Agent) deliverPendingJobResults() (jobID, output string, ok bool) {
+	if a.jobs == nil {
+		return "", "", false
+	}
+	for _, id := range a.jobs.ActiveJobs() {
+		if id2, out, have := a.tryDeliverJobResult(id); have {
+			if a.commitBackgroundJobResult(id2, out) {
+				return id2, out, true
+			}
+		}
+	}
+	return "", "", false
+}
+
+func (a *Agent) deliverPendingJobResultsWithRetry(attempts int, delay time.Duration) (jobID, output string, ok bool) {
+	if attempts < 1 {
+		attempts = 1
+	}
+	for i := 0; i < attempts; i++ {
+		if id, out, delivered := a.deliverPendingJobResults(); delivered {
+			return id, out, true
+		}
+		if i+1 < attempts && delay > 0 {
+			time.Sleep(delay)
+		}
+	}
+	return "", "", false
+}
+
+// drainSubagentReports moves free-form sub-agent reports into parent session envelopes.
+func (a *Agent) drainSubagentReports() bool {
+	jm := a.jobs
+	if jm == nil {
 		return false
 	}
-	jobIDs := jm.ActiveJobs()
 	consumed := false
-	for _, jobID := range jobIDs {
-		ch := jm.NotifyChannels(jobID)
-		if ch == nil {
-			continue
-		}
-		// 非阻塞读取 resultCh
-		select {
-		case notify, ok := <-ch.Result:
-			if ok && notify.Type == "result" {
-				toolCallID, found := a.ctrl.TakeJobMeta(jobID)
-				if found {
-					a.deliverBackgroundToolResult(toolCallID, notify.Output)
-					jm.RemoveJob(jobID)
-					consumed = true
-				}
-				// meta 未就绪时保留 job，依赖 CompletedResult 在后续 drain 重试
+	for _, jobID := range jm.ActiveJobs() {
+		for _, msg := range jm.TakePendingReports(jobID) {
+			if msg == "" {
+				continue
 			}
-		default:
-			if notify, ok := jm.CompletedResult(jobID); ok {
-				toolCallID, found := a.ctrl.TakeJobMeta(jobID)
-				if found {
-					a.deliverBackgroundToolResult(toolCallID, notify.Output)
-					jm.RemoveJob(jobID)
-					consumed = true
-				}
-			}
-		}
-
-		// 非阻塞循环读取 Inbox，消费全部积压消息
-		for {
-			select {
-			case msg, ok := <-ch.Inbox:
-				if ok && msg != "" {
-					a.session.Add(provider.Message{
-						Role:    provider.RoleUser,
-						Content: fmt.Sprintf("[Subagent message]: %s", msg),
-					})
-					consumed = true
-					continue
-				}
-			default:
-			}
-			break
+			a.session.Add(provider.Message{
+				Role:    provider.RoleUser,
+				Content: fmt.Sprintf("<subagent-report job=%q>\n%s\n</subagent-report>", jobID, msg),
+			})
+			consumed = true
 		}
 	}
 	return consumed
+}
+
+// drainNotify delivers finished job results and sub-agent report envelopes.
+func (a *Agent) drainNotify() bool {
+	_, _, r := a.deliverPendingJobResults()
+	i := a.drainSubagentReports()
+	return r || i
 }
 
 type finalReadinessCheck struct {
@@ -1193,12 +1252,25 @@ func (a *Agent) getSchemasForContext(ctx context.Context) []provider.ToolSchema 
 		return nil
 	}
 	schemas := a.tools.Schemas()
-	if allow := a.mainAgentAllowed; allow != nil && NestingDepthFrom(ctx) == 0 {
+	depth := NestingDepthFrom(ctx)
+	if depth == 0 {
+		diagnosticExpose := a.diagnosticRequested.Load()
 		filtered := make([]provider.ToolSchema, 0, len(schemas))
 		for _, s := range schemas {
-			if allow[s.Name] {
-				filtered = append(filtered, s)
+			if a.toolsDynamic != nil && a.toolsDynamic[s.Name] {
+				if !diagnosticExpose {
+					continue
+				}
 			}
+			if t, ok := a.tools.Get(s.Name); ok {
+				if sub, ok := t.(tool.OnlyForSubAgent); ok && sub.OnlyForSubAgent() {
+					continue
+				}
+			}
+			if allow := a.mainAgentAllowed; allow != nil && !allow[s.Name] {
+				continue
+			}
+			filtered = append(filtered, s)
 		}
 		return filtered
 	}
@@ -1463,6 +1535,19 @@ func (a *Agent) executeOne(ctx context.Context, call provider.ToolCall) toolOutc
 			errMsg: fmt.Sprintf("unknown tool %q", call.Name),
 		}
 	}
+	if sub, ok := t.(tool.OnlyForSubAgent); ok && sub.OnlyForSubAgent() && NestingDepthFrom(ctx) == 0 {
+		return toolOutcome{
+			output: fmt.Sprintf("error: tool %q is only available to sub-agents", call.Name),
+			errMsg: fmt.Sprintf("tool %q sub-agent only", call.Name),
+		}
+	}
+	if a.toolsDynamic != nil && a.toolsDynamic[call.Name] && NestingDepthFrom(ctx) == 0 && !a.diagnosticRequested.Load() {
+		return toolOutcome{
+			output:  fmt.Sprintf("permission denied: tool %q is not currently available", call.Name),
+			blocked: true,
+			errMsg:  fmt.Sprintf("permission denied: tool %q not available", call.Name),
+		}
+	}
 	// Main-agent whitelist: when nesting depth is 0 (root/main agent),
 	// only allow explicitly permitted tools (if the option is set).
 	if allow := a.mainAgentAllowed; allow != nil && NestingDepthFrom(ctx) == 0 && !allow[call.Name] {
@@ -1628,7 +1713,13 @@ func (a *Agent) executeOne(ctx context.Context, call provider.ToolCall) toolOutc
 				prefix = p
 			}
 		}
-		if guidance := strings.TrimSpace(pg.PostCallGuidance(json.RawMessage(call.Arguments))); guidance != "" {
+		var guidance string
+		if pgr, ok := t.(tool.PostCallGuidanceWithResult); ok {
+			guidance = strings.TrimSpace(pgr.PostCallGuidanceAfter(json.RawMessage(call.Arguments), result))
+		} else {
+			guidance = strings.TrimSpace(pg.PostCallGuidance(json.RawMessage(call.Arguments)))
+		}
+		if guidance != "" {
 			body += "\n\n---\n" + prefix + "\n" + guidance
 		}
 	}

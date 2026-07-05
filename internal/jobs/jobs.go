@@ -1,8 +1,8 @@
 // Package jobs is the session-scoped background-job registry behind the agent's
 // background tools (bash run_in_background, task run_in_background) and the
-// bash_output and kill_shell tools. A Manager owns a context whose lifetime
+// peek-job and cancel-job tools. A Manager owns a context whose lifetime
 // is the session, NOT a single turn — so a job started in one turn keeps running
-// across turns and is cancelled only when the controller closes (or kill_shell is
+// across turns and is cancelled only when the controller closes (or cancel-job is
 // called). Tools reach the Manager through the call context (WithManager /
 // FromContext), the same injection pattern the `ask` tool uses for the asker.
 //
@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -45,11 +46,11 @@ type View struct {
 // JobNotify is a notification sent from a background sub-agent to its parent.
 type JobNotify struct {
 	JobID    string `json:"job_id"`
-	Type     string `json:"type"`              // "ack" | "progress" | "result"
+	Type     string `json:"type"` // "ack" | "progress" | "result"
 	Step     int    `json:"step,omitempty"`
-	AckMsg   string `json:"ack_msg,omitempty"`    // for ack
-	LastTool string `json:"last_tool,omitempty"`  // for progress
-	Output   string `json:"output,omitempty"`     // for result (final answer)
+	AckMsg   string `json:"ack_msg,omitempty"`   // for ack
+	LastTool string `json:"last_tool,omitempty"` // for progress
+	Output   string `json:"output,omitempty"`    // for result (final answer)
 }
 
 type jobKey struct{}
@@ -82,11 +83,16 @@ type Job struct {
 
 	// Notification channels for sub-agent ↔ parent communication (used by task jobs).
 	// Initialized by Start — defined here as fields only for now.
-	steerCh   chan string      // parent → child steer messages
-	ackCh     chan JobNotify   // child → parent ack, buf 4
-	resultCh  chan JobNotify   // child → parent result, buf 1
-	notifyCh  chan JobNotify   // child → parent progress, buf 16
-	inbox     chan string      // child → parent inbox messages, buf 16
+	steerCh  chan string    // parent → child steer messages
+	ackCh    chan JobNotify // child → parent ack, buf 4
+	resultCh chan JobNotify // child → parent result, buf 1
+	notifyCh chan JobNotify // child → parent progress, buf 16
+	inbox    chan string    // legacy; free-form reports use pendingReports
+
+	step           int
+	lastTool       string
+	lastAck        string
+	pendingReports []string // free-form sub-agent reports (send_message), drained by parent
 
 	completed bool // true after onComplete fires; drainNotify removes the job from the map
 	onMessage func(jobID string)
@@ -253,9 +259,9 @@ func (m *Manager) Start(ctx context.Context, kind, label string, run func(ctx co
 
 	m.sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelInfo, Text: startedText(kind, id, label)})
 
-if len(beforeRun) > 0 && beforeRun[0] != nil {
-beforeRun[0](id)
-}
+	if len(beforeRun) > 0 && beforeRun[0] != nil {
+		beforeRun[0](id)
+	}
 
 	go func() {
 		defer func() {
@@ -267,9 +273,16 @@ beforeRun[0](id)
 		}()
 		result, err := run(jobCtx, jobWriter{j})
 
+		j.mu.Lock()
+		killMarked := j.status == Killed
+		j.mu.Unlock()
+
 		var st Status
 		switch {
-		case jobCtx.Err() != nil:
+		case strings.TrimSpace(result) != "" && err == nil:
+			// run() returned a terminal answer — treat as Done even if Kill raced after return.
+			st = Done
+		case jobCtx.Err() != nil || killMarked:
 			st = Killed
 		case err != nil:
 			st = Failed
@@ -282,14 +295,8 @@ beforeRun[0](id)
 
 		// Send result to resultCh before onComplete (per spec §5.3).
 		if st == Done || st == Failed {
-			select {
-			case <-jobCtx.Done():
-				// ctx 已取消，不发送
-			case j.resultCh <- JobNotify{JobID: id, Type: "result", Output: result}:
-				// 成功发送
-			default:
-				// resultCh 满，drop + warn
-				slog.Warn("resultCh full, dropping result for job", "id", id)
+			if !safeChanSend(j.resultCh, JobNotify{JobID: id, Type: "result", Output: result}) {
+				slog.Warn("resultCh full or closed, dropping result for job", "id", id)
 			}
 		}
 
@@ -305,11 +312,9 @@ beforeRun[0](id)
 		}
 		m.sink.Emit(event.Event{Kind: event.Notice, Level: level, Text: text})
 
-j.mu.Lock()
+		j.mu.Lock()
 		j.result = result
-		if j.status != Killed { // a concurrent Kill already published Killed — keep it
-			j.status = st
-		}
+		j.status = st
 		j.completed = true
 		j.mu.Unlock()
 		// Fire completion callbacks — onComplete (per-call) then onCompletion (global).
@@ -320,12 +325,10 @@ j.mu.Lock()
 			m.onCompletion(id)
 		}
 
-		
 		close(j.done)
 	}()
 	return j, nil
 }
-
 
 func (m *Manager) get(id string) *Job {
 	m.mu.Lock()
@@ -355,7 +358,7 @@ func (m *Manager) Output(id string) (text string, status Status, ok bool) {
 	j.readOffset = len(full)
 	// A task job streams nothing to the buffer — its answer lands in result. Once
 	// it is terminal with no buffered output, surface that result once so a task's
-	// answer is visible here too (bash_output's description promises task support).
+	// answer is visible here too (peek-job uses Output for incremental reads).
 	if text == "" && j.status != Running && j.result != "" && !j.resultRead {
 		text = j.result
 		j.resultRead = true
@@ -431,6 +434,26 @@ func (m *Manager) Running() []View {
 	}
 	return out
 }
+
+// WaitRunning blocks until no jobs report Running or ctx is cancelled.
+func (m *Manager) WaitRunning(ctx context.Context) error {
+	if m == nil {
+		return nil
+	}
+	ticker := time.NewTicker(200 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		if len(m.Running()) == 0 {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+		}
+	}
+}
+
 // Close cancels the session context, terminating every running job. Safe to call
 // once at controller shutdown.
 func (m *Manager) Close() {
@@ -442,8 +465,6 @@ func (m *Manager) Close() {
 	m.mu.Unlock()
 	m.cancel()
 }
-
-
 
 // safeChanSend performs a non-blocking channel send. It recovers from send-on-
 // closed-channel panics so async job completion cannot crash the process when
@@ -480,11 +501,12 @@ var (
 
 // JobStatus is a read-only snapshot returned by Peek.
 type JobStatus struct {
-	JobID    string
-	Status   string // "running" | "done" | "cancelled" | "error"
-	Step     int
-	LastTool string
-	LastAck  string
+	JobID       string
+	Status      string // "running" | "done" | "cancelled" | "error"
+	StartedAtMs int64  // Unix ms when the job was created
+	Step        int
+	LastTool    string
+	LastAck     string
 }
 
 // JobChannels exposes the three notification channel read-ends for a job.
@@ -529,8 +551,12 @@ func (m *Manager) Peek(jobID string) (JobStatus, error) {
 	j.mu.Lock()
 	defer j.mu.Unlock()
 	s := JobStatus{
-		JobID:  j.ID,
-		Status: string(j.status),
+		JobID:       j.ID,
+		Status:      string(j.status),
+		StartedAtMs: j.startedAt,
+		Step:        j.step,
+		LastTool:    j.lastTool,
+		LastAck:     j.lastAck,
 	}
 	return s, nil
 }
@@ -553,19 +579,19 @@ func (m *Manager) NotifyChannels(jobID string) *JobChannels {
 // CompletedResult returns a terminal result for a finished job when resultCh
 // was not drained (e.g. buffer full drop) or the channel read raced completion.
 func (m *Manager) CompletedResult(jobID string) (JobNotify, bool) {
-j := m.get(jobID)
-if j == nil {
-return JobNotify{}, false
-}
-j.mu.Lock()
-defer j.mu.Unlock()
-if !j.completed {
-return JobNotify{}, false
-}
-if j.status != Done && j.status != Failed {
-return JobNotify{}, false
-}
-return JobNotify{JobID: jobID, Type: "result", Output: j.result}, true
+	j := m.get(jobID)
+	if j == nil {
+		return JobNotify{}, false
+	}
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	if !j.completed {
+		return JobNotify{}, false
+	}
+	if j.status != Done && j.status != Failed {
+		return JobNotify{}, false
+	}
+	return JobNotify{JobID: jobID, Type: "result", Output: j.result}, true
 }
 
 // RemoveJob deletes a job from the map. Called by drainNotify after consuming resultCh.
@@ -596,33 +622,27 @@ func FromContext(ctx context.Context) (*Manager, bool) {
 // from the context and performs a non-blocking write. If a callback is registered,
 // it triggers it. Returns true on success.
 func PostMessage(ctx context.Context, msg string) bool {
-	if j, ok := ctx.Value(jobKey{}).(*Job); ok && j != nil {
-	j.mu.Lock()
-	if j.completed {
-		j.mu.Unlock()
+	j, ok := JobFromContext(ctx)
+	if !ok || strings.TrimSpace(msg) == "" {
 		return false
 	}
-	j.mu.Unlock()
-		select {
-		case j.inbox <- msg:
-			j.mu.Lock()
-			fn := j.onMessage
-			j.mu.Unlock()
-			if fn != nil {
-				fn(j.ID)
-			}
-			if j.sink != nil {
-				j.sink.Emit(event.Event{
-					Kind:  event.Notice,
-					Level: event.LevelInfo,
-					Text:  fmt.Sprintf("· sub-agent message: %s", msg),
-				})
-			}
-			return true
-		default:
-			slog.Warn("inbox full, dropping message for job", "id", j.ID)
-			return false
-		}
+	if !appendPendingReport(j, strings.TrimSpace(msg)) {
+		return false
 	}
-	return false
+	j.mu.Lock()
+	fn := j.onMessage
+	sink := j.sink
+	id := j.ID
+	j.mu.Unlock()
+	if fn != nil {
+		fn(id)
+	}
+	if sink != nil {
+		sink.Emit(event.Event{
+			Kind:  event.Notice,
+			Level: event.LevelInfo,
+			Text:  fmt.Sprintf("· sub-agent message: %s", msg),
+		})
+	}
+	return true
 }

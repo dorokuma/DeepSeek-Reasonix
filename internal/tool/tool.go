@@ -41,6 +41,12 @@ type Concurrenter interface {
 	Concurrent() bool
 }
 
+// OnlyForSubAgent marks tools that must not appear on the root (depth-0) agent,
+// e.g. send_message for background sub-agents reporting to the parent.
+type OnlyForSubAgent interface {
+	OnlyForSubAgent() bool
+}
+
 // Previewer is an optional capability a writer Tool may implement: given the
 // same raw JSON args Execute would receive, compute the file change the call
 // *would* make — without touching disk. A front-end uses it to show an approval
@@ -60,6 +66,14 @@ type Previewer interface {
 // A tool without PostCallGuidance leaves no trace in the result.
 type PostCallGuidance interface {
 	PostCallGuidance(args json.RawMessage) string
+}
+
+// PostCallGuidanceWithResult is an optional extension to PostCallGuidance.
+// When implemented, the agent calls PostCallGuidanceAfter with the successful
+// Execute return value instead of PostCallGuidance alone, so guidance can cite
+// dynamic ids (e.g. job_id from "Started task task-N …").
+type PostCallGuidanceWithResult interface {
+	PostCallGuidanceAfter(args json.RawMessage, result string) string
 }
 
 // GuidancePrefixer is an optional extension to PostCallGuidance. When

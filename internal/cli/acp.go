@@ -58,7 +58,6 @@ func acpCommand(args []string, version string) int {
 		return 1
 	}
 
-
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 
@@ -147,17 +146,35 @@ func (f *acpFactory) NewSession(ctx context.Context, p acp.SessionParams) (*cont
 		cfg.Agent.Temperature, config.ArchiveDir(), "", headlessGate,
 		resolveSubagentProvider, nil))
 
+	var mainAgentAllowed map[string]bool
+	if len(cfg.Permissions.MainAgentAllowed) > 0 {
+		mainAgentAllowed = make(map[string]bool)
+		for _, name := range cfg.Permissions.MainAgentAllowed {
+			mainAgentAllowed[name] = true
+		}
+	}
+	var toolsDynamic map[string]bool
+	if len(cfg.Permissions.ToolsDynamic) > 0 {
+		toolsDynamic = make(map[string]bool)
+		for _, name := range cfg.Permissions.ToolsDynamic {
+			toolsDynamic[name] = true
+		}
+	}
+
 	executor := agent.New(execProv, reg, agent.NewSession(sysPrompt), agent.Options{
-		MaxSteps:          maxSteps,
-		Temperature:       cfg.Agent.Temperature,
-		Pricing:           entry.Price,
-		Gate:              headlessGate,
-		ProjectChecks:     projectChecks,
-		ContextWindow:     entry.ContextWindow,
-		SoftCompactRatio:  cfg.Agent.SoftCompactRatio,
-		CompactRatio:      cfg.Agent.CompactRatio,
-		CompactForceRatio: cfg.Agent.CompactForceRatio,
-		ArchiveDir:        config.ArchiveDir(),
+		MaxSteps:                  maxSteps,
+		Temperature:               cfg.Agent.Temperature,
+		Pricing:                   entry.Price,
+		Gate:                      headlessGate,
+		ProjectChecks:             projectChecks,
+		ContextWindow:             entry.ContextWindow,
+		SoftCompactRatio:          cfg.Agent.SoftCompactRatio,
+		CompactRatio:              cfg.Agent.CompactRatio,
+		CompactForceRatio:         cfg.Agent.CompactForceRatio,
+		ArchiveDir:                config.ArchiveDir(),
+		MainAgentAllowed:          mainAgentAllowed,
+		ToolsDynamic:              toolsDynamic,
+		MaxMainAgentReadonlyCalls: cfg.Agent.MaxMainAgentReadonlyCalls,
 	}, p.Sink)
 
 	cmds, _ := command.Load(config.CommandDirs()...)
@@ -179,13 +196,16 @@ func (f *acpFactory) NewSession(ctx context.Context, p acp.SessionParams) (*cont
 			plannerSess := agent.NewSession(agent.PlannerPromptWithContext(mem.Block()))
 			plannerTools := agent.PlannerToolRegistry(reg)
 			runner = agent.NewCoordinator(plannerProv, plannerSess, pe.Price, plannerTools, agent.Options{
-				MaxSteps:          maxSteps,
-				Gate:              headlessGate,
-				ContextWindow:     pe.ContextWindow,
-				SoftCompactRatio:  cfg.Agent.SoftCompactRatio,
-				CompactRatio:      cfg.Agent.CompactRatio,
-				CompactForceRatio: cfg.Agent.CompactForceRatio,
-				ArchiveDir:        config.ArchiveDir(),
+				MaxSteps:                  maxSteps,
+				Gate:                      headlessGate,
+				ContextWindow:             pe.ContextWindow,
+				SoftCompactRatio:          cfg.Agent.SoftCompactRatio,
+				CompactRatio:              cfg.Agent.CompactRatio,
+				CompactForceRatio:         cfg.Agent.CompactForceRatio,
+				ArchiveDir:                config.ArchiveDir(),
+				MainAgentAllowed:          mainAgentAllowed,
+				ToolsDynamic:              toolsDynamic,
+				MaxMainAgentReadonlyCalls: cfg.Agent.MaxMainAgentReadonlyCalls,
 			}, executor, cfg.Agent.Temperature, p.Sink, nil)
 			label = entry.Model + " + planner " + pe.Model
 		}

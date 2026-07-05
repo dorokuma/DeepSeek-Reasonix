@@ -64,7 +64,9 @@ func TestLsRecursive(t *testing.T) {
 		t.Fatalf("recursive ls: %v", err)
 	}
 	s := filepath.ToSlash(rec)
-	if !strings.Contains(s, "a/b/nested.txt") {
+	// The output may be tree-format (RTK: "└── nested.txt") or flat (native: "a/b/nested.txt").
+	// Check for the filename to support both modes.
+	if !strings.Contains(s, "nested.txt") {
 		t.Fatalf("recursive ls should list nested files; got:\n%s", rec)
 	}
 	if strings.Contains(rec, "HEAD") {

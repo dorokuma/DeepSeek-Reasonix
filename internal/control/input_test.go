@@ -88,12 +88,11 @@ func TestComposeDrainsQueuedMemory(t *testing.T) {
 	}
 }
 
-
 func TestSubmitHashNumberStartsTurn(t *testing.T) {
 	runner := &fakeTurnRunner{}
 	events := make(chan event.Event, 4)
 	c := New(Options{
-		Runner:   runner,
+		Runner: runner,
 		Sink: event.FuncSink(func(e event.Event) {
 			events <- e
 		}),
@@ -107,7 +106,6 @@ func TestSubmitHashNumberStartsTurn(t *testing.T) {
 		t.Fatalf("#number prompt should start a model turn, inputs=%q", runner.inputs)
 	}
 }
-
 
 func waitForTurnDone(t *testing.T, events <-chan event.Event) {
 	t.Helper()

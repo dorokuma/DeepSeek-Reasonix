@@ -97,4 +97,3 @@ func AgentFromContext(ctx context.Context) *Agent {
 	}
 	return nil
 }
-

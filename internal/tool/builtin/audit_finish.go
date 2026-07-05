@@ -33,7 +33,7 @@ import (
 // can give the model: "if you can't write 500 bytes of report, you
 // haven't actually finished."
 const (
-	minAuditSummaryBytes = 500     // 500 B forces real prose, not "done"
+	minAuditSummaryBytes = 500    // 500 B forces real prose, not "done"
 	maxAuditSummaryBytes = 200000 // 200 KB forces chunking if audit is huge
 )
 

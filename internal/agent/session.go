@@ -5,6 +5,7 @@ package agent
 import (
 	"fmt"
 	"regexp"
+	"strings"
 	"sync"
 
 	"reasonix/internal/provider"
@@ -41,6 +42,24 @@ func (s *Session) Add(m provider.Message) {
 // given toolCallID. Used when a background sub-agent finishes: the placeholder
 // "Started task …" tool result is updated in place instead of appending an
 // orphan tool message after later assistant turns.
+// ToolCallIDForStartedTaskLine finds the tool call id for a background task
+// placeholder row (Started task <jobID> …). Fallback when job meta was lost.
+func (s *Session) ToolCallIDForStartedTaskLine(jobID string) string {
+	if jobID == "" {
+		return ""
+	}
+	marker := "Started task " + jobID
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for i := len(s.Messages) - 1; i >= 0; i-- {
+		m := s.Messages[i]
+		if m.Role == provider.RoleTool && strings.Contains(m.Content, marker) && m.ToolCallID != "" {
+			return m.ToolCallID
+		}
+	}
+	return ""
+}
+
 func (s *Session) PatchToolResult(toolCallID, content string) bool {
 	if toolCallID == "" {
 		return false

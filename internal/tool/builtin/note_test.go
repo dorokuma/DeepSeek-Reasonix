@@ -255,7 +255,7 @@ func TestCleanupNotes(t *testing.T) {
 	// Fixed "now" anchor for deterministic tests.
 	now := time.Date(2025, 6, 18, 12, 0, 0, 0, time.UTC)
 	old := now.Add(-10 * 24 * time.Hour) // 10 days ago – beyond retention window
-	recent := now.Add(-1 * time.Hour)     // 1 hour ago – well within window
+	recent := now.Add(-1 * time.Hour)    // 1 hour ago – well within window
 
 	// noteBlock builds a single note block with the given id, timestamp and kind.
 	noteBlock := func(id int, ts time.Time, kind string) string {
@@ -263,9 +263,9 @@ func TestCleanupNotes(t *testing.T) {
 	}
 
 	tests := []struct {
-		name     string
-		input    string
-		wantIDs  []int // expected note IDs in output (in file order)
+		name    string
+		input   string
+		wantIDs []int // expected note IDs in output (in file order)
 	}{
 		{
 			name:    "empty input",
@@ -322,13 +322,13 @@ func TestCleanupNotes(t *testing.T) {
 			}(),
 		},
 		{
-			name: "unparseable timestamp – kept",
-			input: "\n## note #1 · bad-timestamp · kind=scratch\n\nbody\n",
+			name:    "unparseable timestamp – kept",
+			input:   "\n## note #1 · bad-timestamp · kind=scratch\n\nbody\n",
 			wantIDs: []int{1},
 		},
 		{
-			name: "prefix preserved before first note",
-			input: "# My Header\n\nSome text before notes.\n" + noteBlock(1, recent, "evidence"),
+			name:    "prefix preserved before first note",
+			input:   "# My Header\n\nSome text before notes.\n" + noteBlock(1, recent, "evidence"),
 			wantIDs: []int{1},
 		},
 		{
@@ -389,4 +389,3 @@ func TestCleanupNotes(t *testing.T) {
 		})
 	}
 }
-

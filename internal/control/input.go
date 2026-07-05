@@ -32,7 +32,6 @@ func (c *Controller) Compose(text string) string {
 	return text
 }
 
-
 // CustomCommand resolves a "/name args…" line against the loaded custom slash
 // commands, returning the rendered prompt to send (found=false when no command
 // matches). The caller should call Compose for memory/jobs framing.

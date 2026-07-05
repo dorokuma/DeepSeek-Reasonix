@@ -300,4 +300,3 @@ func TestMainAgentAllowedWhitelist(t *testing.T) {
 		t.Errorf("expected rw1 to be blocked by whitelist, got output=%q, blocked=%v", res2.output, res2.blocked)
 	}
 }
-

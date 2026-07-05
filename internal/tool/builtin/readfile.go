@@ -31,7 +31,6 @@ func init() { tool.RegisterBuiltin(readFile{}) }
 // at init resolves against the process working directory.
 type readFile struct{ workDir string }
 
-
 func (readFile) Name() string { return "read_file" }
 
 func (readFile) Description() string {

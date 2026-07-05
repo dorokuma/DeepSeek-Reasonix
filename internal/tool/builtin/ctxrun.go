@@ -27,7 +27,6 @@ func init() { tool.RegisterBuiltin(ctxRun{}) }
 // ctxRun executes a short script and returns stdout only — the Think-in-Code path.
 // Large stdout can still be compacted by ctxmode on the way into model context.
 type ctxRun struct {
-
 	workDir string
 }
 

@@ -18,11 +18,11 @@ func TestApplyOpenCodePricingFiltersModels(t *testing.T) {
 				fetchedModels: []string{
 					"deepseek-v4-flash",
 					"deepseek-v4-pro",
-					"glm-5",          // undocumented
+					"glm-5", // undocumented
 					"glm-5.1",
 					"glm-5.2",
-					"hy3-preview",    // undocumented
-					"kimi-k2.5",      // undocumented
+					"hy3-preview", // undocumented
+					"kimi-k2.5",   // undocumented
 					"kimi-k2.6",
 					"kimi-k2.7-code",
 					"mimo-v2.5",
@@ -30,7 +30,7 @@ func TestApplyOpenCodePricingFiltersModels(t *testing.T) {
 					"minimax-m2.5",
 					"minimax-m2.7",
 					"minimax-m3",
-					"qwen3.5-plus",   // undocumented
+					"qwen3.5-plus", // undocumented
 					"qwen3.6-plus",
 					"qwen3.7-max",
 					"qwen3.7-plus",
@@ -91,9 +91,9 @@ func TestApplyOpenCodePricingNoFilterWhenScrapeFails(t *testing.T) {
 		UsdCnyRate: 7.0,
 		Providers: []ProviderEntry{
 			{
-				Name:    "opencode-go",
-				BaseURL: "https://opencode.ai/zen/go/v1",
-				Model:   "deepseek-v4-flash",
+				Name:          "opencode-go",
+				BaseURL:       "https://opencode.ai/zen/go/v1",
+				Model:         "deepseek-v4-flash",
 				fetchedModels: []string{"deepseek-v4-flash", "glm-5", "hy3-preview"},
 			},
 		},

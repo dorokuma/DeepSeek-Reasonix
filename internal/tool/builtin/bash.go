@@ -15,8 +15,8 @@ import (
 	"time"
 
 	"reasonix/internal/envutil"
-	"reasonix/internal/shell"
 	"reasonix/internal/jobs"
+	"reasonix/internal/shell"
 	// "reasonix/internal/rtk" // RTK migrated to PreToolUse hook (hooks/rtk-bash.sh)
 	"reasonix/internal/tool"
 )
@@ -83,6 +83,7 @@ func (lw *limitedWriter) Write(p []byte) (int, error) {
 	lw.written += int64(len(p))
 	return len(p), nil
 }
+
 type bash struct {
 	shell   shell.Shell
 	workDir string
@@ -120,7 +121,7 @@ func (b bash) resolved() shell.Shell {
 }
 
 func (bash) Schema() json.RawMessage {
-	return json.RawMessage(`{"type":"object","properties":{"command":{"type":"string","description":"Shell command to execute"},"run_in_background":{"type":"boolean","description":"Run detached: returns a job id immediately and keeps running across turns (no foreground timeout). Read new output with bash_output, stop it with kill_shell. Use for long-running commands like servers, watchers, or builds you don't need to block on."}},"required":["command"]}`)
+	return json.RawMessage(`{"type":"object","properties":{"command":{"type":"string","description":"Shell command to execute"},"run_in_background":{"type":"boolean","description":"Run detached: returns a job id immediately and keeps running across turns (no foreground timeout). Poll with peek-job, stop with cancel-job. Use for long-running commands like servers, watchers, or builds you don't need to block on."}},"required":["command"]}`)
 }
 
 // ReadOnly is false: bash's effect cannot be inferred from args (rm, curl,
@@ -181,7 +182,7 @@ func (b bash) Execute(ctx context.Context, args json.RawMessage) (string, error)
 		if err != nil {
 			return "", err
 		}
-		return fmt.Sprintf("Started background job %q. It keeps running across turns; read new output with bash_output(job_id=%q) or stop it with kill_shell(job_id=%q).", job.ID, job.ID, job.ID), nil
+		return fmt.Sprintf("Started background job %q. It keeps running across turns; use peek-job(job_id=%q) for status/output and cancel-job(job_id=%q) to stop.", job.ID, job.ID, job.ID), nil
 	}
 
 	runCtx := ctx

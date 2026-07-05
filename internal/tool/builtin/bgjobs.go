@@ -4,130 +4,20 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"regexp"
 	"strings"
 
 	"reasonix/internal/jobs"
 	"reasonix/internal/tool"
 )
 
-// bash_output and kill_shell operate the background jobs registered by
-// bash(run_in_background) and task(run_in_background). They reach the session's
-// job manager through the call context (jobs.FromContext) — the agent stamps it
-// onto every tool call — and degrade to a clear error when it isn't available
-// (a headless context with no manager). Together they poll a job's new output,
-// terminate a job, and block until jobs finish.
+// steer-job, cancel-job, and peek-job operate session background jobs (task
+// sub-agents, bash run_in_background, etc.) via jobs.FromContext.
 
 func init() {
 	tool.RegisterBuiltin(steerJob{})
 	tool.RegisterBuiltin(cancelJob{})
 	tool.RegisterBuiltin(peekJob{})
 	tool.RegisterBuiltin(sendMessage{})
-}
-
-// --- bash_output: poll a background job's new output (non-blocking) ---
-
-type bashOutput struct{}
-
-func (bashOutput) Name() string { return "bash_output" }
-
-func (bashOutput) Description() string {
-	return "Read new output from a background job started with bash(run_in_background=true) or task(run_in_background=true). Returns the output produced since the last bash_output call for that job, plus its status (running/done/failed/killed). Does not block."
-}
-
-func (bashOutput) Schema() json.RawMessage {
-	return json.RawMessage(`{"type":"object","properties":{"job_id":{"type":"string","description":"The background job id (e.g. \"bash-1\") returned when it was started."},"filter":{"type":"string","description":"Optional regular expression; only matching lines of the new output are returned."}},"required":["job_id"]}`)
-}
-
-func (bashOutput) ReadOnly() bool { return true }
-
-func (bashOutput) Execute(ctx context.Context, args json.RawMessage) (string, error) {
-	var p struct {
-		JobID  string `json:"job_id"`
-		Filter string `json:"filter"`
-	}
-	if err := json.Unmarshal(args, &p); err != nil {
-		return "", fmt.Errorf("invalid args: %w", err)
-	}
-	if p.JobID == "" {
-		return "", fmt.Errorf("job_id is required")
-	}
-	jm, ok := jobs.FromContext(ctx)
-	if !ok {
-		return "", fmt.Errorf("background jobs are not available in this context")
-	}
-	text, status, found := jm.Output(p.JobID)
-	if !found {
-		return "", fmt.Errorf("no background job %q", p.JobID)
-	}
-	if p.Filter != "" && text != "" {
-		filtered, err := filterLines(text, p.Filter)
-		if err != nil {
-			return "", err
-		}
-		text = filtered
-	}
-	header := fmt.Sprintf("[%s] %s", p.JobID, status)
-	if strings.TrimSpace(text) == "" {
-		return header + "\n(no new output)", nil
-	}
-	return header + "\n" + text, nil
-}
-
-// filterLines keeps only the lines of s matching the regular expression re.
-// re is limited to 512 characters to prevent ReDoS attacks.
-func filterLines(s, re string) (string, error) {
-	const maxPatternLen = 512
-	if len(re) > maxPatternLen {
-		return "", fmt.Errorf("filter regexp too long (%d chars, max %d)", len(re), maxPatternLen)
-	}
-	rx, err := regexp.Compile(re)
-	if err != nil {
-		return "", fmt.Errorf("invalid filter regexp: %w", err)
-	}
-	var keep []string
-	for _, line := range strings.Split(s, "\n") {
-		if rx.MatchString(line) {
-			keep = append(keep, line)
-		}
-	}
-	return strings.Join(keep, "\n"), nil
-}
-
-// --- kill_shell: terminate a running background job ---
-
-type killShell struct{}
-
-func (killShell) Name() string { return "kill_shell" }
-
-func (killShell) Description() string {
-	return "Terminate a running background job (bash or task) started with run_in_background. A no-op if the job has already finished or the id is unknown."
-}
-
-func (killShell) Schema() json.RawMessage {
-	return json.RawMessage(`{"type":"object","properties":{"job_id":{"type":"string","description":"The background job id to terminate (e.g. \"bash-1\")."}},"required":["job_id"]}`)
-}
-
-func (killShell) ReadOnly() bool { return false }
-
-func (killShell) Execute(ctx context.Context, args json.RawMessage) (string, error) {
-	var p struct {
-		JobID string `json:"job_id"`
-	}
-	if err := json.Unmarshal(args, &p); err != nil {
-		return "", fmt.Errorf("invalid args: %w", err)
-	}
-	if p.JobID == "" {
-		return "", fmt.Errorf("job_id is required")
-	}
-	jm, ok := jobs.FromContext(ctx)
-	if !ok {
-		return "", fmt.Errorf("background jobs are not available in this context")
-	}
-	if jm.Kill(p.JobID) {
-		return fmt.Sprintf("Killed background job %q.", p.JobID), nil
-	}
-	return fmt.Sprintf("Background job %q was not running (already finished or unknown).", p.JobID), nil
 }
 
 // --- steer-job: send a message to a running background job ---
@@ -180,7 +70,7 @@ func (steerJob) Execute(ctx context.Context, params json.RawMessage) (string, er
 type cancelJob struct{}
 
 func (cancelJob) Name() string        { return "cancel-job" }
-func (cancelJob) Description() string { return "Cancel a running background job" }
+func (cancelJob) Description() string { return "Cancel a running background job (bash or task)" }
 func (cancelJob) ReadOnly() bool      { return false }
 func (cancelJob) Schema() json.RawMessage {
 	return json.RawMessage(`{
@@ -216,9 +106,11 @@ func (cancelJob) Execute(ctx context.Context, params json.RawMessage) (string, e
 
 type peekJob struct{}
 
-func (peekJob) Name() string        { return "peek-job" }
-func (peekJob) Description() string { return "Peek at the status of a background job" }
-func (peekJob) ReadOnly() bool      { return true }
+func (peekJob) Name() string { return "peek-job" }
+func (peekJob) Description() string {
+	return "Non-blocking snapshot of a background job (task or bash). Includes new stdout/stderr since the last peek for buffered jobs. Task sub-agent final answers are delivered by the runtime when the job finishes; peek is for in-flight status or bash output."
+}
+func (peekJob) ReadOnly() bool { return true }
 func (peekJob) Schema() json.RawMessage {
 	return json.RawMessage(`{
 		"type": "object",
@@ -250,7 +142,29 @@ func (peekJob) Execute(ctx context.Context, params json.RawMessage) (string, err
 		}
 		return "", fmt.Errorf("peek failed: %w", err)
 	}
-	b, err := json.Marshal(status)
+	out := map[string]any{
+		"job_id": status.JobID,
+		"status": status.Status,
+	}
+	if status.StartedAtMs > 0 {
+		out["started_at_ms"] = status.StartedAtMs
+	}
+	if status.Step > 0 {
+		out["step"] = status.Step
+	}
+	if status.LastTool != "" {
+		out["last_tool"] = status.LastTool
+	}
+	if status.LastAck != "" {
+		out["last_ack"] = status.LastAck
+	}
+	if reports := jm.PendingReports(p.JobID); len(reports) > 0 {
+		out["reports"] = reports
+	}
+	if text, _, found := jm.Output(p.JobID); found && strings.TrimSpace(text) != "" {
+		out["new_output"] = text
+	}
+	b, err := json.Marshal(out)
 	if err != nil {
 		return "", fmt.Errorf("marshal status: %w", err)
 	}
@@ -261,9 +175,13 @@ func (peekJob) Execute(ctx context.Context, params json.RawMessage) (string, err
 
 type sendMessage struct{}
 
-func (sendMessage) Name() string        { return "send_message" }
-func (sendMessage) Description() string { return "Send a message/report from a background sub-agent to its parent agent" }
-func (sendMessage) ReadOnly() bool      { return false }
+func (sendMessage) OnlyForSubAgent() bool { return true }
+
+func (sendMessage) Name() string { return "send_message" }
+func (sendMessage) Description() string {
+	return "Send a message/report from a background sub-agent to its parent agent"
+}
+func (sendMessage) ReadOnly() bool { return false }
 func (sendMessage) Schema() json.RawMessage {
 	return json.RawMessage(`{
 		"type": "object",
