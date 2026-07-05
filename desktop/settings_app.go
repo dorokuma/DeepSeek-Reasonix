@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/url"
@@ -1068,8 +1069,13 @@ func botDomainOrDefault(domain string) string {
 // keys are account-level, not per-project: writing them to the global config
 // rather than the cwd's reasonix.toml is what lets them survive a workspace switch.
 func (a *App) applyConfigChange(mutate func(*config.Config) error) error {
-	if err := a.ensureActiveTabRebuildAllowed("settings"); err != nil {
-		return err
+	_, err := a.applyConfigChangeWithWarning("settings", mutate)
+	return err
+}
+
+func (a *App) applyConfigChangeWithWarning(setting string, mutate func(*config.Config) error) (string, error) {
+	if err := a.ensureActiveTabRebuildAllowed(setting); err != nil {
+		return "", err
 	}
 	if err := func() error {
 		// Serialize the load-modify-save against other in-process config editors
@@ -1087,9 +1093,15 @@ func (a *App) applyConfigChange(mutate func(*config.Config) error) error {
 		}
 		return cfg.SaveTo(path)
 	}(); err != nil {
-		return err
+		return "", err
 	}
-	return a.rebuild()
+	if err := a.rebuildSetting(setting); err != nil {
+		if warning, ok := a.deferredRebuildWarning(setting, err); ok {
+			return warning, nil
+		}
+		return "", err
+	}
+	return "", nil
 }
 
 func (a *App) applyConfigOnly(mutate func(*config.Config) error) error {
@@ -1131,6 +1143,33 @@ func (a *App) ensureLiveControllersRuntimeMutationAllowed(setting string) error 
 		}
 	}
 	return nil
+}
+
+func (a *App) deferredRebuildWarning(setting string, err error) (string, bool) {
+	if err == nil || !errors.Is(err, agent.ErrSessionLeaseHeld) {
+		return "", false
+	}
+	setting = strings.TrimSpace(setting)
+	if setting == "" {
+		setting = "settings"
+	}
+	userErr := userFacingSessionLeaseError(setting, err)
+	warning := fmt.Sprintf("%s saved, but the current session could not refresh yet: %s", setting, userErr.Error())
+	slog.Warn("desktop: deferred settings rebuild", "setting", setting, "err", err)
+	a.warningForActiveTab(warning)
+	return warning, true
+}
+
+func appendSettingsWarning(existing, warning string) string {
+	existing = strings.TrimSpace(existing)
+	warning = strings.TrimSpace(warning)
+	if existing == "" {
+		return warning
+	}
+	if warning == "" {
+		return existing
+	}
+	return existing + "\n" + warning
 }
 
 // loadDesktopUserConfigForEdit loads the user config for a write path and
@@ -1854,60 +1893,104 @@ func providerDefaultForModels(currentDefault string, models []string) string {
 	return ""
 }
 
+func saveProviderConfig(c *config.Config, p ProviderView) error {
+	if c == nil {
+		return fmt.Errorf("config is nil")
+	}
+	e := config.ProviderEntry{Name: p.Name}
+	for i := range c.Providers {
+		if c.Providers[i].Name == p.Name {
+			e = c.Providers[i]
+			break
+		}
+	}
+	e.Name = p.Name
+	e.Kind = p.Kind
+	e.BaseURL = p.BaseURL
+	e.ChatURL = strings.TrimSpace(p.ChatURL)
+	e.ModelsURL = strings.TrimSpace(p.ModelsURL)
+	e.APIKeyEnv = p.APIKeyEnv
+	e.Headers = p.Headers
+	e.ExtraBody = p.ExtraBody
+	e.AuthHeader = p.AuthHeader
+	e.BalanceURL = strings.TrimSpace(p.BalanceURL)
+	e.ContextWindow = p.ContextWindow
+	e.ReasoningProtocol = p.ReasoningProtocol
+	e.Thinking = providerThinkingForSettings(p.Thinking)
+	e.SupportedEfforts = p.SupportedEfforts
+	e.DefaultEffort = p.DefaultEffort
+	e.Model = ""
+	e.Models = nil
+	e.Default = ""
+	e.VisionModels = nil
+	models := chatProviderModels(p.Models)
+	if len(models) > 0 {
+		e.Model = models[0] // also satisfies validateProvider's model requirement
+		e.Models = models
+		e.ModelOverrides = providerModelOverridesForSave(p.ModelOverrides, models)
+		if p.VisionModelsSet || len(p.VisionModels) > 0 {
+			e.Vision = false
+			e.VisionModels = providerVisionModels(models, p.VisionModels)
+		}
+		if len(models) > 1 {
+			e.Default = providerDefaultForModels(p.Default, models)
+		}
+	} else {
+		e.Vision = false
+		e.VisionModels = nil
+		e.ModelOverrides = nil
+	}
+	if err := c.UpsertProvider(e); err != nil {
+		return err
+	}
+	addProviderAccess(c, p.Name)
+	return nil
+}
+
 // SaveProvider adds or updates a provider. Enabled models are persisted through
 // `models` even when only one model is selected, while `model` remains populated
 // in-memory for validation/back-compat. The shared key/endpoint live on the entry.
 func (a *App) SaveProvider(p ProviderView) error {
 	return a.applyConfigChange(func(c *config.Config) error {
-		e := config.ProviderEntry{Name: p.Name}
-		for i := range c.Providers {
-			if c.Providers[i].Name == p.Name {
-				e = c.Providers[i]
-				break
-			}
-		}
-		e.Name = p.Name
-		e.Kind = p.Kind
-		e.BaseURL = p.BaseURL
-		e.ChatURL = strings.TrimSpace(p.ChatURL)
-		e.ModelsURL = strings.TrimSpace(p.ModelsURL)
-		e.APIKeyEnv = p.APIKeyEnv
-		e.Headers = p.Headers
-		e.ExtraBody = p.ExtraBody
-		e.AuthHeader = p.AuthHeader
-		e.BalanceURL = strings.TrimSpace(p.BalanceURL)
-		e.ContextWindow = p.ContextWindow
-		e.ReasoningProtocol = p.ReasoningProtocol
-		e.Thinking = providerThinkingForSettings(p.Thinking)
-		e.SupportedEfforts = p.SupportedEfforts
-		e.DefaultEffort = p.DefaultEffort
-		e.Model = ""
-		e.Models = nil
-		e.Default = ""
-		e.VisionModels = nil
-		models := chatProviderModels(p.Models)
-		if len(models) > 0 {
-			e.Model = models[0] // also satisfies validateProvider's model requirement
-			e.Models = models
-			e.ModelOverrides = providerModelOverridesForSave(p.ModelOverrides, models)
-			if p.VisionModelsSet || len(p.VisionModels) > 0 {
-				e.Vision = false
-				e.VisionModels = providerVisionModels(models, p.VisionModels)
-			}
-			if len(models) > 1 {
-				e.Default = providerDefaultForModels(p.Default, models)
-			}
-		} else {
-			e.Vision = false
-			e.VisionModels = nil
-			e.ModelOverrides = nil
-		}
-		if err := c.UpsertProvider(e); err != nil {
+		return saveProviderConfig(c, p)
+	})
+}
+
+// SaveProviderWithKey saves a custom provider and its credential as one settings
+// transaction, then rebuilds once after both are visible to the runtime.
+func (a *App) SaveProviderWithKey(p ProviderView, key string) (string, error) {
+	apiKeyEnv := strings.TrimSpace(p.APIKeyEnv)
+	if apiKeyEnv == "" {
+		return "", fmt.Errorf("this provider has no api_key_env set")
+	}
+	if err := a.ensureActiveTabRebuildAllowed("provider"); err != nil {
+		return "", err
+	}
+	warning, err := a.saveProviderCredential(apiKeyEnv, key)
+	if err != nil {
+		return "", err
+	}
+	if err := func() error {
+		unlock := config.LockUserConfigEdits()
+		defer unlock()
+		cfg, path, err := a.loadDesktopUserConfigForEdit()
+		if err != nil {
 			return err
 		}
-		addProviderAccess(c, p.Name)
-		return nil
-	})
+		if err := saveProviderConfig(cfg, p); err != nil {
+			return err
+		}
+		return cfg.SaveTo(path)
+	}(); err != nil {
+		return "", err
+	}
+	if err := a.rebuildSetting("provider"); err != nil {
+		if rebuildWarning, ok := a.deferredRebuildWarning("provider", err); ok {
+			return appendSettingsWarning(warning, rebuildWarning), nil
+		}
+		return "", err
+	}
+	return warning, nil
 }
 
 // AddOfficialProviderAccess adds one curated desktop provider template to the
@@ -1935,7 +2018,7 @@ func (a *App) AddOfficialProviderAccess(kind, key string) (string, error) {
 			return "", err
 		}
 	}
-	if err := a.applyConfigChange(func(c *config.Config) error {
+	rebuildWarning, err := a.applyConfigChangeWithWarning("provider access", func(c *config.Config) error {
 		names := make([]string, 0, len(entries))
 		for _, e := range entries {
 			if err := c.UpsertProvider(e); err != nil {
@@ -1945,10 +2028,11 @@ func (a *App) AddOfficialProviderAccess(kind, key string) (string, error) {
 		}
 		addProviderAccess(c, names...)
 		return nil
-	}); err != nil {
+	})
+	if err != nil {
 		return "", err
 	}
-	return keyWarning, nil
+	return appendSettingsWarning(keyWarning, rebuildWarning), nil
 }
 
 // AddProviderPresetAccess installs one editable custom-provider preset. Unlike
@@ -1991,7 +2075,7 @@ func (a *App) AddProviderPresetAccess(id, key string) (string, error) {
 			return "", err
 		}
 	}
-	if err := a.applyConfigChange(func(c *config.Config) error {
+	rebuildWarning, err := a.applyConfigChangeWithWarning("provider access", func(c *config.Config) error {
 		if existing := existingProviderNames(c, preset.Entries); len(existing) > 0 {
 			return providerPresetAlreadyAddedError(preset.ID, existing)
 		}
@@ -2004,10 +2088,11 @@ func (a *App) AddProviderPresetAccess(id, key string) (string, error) {
 		}
 		addProviderAccess(c, names...)
 		return nil
-	}); err != nil {
+	})
+	if err != nil {
 		return "", err
 	}
-	return keyWarning, nil
+	return appendSettingsWarning(keyWarning, rebuildWarning), nil
 }
 
 // ResetProviderPresetAccess intentionally overwrites same-name provider entries
@@ -2397,9 +2482,22 @@ func (a *App) SetProviderKey(apiKeyEnv, value string) (string, error) {
 		return "", err
 	}
 	if err := a.rebuildSetting("provider key"); err != nil {
+		if rebuildWarning, ok := a.deferredRebuildWarning("provider key", err); ok {
+			return appendSettingsWarning(warning, rebuildWarning), nil
+		}
 		return "", err
 	}
 	return warning, nil
+}
+
+// SaveProviderKey writes a provider secret without rebuilding the chat runtime.
+// It is used by settings probes that need credentials only for a model-list
+// request; explicit "save key" actions still call SetProviderKey.
+func (a *App) SaveProviderKey(apiKeyEnv, value string) (string, error) {
+	if strings.TrimSpace(apiKeyEnv) == "" {
+		return "", fmt.Errorf("this provider has no api_key_env set")
+	}
+	return a.saveProviderCredential(apiKeyEnv, value)
 }
 
 func (a *App) ensureProviderAccessForKey(apiKeyEnv string) error {
@@ -2469,7 +2567,13 @@ func (a *App) ClearProviderKey(apiKeyEnv string) error {
 	if err := removeDotEnv(apiKeyEnv); err != nil {
 		return err
 	}
-	return a.rebuildSetting("provider key")
+	if err := a.rebuildSetting("provider key"); err != nil {
+		if _, ok := a.deferredRebuildWarning("provider key", err); ok {
+			return nil
+		}
+		return err
+	}
+	return nil
 }
 
 // SetPermissionMode sets the writer-fallback mode (ask|allow|deny).

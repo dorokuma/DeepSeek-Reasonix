@@ -7526,6 +7526,13 @@ func (a *App) noticeForTab(tabID, text string) {
 	}
 }
 
+func (a *App) warningForActiveTab(text string) {
+	tab := a.activeTab()
+	if tab != nil && tab.sink != nil {
+		tab.sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelWarn, Text: text})
+	}
+}
+
 func (a *App) runEffortCommandForTab(tabID, input string) {
 	entry, err := a.currentProviderEntryForTab(tabID)
 	if err != nil {
@@ -8145,13 +8152,10 @@ func (a *App) ConnectKey(apiKey string) (string, error) {
 		return "", fmt.Errorf("save: %w", err)
 	}
 	if err := a.rebuildSetting("provider key"); err != nil {
-		// Key is persisted. Keep the current session usable and let a later
-		// rebuild pick up the credential.
-		slog.Warn("desktop: connect key rebuild failed", "err", err)
-		if strings.TrimSpace(warning) == "" {
-			warning = err.Error()
+		if rebuildWarning, ok := a.deferredRebuildWarning("provider key", err); ok {
+			warning = appendSettingsWarning(warning, rebuildWarning)
 		} else {
-			warning = warning + "\n" + err.Error()
+			return "", err
 		}
 	}
 	return warning, nil

@@ -4502,7 +4502,7 @@ function ProvidersSection({ s, busy, apply }: SectionProps) {
     setGroupModelDraft(group.id, null);
     try {
       await apply(async () => {
-        await app.SetProviderKey(apiKeyEnv, value);
+        await app.SaveProviderKey(apiKeyEnv, value);
         try {
           const fetched = await app.FetchProviderModels({ ...probe, apiKeyEnv });
           if (fetched.length > 0) {
@@ -4608,7 +4608,7 @@ function ProvidersSection({ s, busy, apply }: SectionProps) {
               setAdding(null);
             }}
             onResetPreset={(id) => apply(() => app.ResetProviderPresetAccess(id)).then(() => setAdding(null))}
-            onAddCustom={(pv) => apply(() => app.SaveProvider(pv)).then(() => setAdding(null))}
+            onAddCustom={(pv, key) => apply(() => key ? app.SaveProviderWithKey(pv, key) : app.SaveProvider(pv)).then(() => setAdding(null))}
           />
         )}
         {adding === null && groups.map((group) => (
@@ -4624,7 +4624,7 @@ function ProvidersSection({ s, busy, apply }: SectionProps) {
             kinds={s.providerKinds}
             onEdit={setEditing}
             onCancelEdit={() => setEditing(null)}
-            onSave={(pv) => apply(() => app.SaveProvider(pv)).then(() => {
+            onSave={(pv, key) => apply(() => key ? app.SaveProviderWithKey(pv, key) : app.SaveProvider(pv)).then(() => {
               setEditing(null);
               setGroupModelDraft(group.id, null);
             })}
@@ -4838,7 +4838,7 @@ function AddProviderPanel({
   onAddPreset: (id: string, key: string) => Promise<void>;
   onViewPresetConflict: (providerName: string) => void;
   onResetPreset: (id: string) => Promise<void>;
-  onAddCustom: (p: ProviderView) => void | Promise<void>;
+  onAddCustom: (p: ProviderView, key?: string) => void | Promise<void>;
 }) {
   const t = useT();
   const templateChoices = useMemo<ProviderTemplateChoice[]>(() => [
@@ -5053,7 +5053,7 @@ function ProviderAccessCard({
   kinds: string[];
   onEdit: (name: string) => void;
   onCancelEdit: () => void;
-  onSave: (p: ProviderView) => void | Promise<void>;
+  onSave: (p: ProviderView, key?: string) => void | Promise<void>;
   onRefresh: () => void;
   onToggleDraftModel: (model: string) => void;
   onToggleDraftVision: (model: string) => void;
@@ -5544,7 +5544,7 @@ function ProviderEditor({
   kinds: string[];
   busy: boolean;
   onCancel: () => void;
-  onSave: (p: ProviderView) => void;
+  onSave: (p: ProviderView, key?: string) => void | Promise<void>;
   onSaveKey?: (apiKeyEnv: string, value: string) => Promise<void>;
   onClearKey?: (apiKeyEnv: string) => Promise<void>;
 }) {
@@ -5621,7 +5621,7 @@ function ProviderEditor({
     try {
       const effectiveApiKeyEnv = providerApiKeyEnvForSave(name, apiKeyEnv, keyDraft);
       if (!apiKeyEnv.trim()) setApiKeyEnv(effectiveApiKeyEnv);
-      if (keyDraft.trim()) await app.SetProviderKey(effectiveApiKeyEnv, keyDraft.trim());
+      if (keyDraft.trim()) await app.SaveProviderKey(effectiveApiKeyEnv, keyDraft.trim());
       const fetched = await app.FetchProviderModels({
         name: name.trim() || t("settings.newProviderDraftName"),
         builtIn: initial?.builtIn ?? false,
@@ -5674,13 +5674,7 @@ function ProviderEditor({
     const ms = parseProviderListInput(models);
     const vms = parseProviderListInput(visionModels).filter((model) => ms.includes(model));
     const effectiveApiKeyEnv = providerApiKeyEnvForSave(name, apiKeyEnv, keyDraft);
-    try {
-      if (keyDraft.trim()) await app.SetProviderKey(effectiveApiKeyEnv, keyDraft.trim());
-    } catch (e) {
-      setFetchFallback(String((e as Error)?.message ?? e));
-      return;
-    }
-    onSave({
+    const provider: ProviderView = {
       name: name.trim(),
       builtIn: initial?.builtIn ?? false,
       added: initial?.added ?? true,
@@ -5706,7 +5700,12 @@ function ProviderEditor({
       // NormalizeEffort would otherwise silently ignore an unsupported value.
       defaultEffort: cleanedSupportedEfforts.length > 0 ? cleanDefaultEffort : "",
       modelOverrides: initial?.modelOverrides ?? [],
-    });
+    };
+    try {
+      await onSave(provider, keyDraft.trim() || undefined);
+    } catch (e) {
+      setFetchFallback(String((e as Error)?.message ?? e));
+    }
   };
 
   if (builtIn) {

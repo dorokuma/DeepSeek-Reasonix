@@ -1757,12 +1757,15 @@ func TestSetProviderKeyLeaseHeldKeepsCurrentController(t *testing.T) {
 	app.tabOrder = []string{tab.ID}
 	app.activeTabID = tab.ID
 
-	_, err = app.SetProviderKey("LONGCAT_API_KEY", "sk-longcat")
-	if !errors.Is(err, agent.ErrSessionLeaseHeld) {
-		t.Fatalf("SetProviderKey err = %v, want ErrSessionLeaseHeld", err)
+	warning, err := app.SetProviderKey("LONGCAT_API_KEY", "sk-longcat")
+	if err != nil {
+		t.Fatalf("SetProviderKey: %v", err)
 	}
-	if strings.Contains(err.Error(), sessionPath) || strings.Contains(err.Error(), "held by") {
-		t.Fatalf("SetProviderKey surfaced raw lease details: %v", err)
+	if !strings.Contains(warning, "current session could not refresh yet") || !strings.Contains(warning, "another Reasonix window") {
+		t.Fatalf("SetProviderKey warning = %q, want deferred rebuild warning", warning)
+	}
+	if strings.Contains(warning, sessionPath) || strings.Contains(warning, "held by") {
+		t.Fatalf("SetProviderKey surfaced raw lease details: %v", warning)
 	}
 	if tab.Ctrl != oldCtrl {
 		t.Fatalf("tab controller changed after failed provider-key rebuild")
@@ -1775,6 +1778,164 @@ func TestSetProviderKeyLeaseHeldKeepsCurrentController(t *testing.T) {
 	}
 	if access := providerAccessSet(config.LoadForEditWithoutCredentials(config.UserConfigPath()).Desktop.ProviderAccess); !access["longcat"] {
 		t.Fatalf("provider_access should still persist longcat after key save")
+	}
+}
+
+func TestSaveProviderWithKeyLeaseHeldPersistsCustomProvider(t *testing.T) {
+	isolateDesktopUserDirs(t)
+	setDesktopTestCredential(t, "OLD_MODEL_KEY", "sk-test")
+
+	cfg := config.Default()
+	cfg.DefaultModel = "old/old-model"
+	cfg.Desktop.ProviderAccess = []string{"old"}
+	cfg.Providers = []config.ProviderEntry{{
+		Name:      "old",
+		Kind:      "openai",
+		BaseURL:   "https://example.invalid/v1",
+		Model:     "old-model",
+		APIKeyEnv: "OLD_MODEL_KEY",
+	}}
+	if err := cfg.SaveTo(config.UserConfigPath()); err != nil {
+		t.Fatalf("save config: %v", err)
+	}
+
+	dir := config.SessionDir()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir session dir: %v", err)
+	}
+	sessionPath := filepath.Join(dir, "externally-leased-custom-provider.jsonl")
+	if err := os.WriteFile(sessionPath, nil, 0o644); err != nil {
+		t.Fatalf("write placeholder session: %v", err)
+	}
+	externalLease, err := agent.TryAcquireSessionLease(sessionPath)
+	if err != nil {
+		t.Fatalf("TryAcquireSessionLease: %v", err)
+	}
+	defer externalLease.Release()
+
+	oldSession := agent.NewSession("old system prompt")
+	oldSession.Add(provider.Message{Role: provider.RoleUser, Content: "hello"})
+	oldExec := agent.New(nil, nil, oldSession, agent.Options{}, event.Discard)
+	oldCtrl := control.New(control.Options{Executor: oldExec, SessionDir: dir, SessionPath: sessionPath, Label: "old", Sink: event.Discard})
+	defer oldCtrl.Close()
+
+	app := NewApp()
+	app.ctx = context.Background()
+	tab := &WorkspaceTab{
+		ID:          "tab_custom_provider",
+		Scope:       "global",
+		SessionPath: sessionPath,
+		Ready:       true,
+		model:       "old/old-model",
+		Ctrl:        oldCtrl,
+		sink:        &tabEventSink{tabID: "tab_custom_provider", app: app},
+		disabledMCP: map[string]ServerView{},
+	}
+	app.tabs = map[string]*WorkspaceTab{tab.ID: tab}
+	app.tabOrder = []string{tab.ID}
+	app.activeTabID = tab.ID
+
+	warning, err := app.SaveProviderWithKey(ProviderView{
+		Name:      "proxy",
+		Kind:      "openai",
+		BaseURL:   "https://proxy.example/v1",
+		Models:    []string{"model-a", "model-b"},
+		Default:   "model-a",
+		APIKeyEnv: "PROXY_API_KEY",
+	}, "sk-proxy")
+	if err != nil {
+		t.Fatalf("SaveProviderWithKey: %v", err)
+	}
+	if !strings.Contains(warning, "current session could not refresh yet") || !strings.Contains(warning, "another Reasonix window") {
+		t.Fatalf("SaveProviderWithKey warning = %q, want deferred rebuild warning", warning)
+	}
+	if strings.Contains(warning, sessionPath) || strings.Contains(warning, "held by") {
+		t.Fatalf("SaveProviderWithKey surfaced raw lease details: %v", warning)
+	}
+	if tab.Ctrl != oldCtrl {
+		t.Fatalf("tab controller changed after failed provider rebuild")
+	}
+	gotCfg := config.LoadForEditWithoutCredentials(config.UserConfigPath())
+	got, ok := gotCfg.Provider("proxy")
+	if !ok {
+		t.Fatal("custom provider was not saved")
+	}
+	if want := []string{"model-a", "model-b"}; !reflect.DeepEqual(got.ModelList(), want) {
+		t.Fatalf("custom provider models = %v, want %v", got.ModelList(), want)
+	}
+	if !providerAccessSet(gotCfg.Desktop.ProviderAccess)["proxy"] {
+		t.Fatalf("provider_access = %+v, want proxy", gotCfg.Desktop.ProviderAccess)
+	}
+	data, err := os.ReadFile(config.UserCredentialsPath())
+	if err != nil {
+		t.Fatalf("read credentials: %v", err)
+	}
+	if !strings.Contains(string(data), "PROXY_API_KEY=sk-proxy") {
+		t.Fatalf("provider key was not saved:\n%s", data)
+	}
+}
+
+func TestConfigChangeLeaseHeldPersistsAndDefersRefresh(t *testing.T) {
+	isolateDesktopUserDirs(t)
+	setDesktopTestCredential(t, "OLD_MODEL_KEY", "sk-test")
+
+	cfg := config.Default()
+	cfg.DefaultModel = "old/old-model"
+	cfg.Desktop.ProviderAccess = []string{"old"}
+	cfg.Providers = []config.ProviderEntry{{
+		Name:      "old",
+		Kind:      "openai",
+		BaseURL:   "https://example.invalid/v1",
+		Model:     "old-model",
+		APIKeyEnv: "OLD_MODEL_KEY",
+	}}
+	if err := cfg.SaveTo(config.UserConfigPath()); err != nil {
+		t.Fatalf("save config: %v", err)
+	}
+
+	dir := config.SessionDir()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir session dir: %v", err)
+	}
+	sessionPath := filepath.Join(dir, "externally-leased-settings.jsonl")
+	if err := os.WriteFile(sessionPath, nil, 0o644); err != nil {
+		t.Fatalf("write placeholder session: %v", err)
+	}
+	externalLease, err := agent.TryAcquireSessionLease(sessionPath)
+	if err != nil {
+		t.Fatalf("TryAcquireSessionLease: %v", err)
+	}
+	defer externalLease.Release()
+
+	oldExec := agent.New(nil, nil, agent.NewSession("old system prompt"), agent.Options{}, event.Discard)
+	oldCtrl := control.New(control.Options{Executor: oldExec, SessionDir: dir, SessionPath: sessionPath, Label: "old", Sink: event.Discard})
+	defer oldCtrl.Close()
+
+	app := NewApp()
+	app.ctx = context.Background()
+	tab := &WorkspaceTab{
+		ID:          "tab_settings",
+		Scope:       "global",
+		SessionPath: sessionPath,
+		Ready:       true,
+		model:       "old/old-model",
+		Ctrl:        oldCtrl,
+		sink:        &tabEventSink{tabID: "tab_settings", app: app},
+		disabledMCP: map[string]ServerView{},
+	}
+	app.tabs = map[string]*WorkspaceTab{tab.ID: tab}
+	app.tabOrder = []string{tab.ID}
+	app.activeTabID = tab.ID
+
+	if err := app.SetMaxSubagentDepth(1); err != nil {
+		t.Fatalf("SetMaxSubagentDepth should defer lease-held refresh instead of failing: %v", err)
+	}
+	if tab.Ctrl != oldCtrl {
+		t.Fatalf("tab controller changed after deferred settings rebuild")
+	}
+	got := config.LoadForEditWithoutCredentials(config.UserConfigPath())
+	if got.Agent.MaxSubagentDepth != 1 {
+		t.Fatalf("saved max_subagent_depth = %d, want 1", got.Agent.MaxSubagentDepth)
 	}
 }
 
