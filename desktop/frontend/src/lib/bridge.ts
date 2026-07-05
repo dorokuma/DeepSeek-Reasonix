@@ -1883,6 +1883,67 @@ function makeMockApp(): AppBindings {
         emitMockTurnDone();
         return;
       }
+      if (trimmedInput === "/nested-preview" || trimmedInput === "nested preview" || trimmedInput === "嵌套预览") {
+        const parentId = "mock-nested-explore";
+        await delay(180);
+        if (cancelled) return;
+        emit({
+          kind: "reasoning",
+          text: "我先快速探索相关文件，再整理这个工具行的视觉层级。",
+        });
+        emit({
+          kind: "message",
+          text: "",
+          reasoning: "我先快速探索相关文件，再整理这个工具行的视觉层级。",
+        });
+        emit({
+          kind: "tool_dispatch",
+          tool: {
+            id: parentId,
+            name: "explore",
+            args: JSON.stringify({ task: "在 Reasonix 前端中检查工具调用图标和嵌套调用展示" }),
+            readOnly: true,
+            profile: { model: "mock-reasonix", effort: "high" },
+          },
+        });
+        for (let i = 1; i <= 30; i += 1) {
+          if (cancelled) return;
+          const id = `mock-nested-${i}`;
+          const isSearch = i % 3 === 0;
+          const name = isSearch ? "grep" : "read_file";
+          const args = isSearch
+            ? { pattern: i % 2 === 0 ? "tool__nested-count" : "explore", path: "desktop/frontend/src" }
+            : { path: `desktop/frontend/src/${i % 2 === 0 ? "components/ToolCard.tsx" : "styles.css"}`, offset: i * 10, limit: 40 };
+          emit({ kind: "tool_dispatch", tool: { id, name, args: JSON.stringify(args), readOnly: true, parentId } });
+          emit({
+            kind: "tool_result",
+            tool: {
+              id,
+              name,
+              readOnly: true,
+              output: isSearch ? "3 matches" : "read 40 lines",
+              durationMs: 24 + i,
+            },
+          });
+          await delay(18);
+        }
+        emit({
+          kind: "tool_result",
+          tool: {
+            id: parentId,
+            name: "explore",
+            readOnly: true,
+            output: "已读 20 个文件 · 搜索 10 个文件",
+            durationMs: 61510,
+          },
+        });
+        emit({
+          kind: "message",
+          text: "Mock nested tool preview complete. The explore row now shows the compass count marker.",
+        });
+        emitMockTurnDone();
+        return;
+      }
       // Simulate the server's pre-first-token latency so the deferred user bubble
       // and the "un-send on Esc before any reply" path are observable in browser
       // dev. Bail if cancelled during the wait — nothing was streamed yet.
