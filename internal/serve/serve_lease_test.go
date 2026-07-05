@@ -2,6 +2,7 @@ package serve
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -134,6 +135,44 @@ func readAll(resp *http.Response) (string, error) {
 	return strings.TrimSpace(string(b)), err
 }
 
+func postServeLeaseJSON(client *http.Client, url string, body any, want int) error {
+	payload, err := json.Marshal(body)
+	if err != nil {
+		return err
+	}
+	resp, err := client.Post(url, "application/json", strings.NewReader(string(payload)))
+	if err != nil {
+		return err
+	}
+	respBody, readErr := readAll(resp)
+	if readErr != nil {
+		return readErr
+	}
+	if resp.StatusCode != want {
+		return fmt.Errorf("POST %s status = %d, want %d (body %q)", url, resp.StatusCode, want, respBody)
+	}
+	return nil
+}
+
+func waitServeLeaseDone(t *testing.T, done <-chan struct{}, what string, timeout time.Duration) {
+	t.Helper()
+	select {
+	case <-done:
+	case <-time.After(timeout):
+		t.Fatalf("timed out waiting for %s", what)
+	}
+}
+
+func waitServeLeaseResult(t *testing.T, ch <-chan error, what string, timeout time.Duration) error {
+	t.Helper()
+	select {
+	case err := <-ch:
+		return err
+	case <-time.After(timeout):
+		return fmt.Errorf("timed out waiting for %s", what)
+	}
+}
+
 // TestConcurrentResumesKeepControllerAndLeaseAligned hammers POST /resume from
 // two goroutines bouncing between different targets and asserts the invariant
 // this PR exists for: whatever session the controller ends up writing is the
@@ -162,33 +201,46 @@ func TestConcurrentResumesKeepControllerAndLeaseAligned(t *testing.T) {
 	server.SetSessionLeases(leases)
 	srv := httptest.NewServer(server.Handler())
 	defer srv.Close()
+	client := &http.Client{Timeout: 10 * time.Second}
 
-	post := func(target string) {
-		body, _ := json.Marshal(map[string]string{"path": target})
-		resp, err := http.Post(srv.URL+"/resume", "application/json", strings.NewReader(string(body)))
-		if err != nil {
-			return
-		}
-		_, _ = io.Copy(io.Discard, resp.Body)
-		resp.Body.Close()
+	post := func(target string) error {
+		return postServeLeaseJSON(client, srv.URL+"/resume", map[string]string{"path": target}, http.StatusNoContent)
 	}
 
 	const rounds = 25
 	var wg sync.WaitGroup
+	errs := make(chan error, rounds*2)
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
 		for range rounds {
-			post(targetB)
+			if err := post(targetB); err != nil {
+				errs <- err
+				return
+			}
 		}
 	}()
 	go func() {
 		defer wg.Done()
 		for range rounds {
-			post(targetC)
+			if err := post(targetC); err != nil {
+				errs <- err
+				return
+			}
 		}
 	}()
-	wg.Wait()
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+		close(errs)
+	}()
+	waitServeLeaseDone(t, done, "concurrent resume posts", 20*time.Second)
+	for err := range errs {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
 
 	got := agent.CanonicalSessionPath(server.ctl().SessionPath())
 	held := leases.HeldPath()
@@ -219,30 +271,48 @@ func TestConcurrentResumeAndForkKeepAlignment(t *testing.T) {
 	server.SetSessionLeases(leases)
 	srv := httptest.NewServer(server.Handler())
 	defer srv.Close()
+	client := &http.Client{Timeout: 10 * time.Second}
 
 	var wg sync.WaitGroup
+	errs := make(chan error, 30)
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
 		for range 15 {
-			body, _ := json.Marshal(map[string]string{"path": target})
-			if resp, err := http.Post(srv.URL+"/resume", "application/json", strings.NewReader(string(body))); err == nil {
-				_, _ = io.Copy(io.Discard, resp.Body)
-				resp.Body.Close()
+			if err := postServeLeaseJSON(client, srv.URL+"/resume", map[string]string{"path": target}, http.StatusNoContent); err != nil {
+				errs <- err
+				return
 			}
 		}
 	}()
 	go func() {
 		defer wg.Done()
 		for range 15 {
-			body, _ := json.Marshal(map[string]any{"turn": 0, "name": ""})
-			if resp, err := http.Post(srv.URL+"/fork", "application/json", strings.NewReader(string(body))); err == nil {
-				_, _ = io.Copy(io.Discard, resp.Body)
-				resp.Body.Close()
+			payload, _ := json.Marshal(map[string]any{"turn": 0, "name": ""})
+			resp, err := client.Post(srv.URL+"/fork", "application/json", strings.NewReader(string(payload)))
+			if err != nil {
+				errs <- err
+				return
+			}
+			_, readErr := readAll(resp)
+			if readErr != nil {
+				errs <- readErr
+				return
 			}
 		}
 	}()
-	wg.Wait()
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+		close(errs)
+	}()
+	waitServeLeaseDone(t, done, "concurrent resume/fork posts", 20*time.Second)
+	for err := range errs {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
 
 	got := agent.CanonicalSessionPath(server.ctl().SessionPath())
 	held := leases.HeldPath()
@@ -278,6 +348,7 @@ func TestInterleavedResumesForcedThroughBindWindow(t *testing.T) {
 	server.SetSessionLeases(leases)
 	srv := httptest.NewServer(server.Handler())
 	defer srv.Close()
+	client := &http.Client{Timeout: 10 * time.Second}
 
 	entered := make(chan struct{})
 	release := make(chan struct{})
@@ -294,37 +365,57 @@ func TestInterleavedResumesForcedThroughBindWindow(t *testing.T) {
 		}
 	}
 	defer func() { resumeBindHookForTest = nil }()
+	var releaseOnce sync.Once
+	unpark := func() {
+		releaseOnce.Do(func() {
+			close(release)
+		})
+	}
+	t.Cleanup(unpark)
 
-	post := func(target string) {
-		body, _ := json.Marshal(map[string]string{"path": target})
-		resp, err := http.Post(srv.URL+"/resume", "application/json", strings.NewReader(string(body)))
-		if err != nil {
-			return
-		}
-		_, _ = io.Copy(io.Discard, resp.Body)
-		resp.Body.Close()
+	post := func(target string) error {
+		return postServeLeaseJSON(client, srv.URL+"/resume", map[string]string{"path": target}, http.StatusNoContent)
 	}
 
-	done1 := make(chan struct{})
-	go func() { defer close(done1); post(targetB) }()
-	<-entered // request 1 parked inside its bind window, lease moved to B
+	done1 := make(chan error, 1)
+	go func() { done1 <- post(targetB) }()
+	select {
+	case <-entered:
+		// Request 1 parked inside its bind window, lease moved to B.
+	case err := <-done1:
+		if err != nil {
+			t.Fatalf("first resume finished before entering bind hook: %v", err)
+		}
+		t.Fatal("first resume finished before entering bind hook")
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for first resume to enter bind hook")
+	}
 
-	done2 := make(chan struct{})
-	go func() { defer close(done2); post(targetC) }()
+	done2 := make(chan error, 1)
+	go func() { done2 <- post(targetC) }()
 	// Request 2 must not complete while request 1 owns the bind window.
 	select {
-	case <-done2:
+	case err := <-done2:
 		// Unpark request 1 before failing, or httptest's Close would wait the
 		// full package timeout on the parked handler.
-		close(release)
-		<-done1
+		unpark()
+		if waitErr := waitServeLeaseResult(t, done1, "first resume after failed serialization check", 5*time.Second); waitErr != nil {
+			t.Fatalf("second resume completed inside the first resume's bind window; first resume cleanup failed: %v", waitErr)
+		}
+		if err != nil {
+			t.Fatalf("second resume completed inside the first resume's bind window with error: %v", err)
+		}
 		t.Fatal("second resume completed inside the first resume's bind window")
 	case <-time.After(150 * time.Millisecond):
 	}
 
-	close(release)
-	<-done1
-	<-done2
+	unpark()
+	if err := waitServeLeaseResult(t, done1, "first resume", 5*time.Second); err != nil {
+		t.Fatal(err)
+	}
+	if err := waitServeLeaseResult(t, done2, "second resume", 5*time.Second); err != nil {
+		t.Fatal(err)
+	}
 
 	got := agent.CanonicalSessionPath(server.ctl().SessionPath())
 	held := leases.HeldPath()

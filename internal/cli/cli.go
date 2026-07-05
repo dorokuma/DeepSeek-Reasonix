@@ -350,18 +350,18 @@ func runAgent(args []string) int {
 	defer leases.Release()
 	var resumeSession *agent.Session
 	if resumePath != "" {
-		var err error
-		resumeSession, err = loadResumableSession(resumePath)
-		if err != nil {
-			fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
-			return 1
-		}
 		if err := leases.Rebind(resumePath); err != nil {
 			if errors.Is(err, agent.ErrSessionLeaseHeld) {
 				fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, sessionLeaseResumeRefusal(err))
 			} else {
 				fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
 			}
+			return 1
+		}
+		var err error
+		resumeSession, err = loadResumableSession(resumePath)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
 			return 1
 		}
 	}
@@ -509,18 +509,18 @@ func runServe(args []string) int {
 	defer leases.Release()
 	var resumeSession *agent.Session
 	if *resume != "" {
-		var err error
-		resumeSession, err = loadResumableSession(*resume)
-		if err != nil {
-			fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
-			return 1
-		}
 		if err := leases.Rebind(*resume); err != nil {
 			if errors.Is(err, agent.ErrSessionLeaseHeld) {
 				fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, control.SessionInUseMessage(err)+"; "+control.SessionLeaseCloseHint)
 			} else {
 				fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
 			}
+			return 1
+		}
+		var err error
+		resumeSession, err = loadResumableSession(*resume)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
 			return 1
 		}
 	}
