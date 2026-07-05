@@ -367,6 +367,10 @@ jobs:
             aws s3 cp assets/ "s3://${R2_BUCKET}/latest/" --recursive --endpoint-url "$ENDPOINT"
           fi
 
+      # dl.reasonix.io serves 403 to GitHub Actions egress IPs (Cloudflare bot
+      # protection), so smoke the mirrored objects over the authenticated S3 API
+      # instead of the public edge. This verifies the mirror landed; the public
+      # edge itself is not reachable from CI and is covered by end users' traffic.
       - name: Smoke desktop release pointers
         if: env.HAS_R2 == 'true'
         env:
@@ -374,8 +378,11 @@ jobs:
           VERSION: ${{ steps.ver.outputs.version }}
           CHANNEL: ${{ steps.ver.outputs.channel }}
           PRERELEASE: ${{ steps.ver.outputs.prerelease }}
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
         run: |
           set -euo pipefail
+          ENDPOINT="https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com"
           f=assets/latest.json
           jq -e --arg version "$VERSION" --arg prefix "https://dl.reasonix.io/${TAG}/" '
             .version == $version and
@@ -384,7 +391,8 @@ jobs:
               all(type == "string" and startswith($prefix) and (contains("/releases/latest/") | not)))
           ' "$f" >/dev/null
 
-          curl --retry 5 --retry-delay 2 -fsSL "https://dl.reasonix.io/${TAG}/latest.json" >/tmp/reasonix-desktop-tag-latest.json
+          aws s3 cp "s3://${R2_BUCKET}/${TAG}/latest.json" /tmp/reasonix-desktop-tag-latest.json --endpoint-url "$ENDPOINT"
+          jq -e --arg version "$VERSION" '.version == $version' /tmp/reasonix-desktop-tag-latest.json >/dev/null
           if [ "$CHANNEL" = "canary" ]; then
             pointer="canary"
           elif [ "$PRERELEASE" = "true" ]; then
@@ -393,12 +401,13 @@ jobs:
             pointer="latest"
           fi
           if [ -n "$pointer" ]; then
-            curl --retry 5 --retry-delay 2 -fsSL "https://dl.reasonix.io/${pointer}/latest.json" >/tmp/reasonix-desktop-pointer-latest.json
+            aws s3 cp "s3://${R2_BUCKET}/${pointer}/latest.json" /tmp/reasonix-desktop-pointer-latest.json --endpoint-url "$ENDPOINT"
             jq -e --arg version "$VERSION" '.version == $version' /tmp/reasonix-desktop-pointer-latest.json >/dev/null
           fi
 
           jq -r '.platforms[] | .url, .sig' "$f" | while IFS= read -r asset; do
-            curl --retry 5 --retry-delay 2 -fsSI "$asset" >/dev/null
+            key="${asset#https://dl.reasonix.io/}"
+            aws s3api head-object --bucket "$R2_BUCKET" --key "$key" --endpoint-url "$ENDPOINT" >/dev/null
           done
 
       - name: Attach desktop manifest to matching CLI release
