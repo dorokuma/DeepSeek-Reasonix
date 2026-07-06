@@ -265,6 +265,86 @@ func TestSaveRewriteOwnedAcrossInterruptedToolCallTail(t *testing.T) {
 	}
 }
 
+// TestSaveSnapshotAfterDirtyResumeKeepsEventChainReplayable: a session resumed
+// from an interrupted tool tail carries the load-time repair in memory, so its
+// transcript is one message longer than what the event log replays. The next
+// snapshot must not take the append shortcut with that inflated index — the
+// chain-broken append event would be discarded on replay, silently dropping
+// the whole new turn from disk. It must fall back to a full rewrite that
+// persists the repair and the new turn together.
+func TestSaveSnapshotAfterDirtyResumeKeepsEventChainReplayable(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "session.jsonl")
+	s := NewSession("sys")
+	s.Add(provider.Message{Role: provider.RoleUser, Content: "run the build"})
+	s.Add(provider.Message{
+		Role: provider.RoleAssistant, Content: "Running it.",
+		ToolCalls: []provider.ToolCall{{ID: "call_1", Name: "bash", Arguments: `{"cmd":"make"}`}},
+	})
+	if err := s.SaveSnapshot(path); err != nil {
+		t.Fatalf("mid-turn SaveSnapshot: %v", err)
+	}
+
+	// Crash + reopen: the resume load answers the dangling call with a
+	// placeholder, then the user runs another turn.
+	resumed, err := LoadSession(path)
+	if err != nil {
+		t.Fatalf("LoadSession resume: %v", err)
+	}
+	if !resumed.normalizedDirty {
+		t.Fatal("resume load should carry a pending repair for the dangling call")
+	}
+	resumed.Add(provider.Message{Role: provider.RoleUser, Content: "try again"})
+	resumed.Add(provider.Message{Role: provider.RoleAssistant, Content: "done"})
+	if err := resumed.SaveSnapshot(path); err != nil {
+		t.Fatalf("SaveSnapshot after dirty resume: %v", err)
+	}
+
+	replay, err := replaySessionEventLog(SessionEventLogPath(path))
+	if err != nil {
+		t.Fatalf("replay event log: %v", err)
+	}
+	if replay.damaged {
+		t.Fatal("event log chain broken by the post-resume snapshot")
+	}
+	loaded, err := LoadSession(path)
+	if err != nil {
+		t.Fatalf("LoadSession reload: %v", err)
+	}
+	if got := len(loaded.Messages); got != 6 {
+		t.Fatalf("message count after post-resume snapshot = %d, want 6", got)
+	}
+	if got := loaded.Messages[3].ToolCallID; got != "call_1" {
+		t.Fatalf("placeholder tool result not persisted; message 3 tool_call_id = %q", got)
+	}
+	if got := loaded.Messages[5].Content; got != "done" {
+		t.Fatalf("new turn after round-trip = %q, want %q", got, "done")
+	}
+}
+
+// TestSaveRecoveryBranchNotNeededWhenRawTranscriptCoversSnapshot: the
+// recovery-needed check must also judge coverage against the pre-repair bytes.
+// Here the stored transcript equals the snapshot exactly, but normalization
+// backfills an empty tool-call name on load; that repair must not make the
+// disk look like it fails to cover the snapshot and fork a pointless recovery.
+func TestSaveRecoveryBranchNotNeededWhenRawTranscriptCoversSnapshot(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "session.jsonl")
+	s := NewSession("sys")
+	s.Add(provider.Message{Role: provider.RoleUser, Content: "run the build"})
+	s.Add(provider.Message{
+		Role: provider.RoleAssistant, Content: "Running it.",
+		ToolCalls: []provider.ToolCall{{ID: "call_1", Name: "", Arguments: `{"cmd":"make"}`}},
+	})
+	s.Add(provider.Message{Role: provider.RoleTool, Name: "bash", ToolCallID: "call_1", Content: "ok"})
+	if err := s.Save(path); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	_, err := s.SaveRecoveryBranch(RecoveryBranchOptions{OriginalPath: path})
+	if !errors.Is(err, ErrSessionRecoveryNotNeeded) {
+		t.Fatalf("SaveRecoveryBranch err = %v, want ErrSessionRecoveryNotNeeded", err)
+	}
+}
+
 func TestSaveSnapshotAppendsWithoutReplacingPrefixFile(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "session.jsonl")
 	base := NewSession("sys")

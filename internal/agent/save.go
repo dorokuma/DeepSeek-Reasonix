@@ -476,7 +476,12 @@ func (s *Session) checkSnapshotWrite(path string, next []provider.Message, nextD
 		if decision.upToDate && currentLedgerDigest != "" && currentLedgerDigest != digestString(nextDigest) {
 			decision.ledgerStale = true
 		}
-		if exactAppend && !contentUnchanged && len(existing) < len(next) && !current.eventLogDamaged {
+		// An append is only chain-safe when existing measures the transcript
+		// the event log actually replays. Under a pending load-time repair the
+		// normalized view differs from the raw log, so an append event indexed
+		// against it breaks the replay chain and orphans the appended suffix;
+		// fall through to the full rewrite, which also persists the repair.
+		if exactAppend && !contentUnchanged && len(existing) < len(next) && !current.eventLogDamaged && !repairPending {
 			decision.appendOnly = true
 			decision.appendFrom = len(existing)
 		}
@@ -564,9 +569,25 @@ func (s *Session) SaveRecoveryBranch(opts RecoveryBranchOptions) (RecoveryBranch
 		if digestErr != nil {
 			return RecoveryBranchInfo{}, digestErr
 		}
-		if bytes.Equal(existingDigest[:], digest[:]) ||
+		covered := bytes.Equal(existingDigest[:], digest[:]) ||
 			messagesHavePrefix(existing, msgs) ||
-			messagesHavePrefixWithCompatibleSystem(existing, msgs) {
+			messagesHavePrefixWithCompatibleSystem(existing, msgs)
+		if !covered && current.normalizedDirty && len(current.rawMessages) > 0 {
+			// Judge coverage against the pre-repair transcript too, for the
+			// same reason as checkSnapshotWrite: load-time normalization can
+			// reshape what is actually stored, and a recovery fork is only
+			// warranted when the stored bytes themselves fail to cover this
+			// snapshot.
+			raw := current.rawMessages
+			rawDigest, rawErr := digestSessionMessages(raw)
+			if rawErr != nil {
+				return RecoveryBranchInfo{}, rawErr
+			}
+			covered = bytes.Equal(rawDigest[:], digest[:]) ||
+				messagesHavePrefix(raw, msgs) ||
+				messagesHavePrefixWithCompatibleSystem(raw, msgs)
+		}
+		if covered {
 			return RecoveryBranchInfo{}, ErrSessionRecoveryNotNeeded
 		}
 	}
