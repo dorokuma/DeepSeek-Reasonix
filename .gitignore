@@ -55,3 +55,4 @@ Thumbs.db
 # Scratch / agent working dirs (never committed)
 /tmp/
 /.codex/
+*.bak.peek
