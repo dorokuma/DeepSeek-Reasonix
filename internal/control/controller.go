@@ -2932,13 +2932,11 @@ func (c *Controller) snapshot(markActivity, forceRewrite bool) error {
 		if !errors.Is(err, agent.ErrSessionSnapshotConflict) {
 			return err
 		}
-		beforeRecoverPath := path
-		beforeRecoverSession := s
-		recoveredPath, recovered, recoverErr := c.recoverSnapshotConflict(path, err, forceRewrite)
+		recoveredPath, outcome, recoverErr := c.recoverSnapshotConflict(path, err, forceRewrite)
 		if recoverErr != nil {
 			return recoverErr
 		}
-		if !recovered {
+		if outcome == conflictDropped {
 			return nil
 		}
 		// Adoption swaps in a freshly loaded session whose rewrite baseline
@@ -2946,7 +2944,7 @@ func (c *Controller) snapshot(markActivity, forceRewrite bool) error {
 		// the replaced session and must not be re-applied to the new one.
 		path = recoveredPath
 		s = c.executor.Session()
-		adoptedDiskSession = recoveredPath == beforeRecoverPath && s != beforeRecoverSession
+		adoptedDiskSession = outcome == conflictAdoptedDisk
 	}
 	// Persist guardian session so the prefix cache stays warm after restart.
 	if c.guardianSess != nil {
@@ -3045,9 +3043,31 @@ func appendSnapshotConflictDiagnostic(path, mode, outcome string, saveErr error,
 	_, _ = f.Write(append(data, '\n'))
 }
 
-func (c *Controller) recoverSnapshotConflict(path string, saveErr error, forceRewrite bool) (string, bool, error) {
+// conflictOutcome is recoverSnapshotConflict's declared result. Callers act
+// on it directly instead of re-deriving what happened from path or session
+// pointer comparisons — the misclassification that broke the depth-cap
+// rewrite baseline (#6120) hid in exactly that inference.
+type conflictOutcome int
+
+const (
+	// conflictDropped: nothing was recovered and the disk transcript could
+	// not be adopted; this snapshot was deliberately dropped.
+	conflictDropped conflictOutcome = iota
+	// conflictAdoptedDisk: the executor session object was replaced by the
+	// newer disk transcript; adoptDiskSession already reset its baselines.
+	conflictAdoptedDisk
+	// conflictForceSavedBranch: recovery depth was exhausted and the same
+	// in-memory session was force-saved onto the same branch; its rewrite
+	// baseline still needs re-anchoring by the caller.
+	conflictForceSavedBranch
+	// conflictForkedBranch: the same in-memory session moved to a freshly
+	// forked recovery branch path.
+	conflictForkedBranch
+)
+
+func (c *Controller) recoverSnapshotConflict(path string, saveErr error, forceRewrite bool) (string, conflictOutcome, error) {
 	if c.executor == nil || strings.TrimSpace(path) == "" {
-		return "", false, saveErr
+		return "", conflictDropped, saveErr
 	}
 	mode := "snapshot"
 	if forceRewrite {
@@ -3060,7 +3080,7 @@ func (c *Controller) recoverSnapshotConflict(path string, saveErr error, forceRe
 			slog.Warn("controller: snapshot conflict; adopted newer disk transcript", logAttrs...)
 			c.sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelWarn,
 				Text: "session changed on disk; adopted the newer transcript"})
-			return path, true, nil
+			return path, conflictAdoptedDisk, nil
 		}
 	}
 	reason := "snapshot conflict"
@@ -3086,13 +3106,13 @@ func (c *Controller) recoverSnapshotConflict(path string, saveErr error, forceRe
 			// transcript back onto the current branch keeps the data and
 			// stops the chain.
 			if forceErr := c.executor.Session().Save(path); forceErr != nil {
-				return "", false, fmt.Errorf("recovery chain depth exceeded; force save failed: %w", forceErr)
+				return "", conflictDropped, fmt.Errorf("recovery chain depth exceeded; force save failed: %w", forceErr)
 			}
 			appendSnapshotConflictDiagnostic(path, mode, "recovery_depth_cap_force_saved", saveErr, path, false)
 			slog.Warn("controller: snapshot conflict; recovery depth cap reached, force-saved onto current branch", logAttrs...)
 			c.sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelWarn,
 				Text: "session conflicts kept recurring; kept the transcript on the current recovery branch"})
-			return path, true, nil
+			return path, conflictForceSavedBranch, nil
 		}
 		if errors.Is(err, agent.ErrSessionRecoveryNotNeeded) {
 			if c.adoptDiskSession(path) {
@@ -3100,16 +3120,16 @@ func (c *Controller) recoverSnapshotConflict(path string, saveErr error, forceRe
 				slog.Warn("controller: snapshot conflict; recovery not needed, adopted disk transcript", logAttrs...)
 				c.sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelWarn,
 					Text: "session changed on disk; adopted the newer transcript (local changes already covered)"})
-				return path, true, nil
+				return path, conflictAdoptedDisk, nil
 			}
 			// Nothing was recovered AND the disk transcript could not be
 			// adopted: the snapshot is silently dropped. Leave a trace so
 			// "my last turns vanished" reports can be tied to this path.
 			appendSnapshotConflictDiagnostic(path, mode, "recovery_not_needed_adopt_failed", saveErr, "", false)
 			slog.Warn("controller: snapshot conflict; recovery not needed but disk transcript could not be adopted", logAttrs...)
-			return "", false, nil
+			return "", conflictDropped, nil
 		}
-		return "", false, fmt.Errorf("recover stale session snapshot: %w", err)
+		return "", conflictDropped, fmt.Errorf("recover stale session snapshot: %w", err)
 	}
 	recoveryInfo := SessionRecoveryInfo{
 		OriginalPath: path,
@@ -3120,7 +3140,7 @@ func (c *Controller) recoverSnapshotConflict(path string, saveErr error, forceRe
 	}
 	if c.onSessionRecovered != nil {
 		if err := c.onSessionRecovered(recoveryInfo); err != nil {
-			return "", false, fmt.Errorf("commit recovered session: %w", err)
+			return "", conflictDropped, fmt.Errorf("commit recovered session: %w", err)
 		}
 	}
 	c.mu.Lock()
@@ -3135,7 +3155,7 @@ func (c *Controller) recoverSnapshotConflict(path string, saveErr error, forceRe
 		append(logAttrs, "recovery", info.Path, "existing", info.Existing)...)
 	c.sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelWarn,
 		Text: fmt.Sprintf("session changed on disk; unsaved local transcript was saved as recovery branch %s", agent.BranchID(info.Path))})
-	return info.Path, true, nil
+	return info.Path, conflictForkedBranch, nil
 }
 
 func (c *Controller) adoptDiskSession(path string) bool {
@@ -3341,8 +3361,10 @@ func (c *Controller) replaceSessionAfterCancel(msgs []provider.Message) {
 	if path != "" {
 		if err := c.executor.Session().SaveRewrite(path); err != nil {
 			if errors.Is(err, agent.ErrSessionSnapshotConflict) {
-				if _, _, recoverErr := c.recoverSnapshotConflict(path, err, true); recoverErr != nil {
+				if _, outcome, recoverErr := c.recoverSnapshotConflict(path, err, true); recoverErr != nil {
 					slog.Warn("controller: post-cancel transcript recovery", "err", recoverErr)
+				} else if outcome == conflictDropped {
+					slog.Warn("controller: post-cancel transcript dropped after conflict", "path", path)
 				}
 			} else {
 				slog.Warn("controller: post-cancel transcript flush", "err", err)
