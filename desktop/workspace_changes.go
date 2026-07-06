@@ -281,19 +281,25 @@ func workspaceGitBranchForMeta(base string) string {
 }
 
 func refreshWorkspaceGitBranchForMeta(key, base string) {
-	branch := workspaceGitBranchForMetaProbe(base)
-
-	storeNow := time.Now()
-	workspaceGitBranchCache.Lock()
-	if len(workspaceGitBranchCache.entries) > 256 {
-		for k, cached := range workspaceGitBranchCache.entries {
-			if storeNow.After(cached.expires) {
-				delete(workspaceGitBranchCache.entries, k)
+	branch := ""
+	// Store via defer so the refreshing flag is always cleared, even when the
+	// probe panics or exits the goroutine early; otherwise the entry would stay
+	// marked refreshing forever and never update again.
+	defer func() {
+		storeNow := time.Now()
+		workspaceGitBranchCache.Lock()
+		if len(workspaceGitBranchCache.entries) > 256 {
+			for k, cached := range workspaceGitBranchCache.entries {
+				if storeNow.After(cached.expires) {
+					delete(workspaceGitBranchCache.entries, k)
+				}
 			}
 		}
-	}
-	workspaceGitBranchCache.entries[key] = workspaceGitBranchCacheEntry{branch: branch, expires: storeNow.Add(workspaceGitBranchCacheTTL)}
-	workspaceGitBranchCache.Unlock()
+		workspaceGitBranchCache.entries[key] = workspaceGitBranchCacheEntry{branch: branch, expires: storeNow.Add(workspaceGitBranchCacheTTL)}
+		workspaceGitBranchCache.Unlock()
+	}()
+
+	branch = workspaceGitBranchForMetaProbe(base)
 }
 
 // workspaceGitBranch returns the current git branch name for the repo rooted
