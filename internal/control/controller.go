@@ -59,6 +59,14 @@ import (
 // while one is already active in the same Controller.
 var ErrTurnRunning = errors.New("turn already running")
 
+// errTurnRunningRotation and errRotationInProgress are returned by the
+// session-rotation gate (beginRotation) when a rotation cannot proceed: a turn
+// is in flight, or another rotation already holds the gate.
+var (
+	errTurnRunningRotation = errors.New("cannot start a new session while a turn is running")
+	errRotationInProgress  = errors.New("cannot start a new session while another session change is in progress")
+)
+
 // errNoSessionPath is returned by snapshot when a session has content to persist
 // but no resolved session path — a misconfiguration (e.g. an unresolvable data
 // dir in a bot deployment) that previously dropped conversations silently
@@ -165,10 +173,18 @@ type Controller struct {
 
 	// mu guards the run state; every critical section under it is short and
 	// non-blocking.
-	mu          sync.Mutex
-	cancel      context.CancelFunc
-	running     bool
-	canceling   bool
+	mu        sync.Mutex
+	cancel    context.CancelFunc
+	running   bool
+	canceling bool
+	// rotating is set under mu while NewSession/ClearSession swap the executor
+	// session out. Checking running once and then swapping later leaves a
+	// TOCTOU window: a turn can start (running=false at check time) during the
+	// intervening Snapshot() and then have its live session replaced. running
+	// and rotating are mutually exclusive gates — a turn refuses to start while
+	// a rotation is in progress, and a rotation refuses to start while a turn
+	// runs — so the run loop's session reference cannot change under it.
+	rotating    bool
 	autosaveWG  sync.WaitGroup
 	planMode    bool
 	sessionPath string
@@ -558,7 +574,7 @@ func (c *Controller) beginCheckpoint(input string) {
 // turn is already in flight.
 func (c *Controller) runGuarded(body func(ctx context.Context) error) {
 	c.mu.Lock()
-	if c.running {
+	if c.running || c.rotating {
 		c.mu.Unlock()
 		return
 	}
@@ -643,7 +659,7 @@ func (c *Controller) runTurn(ctx context.Context, input string) error {
 func (c *Controller) RunTurn(ctx context.Context, input string) error {
 	ctx, cancel := context.WithCancel(ctx)
 	c.mu.Lock()
-	if c.running {
+	if c.running || c.rotating {
 		c.mu.Unlock()
 		cancel()
 		return ErrTurnRunning
@@ -1388,6 +1404,31 @@ func (c *Controller) Running() bool {
 	return c.running
 }
 
+// beginRotation claims the session-rotation gate. It fails if a turn is running
+// or another rotation is already in progress, so the caller holds exclusive
+// rights to swap the executor session from the check here through endRotation.
+// This closes the TOCTOU window that a bare `if c.running` check left open:
+// between that check and the actual SetSession, a turn could start and then be
+// yanked out from under the run loop.
+func (c *Controller) beginRotation() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.running {
+		return errTurnRunningRotation
+	}
+	if c.rotating {
+		return errRotationInProgress
+	}
+	c.rotating = true
+	return nil
+}
+
+func (c *Controller) endRotation() {
+	c.mu.Lock()
+	c.rotating = false
+	c.mu.Unlock()
+}
+
 // CancelRequested reports whether Cancel has been requested for the active turn.
 func (c *Controller) CancelRequested() bool {
 	c.mu.Lock()
@@ -2020,11 +2061,16 @@ func (c *Controller) Compact(ctx context.Context, instructions string) error {
 		return nil
 	}
 	// The run loop is the only sanctioned writer of the live session during a
-	// turn; a manual compact would rewrite the log underneath it (same guard as
-	// Rewind/Branch).
-	if c.Running() {
-		return fmt.Errorf("cannot compact while a turn is running")
+	// turn; a manual compact would rewrite the log underneath it. The rotation
+	// gate (not a bare Running() check) also blocks a turn from starting while
+	// the compaction rewrites the session — see beginRotation.
+	if err := c.beginRotation(); err != nil {
+		if errors.Is(err, errTurnRunningRotation) {
+			return fmt.Errorf("cannot compact while a turn is running")
+		}
+		return err
 	}
+	defer c.endRotation()
 	return c.executor.CompactNow(ctx, instructions)
 }
 
@@ -2049,6 +2095,15 @@ func (c *Controller) NewSession() error {
 	if c.executor == nil {
 		return nil
 	}
+	// Claim the rotation gate for the whole snapshot-then-swap sequence. A bare
+	// `if c.running` check released before Snapshot() left a window where a turn
+	// could start during the snapshot and then have its live session replaced by
+	// the SetSession below. Submit ("/new") and the bot gateway call this
+	// asynchronously, so the gate is load-bearing, not defensive.
+	if err := c.beginRotation(); err != nil {
+		return err
+	}
+	defer c.endRotation()
 	if err := c.Snapshot(); err != nil {
 		return err
 	}
@@ -2084,13 +2139,19 @@ func (c *Controller) ClearSession() error {
 	if c.executor == nil {
 		return nil
 	}
+	// Same rotation gate as NewSession: hold it across the whole
+	// destroy-then-swap so a turn cannot start during the sequence and have its
+	// live session replaced.
+	if err := c.beginRotation(); err != nil {
+		if errors.Is(err, errTurnRunningRotation) {
+			return fmt.Errorf("cannot clear while a turn is running")
+		}
+		return err
+	}
+	defer c.endRotation()
 	c.mu.Lock()
-	running := c.running
 	oldPath := c.sessionPath
 	c.mu.Unlock()
-	if running {
-		return fmt.Errorf("cannot clear while a turn is running")
-	}
 	preMarkedCleanup := c.hasUnfinishedSessionJobs(oldPath)
 	if preMarkedCleanup {
 		if err := agent.MarkCleanupPending(oldPath, "clear"); err != nil {
@@ -2236,9 +2297,16 @@ func (c *Controller) Rewind(turn int, scope RewindScope) error {
 	if !c.checkpoints.enabled() || c.executor == nil {
 		return c.rewindFail(fmt.Errorf("checkpoints unavailable"))
 	}
-	if c.Running() {
-		return c.rewindFail(fmt.Errorf("cannot rewind while a turn is running"))
+	// Rewind rewrites the live session (conversation scope) and restores files;
+	// hold the rotation gate across the whole operation so a turn cannot start
+	// between the check and the Replace/SnapshotRewrite below.
+	if err := c.beginRotation(); err != nil {
+		if errors.Is(err, errTurnRunningRotation) {
+			return c.rewindFail(fmt.Errorf("cannot rewind while a turn is running"))
+		}
+		return c.rewindFail(err)
 	}
+	defer c.endRotation()
 	boundary, hasBound := c.checkpoints.boundary(turn)
 
 	if scope == RewindCode || scope == RewindBoth {
@@ -2303,9 +2371,16 @@ func (c *Controller) forkNamed(turn int, name string, switchToFork bool) (string
 	if c.sessionDir == "" {
 		return "", c.rewindFail(fmt.Errorf("fork needs session persistence, which is disabled"))
 	}
-	if c.Running() {
-		return "", c.rewindFail(fmt.Errorf("cannot fork while a turn is running"))
+	// Hold the rotation gate from before the pre-fork Snapshot through the
+	// switch below: a bare Running() check released here would let a turn start
+	// during the snapshot and then be switched onto the fork.
+	if err := c.beginRotation(); err != nil {
+		if errors.Is(err, errTurnRunningRotation) {
+			return "", c.rewindFail(fmt.Errorf("cannot fork while a turn is running"))
+		}
+		return "", c.rewindFail(err)
 	}
+	defer c.endRotation()
 	boundary, hasBound := c.checkpoints.boundary(turn)
 	if !hasBound {
 		return "", c.rewindFail(fmt.Errorf("fork unavailable for turn %d (resumed session)", turn))
@@ -2385,12 +2460,15 @@ func (c *Controller) Branch(name string) (string, error) {
 	if c.sessionDir == "" {
 		return "", c.rewindFail(fmt.Errorf("branch needs session persistence, which is disabled"))
 	}
-	c.mu.Lock()
-	running := c.running
-	c.mu.Unlock()
-	if running {
-		return "", c.rewindFail(fmt.Errorf("cannot branch while a turn is running"))
+	// Hold the rotation gate across the Snapshot and the switch below so a turn
+	// cannot start mid-branch and then have its session replaced.
+	if err := c.beginRotation(); err != nil {
+		if errors.Is(err, errTurnRunningRotation) {
+			return "", c.rewindFail(fmt.Errorf("cannot branch while a turn is running"))
+		}
+		return "", c.rewindFail(err)
 	}
+	defer c.endRotation()
 	if !c.executor.Session().HasContent() {
 		return "", c.rewindFail(fmt.Errorf("nothing to branch yet"))
 	}
@@ -2456,12 +2534,15 @@ func (c *Controller) SwitchBranch(ref string) (agent.BranchInfo, error) {
 	if ref == "" {
 		return agent.BranchInfo{}, c.rewindFail(fmt.Errorf("usage: /switch <branch id|name>"))
 	}
-	c.mu.Lock()
-	running := c.running
-	c.mu.Unlock()
-	if running {
-		return agent.BranchInfo{}, c.rewindFail(fmt.Errorf("cannot switch branches while a turn is running"))
+	// Hold the rotation gate across the branch listing/load and the switch so a
+	// turn cannot start between the check and the SetSession below.
+	if err := c.beginRotation(); err != nil {
+		if errors.Is(err, errTurnRunningRotation) {
+			return agent.BranchInfo{}, c.rewindFail(fmt.Errorf("cannot switch branches while a turn is running"))
+		}
+		return agent.BranchInfo{}, c.rewindFail(err)
 	}
+	defer c.endRotation()
 	branches, err := c.Branches()
 	if err != nil {
 		return agent.BranchInfo{}, c.rewindFail(err)
@@ -2558,9 +2639,17 @@ func (c *Controller) summarizeAt(ctx context.Context, turn int, from bool) error
 	if c.executor == nil {
 		return c.rewindFail(fmt.Errorf("checkpoints unavailable"))
 	}
-	if c.Running() {
-		return c.rewindFail(fmt.Errorf("cannot summarize while a turn is running"))
+	// Summarize rewrites the live session AFTER a provider round-trip, so the
+	// bare Running() check left a seconds-wide window for a turn to start and
+	// then have the log replaced under it. Hold the rotation gate from the
+	// boundary read through the post-rewrite snapshot.
+	if err := c.beginRotation(); err != nil {
+		if errors.Is(err, errTurnRunningRotation) {
+			return c.rewindFail(fmt.Errorf("cannot summarize while a turn is running"))
+		}
+		return c.rewindFail(err)
 	}
+	defer c.endRotation()
 	boundary, hasBound := c.checkpoints.boundary(turn)
 	if !hasBound {
 		return c.rewindFail(fmt.Errorf("summarize unavailable for turn %d (resumed session)", turn))

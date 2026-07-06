@@ -3,6 +3,7 @@ package control
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -1631,6 +1632,196 @@ func TestSnapshotConflictAtRecoveryDepthCapForceSavesCurrentBranch(t *testing.T)
 	}
 	if got := sink.notices(); len(got) != len(notices) {
 		t.Fatalf("follow-up snapshot emitted more notices: %v", got)
+	}
+}
+
+func TestNewSessionRefusesWhileTurnRunning(t *testing.T) {
+	dir := t.TempDir()
+	sess := agent.NewSession("sys")
+	sess.Add(provider.Message{Role: provider.RoleUser, Content: "old context"})
+	exec := agent.New(nil, nil, sess, agent.Options{}, event.Discard)
+	path := filepath.Join(dir, "session.jsonl")
+	c := New(Options{Executor: exec, SystemPrompt: "sys", SessionDir: dir, SessionPath: path, Label: "test"})
+
+	c.mu.Lock()
+	c.running = true
+	c.mu.Unlock()
+
+	if err := c.NewSession(); err == nil {
+		t.Fatal("NewSession while running = nil error, want refusal")
+	}
+	if got := c.SessionPath(); got != path {
+		t.Fatalf("session path = %q, want unrotated %q", got, path)
+	}
+	if snap := exec.Session().Snapshot(); len(snap) != 2 {
+		t.Fatalf("running session was reset out from under the turn: %+v", snap)
+	}
+
+	c.mu.Lock()
+	c.running = false
+	c.mu.Unlock()
+	if err := c.NewSession(); err != nil {
+		t.Fatalf("NewSession after the turn stopped: %v", err)
+	}
+	if c.SessionPath() == path {
+		t.Fatal("session path did not rotate once the turn stopped")
+	}
+}
+
+// TestNewSessionRefusesTurnStartedDuringSnapshot forces the TOCTOU interleaving
+// the running guard alone missed: a turn starts while NewSession is mid-Snapshot
+// (running was false at the entry check), and must be refused so the executor
+// session is not swapped out from under a live run loop.
+func TestNewSessionRefusesTurnStartedDuringSnapshot(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "session.jsonl")
+
+	// A diverged on-disk transcript makes Snapshot enter the recovery callback,
+	// where the test parks NewSession mid-rotation.
+	diskSess := agent.NewSession("sys")
+	diskSess.Add(provider.Message{Role: provider.RoleUser, Content: "first"})
+	diskSess.Add(provider.Message{Role: provider.RoleAssistant, Content: "disk"})
+	if err := diskSess.Save(path); err != nil {
+		t.Fatalf("Save disk: %v", err)
+	}
+	localSess := agent.NewSession("sys")
+	localSess.Add(provider.Message{Role: provider.RoleUser, Content: "first"})
+	localSess.Add(provider.Message{Role: provider.RoleAssistant, Content: "local"})
+	localExec := agent.New(nil, nil, localSess, agent.Options{}, event.Discard)
+
+	entered := make(chan struct{}, 1)
+	release := make(chan struct{})
+	c := New(Options{
+		Executor:     localExec,
+		SystemPrompt: "sys",
+		SessionDir:   dir,
+		SessionPath:  path,
+		Label:        "test",
+		OnSessionRecovered: func(SessionRecoveryInfo) error {
+			entered <- struct{}{}
+			<-release
+			return nil
+		},
+	})
+
+	newSessionDone := make(chan error, 1)
+	go func() { newSessionDone <- c.NewSession() }()
+
+	// NewSession is now parked inside Snapshot, still holding the rotation gate.
+	<-entered
+
+	// A turn tries to start in exactly the window the bare running check left
+	// open. It must be refused rather than flip running=true and read the
+	// session NewSession is about to replace.
+	if err := c.RunTurn(context.Background(), "hello"); !errors.Is(err, ErrTurnRunning) {
+		close(release)
+		<-newSessionDone
+		t.Fatalf("RunTurn during rotation = %v, want ErrTurnRunning", err)
+	}
+	if c.Running() {
+		close(release)
+		<-newSessionDone
+		t.Fatal("RunTurn set running=true during a rotation")
+	}
+	// The live session must be untouched while the refused turn could have read
+	// it: NewSession has not swapped yet (still parked before the swap).
+	if snap := localExec.Session().Snapshot(); len(snap) != 3 {
+		close(release)
+		<-newSessionDone
+		t.Fatalf("session mutated during rotation window: %+v", snap)
+	}
+
+	close(release)
+	if err := <-newSessionDone; err != nil {
+		t.Fatalf("NewSession: %v", err)
+	}
+	// Rotation completed: a fresh session with only the system prompt, on a new
+	// path, and a turn may start again.
+	if c.SessionPath() == path {
+		t.Fatal("session path did not rotate")
+	}
+	if snap := localExec.Session().Snapshot(); len(snap) != 1 || snap[0].Role != provider.RoleSystem {
+		t.Fatalf("post-rotation session = %+v, want only system prompt", snap)
+	}
+	if c.Running() {
+		t.Fatal("rotation gate leaked: controller still marked running")
+	}
+}
+
+// TestSessionMutationsRefuseWhileRotating proves every session-mutating entry
+// point is wired to the same rotation gate: while a rotation is in progress
+// (c.rotating held), each refuses instead of swapping/rewriting the live
+// session, and a turn cannot start either. This is the TOCTOU class the bare
+// Running() checks left open — a mutation slipping in mid-rotation.
+func TestSessionMutationsRefuseWhileRotating(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "session.jsonl")
+	sess := agent.NewSession("sys")
+	sess.Add(provider.Message{Role: provider.RoleUser, Content: "hi"})
+	sess.Add(provider.Message{Role: provider.RoleAssistant, Content: "there"})
+	exec := agent.New(nil, nil, sess, agent.Options{}, event.Discard)
+	c := New(Options{Executor: exec, SystemPrompt: "sys", SessionDir: dir, SessionPath: path, Label: "test"})
+
+	// Simulate a rotation already in progress (as NewSession/ClearSession hold
+	// it across their snapshot-then-swap window).
+	if err := c.beginRotation(); err != nil {
+		t.Fatalf("beginRotation: %v", err)
+	}
+
+	if err := c.NewSession(); !errors.Is(err, errRotationInProgress) {
+		t.Fatalf("NewSession while rotating = %v, want errRotationInProgress", err)
+	}
+	if err := c.ClearSession(); !errors.Is(err, errRotationInProgress) {
+		t.Fatalf("ClearSession while rotating = %v, want errRotationInProgress", err)
+	}
+	if _, err := c.Branch("x"); !errors.Is(err, errRotationInProgress) {
+		t.Fatalf("Branch while rotating = %v, want errRotationInProgress", err)
+	}
+	if _, err := c.ForkNamed(1, "x"); !errors.Is(err, errRotationInProgress) {
+		t.Fatalf("ForkNamed while rotating = %v, want errRotationInProgress", err)
+	}
+	if _, err := c.SwitchBranch("x"); !errors.Is(err, errRotationInProgress) {
+		t.Fatalf("SwitchBranch while rotating = %v, want errRotationInProgress", err)
+	}
+	if err := c.Compact(context.Background(), ""); !errors.Is(err, errRotationInProgress) {
+		t.Fatalf("Compact while rotating = %v, want errRotationInProgress", err)
+	}
+	if err := c.Rewind(0, RewindConversation); !errors.Is(err, errRotationInProgress) {
+		t.Fatalf("Rewind while rotating = %v, want errRotationInProgress", err)
+	}
+	if err := c.SummarizeFrom(context.Background(), 1); !errors.Is(err, errRotationInProgress) {
+		t.Fatalf("SummarizeFrom while rotating = %v, want errRotationInProgress", err)
+	}
+	if err := c.SummarizeUpTo(context.Background(), 1); !errors.Is(err, errRotationInProgress) {
+		t.Fatalf("SummarizeUpTo while rotating = %v, want errRotationInProgress", err)
+	}
+	// A turn must not start while a rotation holds the gate.
+	if err := c.RunTurn(context.Background(), "hello"); !errors.Is(err, ErrTurnRunning) {
+		t.Fatalf("RunTurn while rotating = %v, want ErrTurnRunning", err)
+	}
+	// The live session was never touched by any refused mutation.
+	if snap := exec.Session().Snapshot(); len(snap) != 3 {
+		t.Fatalf("session mutated during rotation = %+v, want untouched", snap)
+	}
+
+	c.endRotation()
+
+	// Conversely: while a turn runs, every mutation is refused with its own
+	// message and the gate cannot be claimed.
+	c.mu.Lock()
+	c.running = true
+	c.mu.Unlock()
+	if err := c.beginRotation(); !errors.Is(err, errTurnRunningRotation) {
+		t.Fatalf("beginRotation while running = %v, want errTurnRunningRotation", err)
+	}
+	if err := c.Compact(context.Background(), ""); err == nil || !strings.Contains(err.Error(), "cannot compact while a turn is running") {
+		t.Fatalf("Compact while running = %v, want 'cannot compact' message", err)
+	}
+	if err := c.Rewind(0, RewindConversation); err == nil || !strings.Contains(err.Error(), "cannot rewind while a turn is running") {
+		t.Fatalf("Rewind while running = %v, want 'cannot rewind' message", err)
+	}
+	if err := c.SummarizeFrom(context.Background(), 1); err == nil || !strings.Contains(err.Error(), "cannot summarize while a turn is running") {
+		t.Fatalf("SummarizeFrom while running = %v, want 'cannot summarize' message", err)
 	}
 }
 
