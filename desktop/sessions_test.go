@@ -955,6 +955,21 @@ func TestMovePathIfExistsCopyFallback(t *testing.T) {
 	}
 }
 
+func TestCopyFallbackTreatsMissingSourceAsAlreadyMoved(t *testing.T) {
+	dir := t.TempDir()
+	if err := copyAndRemove(filepath.Join(dir, "missing.txt"), filepath.Join(dir, "dst.txt")); err != nil {
+		t.Fatalf("copy missing source: %v", err)
+	}
+
+	dstDir := filepath.Join(dir, "dst-dir")
+	if err := copyDir(filepath.Join(dir, "missing-dir"), dstDir, 0o755); err != nil {
+		t.Fatalf("copy missing dir: %v", err)
+	}
+	if _, err := os.Stat(dstDir); !os.IsNotExist(err) {
+		t.Fatalf("copy missing dir should not leave an empty target, stat err = %v", err)
+	}
+}
+
 func TestCopyAndRemoveDirectory(t *testing.T) {
 	dir := t.TempDir()
 	srcDir := filepath.Join(dir, "src")
