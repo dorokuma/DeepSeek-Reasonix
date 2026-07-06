@@ -801,14 +801,28 @@ func TestLazyCacheHitPinsToolBytesAcrossDivergentHandshake(t *testing.T) {
 		t.Fatal("live-only tool joined the registry mid-session; it must wait for the next session")
 	}
 
-	// The refreshed cache carries the live truth for the NEXT session.
-	refreshed := waitForCachedSchema(t, spec, 5*time.Second)
-	names := map[string]bool{}
-	for _, ct := range refreshed.Tools {
-		names[ct.Name] = true
-	}
-	if !names["echo"] || !names["zed"] {
-		t.Fatalf("refreshed cache tools = %v, want live set {echo, zed}", refreshed.Tools)
+	// The refreshed cache carries the live truth for the NEXT session. The
+	// stale cache this test wrote is itself loadable, so poll until the
+	// refresh actually lands (the background save races Execute's return on
+	// slow machines) rather than accepting the first loadable snapshot.
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		refreshed, ok := LoadCachedSchema(spec.Name, SpecFingerprint(spec))
+		if ok {
+			names := map[string]bool{}
+			for _, ct := range refreshed.Tools {
+				names[ct.Name] = true
+			}
+			if names["echo"] && names["zed"] {
+				break
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("refreshed cache tools = %v, want live set {echo, zed}", refreshed.Tools)
+			}
+		} else if time.Now().After(deadline) {
+			t.Fatal("cached schema never became loadable")
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }
 
