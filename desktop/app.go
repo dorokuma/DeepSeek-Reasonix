@@ -639,7 +639,14 @@ func (a *App) restoreOrBuildTabs() {
 			tab.effort = cloneStringPtr(entry.Effort)
 			tab.tokenMode = boot.NormalizeTokenMode(entry.TokenMode)
 			tab.mode = persistedTabMode(entry.Mode)
-			tab.goal = strings.TrimSpace(entry.Goal)
+			// Validate the persisted goal against the session's goal-state
+			// sidecar: a typed /new or /clear rotates the session through the
+			// controller without passing App.NewSession/ClearSession, so
+			// entry.Goal can be stale. Session rotation writes a stopped
+			// goal-state onto the fresh path; reading it here stops a restart
+			// from re-seeding the cleared goal into the rotated session. A
+			// session without a sidecar keeps the persisted goal (legacy).
+			tab.goal = runningTabSessionGoal(strings.TrimSpace(entry.SessionPath), strings.TrimSpace(entry.Goal))
 			tab.toolApprovalMode = normalizeToolApprovalMode(entry.ToolApprovalMode)
 			if tab.toolApprovalMode == control.ToolApprovalAsk && tabModeHasAutoApproveTools(entry.Mode) {
 				tab.toolApprovalMode = control.ToolApprovalYolo
