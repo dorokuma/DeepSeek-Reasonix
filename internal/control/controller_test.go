@@ -963,6 +963,141 @@ type controlRecoveryInfo struct {
 	recoveryPath string
 }
 
+// blockedRecoveryHandoff is a controller whose first Snapshot has entered the
+// recovery handoff and is parked inside OnSessionRecovered until release is
+// closed, so tests can race other controller operations against an in-flight
+// handoff.
+type blockedRecoveryHandoff struct {
+	c         *Controller
+	dir       string
+	path      string
+	local     *agent.Session
+	first     controlRecoveryInfo
+	release   chan struct{}
+	firstDone chan error
+}
+
+func startBlockedRecoveryHandoff(t *testing.T) *blockedRecoveryHandoff {
+	t.Helper()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "session.jsonl")
+
+	currentSess := agent.NewSession("sys")
+	currentSess.Add(provider.Message{Role: provider.RoleUser, Content: "first"})
+	currentSess.Add(provider.Message{Role: provider.RoleAssistant, Content: "disk"})
+	if err := currentSess.Save(path); err != nil {
+		t.Fatalf("Save current: %v", err)
+	}
+
+	localSess := agent.NewSession("sys")
+	localSess.Add(provider.Message{Role: provider.RoleUser, Content: "first"})
+	localSess.Add(provider.Message{Role: provider.RoleAssistant, Content: "local"})
+	localExec := agent.New(nil, nil, localSess, agent.Options{}, event.Discard)
+
+	entered := make(chan controlRecoveryInfo, 1)
+	release := make(chan struct{})
+	c := New(Options{
+		Executor:    localExec,
+		SessionDir:  dir,
+		SessionPath: path,
+		Label:       "test",
+		OnSessionRecovered: func(info SessionRecoveryInfo) error {
+			entered <- controlRecoveryInfo{originalPath: info.OriginalPath, recoveryPath: info.RecoveryPath}
+			<-release
+			return nil
+		},
+	})
+	t.Cleanup(func() {
+		select {
+		case <-release:
+		default:
+			close(release)
+		}
+	})
+
+	firstDone := make(chan error, 1)
+	go func() { firstDone <- c.Snapshot() }()
+	first := <-entered
+	if first.originalPath != path || first.recoveryPath == "" || first.recoveryPath == path {
+		t.Fatalf("recovery info = %+v, want distinct recovery from original", first)
+	}
+	return &blockedRecoveryHandoff{
+		c: c, dir: dir, path: path, local: localSess,
+		first: first, release: release, firstDone: firstDone,
+	}
+}
+
+// TestSessionSwapWaitsForRecoveryHandoff guards the swap side of the snapshot
+// serialization: moves of controller-owned session state must wait for an
+// in-flight save/recovery handoff instead of interleaving with it. A swap that
+// lands mid-handoff pairs the old path with the new session, which either
+// writes one transcript's messages into another's file or manufactures another
+// bogus conflict on the next save.
+func TestSessionSwapWaitsForRecoveryHandoff(t *testing.T) {
+	cases := []struct {
+		name string
+		run  func(t *testing.T, h *blockedRecoveryHandoff) (done chan struct{}, wantPath string)
+	}{
+		{name: "SetSessionPath", run: func(t *testing.T, h *blockedRecoveryHandoff) (chan struct{}, string) {
+			other := filepath.Join(h.dir, "other.jsonl")
+			done := make(chan struct{})
+			go func() { h.c.SetSessionPath(other); close(done) }()
+			return done, other
+		}},
+		{name: "Resume", run: func(t *testing.T, h *blockedRecoveryHandoff) (chan struct{}, string) {
+			other := filepath.Join(h.dir, "resumed.jsonl")
+			sess := agent.NewSession("sys")
+			sess.Add(provider.Message{Role: provider.RoleUser, Content: "resumed"})
+			if err := sess.Save(other); err != nil {
+				t.Fatalf("Save resumed: %v", err)
+			}
+			done := make(chan struct{})
+			go func() { h.c.Resume(sess, other); close(done) }()
+			return done, other
+		}},
+		{name: "CancelFlush", run: func(t *testing.T, h *blockedRecoveryHandoff) (chan struct{}, string) {
+			// Flush the content the session already holds: once the handoff
+			// commits, the flush lands on the recovery branch as an up-to-date
+			// no-op instead of deriving a second recovery.
+			msgs := h.local.Snapshot()
+			done := make(chan struct{})
+			go func() { h.c.replaceSessionAfterCancel(msgs); close(done) }()
+			return done, h.first.recoveryPath
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			h := startBlockedRecoveryHandoff(t)
+			done, wantPath := tc.run(t, h)
+			select {
+			case <-done:
+				t.Fatal("session state moved while the recovery handoff was still in flight")
+			case <-time.After(100 * time.Millisecond):
+			}
+			close(h.release)
+			if err := <-h.firstDone; err != nil {
+				t.Fatalf("first Snapshot: %v", err)
+			}
+			select {
+			case <-done:
+			case <-time.After(10 * time.Second):
+				t.Fatal("session state move did not finish after the handoff completed")
+			}
+			if got := h.c.SessionPath(); got != wantPath {
+				t.Fatalf("controller session path = %q, want %q", got, wantPath)
+			}
+			matches, err := filepath.Glob(filepath.Join(h.dir, "*-recovery-*.jsonl"))
+			if err != nil {
+				t.Fatalf("glob recovery branches: %v", err)
+			}
+			recoveries := recoveryTranscriptPaths(matches)
+			if len(recoveries) != 1 || recoveries[0] != h.first.recoveryPath {
+				t.Fatalf("recovery branches = %v, want only %q", matches, h.first.recoveryPath)
+			}
+		})
+	}
+}
+
 // TestSnapshotConflictAdoptionResetsRewriteBaseline guards the baseline
 // handoff on the adopt path: adopting a newer on-disk transcript installs a
 // freshly loaded session, and the replaced session's rewrite version must not
