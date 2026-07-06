@@ -403,7 +403,10 @@ func (s *Session) checkSnapshotWrite(path string, next []provider.Message, nextD
 		// An unknown-revision baseline (meta sidecar unreadable at load) cannot
 		// vouch for revision equality; the digest/prefix checks above already
 		// vouch for the content, so only a known baseline arms the CAS check.
-		if baseState.ok && baseState.revisionKnown && currentRevision != baseState.revision && !contentUnchanged {
+		// Exact append is also safe with a stale baseline: the disk transcript is
+		// a byte-for-byte prefix of the snapshot, so the write only records the
+		// suffix at the current disk revision instead of rewriting that prefix.
+		if baseState.ok && baseState.revisionKnown && currentRevision != baseState.revision && !contentUnchanged && !exactAppend {
 			return snapshotWriteDecision{}, snapshotConflict(path, existing, next, baseState.revision, currentRevision)
 		}
 		// A normalized-dirty load means LoadSession repaired the history on the

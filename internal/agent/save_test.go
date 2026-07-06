@@ -444,6 +444,52 @@ func TestSaveSnapshotSameContentByOtherRuntimeKeepsClonedBaselineWritable(t *tes
 	}
 }
 
+func TestSaveSnapshotAllowsExactAppendFromStaleRevisionBaseline(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "session.jsonl")
+	s := NewSession("sys")
+	s.Add(provider.Message{Role: provider.RoleUser, Content: "first"})
+	if err := s.SaveSnapshot(path); err != nil {
+		t.Fatalf("SaveSnapshot base: %v", err)
+	}
+	staleBaseline := s.persistState(path)
+
+	s.Add(provider.Message{Role: provider.RoleAssistant, Content: "one"})
+	if err := s.SaveSnapshot(path); err != nil {
+		t.Fatalf("SaveSnapshot prefix append: %v", err)
+	}
+	prefixMeta, ok, err := LoadBranchMeta(path)
+	if err != nil || !ok {
+		t.Fatalf("LoadBranchMeta prefix ok=%v err=%v", ok, err)
+	}
+	if prefixMeta.Revision == staleBaseline.revision {
+		t.Fatalf("prefix revision did not advance: %d", prefixMeta.Revision)
+	}
+
+	s.Add(provider.Message{Role: provider.RoleUser, Content: "two"})
+	s.setPersistedBaseline(path, staleBaseline.digest, staleBaseline.version, staleBaseline.revision, true)
+	if err := s.SaveSnapshot(path); err != nil {
+		t.Fatalf("SaveSnapshot exact append from stale revision baseline: %v", err)
+	}
+
+	loaded, err := LoadSession(path)
+	if err != nil {
+		t.Fatalf("LoadSession appended: %v", err)
+	}
+	if got := loaded.Messages[len(loaded.Messages)-1].Content; got != "two" {
+		t.Fatalf("tail after stale-baseline append = %q, want two", got)
+	}
+	advancedMeta, ok, err := LoadBranchMeta(path)
+	if err != nil || !ok {
+		t.Fatalf("LoadBranchMeta advanced ok=%v err=%v", ok, err)
+	}
+	if advancedMeta.Revision != prefixMeta.Revision+1 {
+		t.Fatalf("revision after stale-baseline append = %d, want %d", advancedMeta.Revision, prefixMeta.Revision+1)
+	}
+	if matches, err := filepath.Glob(filepath.Join(filepath.Dir(path), "*-recovery-*.jsonl")); err != nil || len(matches) != 0 {
+		t.Fatalf("recovery branches after stale-baseline append = %v err=%v, want none", matches, err)
+	}
+}
+
 func TestSaveSnapshotStillPersistsNormalizedRepair(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "session.jsonl")
 	mal := NewSession("sys")
