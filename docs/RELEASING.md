@@ -59,9 +59,11 @@ the `release` environment deployment.
    Each stable run **waits for esengine to approve the `release` environment** before publishing.
    A stable `npm-v*` publish moves the `latest` dist-tag automatically (build.mjs)
    and release-npm.yml verifies it landed. **Do not skip the npm tag**: the stable
-   CLI release (release.yml) fails when npm `latest` lags behind the version being
-   released — that guard exists because 1.0.0–1.17.5 shipped without stable npm
-   tags and `npm update -g` silently downgraded users to 0.53.2 (#5822).
+   CLI release (release.yml) fails when the matching `npm-v*` tag was never pushed
+   — that guard exists because 1.0.0–1.17.5 shipped without stable npm tags and
+   `npm update -g` silently downgraded users to 0.53.2 (#5822). A pushed tag whose
+   publish is still awaiting approval only warns; release-npm.yml's verify step
+   owns asserting the dist-tag lands.
 6. **Next cycle** — the canary rolls on toward `1.5.0`.
 
 ## Notes
