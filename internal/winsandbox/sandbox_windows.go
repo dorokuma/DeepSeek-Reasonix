@@ -9,6 +9,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -66,13 +67,23 @@ func Run(spec Spec, argv []string, opts RunOptions) (Result, error) {
 	return Result{ExitCode: code}, nil
 }
 
+// lockWaitNotice adapts the run's stderr into the lock queue-notice writer.
+// The typed-nil guard matters: passing a nil *os.File through io.Writer would
+// make the interface non-nil and defeat the notice==nil checks downstream.
+func lockWaitNotice(opts RunOptions) io.Writer {
+	if opts.Stderr == nil {
+		return nil
+	}
+	return opts.Stderr
+}
+
 func runWindowsSandboxed(spec Spec, argv []string, opts RunOptions) (int, error) {
 	if spec.Writable {
 		return runWindowsRestrictedSandboxed(spec, argv, opts)
 	}
 	// Serialize against concurrent runs touching the same roots and clear any
 	// deny residue left by a crashed run before we mutate ACLs.
-	lock, err := lockWindowsRoots(windowsMutatedRootsForRun(spec, argv[0]))
+	lock, err := lockWindowsRoots(windowsMutatedRootsForRun(spec, argv[0]), lockWaitNotice(opts))
 	if err != nil {
 		return 0, err
 	}
@@ -152,7 +163,7 @@ func runWindowsRestrictedSandboxed(spec Spec, argv []string, opts RunOptions) (i
 	}
 	// Serialize against concurrent runs touching the same roots and clear any
 	// deny residue left by a crashed run before we mutate ACLs.
-	lock, err := lockWindowsRoots(windowsMutatedRootsForRun(spec, argv[0]))
+	lock, err := lockWindowsRoots(windowsMutatedRootsForRun(spec, argv[0]), lockWaitNotice(opts))
 	if err != nil {
 		return 0, err
 	}

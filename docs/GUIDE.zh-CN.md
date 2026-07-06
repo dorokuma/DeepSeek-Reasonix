@@ -408,6 +408,16 @@ low-integrity token 下，除配置的 root 外它仍能写入 Windows 对任何
 （越界询问与可选的 Windows elevated 加固见
 [`SPEC.md` §9](./SPEC.md#9-roadmap-not-in-current-scope)）。
 
+Windows 沙盒排障：沙盒会把 Reasonix 可执行文件自身以隐藏 helper 方式重新拉起，
+CLI 与桌面端都内置了这个 helper 入口——若某个构建缺少入口而又请求 enforce，
+bash 会以明确报错拒绝执行，而不是返回空输出。同一 workspace 上排队等待另一条
+沙盒命令时会打印一行“waiting for another sandboxed command”提示（等待上限
+`WINDOWS_SANDBOX_LOCK_MS`，默认 10 分钟）。如果只有 Git-for-Windows/MSYS2 bash
+下的沙盒命令失败，可试 `[tools.shell] prefer = "powershell"`——MSYS 运行时在
+low-integrity token 下较脆弱。运行 `reasonix doctor` 可查看解析到的 shell、沙盒
+可用性，以及项目 `reasonix.toml` 是否固定了 `[sandbox]`（项目文件优先级高于
+Settings/用户配置；沙盒配置变更需 reload session config 或新开会话才生效）。
+
 ## 插件（MCP）
 
 Reasonix 是一个 MCP 客户端。`[[plugins]]` 的 `type` 选择传输：`stdio`（默认）启动本地子进

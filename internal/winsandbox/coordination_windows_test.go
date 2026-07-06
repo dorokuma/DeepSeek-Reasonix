@@ -3,6 +3,7 @@
 package winsandbox
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"sort"
@@ -12,6 +13,63 @@ import (
 	"testing"
 	"time"
 )
+
+// lockNoticeBuffer is an io.Writer safe to read while the contender goroutine
+// writes the queue notice into it.
+type lockNoticeBuffer struct {
+	mu sync.Mutex
+	b  bytes.Buffer
+}
+
+func (s *lockNoticeBuffer) Write(p []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.b.Write(p)
+}
+
+func (s *lockNoticeBuffer) String() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.b.String()
+}
+
+func TestWindowsRootLockQueueEmitsNotice(t *testing.T) {
+	root := t.TempDir()
+	// Long enough for the contender to sit through one full silent slice
+	// (windowsRootLockNoticeAfter) and emit the queue notice before timing out.
+	t.Setenv("WINDOWS_SANDBOX_LOCK_MS", "5000")
+	held, err := lockWindowsRoots([]string{root}, nil)
+	if err != nil {
+		t.Fatalf("hold lock: %v", err)
+	}
+
+	var notice lockNoticeBuffer
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		lock, err := lockWindowsRoots([]string{root}, &notice)
+		if err == nil {
+			lock.release()
+		}
+	}()
+
+	deadline := time.Now().Add(4 * time.Second)
+	for time.Now().Before(deadline) {
+		if strings.Contains(notice.String(), "waiting for another sandboxed command") {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if !strings.Contains(notice.String(), "waiting for another sandboxed command") {
+		t.Fatalf("queued lock never emitted a notice; got %q", notice.String())
+	}
+	held.release()
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("contender never finished after release")
+	}
+}
 
 func TestWindowsRootLockNamesAreSortedAndDeduped(t *testing.T) {
 	names := windowsRootLockNames([]string{
@@ -45,14 +103,14 @@ func TestWindowsRootLockSerializesSameRoot(t *testing.T) {
 	// the first releases. Use a short timeout so a regression fails fast.
 	t.Setenv("WINDOWS_SANDBOX_LOCK_MS", "2000")
 
-	first, err := lockWindowsRoots([]string{root})
+	first, err := lockWindowsRoots([]string{root}, nil)
 	if err != nil {
 		t.Fatalf("first lock: %v", err)
 	}
 
 	acquired := make(chan *windowsRootLock, 1)
 	go func() {
-		second, err := lockWindowsRoots([]string{root})
+		second, err := lockWindowsRoots([]string{root}, nil)
 		if err != nil {
 			acquired <- nil
 			return
@@ -82,7 +140,7 @@ func TestWindowsRootLockSerializesSameRoot(t *testing.T) {
 func TestWindowsRootLockTimesOutWhenHeld(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("WINDOWS_SANDBOX_LOCK_MS", "300")
-	held, err := lockWindowsRoots([]string{root})
+	held, err := lockWindowsRoots([]string{root}, nil)
 	if err != nil {
 		t.Fatalf("hold lock: %v", err)
 	}
@@ -99,7 +157,7 @@ func TestWindowsRootLockTimesOutWhenHeld(t *testing.T) {
 	done := make(chan result, 1)
 	go func() {
 		start := time.Now()
-		lock, err := lockWindowsRoots([]string{root})
+		lock, err := lockWindowsRoots([]string{root}, nil)
 		if lock != nil {
 			lock.release()
 		}
@@ -128,7 +186,7 @@ func TestWindowsRootLockMultiRootNoSelfDeadlock(t *testing.T) {
 	t.Setenv("WINDOWS_SANDBOX_LOCK_MS", "2000")
 	// Acquiring multiple roots in one call must not deadlock regardless of the
 	// order the caller passes them, because names are sorted internally.
-	lock, err := lockWindowsRoots([]string{b, a, b})
+	lock, err := lockWindowsRoots([]string{b, a, b}, nil)
 	if err != nil {
 		t.Fatalf("multi-root lock: %v", err)
 	}

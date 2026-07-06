@@ -18,12 +18,31 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"runtime"
+	"sync/atomic"
 )
 
 // WindowsHelperCommand is an internal CLI subcommand used only by the Windows
 // sandbox wrapper. It is intentionally obscure so it does not collide with
 // public commands.
 const WindowsHelperCommand = "__reasonix_windows_sandbox"
+
+// helperDispatchRegistered records that this binary's entry point routes
+// WindowsHelperCommand to RunWindowsSandboxHelper. The Windows wrapper
+// relaunches os.Executable() as the sandbox helper, so a host binary without
+// that route swallows every sandboxed command: a Wails desktop build, for
+// example, would start a second GUI instance that forwards to the running app
+// and exits 0 with no output (#6051, #6067, #6072). Registration turns that
+// mistake into a fail-closed refusal with a clear error instead of silent
+// empty output: Available() stays false until the entry point registers.
+var helperDispatchRegistered atomic.Bool
+
+// RegisterHelperDispatch declares that the current binary's entry point routes
+// WindowsHelperCommand to RunWindowsSandboxHelper before any other startup
+// work. Every main() that can host the bash tool must add the route and call
+// this; on Windows, enforce mode fails closed without it.
+func RegisterHelperDispatch() { helperDispatchRegistered.Store(true) }
+
+func helperDispatchAvailable() bool { return helperDispatchRegistered.Load() }
 
 const windowsSandboxFailureMarkerPrefix = "__reasonix_windows_sandbox_failure__:"
 

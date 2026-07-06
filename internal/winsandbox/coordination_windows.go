@@ -8,6 +8,7 @@ import (
 	"crypto/sha1"
 	"encoding/hex"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -77,7 +78,9 @@ func windowsRootLockTimeout() time.Duration {
 
 // lockWindowsRoots serializes access to every distinct root in roots. The
 // returned lock must be released once the run's grants have been cleaned up.
-func lockWindowsRoots(roots []string) (*windowsRootLock, error) {
+// notice, when non-nil, receives a one-line message if acquisition has to
+// queue behind another run for more than windowsRootLockNoticeAfter.
+func lockWindowsRoots(roots []string, notice io.Writer) (*windowsRootLock, error) {
 	names := windowsRootLockNames(roots)
 	if len(names) == 0 {
 		return &windowsRootLock{}, nil
@@ -89,7 +92,7 @@ func lockWindowsRoots(roots []string) (*windowsRootLock, error) {
 	lock.pinned = true
 	timeout := windowsRootLockTimeout()
 	for _, name := range names {
-		h, err := acquireNamedMutex(name, timeout)
+		h, err := acquireNamedMutex(name, timeout, notice)
 		if err != nil {
 			lock.release()
 			return nil, err
@@ -138,7 +141,14 @@ func windowsRootLockNames(roots []string) []string {
 	return names
 }
 
-func acquireNamedMutex(name string, timeout time.Duration) (windows.Handle, error) {
+// windowsRootLockNoticeAfter is how long a lock acquisition may block silently
+// before a one-line notice is emitted. Queueing behind another sandboxed
+// command's whole-run lock is by design (see the package comment above), but
+// before this notice existed a queued command was indistinguishable from a
+// hung one — users read the silence as "bash is broken" (#6067).
+const windowsRootLockNoticeAfter = 2 * time.Second
+
+func acquireNamedMutex(name string, timeout time.Duration, notice io.Writer) (windows.Handle, error) {
 	name16, err := windows.UTF16PtrFromString(name)
 	if err != nil {
 		return 0, err
@@ -149,27 +159,46 @@ func acquireNamedMutex(name string, timeout time.Duration) (windows.Handle, erro
 	if h == 0 {
 		return 0, fmt.Errorf("create sandbox mutex %q: %w", name, err)
 	}
-	ms := uint32(windows.INFINITE)
-	if timeout > 0 {
-		ms = uint32(timeout / time.Millisecond)
-	}
-	event, werr := windows.WaitForSingleObject(h, ms)
-	switch event {
-	case windows.WAIT_OBJECT_0, windows.WAIT_ABANDONED:
-		// WAIT_ABANDONED means the previous holder died without releasing. We now
-		// own the mutex; any filesystem residue that run left behind is cleared by
-		// sweepWindowsDenyResidue before we re-apply, and the integrity-label reset
-		// on cleanup returns the tree to Medium.
-		return h, nil
-	case uint32(windows.WAIT_TIMEOUT):
-		_ = windows.CloseHandle(h)
-		return 0, fmt.Errorf("timed out waiting for sandbox lock %q after %s", name, timeout)
-	default:
-		_ = windows.CloseHandle(h)
-		if werr != nil {
-			return 0, fmt.Errorf("wait for sandbox lock %q: %w", name, werr)
+	// Wait in slices so a long queue surfaces a notice instead of blocking
+	// silently until the deadline.
+	var waited time.Duration
+	noticed := false
+	for {
+		slice := windowsRootLockNoticeAfter
+		if timeout > 0 {
+			if remaining := timeout - waited; remaining < slice {
+				slice = remaining
+			}
 		}
-		return 0, fmt.Errorf("wait for sandbox lock %q returned %#x", name, event)
+		event, werr := windows.WaitForSingleObject(h, uint32(slice/time.Millisecond))
+		switch event {
+		case windows.WAIT_OBJECT_0, windows.WAIT_ABANDONED:
+			// WAIT_ABANDONED means the previous holder died without releasing. We now
+			// own the mutex; any filesystem residue that run left behind is cleared by
+			// sweepWindowsDenyResidue before we re-apply, and the integrity-label reset
+			// on cleanup returns the tree to Medium.
+			return h, nil
+		case uint32(windows.WAIT_TIMEOUT):
+			waited += slice
+			if timeout > 0 && waited >= timeout {
+				_ = windows.CloseHandle(h)
+				return 0, fmt.Errorf("timed out waiting for sandbox lock %q after %s", name, timeout)
+			}
+			if !noticed && notice != nil {
+				noticed = true
+				limit := "no limit"
+				if timeout > 0 {
+					limit = timeout.String()
+				}
+				fmt.Fprintf(notice, "windows sandbox: waiting for another sandboxed command on this workspace to finish (lock wait limit %s; set WINDOWS_SANDBOX_LOCK_MS to adjust)\n", limit)
+			}
+		default:
+			_ = windows.CloseHandle(h)
+			if werr != nil {
+				return 0, fmt.Errorf("wait for sandbox lock %q: %w", name, werr)
+			}
+			return 0, fmt.Errorf("wait for sandbox lock %q returned %#x", name, event)
+		}
 	}
 }
 

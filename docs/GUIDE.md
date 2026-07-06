@@ -508,6 +508,20 @@ behavior (see
 [`SPEC.md` §9](./SPEC.md#9-roadmap-not-in-current-scope) for the escape-prompt
 and optional elevated Windows hardening still to come).
 
+Windows sandbox troubleshooting: the sandbox relaunches the Reasonix
+executable as a hidden helper, and both the CLI and the desktop app embed that
+helper entry point — if enforce is requested in a build that lacks it, bash
+refuses with a clear error instead of returning empty output. A command that
+queues behind another sandboxed command on the same workspace prints a
+one-line "waiting for another sandboxed command" notice (wait cap
+`WINDOWS_SANDBOX_LOCK_MS`, default 10 minutes). If sandboxed commands fail
+only under Git-for-Windows/MSYS2 bash, try `[tools.shell] prefer =
+"powershell"` — the MSYS runtime is fragile under a low-integrity token. Run
+`reasonix doctor` to see the resolved shell, sandbox availability, and whether
+a project `reasonix.toml` pins `[sandbox]` (a project file overrides
+Settings/user-config edits, and sandbox changes take effect after a session
+config reload or a new session).
+
 ## Plugins (MCP)
 
 Reasonix is an MCP client. A `[[plugins]]` entry's `type` selects the transport:
