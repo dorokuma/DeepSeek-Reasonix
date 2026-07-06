@@ -35,13 +35,16 @@ import (
 // Cwd roots the session's file tools and bash (built via builtin.Workspace).
 // Model and EffortOverride are optional session-local provider selectors from
 // ACP config options. MCPServers are the MCP servers the client asked the agent
-// to connect for this session.
+// to connect for this session. OnSessionRecovered is the service's bookkeeping
+// hook for automatic transcript recovery branches (see sessionRecoveredHandler);
+// factories must wire it into the controller they build.
 type SessionParams struct {
-	Cwd            string
-	MCPServers     []plugin.Spec
-	Sink           event.Sink
-	Model          string
-	EffortOverride *string
+	Cwd                string
+	MCPServers         []plugin.Spec
+	Sink               event.Sink
+	Model              string
+	EffortOverride     *string
+	OnSessionRecovered func(control.SessionRecoveryInfo) error
 }
 
 // Factory builds the per-session controller. The composition root (the cli's
@@ -170,12 +173,10 @@ type acpSession struct {
 	deleted bool
 	// lease is the session lease guarding transcript against other runtimes
 	// (a desktop window, the CLI) for the life of this session. Held from
-	// session/new / session/load and released on close/delete/teardown. Config
-	// rebuilds normally keep the same transcript; when the pre-rebuild
-	// snapshot conflicts and retargets the controller to a recovery branch,
-	// the lease keeps guarding the original transcript (the recovery file was
-	// just created by this process — following it needs OnSessionRecovered
-	// wiring, tracked as a follow-up).
+	// session/new / session/load and released on close/delete/teardown.
+	// Config rebuilds keep the same transcript; when a snapshot conflict
+	// retargets the controller to a recovery branch, sessionRecoveredHandler
+	// moves transcript and this lease to the recovery file at commit time.
 	lease *agent.SessionLease
 	// maintenanceDone is non-nil while session-owned maintenance, such as an
 	// idle config rebuild, is in flight outside mu.
@@ -306,6 +307,53 @@ func sessionLeaseBindError(method string, err error) *RPCError {
 	return &RPCError{Code: ErrInternal, Message: method + ": session lease: " + err.Error()}
 }
 
+// sessionRecoveredHandler returns the OnSessionRecovered callback wired into
+// every controller built for session id. When a snapshot conflict retargets
+// the controller to a recovery branch (turn-end autosave in persistAfterTurn,
+// or the pre-rebuild snapshot in rebuildSession), the ACP bookkeeping must
+// follow at commit time: session/prompt reports sess.transcript,
+// session/delete destroys it, and the session lease must guard the file the
+// controller actually writes. The recovery lease is acquired before the old
+// one is released so the outgoing transcript stays guarded until the new one
+// is secured; a failure aborts the recovery commit and the controller stays
+// on the original path (the next save retries).
+func (s *service) sessionRecoveredHandler(id string) func(control.SessionRecoveryInfo) error {
+	return func(info control.SessionRecoveryInfo) error {
+		recoveryPath := strings.TrimSpace(info.RecoveryPath)
+		if recoveryPath == "" {
+			return nil
+		}
+		sess := s.session(id)
+		if sess == nil {
+			return nil
+		}
+		lease, err := agent.TryAcquireSessionLease(recoveryPath)
+		if err != nil {
+			if errors.Is(err, agent.ErrSessionLeaseHeld) {
+				return fmt.Errorf("bind recovery session: %s; %s",
+					control.SessionInUseMessage(err), control.SessionLeaseCloseHint)
+			}
+			return fmt.Errorf("bind recovery session: %w", err)
+		}
+		sess.mu.Lock()
+		if sess.deleted {
+			sess.mu.Unlock()
+			lease.Release()
+			return fmt.Errorf("bind recovery session: session is deleted")
+		}
+		old := sess.lease
+		sess.lease = lease
+		sess.transcript = recoveryPath
+		meta := sess.metaLocked()
+		sess.mu.Unlock()
+		if old != nil {
+			old.Release()
+		}
+		_ = saveACPMeta(recoveryPath, meta)
+		return nil
+	}
+}
+
 // initialize advertises the agent's capability set: persisted load plus ACP v1
 // list/resume/close/delete lifecycle helpers, prompts carrying inline resource
 // text (embeddedContext) but not image/audio, and stdio / Streamable HTTP MCP
@@ -385,11 +433,12 @@ func (s *service) sessionNew(ctx context.Context, raw json.RawMessage) (any, err
 
 	sink := newUpdateSink(s.conn, id)
 	ctrl, err := s.factory.NewSession(ctx, SessionParams{
-		Cwd:            cwd,
-		MCPServers:     mcpServers,
-		Sink:           sink,
-		Model:          cfgState.Model,
-		EffortOverride: cloneStringPtr(cfgState.EffortOverride),
+		Cwd:                cwd,
+		MCPServers:         mcpServers,
+		Sink:               sink,
+		Model:              cfgState.Model,
+		EffortOverride:     cloneStringPtr(cfgState.EffortOverride),
+		OnSessionRecovered: s.sessionRecoveredHandler(id),
 	})
 	if err != nil {
 		return nil, &RPCError{Code: ErrInternal, Message: "session/new: " + err.Error()}
@@ -525,11 +574,12 @@ func (s *service) openExistingSession(ctx context.Context, method, id, cwdParam 
 
 	sink := newUpdateSink(s.conn, id)
 	ctrl, err := s.factory.NewSession(ctx, SessionParams{
-		Cwd:            cwd,
-		MCPServers:     mcpServers,
-		Sink:           sink,
-		Model:          cfgState.Model,
-		EffortOverride: cloneStringPtr(cfgState.EffortOverride),
+		Cwd:                cwd,
+		MCPServers:         mcpServers,
+		Sink:               sink,
+		Model:              cfgState.Model,
+		EffortOverride:     cloneStringPtr(cfgState.EffortOverride),
+		OnSessionRecovered: s.sessionRecoveredHandler(id),
 	})
 	if err != nil {
 		return SessionConfigState{}, &RPCError{Code: ErrInternal, Message: method + ": " + err.Error()}
@@ -789,17 +839,21 @@ func (s *service) rebuildSession(ctx context.Context, sess *acpSession, cfgState
 	// Capture the adopt path and history only after Snapshot: a snapshot
 	// conflict can retarget cur to a recovery branch (or adopt the newer disk
 	// transcript), and a pre-snapshot capture would bind the rebuilt controller
-	// back to the original file, re-conflicting on every later save.
+	// back to the original file, re-conflicting on every later save. When that
+	// recovery fired, sessionRecoveredHandler already moved sess.transcript
+	// and the session lease to the recovery file, so prevPath, the session
+	// bookkeeping, and the controller agree on one path here.
 	// SessionPath is controller-locked, so reading it off sess.mu is safe.
 	prevPath := cur.SessionPath()
 	carried := cur.History()
 
 	newCtrl, err := s.factory.NewSession(ctx, SessionParams{
-		Cwd:            cwd,
-		MCPServers:     mcpServers,
-		Sink:           sink,
-		Model:          cfgState.Model,
-		EffortOverride: cloneStringPtr(cfgState.EffortOverride),
+		Cwd:                cwd,
+		MCPServers:         mcpServers,
+		Sink:               sink,
+		Model:              cfgState.Model,
+		EffortOverride:     cloneStringPtr(cfgState.EffortOverride),
+		OnSessionRecovered: s.sessionRecoveredHandler(sess.id),
 	})
 	if err != nil {
 		return &RPCError{Code: ErrInternal, Message: "session config: " + err.Error()}
