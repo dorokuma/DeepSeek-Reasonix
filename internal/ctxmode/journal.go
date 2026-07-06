@@ -409,7 +409,9 @@ func RecordTool(j *Journal, toolName string, args json.RawMessage, result string
 	}
 	switch toolName {
 	case "read_file":
-		var p struct{ Path string `json:"path"` }
+		var p struct {
+			Path string `json:"path"`
+		}
 		if json.Unmarshal(args, &p) == nil && p.Path != "" {
 			j.Record("read", p.Path, "")
 		}
@@ -428,17 +430,23 @@ func RecordTool(j *Journal, toolName string, args json.RawMessage, result string
 			}
 		}
 	case "grep":
-		var p struct{ Pattern string `json:"pattern"` }
+		var p struct {
+			Pattern string `json:"pattern"`
+		}
 		if json.Unmarshal(args, &p) == nil && p.Pattern != "" {
 			j.Record("grep", p.Pattern, "")
 		}
 	case "glob":
-		var p struct{ Pattern string `json:"pattern"` }
+		var p struct {
+			Pattern string `json:"pattern"`
+		}
 		if json.Unmarshal(args, &p) == nil && p.Pattern != "" {
 			j.Record("glob", p.Pattern, "")
 		}
 	case "ls":
-		var p struct{ Path string `json:"path"` }
+		var p struct {
+			Path string `json:"path"`
+		}
 		if json.Unmarshal(args, &p) == nil {
 			path := strings.TrimSpace(p.Path)
 			if path == "" {
@@ -447,12 +455,16 @@ func RecordTool(j *Journal, toolName string, args json.RawMessage, result string
 			j.Record("ls", path, "")
 		}
 	case "ctx_read", "ctx_search":
-		var p struct{ Ref string `json:"ref"` }
+		var p struct {
+			Ref string `json:"ref"`
+		}
 		if json.Unmarshal(args, &p) == nil && p.Ref != "" {
 			j.Record("ctx", toolName, p.Ref)
 		}
 	case "bash":
-		var p struct{ Command string `json:"command"` }
+		var p struct {
+			Command string `json:"command"`
+		}
 		if json.Unmarshal(args, &p) == nil {
 			cmd := strings.TrimSpace(p.Command)
 			if strings.HasPrefix(cmd, "git ") || cmd == "git" {

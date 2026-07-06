@@ -17,16 +17,19 @@ func init() {
 	tool.RegisterBuiltin(steerJob{})
 	tool.RegisterBuiltin(cancelJob{})
 	tool.RegisterBuiltin(peekJob{})
-	tool.RegisterBuiltin(sendMessage{})
 }
 
 // --- steer-job: send a message to a running background job ---
 
 type steerJob struct{}
 
-func (steerJob) Name() string        { return "steer-job" }
-func (steerJob) Description() string { return "Send a message to a running background job" }
-func (steerJob) ReadOnly() bool      { return false }
+func (steerJob) Name() string { return "steer-job" }
+func (steerJob) Description() string {
+	return `Send a new instruction to a running background sub-agent or bash job (queued to its inbox).
+
+CRITICAL — NOT FOR STATUS CHECKING: Never use steer-job to check whether a job finished. Never use steer-job to poll. Steer-job only queues a new instruction — it does not return the job's status or output. If you dispatched a task, wait for the automatic result delivery at the conversation tail. Only use steer-job when you have a genuine new instruction for the sub-agent.`
+}
+func (steerJob) ReadOnly() bool { return false }
 func (steerJob) Schema() json.RawMessage {
 	return json.RawMessage(`{
 		"type": "object",
@@ -36,6 +39,13 @@ func (steerJob) Schema() json.RawMessage {
 		},
 		"required": ["job_id", "message"]
 	}`)
+}
+
+func (steerJob) PostCallGuidanceAfter(_ json.RawMessage, result string) string {
+	if strings.Contains(result, `"status":"queued"`) || strings.Contains(result, "queued") {
+		return "steer-job only queued a new instruction; that is not the sub-agent’s final answer. Do not dispatch another task for the same goal — wait for the task tool result at the conversation tail."
+	}
+	return ""
 }
 
 func (steerJob) Execute(ctx context.Context, params json.RawMessage) (string, error) {
@@ -108,7 +118,9 @@ type peekJob struct{}
 
 func (peekJob) Name() string { return "peek-job" }
 func (peekJob) Description() string {
-	return "Non-blocking snapshot of a background job (task or bash). Includes new stdout/stderr since the last peek for buffered jobs. Task sub-agent final answers are delivered by the runtime when the job finishes; peek is for in-flight status or bash output."
+	return `Non-blocking snapshot of a background job (task or bash). Includes new stdout/stderr since the last peek for buffered jobs.
+
+CRITICAL — DO NOT POLL: Background task results are delivered to you automatically when they finish — you will see them as a new tool result without calling peek-job. Never call peek-job more than once per task. Never call peek-job just to check whether a task is done. Only use peek-job when the user explicitly asks about a job's status, or when you need to read bash background output mid-flight.`
 }
 func (peekJob) ReadOnly() bool { return true }
 func (peekJob) Schema() json.RawMessage {
@@ -158,9 +170,6 @@ func (peekJob) Execute(ctx context.Context, params json.RawMessage) (string, err
 	if status.LastAck != "" {
 		out["last_ack"] = status.LastAck
 	}
-	if reports := jm.PendingReports(p.JobID); len(reports) > 0 {
-		out["reports"] = reports
-	}
 	if text, _, found := jm.Output(p.JobID); found && strings.TrimSpace(text) != "" {
 		out["new_output"] = text
 	}
@@ -169,41 +178,4 @@ func (peekJob) Execute(ctx context.Context, params json.RawMessage) (string, err
 		return "", fmt.Errorf("marshal status: %w", err)
 	}
 	return string(b), nil
-}
-
-// --- send_message: send a message from a background sub-agent to its parent ---
-
-type sendMessage struct{}
-
-func (sendMessage) OnlyForSubAgent() bool { return true }
-
-func (sendMessage) Name() string { return "send_message" }
-func (sendMessage) Description() string {
-	return "Send a message/report from a background sub-agent to its parent agent"
-}
-func (sendMessage) ReadOnly() bool { return false }
-func (sendMessage) Schema() json.RawMessage {
-	return json.RawMessage(`{
-		"type": "object",
-		"properties": {
-			"message": {"type": "string", "description": "The text report/message to send to the parent"}
-		},
-		"required": ["message"]
-	}`)
-}
-
-func (sendMessage) Execute(ctx context.Context, params json.RawMessage) (string, error) {
-	var p struct {
-		Message string `json:"message"`
-	}
-	if err := json.Unmarshal(params, &p); err != nil {
-		return "", fmt.Errorf("invalid args: %w", err)
-	}
-	if p.Message == "" {
-		return "", fmt.Errorf("message is required")
-	}
-	if ok := jobs.PostMessage(ctx, p.Message); ok {
-		return `{"status":"sent"}`, nil
-	}
-	return `{"status":"failed","reason":"parent inbox full or job context unavailable"}`, nil
 }

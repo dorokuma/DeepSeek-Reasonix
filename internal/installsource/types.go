@@ -24,8 +24,8 @@ type request struct {
 	Headers   map[string]string `json:"headers"`
 	Tier      string            `json:"tier"`
 	Replace   bool              `json:"replace"` // overwrite existing entries
-	Strict    *bool  `json:"strict"` // nil -> true; require skill frontmatter
-	Hash      string `json:"hash"`  // sha256:<hex> content integrity hash for remote sources
+	Strict    *bool             `json:"strict"`  // nil -> true; require skill frontmatter
+	Hash      string            `json:"hash"`    // sha256:<hex> content integrity hash for remote sources
 	// PlanID is echoed back on a confirm-apply call so the host can refuse
 	// to apply a plan that does not match the one it approved.
 	PlanID string `json:"planId"`

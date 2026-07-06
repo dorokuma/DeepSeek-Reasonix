@@ -11,8 +11,8 @@ import (
 
 	"reasonix/internal/agent"
 	"reasonix/internal/config"
-	"reasonix/internal/netclient"
 	"reasonix/internal/ctxmode"
+	"reasonix/internal/netclient"
 	"reasonix/internal/rtk"
 )
 
@@ -97,8 +97,6 @@ type RTKReport struct {
 	Sample    string            `json:"sample,omitempty"`
 	Warning   string            `json:"warning,omitempty"`
 }
-
-
 
 type NetworkReport struct {
 	ProxyMode string `json:"proxy_mode"`

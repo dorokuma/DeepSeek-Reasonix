@@ -26,7 +26,7 @@ import (
 
 type blockingTurnRunner struct {
 	started chan struct{}
-	once     sync.Once
+	once    sync.Once
 }
 
 func TestMain(m *testing.M) {
@@ -1466,7 +1466,6 @@ func TestCtrlCCopyBeatsClearInput(t *testing.T) {
 	}
 }
 
-
 // TestEscDenyApprovalClearsPending verifies Esc routes to deny (Approve false)
 // and clears the modal approval state without panicking.
 func TestEscDenyApprovalClearsPending(t *testing.T) {
@@ -1570,4 +1569,3 @@ func TestAutoReentryTurnStartedEntersRunning(t *testing.T) {
 		t.Fatalf("TurnStarted while idle: state=%v, want tuiRunning", m.state)
 	}
 }
-

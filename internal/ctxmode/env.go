@@ -17,8 +17,6 @@ func envActive() string {
 	return "off"
 }
 
-
-
 // Probe is a doctor smoke result for ctxmode.
 type Probe struct {
 	Active    bool              `json:"active"`

@@ -444,8 +444,8 @@ func TestAutoReentryPatchesStartedToolPlaceholder(t *testing.T) {
 			lastContent = m.Content
 		}
 	}
-	if toolRows != 2 {
-		t.Fatalf("want exactly two tool rows for tool-call-1, got %d tool messages", toolRows)
+	if toolRows != 1 {
+		t.Fatalf("want one tool row (started replaced by result), got %d", toolRows)
 	}
 	if lastContent != "explore-result" {
 		t.Fatalf("last tool content = %q, want explore-result", lastContent)

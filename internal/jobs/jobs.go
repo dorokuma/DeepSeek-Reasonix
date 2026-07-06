@@ -69,6 +69,8 @@ type Job struct {
 	ID    string
 	Kind  string // "bash" | "task"
 	Label string
+	// dispatchDigest is set by the task tool for duplicate-dispatch detection (prompt/label fingerprint).
+	dispatchDigest string
 
 	mu         sync.Mutex
 	buf        bytes.Buffer
@@ -103,6 +105,31 @@ func (j *Job) SetOnMessage(fn func(jobID string)) {
 	j.mu.Lock()
 	defer j.mu.Unlock()
 	j.onMessage = fn
+}
+
+// SetDispatchDigest records a stable fingerprint for duplicate task detection.
+func (m *Manager) SetDispatchDigest(jobID, digest string) {
+	if m == nil || jobID == "" || digest == "" {
+		return
+	}
+	j := m.get(jobID)
+	if j == nil {
+		return
+	}
+	j.mu.Lock()
+	j.dispatchDigest = digest
+	j.mu.Unlock()
+}
+
+// DispatchDigest returns the fingerprint stored for a job.
+func (m *Manager) DispatchDigest(jobID string) string {
+	j := m.get(jobID)
+	if j == nil {
+		return ""
+	}
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	return j.dispatchDigest
 }
 
 // Manager is the session's background-job table. It is safe for concurrent use.
@@ -633,28 +660,10 @@ func FromContext(ctx context.Context) (*Manager, bool) {
 // PostMessage sends a message to the job's inbox channel. It retrieves the current Job
 // from the context and performs a non-blocking write. If a callback is registered,
 // it triggers it. Returns true on success.
+// PostMessage is deprecated: mid-flight parent reports were removed. Delivery is
+// only via the task tool result at job completion.
 func PostMessage(ctx context.Context, msg string) bool {
-	j, ok := JobFromContext(ctx)
-	if !ok || strings.TrimSpace(msg) == "" {
-		return false
-	}
-	if !appendPendingReport(j, strings.TrimSpace(msg)) {
-		return false
-	}
-	j.mu.Lock()
-	fn := j.onMessage
-	sink := j.sink
-	id := j.ID
-	j.mu.Unlock()
-	if fn != nil {
-		fn(id)
-	}
-	if sink != nil {
-		sink.Emit(event.Event{
-			Kind:  event.Notice,
-			Level: event.LevelInfo,
-			Text:  fmt.Sprintf("· sub-agent message: %s", msg),
-		})
-	}
-	return true
+	_ = ctx
+	_ = msg
+	return false
 }

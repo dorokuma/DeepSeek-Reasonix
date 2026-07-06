@@ -522,28 +522,22 @@ func (c *Controller) runTurnWithRaw(ctx context.Context, input, raw string) erro
 		}
 		defer func() { c.hooks.Stop(ctx, lastAssistantText(c.History()), turn) }()
 	}
-	wantsPeek := raw != "" && c.executor != nil && UserRequestsJobPeek(raw)
-	if wantsPeek {
-		c.executor.SetDiagnosticRequested(true)
-	}
-
-	// Block dynamic tools that the model should not call in this turn.
-	blocked := map[string]string{}
-	if !wantsPeek {
-		blocked["peek-job"] = "peek-job is a diagnostic tool for the owner, not for the model to poll. Task results arrive automatically when finished — wait for them. Do not call peek-job on your own."
-	}
-	if c.jobs == nil || len(c.jobs.Running()) == 0 {
-		blocked["steer-job"] = "steer-job sends new instructions to a running sub-agent. There are no running jobs right now, so steer-job is unavailable. If you were checking status — stop, results arrive automatically. If you have a genuine new instruction, wait for the current work to complete."
-	}
-	if c.subAgentGate != nil && len(blocked) > 0 {
-		c.subAgentGate.SetBlockedTools(blocked)
+	if raw != "" && c.executor != nil && c.jobs != nil && len(c.jobs.Running()) > 0 {
+		lo := strings.ToLower(raw)
+		containsPeek := strings.Contains(lo, "peek")
+		negated := strings.Contains(lo, "别peek") || strings.Contains(lo, "不要peek") ||
+			strings.Contains(lo, "不准peek") || strings.Contains(lo, "stop peek") ||
+			strings.Contains(lo, "don't peek") || strings.Contains(lo, "no peek")
+		if containsPeek && !negated {
+			c.executor.SetDiagnosticRequested(true)
+		}
 	}
 	if err := c.runner.Run(ctx, input); err != nil {
 		return err
 	}
 	return nil
-
 }
+
 // lastAssistantText returns the content of the most recent assistant message with
 // non-empty text — the model's final answer for the turn.
 func lastAssistantText(msgs []provider.Message) string {

@@ -954,33 +954,6 @@ func (a *Agent) deliverBackgroundToolResult(toolCallID, output string) {
 
 // deliverPendingJobResults writes finished background job answers into the session
 // (patching the Started placeholder or appending a tool row).
-
-// commitJobResult is shared by CompleteBackgroundJob and commitBackgroundJobResult.
-// It writes the job output into the session, replacing the started-task placeholder
-// or appending a new tool result as fallback.
-func (a *Agent) commitJobResult(jobID, output string) bool {
-	if output == "" {
-		return false
-	}
-	var toolCallID string
-	if a.ctrl != nil {
-		toolCallID, _ = a.ctrl.TakeJobMeta(jobID)
-	}
-	if toolCallID == "" && a.session != nil {
-		toolCallID = a.session.ToolCallIDForStartedTaskLine(jobID)
-	}
-	if toolCallID == "" {
-		a.deliverBackgroundToolResult("", output)
-		return true
-	}
-	if a.session != nil && a.session.ReplaceTaskStartedWithResult(toolCallID, jobID, output) {
-		return true
-	}
-	a.deliverBackgroundToolResult(toolCallID, output)
-	return true
-}
-
-
 func (a *Agent) deliverPendingJobResults() (jobID, output string, ok bool) {
 	if a.jobs == nil {
 		return "", "", false
@@ -1577,7 +1550,7 @@ func (a *Agent) executeOne(ctx context.Context, call provider.ToolCall) toolOutc
 	}
 	// Main-agent whitelist: when nesting depth is 0 (root/main agent),
 	// only allow explicitly permitted tools (if the option is set).
-	if allow := a.mainAgentAllowed; allow != nil && NestingDepthFrom(ctx) == 0 && !allow[call.Name] && !(a.toolsDynamic != nil && a.toolsDynamic[call.Name] && a.diagnosticRequested.Load()) {
+	if allow := a.mainAgentAllowed; allow != nil && NestingDepthFrom(ctx) == 0 && !allow[call.Name] {
 		return toolOutcome{
 			output:  fmt.Sprintf("permission denied: tool %q not allowed for main agent", call.Name),
 			blocked: true,
@@ -2015,72 +1988,4 @@ func parseDataURL(dataURL string) (mime, data string) {
 	mime = rest[:idx]
 	data = rest[idx+len(";base64,"):]
 	return
-}
-
-// CompleteBackgroundJob delivers a single completed job's result to the
-// session by replacing the started-task placeholder with the job's output.
-// Returns true when the result was committed.
-func (a *Agent) CompleteBackgroundJob(jobID string) bool {
-	if a.jobs == nil {
-		return false
-	}
-	text, _, ok := a.jobs.Output(jobID)
-	if !ok || text == "" {
-		return false
-	}
-	return a.commitJobResult(jobID, text)
-}
-
-// tryDeliverJobResult reads a job's output and its tool-call metadata without
-// committing. Returns (jobID, output, true) when output is available.
-func (a *Agent) tryDeliverJobResult(id string) (string, string, bool) {
-	if a.jobs == nil {
-		return "", "", false
-	}
-	text, _, ok := a.jobs.Output(id)
-	if !ok || text == "" {
-		return "", "", false
-	}
-	return id, text, true
-}
-
-// commitBackgroundJobResult commits a previously-read job result to the session.
-// Returns true when the result was committed.
-func (a *Agent) commitBackgroundJobResult(jobID, output string) bool {
-	if output == "" {
-		return false
-	}
-	return a.commitJobResult(jobID, output)
-}
-
-// clearBackgroundWakeIfCaughtUp resets the pending-tool-result flag when no
-// more results remain to be delivered, preventing unnecessary wake re-entries.
-func (a *Agent) clearBackgroundWakeIfCaughtUp() {
-	if a.ctrl == nil {
-		return
-	}
-	// 只要有未消除的 job（包括已结束但结果未交付的），就不清唤醒标记。
-	if a.jobs != nil && len(a.jobs.ActiveJobs()) > 0 {
-		return
-	}
-	// 全部 job 已移除 → 清标记。
-	a.ctrl.PendingToolResultCAS(true, false)
-}
-
-// surfaceBackgroundHandoffIfNeeded appends a user nudge when the model
-// returned no visible answer after a background delivery, so it knows to
-// summarise the result.
-func (a *Agent) surfaceBackgroundHandoffIfNeeded(wakeForBackground bool, text string) string {
-	if !wakeForBackground || a.latestBackgroundDeliveryBody() == "" {
-		return text
-	}
-	if strings.TrimSpace(text) == "" {
-		if a.session != nil {
-			a.session.Add(provider.Message{
-				Role:    provider.RoleUser,
-				Content: backgroundWakeUserNudge,
-			})
-		}
-	}
-	return text
 }

@@ -17,8 +17,8 @@ func TestRenderTextRTKSection(t *testing.T) {
 			Timeout:   "3s",
 			ReadLimit: 800,
 			Env: map[string]string{
-				"REASONIX_RTK":          "rewrite",
-				"REASONIX_RTK_TIMEOUT":  "3s",
+				"REASONIX_RTK":            "rewrite",
+				"REASONIX_RTK_TIMEOUT":    "3s",
 				"REASONIX_RTK_READ_LIMIT": "800",
 			},
 			Sample: "git status → rtk git status",

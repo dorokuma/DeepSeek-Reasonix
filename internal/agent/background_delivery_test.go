@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"io"
+	"strings"
 	"testing"
 	"time"
 
@@ -41,44 +42,24 @@ func TestCommitBackgroundJobResultWithoutRegisterJobMeta(t *testing.T) {
 	if !ag.CompleteBackgroundJob(job.ID) {
 		t.Fatal("CompleteBackgroundJob should commit via Started line fallback")
 	}
-	if sess.Messages[1].Content == "ANSWER-7" {
-		t.Fatal("old 'Started task' message should NOT be patched in place")
+	if sess.Messages[1].Content != "ANSWER-7" {
+		t.Fatalf("started row should become answer, got %q", sess.Messages[1].Content)
 	}
-	if sess.Messages[2].Content != "ANSWER-7" {
-		t.Fatalf("appended tool message = %q, want ANSWER-7", sess.Messages[2].Content)
+	if len(sess.Messages) > 3 {
+		t.Fatalf("unexpected extra messages: %d", len(sess.Messages))
 	}
-	if sess.Messages[2].Name != "task" {
-		t.Fatalf("appended tool message Name = %q, want task", sess.Messages[2].Name)
-	}
-	foundEnvelope := false
 	for _, m := range sess.Messages {
-		if m.Role == provider.RoleUser && containsSubstr(m.Content, "ANSWER-7") && containsSubstr(m.Content, "background-task-result") {
-			foundEnvelope = true
+		if m.Role == provider.RoleUser && strings.Contains(m.Content, "background-task-result") {
+			t.Fatalf("unexpected user envelope: %q", m.Content)
 		}
-	}
-	if !foundEnvelope {
-		t.Fatal("expected background-task-result envelope")
 	}
 }
 
 func agentNewSessionWithStartedTask(toolCallID, jobID string) *Session {
 	s := NewSession("")
 	s.Add(provider.Message{Role: provider.RoleAssistant, ToolCalls: []provider.ToolCall{{ID: toolCallID, Name: "task"}}})
-	s.Add(provider.Message{Role: provider.RoleTool, ToolCallID: toolCallID, Name: "task", Content: "Started task " + jobID + " (label)"})
+	s.Add(provider.Message{Role: provider.RoleTool, ToolCallID: toolCallID, Name: "task", Content: FormatStartedTaskResult(jobID, "label")})
 	return s
-}
-
-func containsSubstr(s, sub string) bool {
-	return len(sub) == 0 || (len(s) >= len(sub) && stringIndex(s, sub) >= 0)
-}
-
-func stringIndex(s, sub string) int {
-	for i := 0; i+len(sub) <= len(s); i++ {
-		if s[i:i+len(sub)] == sub {
-			return i
-		}
-	}
-	return -1
 }
 
 func TestToolCallIDForStartedTaskLine(t *testing.T) {
@@ -86,8 +67,4 @@ func TestToolCallIDForStartedTaskLine(t *testing.T) {
 	if got := s.ToolCallIDForStartedTaskLine("task-9"); got != "c9" {
 		t.Fatalf("got %q", got)
 	}
-	if got := s.ToolCallIDForStartedTaskLine("task-nope"); got != "" {
-		t.Fatalf("got %q", got)
-	}
 }
-

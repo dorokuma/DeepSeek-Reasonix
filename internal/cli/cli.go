@@ -210,11 +210,11 @@ func configureCLIThemeFromConfigNoProbe() {
 // stdout, the TUI passes an event-channel sink so events become tea.Msgs.
 func setup(ctx context.Context, modelName string, maxStepsOverride int, requireKey bool, sink event.Sink, configRoot string) (*control.Controller, error) {
 	ctrl, err := boot.Build(ctx, boot.Options{
-		Model:       modelName,
-		MaxSteps:    maxStepsOverride,
-		RequireKey:  requireKey,
-		Sink:        sink,
-		ConfigRoot:  configRoot,
+		Model:      modelName,
+		MaxSteps:   maxStepsOverride,
+		RequireKey: requireKey,
+		Sink:       sink,
+		ConfigRoot: configRoot,
 	})
 	if err == nil {
 		// Capture the boot-time config for model listing and completion.

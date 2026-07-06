@@ -237,41 +237,42 @@ func acpBuiltinTools(cfg *config.Config, cwd string, writeRoots []string) []tool
 
 func newACPSubagentProviderResolver(cfg *config.Config, parent *config.ProviderEntry, proxySpec netclient.ProxySpec) func(string, string) (provider.Provider, *provider.Pricing, int, error) {
 	return func(modelRef, effort string) (provider.Provider, *provider.Pricing, int, error) {
+		_ = parent
 		modelRef = strings.TrimSpace(modelRef)
-		effort = strings.TrimSpace(effort)
-
-		var entry *config.ProviderEntry
-		if modelRef != "" {
-			var ok bool
-			entry, ok = cfg.ResolveModel(modelRef)
-			if !ok {
-				// Unknown model — fall back to the parent's default instead of
-				// erroring.  LLMs sometimes hallucinate model names; failing
-				// hard forces a retry round-trip while the correct model is
-				// already known from the parent config.
-				cp := *parent
-				entry = &cp
+		if modelRef == "" {
+			modelRef = strings.TrimSpace(cfg.Agent.SubagentModel)
+			for _, key := range []string{"task", "explore", "research", "review", "security_review", "security-review"} {
+				if m := strings.TrimSpace(cfg.Agent.SubagentModels[key]); m != "" {
+					modelRef = m
+					break
+				}
 			}
-		} else {
-			cp := *parent
-			entry = &cp
 		}
-
+		if modelRef == "" {
+			return nil, nil, 0, fmt.Errorf("subagent_model not configured")
+		}
+		entry, ok := cfg.ResolveModel(modelRef)
+		if !ok {
+			return nil, nil, 0, fmt.Errorf("unknown subagent model %q", modelRef)
+		}
+		me := *entry
+		if strings.TrimSpace(effort) == "" {
+			effort = strings.TrimSpace(cfg.Agent.SubagentEffort)
+		}
 		if effort != "" {
-			normalized, err := config.NormalizeEffort(entry, effort)
+			normalized, err := config.NormalizeEffort(&me, effort)
 			if err != nil {
 				return nil, nil, 0, err
 			}
-			entry.Effort = normalized
-			if entry.Kind == "anthropic" && strings.TrimSpace(entry.Effort) != "" && strings.TrimSpace(entry.Thinking) == "" {
-				entry.Thinking = "adaptive"
+			me.Effort = normalized
+			if me.Kind == "anthropic" && strings.TrimSpace(me.Effort) != "" && strings.TrimSpace(me.Thinking) == "" {
+				me.Thinking = "adaptive"
 			}
 		}
-
-		prov, err := boot.NewProviderWithProxy(entry, proxySpec)
+		prov, err := boot.NewProviderWithProxy(&me, proxySpec)
 		if err != nil {
 			return nil, nil, 0, err
 		}
-		return prov, entry.Price, entry.ContextWindow, nil
+		return prov, me.Price, me.ContextWindow, nil
 	}
 }

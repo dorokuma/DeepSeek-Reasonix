@@ -15,11 +15,11 @@ import (
 // (prompt/stop events) fire hooks through, so neither has to know how hooks load
 // or run. A nil *Runner is a valid no-op (no hooks configured).
 type Runner struct {
-	hooks      []ResolvedHook
-	cwd        string
-	spawner    Spawner
-	notify     func(string) // surface a non-blocking (warn/error) hook message; may be nil
-	agentLayer AgentLayer
+	hooks       []ResolvedHook
+	cwd         string
+	spawner     Spawner
+	notify      func(string) // surface a non-blocking (warn/error) hook message; may be nil
+	agentLayer  AgentLayer
 	rtkRewriter interface {
 		PostToolRewrite(ctx context.Context, name string, args json.RawMessage, result string) string
 	}

@@ -30,4 +30,3 @@ func (s *syncSink) Emit(e Event) {
 	defer s.mu.Unlock()
 	s.inner.Emit(e)
 }
-

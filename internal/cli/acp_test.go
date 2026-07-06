@@ -130,6 +130,7 @@ func TestACPSubagentProviderResolverHonorsProfile(t *testing.T) {
 	if !ok {
 		t.Fatal("parent model did not resolve")
 	}
+	cfg.Agent.SubagentModel = "sub/sub-model"
 
 	resolve := newACPSubagentProviderResolver(cfg, parent, netclient.ProxySpec{})
 	prov, _, ctxWin, err := resolve("sub/sub-model", "HIGH")
@@ -146,8 +147,8 @@ func TestACPSubagentProviderResolverHonorsProfile(t *testing.T) {
 		t.Fatalf("resolve effort-only profile: %v", err)
 	}
 	got = prov.(*acpTestProvider).cfg
-	if got.Model != "parent-model" || got.Extra["effort"] != "low" || ctxWin != 111 {
-		t.Fatalf("effort-only profile = model:%q effort:%v ctx:%d, want parent-model/low/111", got.Model, got.Extra["effort"], ctxWin)
+	if got.Model != "sub-model" || got.Extra["effort"] != "low" || ctxWin != 222 {
+		t.Fatalf("effort-only profile = model:%q effort:%v ctx:%d, want sub-model/low/222", got.Model, got.Extra["effort"], ctxWin)
 	}
 }
 
@@ -163,6 +164,7 @@ func TestACPSubagentProviderResolverRejectsInvalidEffort(t *testing.T) {
 	if !ok {
 		t.Fatal("parent model did not resolve")
 	}
+	cfg.Agent.SubagentModel = "parent"
 
 	resolve := newACPSubagentProviderResolver(cfg, parent, netclient.ProxySpec{})
 	if _, _, _, err := resolve("", "max"); err == nil {

@@ -295,11 +295,11 @@ type Usage struct {
 // Pricing is a provider's per-1M-token rates, used to estimate spend. Currency
 // is just a display symbol (default "¥"). toml tags let config decode it.
 type Pricing struct {
-	CacheHit  float64 `toml:"cache_hit"`  // per 1M cached prompt tokens
-	Input     float64 `toml:"input"`      // per 1M uncached prompt tokens
-	Output    float64 `toml:"output"`     // per 1M completion tokens
+	CacheHit   float64 `toml:"cache_hit"`   // per 1M cached prompt tokens
+	Input      float64 `toml:"input"`       // per 1M uncached prompt tokens
+	Output     float64 `toml:"output"`      // per 1M completion tokens
 	CacheWrite float64 `toml:"cache_write"` // per 1M cache creation tokens（Anthropic 1.25× input；OpenAI 无此概念）
-	Currency  string  `toml:"currency"`
+	Currency   string  `toml:"currency"`
 }
 
 // Cost estimates the spend for a usage record.

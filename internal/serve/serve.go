@@ -74,8 +74,6 @@ func (s *Server) AuthMode() string {
 	return s.auth.Mode()
 }
 
-
-
 // switchModel rebuilds the controller with a new model, carrying over the
 // conversation history. This replicates the TUI/desktop model-switch path.
 // The write lock is held only for state reads and the final swap; the

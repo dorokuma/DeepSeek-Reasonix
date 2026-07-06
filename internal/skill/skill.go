@@ -59,9 +59,9 @@ type Skill struct {
 	Scope       Scope  // where it came from
 	Path        string // absolute path to the SKILL.md / <name>.md, or "(builtin)"
 
-	RunAs        RunAs  // inline | subagent
-	Model        string // optional model override for runAs=subagent (frontmatter `model:`)
-	Effort       string // optional effort for runAs=subagent (frontmatter `effort:`)
+	RunAs  RunAs  // inline | subagent
+	Model  string // optional model override for runAs=subagent (frontmatter `model:`)
+	Effort string // optional effort for runAs=subagent (frontmatter `effort:`)
 }
 
 // IsValidName reports whether name is a usable skill identifier.
@@ -430,15 +430,15 @@ func (s *Store) parse(path, stem string, scope Scope) (Skill, bool) {
 		fmt.Fprintf(s.stderr, "warning: skill %q at %s has no description: — it will load but won't appear in the skills index\n", name, path)
 	}
 	return Skill{
-		Name:         name,
-		Description:  desc,
-		Body:         loadBodyWithScripts(path, loadBodyWithReferences(path, strings.TrimSpace(body))),
-		Scope:        scope,
-		Path:         path,
+		Name:        name,
+		Description: desc,
+		Body:        loadBodyWithScripts(path, loadBodyWithReferences(path, strings.TrimSpace(body))),
+		Scope:       scope,
+		Path:        path,
 
-		RunAs:        parseRunAs(fm["runas"], fm["context"], fm["agent"]),
-		Model:        strings.TrimSpace(fm["model"]),
-		Effort:       strings.TrimSpace(fm["effort"]),
+		RunAs:  parseRunAs(fm["runas"], fm["context"], fm["agent"]),
+		Model:  strings.TrimSpace(fm["model"]),
+		Effort: strings.TrimSpace(fm["effort"]),
 	}, true
 }
 
@@ -573,8 +573,6 @@ func loadBodyWithScripts(skillPath, body string) string {
 	}
 	return b.String()
 }
-
-
 
 // parseRunAs maps frontmatter to a run mode. An unknown value defaults to the
 // safe (non-spawning) inline mode; a `context: fork` or a non-empty `agent:`

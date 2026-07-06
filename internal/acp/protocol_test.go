@@ -64,21 +64,21 @@ func TestFlattenPrompt(t *testing.T) {
 
 func TestToolKindFor(t *testing.T) {
 	tests := map[string]string{
-		"read_file":             "read",
-		"ls":                    "read",
-		"glob":                  "read",
-		"grep":                  "search",
-		"edit_file":             "edit",
-		"move_file":             "edit",
-		"multiedit":             "edit",
-		"write_file":            "edit",
-		"bash":                  "execute",
-		"webfetch":              "other",
-		"task":                  "other",
+		"read_file":           "read",
+		"ls":                  "read",
+		"glob":                "read",
+		"grep":                "search",
+		"edit_file":           "edit",
+		"move_file":           "edit",
+		"multiedit":           "edit",
+		"write_file":          "edit",
+		"bash":                "execute",
+		"webfetch":            "other",
+		"task":                "other",
 		"mcp_server_do_thing": "other",
-		"semantic_search":       "search", // heuristic fallback
-		"run_command":           "execute",
-		"unknown":               "other",
+		"semantic_search":     "search", // heuristic fallback
+		"run_command":         "execute",
+		"unknown":             "other",
 	}
 	for name, want := range tests {
 		if got := toolKindFor(name); got != want {

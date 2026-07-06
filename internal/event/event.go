@@ -209,7 +209,7 @@ type CacheDiagnostics struct {
 // Event is one increment in a turn's event stream. Read the field(s) documented
 // for Kind; the others are zero.
 type Event struct {
-	Seq              int64        // monotonic sequence number assigned by Broadcaster on Emit
+	Seq              int64 // monotonic sequence number assigned by Broadcaster on Emit
 	Kind             Kind
 	Text             string            // Reasoning / Text / Message / Notice / Phase
 	Reasoning        string            // Message: the full reasoning chain
@@ -221,19 +221,19 @@ type Event struct {
 	// session (Usage events only), so a frontend can show the aggregate hit-rate
 	// — which doesn't crater on a short turn or after compaction — alongside
 	// Usage's single-turn numbers.
-	SessionHit   int        // Usage: cumulative cache-hit prompt tokens this session
-	SessionMiss  int        // Usage: cumulative cache-miss prompt tokens this session
-	SessionCost      float64 // Usage: cumulative conversation cost, computed from Pricing.Cost
-	SessionCurrency  string  // Usage: currency symbol for SessionCost (e.g. "¥")
-	SessionPrompt    int     // Usage: cumulative prompt tokens this session
-	SessionTotal     int     // Usage: cumulative total tokens this session
-	Level        Level      // Notice
-	Approval     Approval   // ApprovalRequest
-	Ask          Ask        // AskRequest
-	Err          error      // TurnDone: non-nil on failure
-	Compaction   Compaction // Compaction
-	RetryAttempt int        // Retrying: 1-based attempt about to be made
-	RetryMax     int        // Retrying: total attempts before giving up
+	SessionHit      int        // Usage: cumulative cache-hit prompt tokens this session
+	SessionMiss     int        // Usage: cumulative cache-miss prompt tokens this session
+	SessionCost     float64    // Usage: cumulative conversation cost, computed from Pricing.Cost
+	SessionCurrency string     // Usage: currency symbol for SessionCost (e.g. "¥")
+	SessionPrompt   int        // Usage: cumulative prompt tokens this session
+	SessionTotal    int        // Usage: cumulative total tokens this session
+	Level           Level      // Notice
+	Approval        Approval   // ApprovalRequest
+	Ask             Ask        // AskRequest
+	Err             error      // TurnDone: non-nil on failure
+	Compaction      Compaction // Compaction
+	RetryAttempt    int        // Retrying: 1-based attempt about to be made
+	RetryMax        int        // Retrying: total attempts before giving up
 }
 
 // Sink consumes a turn's events. The agent calls Emit from multiple goroutines

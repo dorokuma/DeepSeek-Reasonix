@@ -8,19 +8,19 @@ import "reasonix/internal/event"
 // error becomes a message — so a browser frontend renders the same typed stream
 // the TUI does.
 type wireEvent struct {
-	Seq        int64           `json:"seq"`
-	Kind       string          `json:"kind"`
-	Text       string          `json:"text,omitempty"`
-	Reasoning  string          `json:"reasoning,omitempty"`
-	Level      string          `json:"level,omitempty"`
-	Tool       *wireTool       `json:"tool,omitempty"`
-	Usage      *wireUsage      `json:"usage,omitempty"`
-	Approval   *wireApproval   `json:"approval,omitempty"`
-	Ask        *wireAsk        `json:"ask,omitempty"`
-	Compaction *wireCompaction `json:"compaction,omitempty"`
-	RetryAttempt int `json:"retryAttempt,omitempty"`
-	RetryMax     int `json:"retryMax,omitempty"`
-	Err        string          `json:"err,omitempty"`
+	Seq          int64           `json:"seq"`
+	Kind         string          `json:"kind"`
+	Text         string          `json:"text,omitempty"`
+	Reasoning    string          `json:"reasoning,omitempty"`
+	Level        string          `json:"level,omitempty"`
+	Tool         *wireTool       `json:"tool,omitempty"`
+	Usage        *wireUsage      `json:"usage,omitempty"`
+	Approval     *wireApproval   `json:"approval,omitempty"`
+	Ask          *wireAsk        `json:"ask,omitempty"`
+	Compaction   *wireCompaction `json:"compaction,omitempty"`
+	RetryAttempt int             `json:"retryAttempt,omitempty"`
+	RetryMax     int             `json:"retryMax,omitempty"`
+	Err          string          `json:"err,omitempty"`
 }
 
 // wireCompaction is the JSON form of an event.Compaction. On a compaction_started
@@ -71,19 +71,19 @@ type wireTool struct {
 }
 
 type wireUsage struct {
-	PromptTokens     int                   `json:"promptTokens"`
-	CompletionTokens int                   `json:"completionTokens"`
-	TotalTokens      int                   `json:"totalTokens"`
-	CacheHitTokens   int                   `json:"cacheHitTokens"`
-	CacheMissTokens  int                   `json:"cacheMissTokens"`
-	ReasoningTokens  int                   `json:"reasoningTokens,omitempty"`
-	CacheDiagnostics *wireCacheDiagnostics `json:"cacheDiagnostics,omitempty"`
-	SessionCost            float64 `json:"sessionCost,omitempty"`
-	SessionCurrency        string  `json:"sessionCurrency,omitempty"`
-	SessionPromptTokens    int     `json:"sessionPromptTokens"`
-	SessionTotalTokens     int     `json:"sessionTotalTokens"`
-	Cost                   float64 `json:"cost,omitempty"`
-	Currency               string  `json:"currency,omitempty"`
+	PromptTokens        int                   `json:"promptTokens"`
+	CompletionTokens    int                   `json:"completionTokens"`
+	TotalTokens         int                   `json:"totalTokens"`
+	CacheHitTokens      int                   `json:"cacheHitTokens"`
+	CacheMissTokens     int                   `json:"cacheMissTokens"`
+	ReasoningTokens     int                   `json:"reasoningTokens,omitempty"`
+	CacheDiagnostics    *wireCacheDiagnostics `json:"cacheDiagnostics,omitempty"`
+	SessionCost         float64               `json:"sessionCost,omitempty"`
+	SessionCurrency     string                `json:"sessionCurrency,omitempty"`
+	SessionPromptTokens int                   `json:"sessionPromptTokens"`
+	SessionTotalTokens  int                   `json:"sessionTotalTokens"`
+	Cost                float64               `json:"cost,omitempty"`
+	Currency            string                `json:"currency,omitempty"`
 	// CostUSD is kept for older status consumers. It mirrors Cost and does not
 	// imply USD.
 	CostUSD float64 `json:"costUsd,omitempty"`

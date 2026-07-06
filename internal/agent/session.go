@@ -38,44 +38,39 @@ func (s *Session) Add(m provider.Message) {
 	s.Messages = append(s.Messages, m)
 }
 
-// PatchToolResult replaces the content of the most recent tool message with the
-// given toolCallID. Used when a background sub-agent finishes: the placeholder
-// "Started task …" tool result is updated in place instead of appending an
-// orphan tool message after later assistant turns.
-// ToolCallIDForStartedTaskLine finds the tool call id for a background task
-// placeholder row (Started task <jobID> …). Fallback when job meta was lost.
+// ToolCallIDForStartedTaskLine finds the tool call id for a started-task placeholder. Fallback when job meta was lost.
 func (s *Session) ToolCallIDForStartedTaskLine(jobID string) string {
 	if jobID == "" {
 		return ""
 	}
-	marker := "Started task " + jobID
-	bgPattern := `Started background job "` + regexp.QuoteMeta(jobID) + `"`
-	bgRe, _ := regexp.Compile(bgPattern)
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	for i := len(s.Messages) - 1; i >= 0; i-- {
 		m := s.Messages[i]
-		if m.Role == provider.RoleTool && m.ToolCallID != "" {
-			if strings.Contains(m.Content, marker) || (bgRe != nil && bgRe.MatchString(m.Content)) {
-				return m.ToolCallID
-			}
+		if m.Role == provider.RoleTool && m.ToolCallID != "" && TaskToolContentReferencesJob(m.Content, jobID) {
+			return m.ToolCallID
 		}
 	}
 	return ""
 }
 
-func (s *Session) PatchToolResult(toolCallID, content string) bool {
-	if toolCallID == "" {
+// ReplaceTaskStartedWithResult overwrites a started-task tool row with the terminal answer (same tool_call_id).
+func (s *Session) ReplaceTaskStartedWithResult(toolCallID, jobID, output string) bool {
+	if toolCallID == "" || jobID == "" || strings.TrimSpace(output) == "" {
 		return false
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for i := len(s.Messages) - 1; i >= 0; i-- {
 		m := &s.Messages[i]
-		if m.Role == provider.RoleTool && m.ToolCallID == toolCallID {
-			m.Content = content
-			return true
+		if m.Role != provider.RoleTool || m.ToolCallID != toolCallID || m.Name != "task" {
+			continue
 		}
+		if !TaskToolContentReferencesJob(m.Content, jobID) || !IsStartedTaskPlaceholder(m.Content) {
+			continue
+		}
+		m.Content = output
+		return true
 	}
 	return false
 }

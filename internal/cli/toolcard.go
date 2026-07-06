@@ -136,10 +136,10 @@ var toolCategory = map[string]string{
 	"web_search": "read", "bash_output": "read",
 	"write_file": "write", "edit_file": "write", "multi_edit": "write",
 	"move_file": "write", "delete_range": "write", "delete_symbol": "write", "notebook_edit": "write",
-	"note": "write",
+	"note":         "write",
 	"audit_finish": "write",
-	"bash": "exec",
-	"kill_shell": "proc",
+	"bash":         "exec",
+	"kill_shell":   "proc",
 }
 
 // toolDisplayName returns the card verb for a tool: a mapped builtin verb, the

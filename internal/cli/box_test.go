@@ -106,4 +106,3 @@ func TestBoxedWrap(t *testing.T) {
 		t.Errorf("boxed should contain wrapped line 2 %q", want2)
 	}
 }
-

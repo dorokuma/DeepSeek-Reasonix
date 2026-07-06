@@ -442,6 +442,11 @@ type Gate struct {
 	// OnRemember, when set, is invoked with a new allow rule the user chose to
 	// remember (e.g. "bash=go build"), so the front-end can persist it.
 	OnRemember func(rule string)
+
+	// BlockedTools maps tool name → custom block message. When set, Check()
+	// returns blocked with the custom message before policy evaluation, so the
+	// LLM gets a context-specific reason instead of a generic "denied".
+	BlockedTools map[string]string
 }
 
 // NewGate wires a Policy to an Approver (nil for non-interactive use).
@@ -453,6 +458,16 @@ func (g *Gate) SetApprover(a Approver) {
 	g.Approver = a
 }
 
+
+// SetBlockedTools replaces the BlockedTools map on the Gate. The controller
+// calls this before each turn to block dynamic tools (e.g. peek-job) when they
+// are not supposed to be visible.
+func (g *Gate) SetBlockedTools(blocked map[string]string) {
+	if g == nil {
+		return
+	}
+	g.BlockedTools = blocked
+}
 // Check decides whether a tool call may run. It is the method the agent's Gate
 // interface expects. A denied or refused call returns allow=false with a short
 // reason the agent feeds back to the model.
@@ -461,6 +476,13 @@ func (g *Gate) Check(ctx context.Context, toolName string, args json.RawMessage,
 		subject := Subject(args)
 		if isReadOnlyBashSubject(subject) {
 			readOnly = true
+		}
+	}
+
+	// Dynamic block: checked before policy rules so custom messages take priority.
+	if g.BlockedTools != nil {
+		if msg, ok := g.BlockedTools[toolName]; ok {
+			return false, msg, nil
 		}
 	}
 	switch g.Policy.Decide(toolName, readOnly, args) {

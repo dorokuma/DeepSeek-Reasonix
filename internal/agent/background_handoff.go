@@ -1,45 +1,37 @@
 package agent
 
 import (
-	"regexp"
 	"strings"
 
 	"reasonix/internal/provider"
 )
 
-var backgroundTaskResultRE = regexp.MustCompile(`(?s)<background-task-result job="[^"]*">\n(.*)\n</background-task-result>`)
+const backgroundWakeUserNudge = "后台任务结果已写入会话末尾的 task 工具消息。请用简要中文向用户汇报完成情况，勿复读子代理全文。"
 
-func (a *Agent) surfaceBackgroundHandoffIfNeeded(wakeForBackground bool, assistantText string) string {
-	if !wakeForBackground || hasVisibleFinalAnswer(assistantText) {
-		return assistantText
+func (a *Agent) maybeNudgeBackgroundWake(wakeForBackground bool, step int) {
+	if !wakeForBackground || step != 0 || a.session == nil {
+		return
 	}
-	if body := a.latestBackgroundDeliveryBody(); body != "" {
-		const max = 8000
-		if len(body) > max {
-			body = body[:max] + "\n…[truncated]"
-		}
-		return "后台子代理已完成，结果如下：\n\n" + body
+	if a.latestBackgroundDeliveryBody() == "" {
+		return
 	}
-	return assistantText
+	a.session.Add(provider.Message{Role: provider.RoleUser, Content: backgroundWakeUserNudge})
 }
 
 func (a *Agent) latestBackgroundDeliveryBody() string {
 	if a.session == nil {
 		return ""
 	}
-	a.session.mu.RLock()
-	msgs := a.session.Messages
-	a.session.mu.RUnlock()
-	for i := len(msgs) - 1; i >= 0; i-- {
-		m := msgs[i]
-		if m.Role == provider.RoleUser {
-			if sub := backgroundTaskResultRE.FindStringSubmatch(m.Content); len(sub) > 1 {
-				return strings.TrimSpace(sub[1])
-			}
+	for i := len(a.session.Snapshot()) - 1; i >= 0; i-- {
+		m := a.session.Snapshot()[i]
+		if m.Role != provider.RoleTool || m.Name != "task" {
+			continue
 		}
-		if m.Role == provider.RoleTool && m.Name == "task" && !strings.HasPrefix(strings.TrimSpace(m.Content), "Started task ") {
-			return strings.TrimSpace(m.Content)
+		c := strings.TrimSpace(m.Content)
+		if c == "" || IsStartedTaskPlaceholder(c) {
+			continue
 		}
+		return c
 	}
 	return ""
 }

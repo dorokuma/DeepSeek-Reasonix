@@ -103,11 +103,11 @@ func TestTools(t *testing.T) {
 
 func TestToolSource(t *testing.T) {
 	cases := map[string]string{
-		"read_file":           "builtin",
-		"bash":                "builtin",
+		"read_file":         "builtin",
+		"bash":              "builtin",
 		"mcp_stripe_charge": "mcp:stripe",
 		"mcp_fs_read":       "mcp:fs",
-		"mcp_weird":          "mcp", // malformed (no second __) falls back
+		"mcp_weird":         "mcp", // malformed (no second __) falls back
 	}
 	for name, want := range cases {
 		if got := toolSource(name); got != want {

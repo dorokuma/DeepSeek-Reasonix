@@ -1133,7 +1133,6 @@ func (m chatTUI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.rememberSubmittedInput(line)
 
-
 			// "!<cmd>" runs a shell command directly, bypassing the model.
 			if strings.HasPrefix(line, "!") {
 				cmd := strings.TrimPrefix(line, "!")
@@ -3270,7 +3269,6 @@ func (m *chatTUI) commandNames() string {
 	}
 	return strings.Join(names, " · ")
 }
-
 
 // runMCPSubcommand handles "/mcp" (status), "/mcp add …" (connect a server live
 // and persist it), and "/mcp remove <name>" (disconnect + drop from config). Add

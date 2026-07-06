@@ -158,4 +158,3 @@ func TestServeContextEndpoint(t *testing.T) {
 		t.Errorf("used = %d, want 0", body["used"])
 	}
 }
-

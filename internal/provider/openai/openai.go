@@ -501,7 +501,6 @@ func (c *client) readStream(ctx context.Context, resp *http.Response, cr *provid
 		return emitted, fmt.Errorf("%s: read stream: %w", c.name, err)
 	}
 
-
 	sort.Ints(order)
 	for _, idx := range order {
 		tc := acc[idx]
@@ -589,9 +588,9 @@ type chatMessage struct {
 
 // openaiContentPart is a single content block within a message's content array.
 type openaiContentPart struct {
-	Type     string           `json:"type"`
-	Text     string           `json:"text,omitempty"`
-	ImageURL *openaiImageURL  `json:"image_url,omitempty"`
+	Type     string          `json:"type"`
+	Text     string          `json:"text,omitempty"`
+	ImageURL *openaiImageURL `json:"image_url,omitempty"`
 }
 
 // openaiImageURL is the image_url object for an image content part.

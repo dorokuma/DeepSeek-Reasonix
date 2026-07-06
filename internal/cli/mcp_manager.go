@@ -313,7 +313,7 @@ func (m chatTUI) buildMCPSnapshot() mcpSnapshot {
 		for _, s := range m.host.Servers() {
 			v := mcpServerView{
 				Name: s.Name, Transport: fallbackText(s.Transport, "stdio"), Status: "connected",
-				Tools:   s.Tools, Prompts: s.Prompts, Resources: s.Resources,
+				Tools: s.Tools, Prompts: s.Prompts, Resources: s.Resources,
 				ToolList: append([]plugin.ToolInfo(nil), s.ToolList...),
 			}
 			if p, ok := configured[s.Name]; ok {
@@ -325,7 +325,7 @@ func (m chatTUI) buildMCPSnapshot() mcpSnapshot {
 		for _, f := range m.host.Failures() {
 			v := mcpServerView{
 				Name: f.Name, Transport: fallbackText(f.Transport, "stdio"), Status: "failed",
-				Error:   f.Error,
+				Error: f.Error,
 			}
 			if p, ok := configured[f.Name]; ok {
 				v = withMCPPluginConfig(v, p)

@@ -4,8 +4,8 @@ GOEXE := $(shell go env GOEXE)
 .PHONY: build vet fmt test hooks cross clean install
 
 build:
-	CGO_ENABLED=0 go build -ldflags "$(LDFLAGS)" -o /usr/local/bin/reasonix$(GOEXE) ./cmd/reasonix
-	CGO_ENABLED=0 go build -ldflags "$(LDFLAGS)" -o /dev/null ./cmd/reasonix-plugin-example
+	CGO_ENABLED=0 go build -buildvcs=false -ldflags "$(LDFLAGS)" -o /usr/local/bin/reasonix$(GOEXE) ./cmd/reasonix
+	CGO_ENABLED=0 go build -buildvcs=false -ldflags "$(LDFLAGS)" -o /dev/null ./cmd/reasonix-plugin-example
 
 vet:
 	go vet ./...
@@ -25,7 +25,7 @@ cross:
 	@for p in darwin/amd64 darwin/arm64 linux/amd64 linux/arm64 windows/amd64 windows/arm64; do \
 		os=$${p%/*}; arch=$${p#*/}; ext=; [ $$os = windows ] && ext=.exe; \
 		echo "build $$os/$$arch"; \
-		CGO_ENABLED=0 GOOS=$$os GOARCH=$$arch go build -ldflags "$(LDFLAGS)" -o dist/reasonix-$$os-$$arch$$ext ./cmd/reasonix; \
+		CGO_ENABLED=0 GOOS=$$os GOARCH=$$arch go build -buildvcs=false -ldflags "$(LDFLAGS)" -o dist/reasonix-$$os-$$arch$$ext ./cmd/reasonix; \
 	done
 
 clean:

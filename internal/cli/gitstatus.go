@@ -232,4 +232,3 @@ func (s gitStatus) render(repo, branch string) string {
 	}
 	return b.String()
 }
-

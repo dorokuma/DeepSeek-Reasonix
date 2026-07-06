@@ -6,7 +6,7 @@ import (
 )
 
 func TestBackgroundJobPostCallGuidance_SkillJobID(t *testing.T) {
-	g := BackgroundJobPostCallGuidance("Started task skill-9 (explore)")
+	g := BackgroundJobPostCallGuidance(`{"job_id":"skill-9","status":"started","label":"explore"}`)
 	if g == "" {
 		t.Fatal("expected guidance for explore Started line")
 	}

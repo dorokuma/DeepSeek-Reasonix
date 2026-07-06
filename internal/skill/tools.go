@@ -105,7 +105,7 @@ func (t *runSkillTool) Execute(ctx context.Context, args json.RawMessage) (strin
 			if err != nil {
 				return "", err
 			}
-			return fmt.Sprintf("Started task %s (run_skill:%s)", jobID, name), nil
+			return agent.FormatStartedTaskResult(jobID, "run_skill:"+name), nil
 		}
 		if t.runner == nil {
 			return "", fmt.Errorf("run_skill: skill %q is runAs=subagent but no subagent runner is configured in this session", name)
@@ -244,7 +244,7 @@ func (t *subagentSkillTool) Execute(ctx context.Context, args json.RawMessage) (
 		if err != nil {
 			return "", err
 		}
-		return fmt.Sprintf("Started task %s (%s)", jobID, t.toolName), nil
+		return agent.FormatStartedTaskResult(jobID, t.toolName), nil
 	}
 	if t.runner == nil {
 		return "", fmt.Errorf("%s: no subagent runner is configured in this session", t.toolName)

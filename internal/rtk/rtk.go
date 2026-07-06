@@ -18,8 +18,8 @@ type Mode int
 
 const (
 	ModeRewrite Mode = iota // default: transparent rewrite before execution
-	ModeSuggest               // log would-be rewrites, run original command
-	ModeOff                   // disable RTK integration
+	ModeSuggest             // log would-be rewrites, run original command
+	ModeOff                 // disable RTK integration
 )
 
 const (
@@ -29,7 +29,7 @@ const (
 )
 
 var (
-	binPath string
+	binPath      string
 	rewriteCache sync.Map
 )
 
@@ -257,17 +257,17 @@ func splitShellPipeline(cmd string) []segSep {
 
 // Probe collects RTK diagnostics for reasonix doctor.
 type Probe struct {
-	Mode       string `json:"mode"`
-	Path       string `json:"path,omitempty"`
-	Version    string `json:"version,omitempty"`
-	RewriteOK  bool   `json:"rewrite_ok"`
-	GrepOK     bool   `json:"grep_ok"`
-	PipeOK     bool   `json:"pipe_ok"`
-	ReadLimit  int    `json:"read_limit,omitempty"`
-	Timeout    string `json:"timeout,omitempty"`
-	Env        map[string]string `json:"env,omitempty"`
-	Sample     string `json:"sample,omitempty"`
-	Warning    string `json:"warning,omitempty"`
+	Mode      string            `json:"mode"`
+	Path      string            `json:"path,omitempty"`
+	Version   string            `json:"version,omitempty"`
+	RewriteOK bool              `json:"rewrite_ok"`
+	GrepOK    bool              `json:"grep_ok"`
+	PipeOK    bool              `json:"pipe_ok"`
+	ReadLimit int               `json:"read_limit,omitempty"`
+	Timeout   string            `json:"timeout,omitempty"`
+	Env       map[string]string `json:"env,omitempty"`
+	Sample    string            `json:"sample,omitempty"`
+	Warning   string            `json:"warning,omitempty"`
 }
 
 // CollectProbe returns redacted RTK status for doctor reports.

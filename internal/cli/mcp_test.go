@@ -450,7 +450,6 @@ func TestApplyMCPModeRecordsPluginConnectFailure(t *testing.T) {
 	}
 }
 
-
 func TestMCPManagerEscFromDetailReturnsToList(t *testing.T) {
 	m := newTestChatTUI()
 	m.mcp = &mcpManager{

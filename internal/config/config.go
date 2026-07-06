@@ -1308,6 +1308,24 @@ func (c *Config) ResolveSystemPrompt() (string, error) {
 }
 
 // Validate checks that the selected model's provider is usable.
+
+// ValidatePermissionsOverlap rejects tools listed in both main_agent_allowed and tools_dynamic.
+func (c *Config) ValidatePermissionsOverlap() error {
+	if c == nil || len(c.Permissions.ToolsDynamic) == 0 || len(c.Permissions.MainAgentAllowed) == 0 {
+		return nil
+	}
+	allow := make(map[string]struct{}, len(c.Permissions.MainAgentAllowed))
+	for _, name := range c.Permissions.MainAgentAllowed {
+		allow[name] = struct{}{}
+	}
+	for _, name := range c.Permissions.ToolsDynamic {
+		if _, ok := allow[name]; ok {
+			return fmt.Errorf("tool %q cannot be in both main_agent_allowed and tools_dynamic", name)
+		}
+	}
+	return nil
+}
+
 func (c *Config) Validate(model string) error {
 	e, ok := c.ResolveModel(model)
 	if !ok {

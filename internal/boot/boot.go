@@ -428,17 +428,21 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	// sub-agents inherit the full tool set (minus `task` itself, to keep
 	// nesting out of the picture). It registers into the same reg the
 	// executor uses, so the model surfaces it like any other tool.
-	resolveSubagentProvider := func(modelRef, effort string) (provider.Provider, *provider.Pricing, int, error) {
-		me := *entry
-		if strings.TrimSpace(modelRef) != "" {
-			resolved, ok := cfg.ResolveModel(modelRef)
-			if !ok {
-				// Unknown model — fall back to parent default.
-				// LLMs sometimes hallucinate model names; failing hard
-				// wastes a round-trip when the correct model is known.
-			} else {
-				me = *resolved
-			}
+	resolveSubagentProvider := func(skillName, modelRef, effort string) (provider.Provider, *provider.Pricing, int, error) {
+		sk := skill.Skill{Name: skillName, RunAs: skill.RunSubagent}
+		if strings.TrimSpace(modelRef) == "" {
+			modelRef = subagentModelRef(cfg, sk)
+		}
+		if strings.TrimSpace(modelRef) == "" {
+			return nil, nil, 0, fmt.Errorf("subagent_model not configured for %q", skillName)
+		}
+		resolved, ok := cfg.ResolveModel(modelRef)
+		if !ok {
+			return nil, nil, 0, fmt.Errorf("unknown subagent model %q", modelRef)
+		}
+		me := *resolved
+		if strings.TrimSpace(effort) == "" {
+			effort = subagentEffortRef(cfg, sk)
 		}
 		if strings.TrimSpace(effort) != "" {
 			normalized, err := config.NormalizeEffort(&me, effort)
@@ -455,6 +459,9 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 			return nil, nil, 0, err
 		}
 		return p, me.Price, me.ContextWindow, nil
+	}
+	resolveSubagentProviderForTask := func(modelRef, effort string) (provider.Provider, *provider.Pricing, int, error) {
+		return resolveSubagentProvider("task", modelRef, effort)
 	}
 
 	// extractSharedSections reads the reasonix-system.md prompt and extracts
@@ -492,7 +499,7 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	reg.Add(agent.NewTaskTool(execProv, entry.Price, reg,
 		entry.ContextWindow, cfg.Agent.SoftCompactRatio, cfg.Agent.CompactRatio, cfg.Agent.CompactForceRatio,
 		cfg.Agent.Temperature, config.ArchiveDir(), agent.DefaultTaskSystemPrompt+"\n\n"+extractSharedSections(), subAgentGate,
-		resolveSubagentProvider, hookRunner))
+		resolveSubagentProviderForTask, hookRunner))
 
 	// Session history tools let the AI discover and read past conversations.
 	// `list_sessions` returns all saved session files; `read_session` loads one
@@ -553,14 +560,11 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	// task/skill meta-tools, to bar recursion), and an optional per-skill model.
 	// Its tool activity nests under the invoking call, like `task`.
 	skillRunner := func(sctx context.Context, sk skill.Skill, task string) (string, error) {
-		prov, price, ctxWin := execProv, entry.Price, entry.ContextWindow
-		modelRef := subagentModelRef(cfg, sk)
-		if modelRef != "" {
-			if p, pr, cw, err := resolveSubagentProvider(modelRef, "max"); err == nil {
-				prov, price, ctxWin = p, pr, cw
-			}
-			// On error, keep using execProv — gracefully degrades
+		p, pr, cw, err := resolveSubagentProvider(sk.Name, subagentModelRef(cfg, sk), subagentEffortRef(cfg, sk))
+		if err != nil {
+			return "", err
 		}
+		prov, price, ctxWin := p, pr, cw
 		subReg := agent.FilterRegistry(reg, nil, agent.SubagentMetaTools()...)
 		steps := 0
 		subCtx := agent.WithNestingDepth(sctx, agent.NestingDepthFrom(sctx)+1)
@@ -603,9 +607,6 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 		}, onComplete, registerMeta)
 		if err != nil {
 			return "", err
-		}
-		if ctrl, ok := agent.CtrlFromContext(ctx); ok {
-			job.SetOnMessage(ctrl.MakeOnMessage())
 		}
 		return job.ID, nil
 	}

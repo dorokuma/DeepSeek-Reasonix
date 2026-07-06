@@ -180,8 +180,6 @@ Rules:
 - Don't fabricate conventions the code doesn't demonstrate.
 - After writing, summarize in one or two lines what you captured and tell the user to review and edit it.`
 
-
-
 // builtinSkills returns the shipped skills. A fresh slice each call so callers
 // can't mutate the shared set.
 func builtinSkills() []Skill {
@@ -195,16 +193,16 @@ func builtinSkills() []Skill {
 			RunAs:       RunInline,
 		},
 		{
-			Name:         "explore",
-			Description:  "Explore the codebase in an isolated subagent — wide-net read-only investigation that returns one distilled answer. Best for: 'find all places that...', 'how does X work across the project', 'survey the code for Y'.",
+			Name:        "explore",
+			Description: "Explore the codebase in an isolated subagent — wide-net read-only investigation that returns one distilled answer. Best for: 'find all places that...', 'how does X work across the project', 'survey the code for Y'.",
 			Body:        builtinExploreBody,
 			Scope:       ScopeBuiltin,
 			Path:        "(builtin)",
 			RunAs:       RunSubagent,
 		},
 		{
-			Name:         "research",
-			Description:  "Research a question by combining web search/read (via Jina MCP) + code reading in an isolated subagent. Best for: 'is X supported by lib Y', 'what's the canonical way to do Z', 'compare our impl against the spec'.",
+			Name:        "research",
+			Description: "Research a question by combining web search/read (via Jina MCP) + code reading in an isolated subagent. Best for: 'is X supported by lib Y', 'what's the canonical way to do Z', 'compare our impl against the spec'.",
 			Body:        builtinResearchBody,
 			Scope:       ScopeBuiltin,
 			Path:        "(builtin)",
@@ -244,4 +242,3 @@ func builtinSkills() []Skill {
 		},
 	}
 }
-

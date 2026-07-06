@@ -104,7 +104,7 @@ func NewTaskTool(prov provider.Provider, pricing *provider.Pricing, parentReg *t
 func (t *TaskTool) Name() string { return "task" }
 
 func (t *TaskTool) Description() string {
-	return "Spawn a sub-agent as a background job for a focused sub-task. Returns immediately with Started task <id>. When the sub-agent finishes, the runtime patches that tool result and may auto-continue the turn with the delivered answer — no polling tools on the main agent. The sub-agent runs in its own session with a filtered tool list."
+	return "Spawn a sub-agent as a background job for a focused sub-task. Returns immediately with a JSON started stub (job_id). When the sub-agent finishes, the runtime appends the final answer as a new tool message (name=task) at the conversation tail and may auto-continue the turn. While that job is still running for the same goal, do not dispatch another task — wait for delivery. The sub-agent runs in its own session with a filtered tool list."
 }
 
 func (t *TaskTool) Schema() json.RawMessage {
@@ -138,18 +138,23 @@ func (t *TaskTool) PostCallGuidanceAfter(args json.RawMessage, result string) st
 }
 
 func extractJobID(result string) string {
-	m := startedJobLine.FindStringSubmatch(strings.TrimSpace(result))
-	if len(m) < 2 {
-		return ""
-	}
-	return m[1]
+	return ExtractJobIDFromStartedResult(result)
 }
 
 func taskPostCallGuidance(jobID string) string {
-	rule := `Background job results auto-deliver. The result is appended as a new tool message (name=task) at the conversation tail when finished — see the tailmost tool message for your job_id.`
-	idClause := " job_id=task-N (from the Started line above)"
+	rule := `⚠ BACKGROUND JOB STARTED — RESULT AUTO-DELIVERS
+
+The task is running in the background. Wait for its final result — it will appear automatically as a new tool result at the end of this conversation.
+
+While waiting, do NOT:
+• Call peek-job to check progress (results arrive without polling)
+• Call steer-job to ask "are you done" (steer is for new instructions only)
+• Dispatch another task for the same goal
+
+Polling wastes context and delays responses. Continue other work or reply to the user instead.`
+	idClause := " job_id=task-N (from the started stub above)"
 	if jobID != "" {
-		idClause = fmt.Sprintf(" job_id=%q (from the Started line above)", jobID)
+		idClause = fmt.Sprintf(" job_id=%q (from the started stub above)", jobID)
 	}
 	return rule + "\n" + idClause
 }
@@ -176,6 +181,10 @@ func (t *TaskTool) Execute(ctx context.Context, args json.RawMessage) (string, e
 	if p.Prompt == "" {
 		return "", fmt.Errorf("prompt is required")
 	}
+	label := p.Description
+	if label == "" {
+		label = "task"
+	}
 
 	maxSteps := 0
 	// Default is no limit (0). Only capped when explicitly set by the caller.
@@ -191,23 +200,17 @@ func (t *TaskTool) Execute(ctx context.Context, args json.RawMessage) (string, e
 	if !ok {
 		return "", fmt.Errorf("background execution is not available in this context")
 	}
+	if dupID := findRunningDuplicateTask(jm, label, p.Prompt); dupID != "" {
+		return "", fmt.Errorf("background task %s is already running with the same goal (label/description). Wait for its result at the conversation tail; do not dispatch a duplicate task", dupID)
+	}
 	parentID, _, _, _ := CallContext(ctx)
 	nested := event.Discard
-	label := p.Description
-	if label == "" {
-		label = "task"
-	}
 	onComplete := OnCompleteCallbackFrom(ctx)
-	var provider OnCompleteProvider
-	if p, ok := OnCompleteProviderFrom(ctx); ok {
-		provider = p
-	} else if ctrl, ok := CtrlFromContext(ctx); ok {
-		provider, _ = ctrl.(OnCompleteProvider)
-	}
 	var registerMeta jobs.BeforeRunFunc
 	if ctrl, ok := CtrlFromContext(ctx); ok {
 		registerMeta = func(jobID string) { ctrl.RegisterJobMeta(jobID, parentID) }
 	}
+	digest := taskDispatchFingerprint(label, p.Prompt)
 	job, err := jm.Start(ctx, "task", label, func(jobCtx context.Context, _ io.Writer) (string, error) {
 		// Heartbeat: keep lastActive fresh so the stale monitor (120s inactivity)
 		// won't kill a busy task sub-agent whose output doesn't flow through the writer.
@@ -238,10 +241,8 @@ func (t *TaskTool) Execute(ctx context.Context, args json.RawMessage) (string, e
 	if err != nil {
 		return "", err
 	}
-	if provider != nil {
-		job.SetOnMessage(provider.MakeOnMessage())
-	}
-	return fmt.Sprintf("Started task %s (%s)", job.ID, label), nil
+	jm.SetDispatchDigest(job.ID, digest)
+	return FormatStartedTaskResult(job.ID, label), nil
 }
 
 // buildSubReg returns the sub-agent's tool set: the named whitelist (minus
@@ -276,9 +277,6 @@ func FilterRegistry(parent *tool.Registry, names []string, exclude ...string) *t
 		if tl, ok := parent.Get(name); ok {
 			sub.Add(tl)
 		}
-	}
-	if sm, ok := parent.Get("send_message"); ok {
-		sub.Add(sm)
 	}
 	return sub
 }
@@ -326,13 +324,12 @@ func FilterReadOnlyRegistry(parent *tool.Registry, exclude ...string) *tool.Regi
 // sink, and returns its final assistant answer. Shared by the foreground and
 // background paths. effort overrides the parent default when non-empty.
 func (t *TaskTool) runSub(ctx context.Context, prompt string, subReg *tool.Registry, sink event.Sink, maxSteps int) (string, error) {
-	prov, pricing, ctxWin := t.prov, t.pricing, t.contextWindow
-	if t.resolveProvider != nil {
-		if p, pr, cw, err := t.resolveProvider("", "max"); err == nil {
-			prov, pricing, ctxWin = p, pr, cw
-		}
-		// On error, keep using parent provider (t.prov) — gracefully degrades
-		// for provider kinds that don't support effort configuration.
+	if t.resolveProvider == nil {
+		return "", fmt.Errorf("subagent model resolver not configured")
+	}
+	prov, pricing, ctxWin, err := t.resolveProvider("", "")
+	if err != nil {
+		return "", err
 	}
 	var shared *ctxmode.Store
 	if s, ok := ctxmode.FromContext(ctx); ok {
