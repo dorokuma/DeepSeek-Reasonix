@@ -856,7 +856,7 @@ func (a *Agent) Run(ctx context.Context, input string) error {
 		}
 
 		if len(calls) == 0 {
-			text = a.surfaceBackgroundHandoffIfNeeded(wakeForBackground, text)
+			// text = a.surfaceBackgroundHandoffIfNeeded(wakeForBackground, text)  // removed by owner
 			if !hasVisibleFinalAnswer(text) {
 				emptyFinalBlocks++
 				if emptyFinalBlocks >= maxEmptyFinalBlocks {
@@ -2067,20 +2067,4 @@ func (a *Agent) clearBackgroundWakeIfCaughtUp() {
 	a.ctrl.PendingToolResultCAS(true, false)
 }
 
-// surfaceBackgroundHandoffIfNeeded appends a user nudge when the model
-// returned no visible answer after a background delivery, so it knows to
-// summarise the result.
-func (a *Agent) surfaceBackgroundHandoffIfNeeded(wakeForBackground bool, text string) string {
-	if !wakeForBackground || a.latestBackgroundDeliveryBody() == "" {
-		return text
-	}
-	if strings.TrimSpace(text) == "" {
-		if a.session != nil {
-			a.session.Add(provider.Message{
-				Role:    provider.RoleUser,
-				Content: backgroundWakeUserNudge,
-			})
-		}
-	}
-	return text
-}
+
