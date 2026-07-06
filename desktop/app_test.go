@@ -1387,6 +1387,53 @@ func TestSettingsMarksPresetWithChangedCoreConfigAsModified(t *testing.T) {
 	}
 }
 
+func TestSettingsMigratesLegacyStepFunPresetBaseURLs(t *testing.T) {
+	isolateDesktopUserDirs(t)
+
+	cfg := config.Default()
+	stepfun, ok := config.CuratedProviderPreset("stepfun")
+	if !ok || len(stepfun.Entries) != 1 {
+		t.Fatal("missing stepfun preset")
+	}
+	stepfunEntry := stepfun.Entries[0]
+	stepfunEntry.BaseURL = "https://api.stepfun.ai/step_plan/v1"
+	stepfunAnthropic, ok := config.CuratedProviderPreset("stepfun-anthropic")
+	if !ok || len(stepfunAnthropic.Entries) != 1 {
+		t.Fatal("missing stepfun-anthropic preset")
+	}
+	stepfunAnthropicEntry := stepfunAnthropic.Entries[0]
+	stepfunAnthropicEntry.BaseURL = "https://api.stepfun.ai/step_plan"
+	cfg.Providers = append(cfg.Providers, stepfunEntry, stepfunAnthropicEntry)
+	cfg.Desktop.ProviderAccess = []string{"stepfun", "stepfun-anthropic"}
+	if err := cfg.SaveTo(config.UserConfigPath()); err != nil {
+		t.Fatalf("save config: %v", err)
+	}
+
+	view := NewApp().Settings()
+	for _, id := range []string{"stepfun", "stepfun-anthropic"} {
+		presetView := providerPresetViewByID(t, view, id)
+		if !presetView.Added || presetView.Status != providerPresetStatusInstalled {
+			t.Fatalf("%s preset view = %+v, want installed after migration", id, presetView)
+		}
+	}
+
+	migrated := config.LoadForEdit(config.UserConfigPath())
+	stepfunEntryView, ok := migrated.Provider("stepfun")
+	if !ok {
+		t.Fatal("stepfun provider missing after migration")
+	}
+	if got := stepfunEntryView.BaseURL; got != "https://api.stepfun.com/step_plan/v1" {
+		t.Fatalf("stepfun base_url = %q, want official URL", got)
+	}
+	stepfunAnthropicEntryView, ok := migrated.Provider("stepfun-anthropic")
+	if !ok {
+		t.Fatal("stepfun-anthropic provider missing after migration")
+	}
+	if got := stepfunAnthropicEntryView.BaseURL; got != "https://api.stepfun.com/step_plan" {
+		t.Fatalf("stepfun-anthropic base_url = %q, want official URL", got)
+	}
+}
+
 func TestSettingsMarksSimilarProviderPresetWithoutBlockingAdd(t *testing.T) {
 	isolateDesktopUserDirs(t)
 	preset, ok := config.CuratedProviderPreset("mimo-api")

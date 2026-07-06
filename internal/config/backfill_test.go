@@ -113,6 +113,85 @@ func TestNormalizeLegacyProviderModelsLeavesCustomProviderUntouched(t *testing.T
 	}
 }
 
+func TestNormalizeLegacyStepFunBaseURLsMigratesPresetProviders(t *testing.T) {
+	c := &Config{Providers: []ProviderEntry{
+		{
+			Name:      "stepfun",
+			Kind:      "openai",
+			BaseURL:   legacyStepFunOpenAIBaseURL,
+			APIKeyEnv: "STEPFUN_API_KEY",
+			PresetID:  "stepfun",
+		},
+		{
+			Name:      "stepfun-anthropic",
+			Kind:      "anthropic",
+			BaseURL:   legacyStepFunAnthropicBaseURL + "/",
+			APIKeyEnv: "STEPFUN_API_KEY",
+			PresetID:  "stepfun-anthropic",
+		},
+		{
+			Name:      "custom-stepfun",
+			Kind:      "openai",
+			BaseURL:   legacyStepFunOpenAIBaseURL,
+			APIKeyEnv: "STEPFUN_API_KEY",
+		},
+	}}
+
+	if !normalizeLegacyStepFunBaseURLs(c) {
+		t.Fatal("legacy StepFun preset URL migration did not report a change")
+	}
+	if got := c.Providers[0].BaseURL; got != officialStepFunOpenAIBaseURL {
+		t.Fatalf("stepfun base_url = %q, want %q", got, officialStepFunOpenAIBaseURL)
+	}
+	if got := c.Providers[1].BaseURL; got != officialStepFunAnthropicBaseURL {
+		t.Fatalf("stepfun-anthropic base_url = %q, want %q", got, officialStepFunAnthropicBaseURL)
+	}
+	if got := c.Providers[2].BaseURL; got != legacyStepFunOpenAIBaseURL {
+		t.Fatalf("custom provider base_url = %q, want untouched legacy URL", got)
+	}
+}
+
+func TestLoadForEditPersistsLegacyStepFunBaseURLMigration(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	cfg := Default()
+	stepfun, ok := CuratedProviderPreset("stepfun")
+	if !ok || len(stepfun.Entries) != 1 {
+		t.Fatal("missing stepfun preset")
+	}
+	stepfunEntry := stepfun.Entries[0]
+	stepfunEntry.BaseURL = legacyStepFunOpenAIBaseURL
+	stepfunAnthropic, ok := CuratedProviderPreset("stepfun-anthropic")
+	if !ok || len(stepfunAnthropic.Entries) != 1 {
+		t.Fatal("missing stepfun-anthropic preset")
+	}
+	stepfunAnthropicEntry := stepfunAnthropic.Entries[0]
+	stepfunAnthropicEntry.BaseURL = legacyStepFunAnthropicBaseURL
+	cfg.Providers = append(cfg.Providers, stepfunEntry, stepfunAnthropicEntry)
+	cfg.Desktop.ProviderAccess = []string{"stepfun", "stepfun-anthropic"}
+	if err := cfg.SaveTo(path); err != nil {
+		t.Fatalf("SaveTo: %v", err)
+	}
+
+	loaded := LoadForEdit(path)
+	if got, _ := loaded.Provider("stepfun"); got == nil || got.BaseURL != officialStepFunOpenAIBaseURL {
+		t.Fatalf("loaded stepfun = %+v, want official base URL", got)
+	}
+	if got, _ := loaded.Provider("stepfun-anthropic"); got == nil || got.BaseURL != officialStepFunAnthropicBaseURL {
+		t.Fatalf("loaded stepfun-anthropic = %+v, want official base URL", got)
+	}
+
+	var disk Config
+	if _, err := toml.DecodeFile(path, &disk); err != nil {
+		t.Fatalf("decode persisted config: %v", err)
+	}
+	if got, _ := disk.Provider("stepfun"); got == nil || got.BaseURL != officialStepFunOpenAIBaseURL {
+		t.Fatalf("persisted stepfun = %+v, want official base URL", got)
+	}
+	if got, _ := disk.Provider("stepfun-anthropic"); got == nil || got.BaseURL != officialStepFunAnthropicBaseURL {
+		t.Fatalf("persisted stepfun-anthropic = %+v, want official base URL", got)
+	}
+}
+
 func TestNormalizeDesktopOfficialProviderAccessCanonicalizesOnlyDeepSeekIDs(t *testing.T) {
 	c := Default()
 	c.DefaultModel = "deepseek-flash/deepseek-v4-pro"
