@@ -169,9 +169,7 @@ func ApplyUserConfigUpgradesOnStartup(path string) (bool, error) {
 		changed = true
 	}
 	if shouldMarkWindowsBashSandboxDefaultUpgrade(header.ConfigVersion) {
-		if resetWindowsBashSandboxDefaultOnUpgrade(cfg) {
-			changed = true
-		}
+		resetWindowsBashSandboxDefaultOnUpgrade(cfg)
 		// Mark the Windows v4 migration even when the user was already on off,
 		// so a later manual enforce choice is not treated as the old template default.
 		changed = true
