@@ -721,7 +721,7 @@ const LanguagePolicy = `Reply in the same language the user is using in their mo
 const VisibilityPolicy = `User visibility: The user sees only your assistant messages in the chat UI — ` +
 	`not tool results, not the system prompt, not memory loaded in your context, not reasoning. ` +
 	`"Above" in your context is invisible to the user. Summarizing that a file or rules are ` +
-	`"loaded" or listing section names is not showing content. Calling read_file or any tool does ` +
+	`"loaded" or listing section names is not showing content. Calling any tool does ` +
 	`not display anything until you paste the text in your reply. Never say "above", "as shown", ` +
 	`"都在上面", or "内容如上". When the user asks to see a file or rules, quote the full text ` +
 	`in your message.`
