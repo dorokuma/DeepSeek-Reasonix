@@ -78,6 +78,41 @@ func TestStormBreakerEscalatesRepeatedFailure(t *testing.T) {
 	}
 }
 
+// TestStormBreakerEscalatesRepeatedBlockedPermission covers the readiness
+// recovery failure mode where the model keeps changing bash commands after the
+// host returns the same permission denial. Blocked calls used to reset the storm
+// counter, so this loop could churn approval prompts without ever changing
+// approach.
+func TestStormBreakerEscalatesRepeatedBlockedPermission(t *testing.T) {
+	reg := tool.NewRegistry()
+	reg.Add(fakeTool{name: "bash", readOnly: false})
+	sink, notices := warnNoticeRecorder()
+	a := New(nil, reg, NewSession(""), Options{
+		Gate: &stubGate{deny: map[string]bool{"bash": true}},
+	}, sink)
+
+	args := []string{
+		`{"command":"go test ./..."}`,
+		`{"command":"git status --short"}`,
+		`{"command":"ls -la"}`,
+	}
+	var last string
+	for i := 0; i < stormBreakThreshold; i++ {
+		call := provider.ToolCall{Name: "bash", Arguments: args[i]}
+		last = a.executeBatch(context.Background(), []provider.ToolCall{call})[0]
+	}
+
+	if !strings.Contains(last, "[loop guard]") {
+		t.Fatalf("after %d same permission blocks the result should carry the loop guard, got: %q", stormBreakThreshold, last)
+	}
+	if !strings.Contains(last, "blocked") || !strings.Contains(last, "permission") {
+		t.Fatalf("permission loop guard should preserve blocked context, got: %q", last)
+	}
+	if len(*notices) == 0 {
+		t.Errorf("loop guard should emit a warn notice to the user")
+	}
+}
+
 // TestStormBreakerEscalatesRepeatedBatch: a multi-call batch that fails the same
 // way every round is just as much a death-spiral as a single call — once the whole
 // batch repeats stormBreakThreshold times, the guard must fire and name the batch.

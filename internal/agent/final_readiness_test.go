@@ -6,6 +6,7 @@ import (
 
 	"reasonix/internal/evidence"
 	"reasonix/internal/instruction"
+	"reasonix/internal/provider"
 )
 
 func readinessLedger(receipts ...evidence.Receipt) *evidence.Ledger {
@@ -98,6 +99,25 @@ func TestFinalReadinessCheckAuditsIncompleteTodos(t *testing.T) {
 	}
 }
 
+func TestFinalReadinessAllowsFinalAfterLoopGuardedToolBlocker(t *testing.T) {
+	todo := evidence.Receipt{ToolName: "todo_write", Success: true, Todos: []evidence.TodoItem{{Content: "edit", Status: "in_progress"}}}
+	writer := evidence.Receipt{ToolName: "write_file", Success: true, Write: true, Paths: []string{"a.go"}}
+	sess := NewSession("")
+	sess.Add(provider.Message{Role: provider.RoleUser, Content: "edit"})
+	sess.Add(provider.Message{Role: provider.RoleAssistant, ToolCalls: []provider.ToolCall{{ID: "b1", Name: "bash"}}})
+	sess.Add(provider.Message{Role: provider.RoleTool, ToolCallID: "b1", Name: "bash", Content: "blocked: denied\n\n[loop guard] bash kept hitting the same host response"})
+	sess.Add(provider.Message{Role: provider.RoleAssistant, Content: "I am blocked by permission."})
+	a := &Agent{evidence: readinessLedger(writer, todo), session: sess}
+
+	got := a.finalReadinessCheck()
+	if !got.applies {
+		t.Fatalf("finalReadinessCheck() applies = false, want true audit after loop guard")
+	}
+	if got.reason != "" {
+		t.Fatalf("finalReadinessCheck() reason = %q, want loop guard to allow final blocker report", got.reason)
+	}
+}
+
 func TestFinalReadinessRetryMessageKeepsUserChoicesInteractive(t *testing.T) {
 	msg := finalReadinessRetryMessage("latest successful todo_write still has incomplete items: Ask user to review the doc: in_progress")
 	lower := strings.ToLower(msg)
@@ -106,6 +126,8 @@ func TestFinalReadinessRetryMessageKeepsUserChoicesInteractive(t *testing.T) {
 		"wait for its tool result",
 		"do not ask in prose",
 		"do not claim the user answered",
+		"do not run exploratory bash commands",
+		"do not keep retrying the blocked command",
 	} {
 		if !strings.Contains(lower, want) {
 			t.Fatalf("finalReadinessRetryMessage() missing %q:\n%s", want, msg)

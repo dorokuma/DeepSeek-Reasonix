@@ -412,6 +412,52 @@ func TestFinalReadinessStopsAfterRepeatedBlocks(t *testing.T) {
 	}
 }
 
+func TestFinalReadinessPermissionLoopGuardAllowsBlockedFinal(t *testing.T) {
+	todoWrite, ok := tool.LookupBuiltin("todo_write")
+	if !ok {
+		t.Fatal("todo_write builtin not registered")
+	}
+	reg := tool.NewRegistry()
+	reg.Add(fakeTool{name: "write_file", readOnly: false})
+	reg.Add(fakeTool{name: "bash", readOnly: false})
+	reg.Add(todoWrite)
+	prov := &scriptedProvider{name: "p", turns: [][]provider.Chunk{
+		{
+			toolCallChunk("w1", "write_file", `{"path":"changed.go","content":"package main"}`),
+			toolCallChunk("t1", "todo_write", `{"todos":[{"content":"Edit code","status":"in_progress"}]}`),
+			{Type: provider.ChunkDone},
+		},
+		{{Type: provider.ChunkText, Text: "premature final"}, {Type: provider.ChunkDone}},
+		{toolCallChunk("b1", "bash", `{"command":"go test ./..."}`), {Type: provider.ChunkDone}},
+		{toolCallChunk("b2", "bash", `{"command":"git status --short"}`), {Type: provider.ChunkDone}},
+		{toolCallChunk("b3", "bash", `{"command":"ls -la"}`), {Type: provider.ChunkDone}},
+		{{Type: provider.ChunkText, Text: "blocked by permission"}, {Type: provider.ChunkDone}},
+	}}
+	sink, notices := warnNoticeRecorder()
+	a := New(prov, reg, NewSession(""), Options{
+		Gate: &stubGate{deny: map[string]bool{"bash": true}},
+	}, sink)
+
+	if err := a.Run(context.Background(), "edit with todo, then hit bash permission blocks"); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if prov.call != 6 {
+		t.Fatalf("provider calls = %d, want readiness retry, three blocked bash calls, then final", prov.call)
+	}
+	if !sessionHasUserMessageContaining(a.session, "final-answer readiness") {
+		t.Fatal("missing synthetic readiness retry message")
+	}
+	if got := lastToolResult(a.session, "bash"); !strings.Contains(got, "[loop guard]") {
+		t.Fatalf("last bash result = %q, want permission loop guard", got)
+	}
+	if got := toolResults(a.session, "bash"); len(got) != stormBreakThreshold {
+		t.Fatalf("bash results = %d, want exactly %d blocked attempts", len(got), stormBreakThreshold)
+	}
+	if len(*notices) == 0 {
+		t.Fatal("loop guard should emit a user-facing warning notice")
+	}
+}
+
 func TestTodoWriteOnlyTurnMayEndWithIncompleteTodos(t *testing.T) {
 	todoWrite, ok := tool.LookupBuiltin("todo_write")
 	if !ok {
