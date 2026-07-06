@@ -194,6 +194,74 @@ func TestSaveSnapshotAppendsAcrossInterruptedToolCallTail(t *testing.T) {
 	}
 }
 
+// TestSaveSnapshotAppendsAcrossPartiallyAnsweredMultiToolCallTail covers the
+// same raw-prefix fallback when a multi-call assistant turn already has some
+// tool results on disk. LoadSession fabricates placeholders only for the still
+// unanswered calls; the live session later appends the real remaining results.
+func TestSaveSnapshotAppendsAcrossPartiallyAnsweredMultiToolCallTail(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "session.jsonl")
+	s := NewSession("sys")
+	s.Add(provider.Message{Role: provider.RoleUser, Content: "inspect and test"})
+	s.Add(provider.Message{
+		Role: provider.RoleAssistant, Content: "I will run a few checks.",
+		ToolCalls: []provider.ToolCall{
+			{ID: "call_read", Name: "read_file", Arguments: `{"path":"main.go"}`},
+			{ID: "call_test", Name: "bash", Arguments: `{"cmd":"go test ./..."}`},
+			{ID: "call_status", Name: "bash", Arguments: `{"cmd":"git status --short"}`},
+		},
+	})
+	s.Add(provider.Message{Role: provider.RoleTool, Name: "read_file", ToolCallID: "call_read", Content: "package main"})
+	if err := s.SaveSnapshot(path); err != nil {
+		t.Fatalf("partial multi-tool SaveSnapshot: %v", err)
+	}
+
+	loadedPartial, err := LoadSession(path)
+	if err != nil {
+		t.Fatalf("LoadSession partial: %v", err)
+	}
+	if !loadedPartial.normalizedDirty {
+		t.Fatal("partial multi-tool load should need placeholder repair")
+	}
+
+	s.Add(provider.Message{Role: provider.RoleTool, Name: "bash", ToolCallID: "call_test", Content: "ok"})
+	s.Add(provider.Message{Role: provider.RoleTool, Name: "bash", ToolCallID: "call_status", Content: "clean"})
+	s.Add(provider.Message{Role: provider.RoleAssistant, Content: "All checks passed."})
+	if err := s.SaveSnapshot(path); err != nil {
+		t.Fatalf("SaveSnapshot after remaining multi-tool results: %v", err)
+	}
+
+	events := readSessionEventsForTest(t, path)
+	if len(events) != 2 || events[1].Type != sessionEventTypeAppend {
+		t.Fatalf("events after multi-tool append = %+v, want trailing append", events)
+	}
+	if events[1].MessageIndex != 4 || len(events[1].Messages) != 3 {
+		t.Fatalf("multi-tool append event index=%d len=%d, want index 4 len 3", events[1].MessageIndex, len(events[1].Messages))
+	}
+	replay, err := replaySessionEventLog(SessionEventLogPath(path))
+	if err != nil {
+		t.Fatalf("replay event log: %v", err)
+	}
+	if replay.damaged {
+		t.Fatal("event log damaged after appending remaining multi-tool results")
+	}
+	loaded, err := LoadSession(path)
+	if err != nil {
+		t.Fatalf("LoadSession final: %v", err)
+	}
+	if got := len(loaded.Messages); got != 7 {
+		t.Fatalf("message count after multi-tool append = %d, want 7", got)
+	}
+	if got := loaded.Messages[4].Content; got != "ok" {
+		t.Fatalf("second tool result after round-trip = %q, want ok", got)
+	}
+	if got := loaded.Messages[5].Content; got != "clean" {
+		t.Fatalf("third tool result after round-trip = %q, want clean", got)
+	}
+	if loaded.normalizedDirty {
+		t.Fatal("multi-tool transcript still needs repair after real results landed")
+	}
+}
+
 // TestSaveSnapshotUnchangedInterruptedToolCallTailIsNoOp covers the turn that
 // stays interrupted (cancel, crash recovery with nothing new in memory):
 // re-snapshotting the exact bytes on disk must be a no-op, not a stale-prefix
@@ -318,6 +386,68 @@ func TestSaveSnapshotAfterDirtyResumeKeepsEventChainReplayable(t *testing.T) {
 	}
 	if got := loaded.Messages[5].Content; got != "done" {
 		t.Fatalf("new turn after round-trip = %q, want %q", got, "done")
+	}
+}
+
+// TestSaveSnapshotAfterDirtyResumeWithTruncatedToolArgsPersistsRepair covers a
+// same-length load-time repair: truncated tool-call JSON is fixed in memory, but
+// appending against the repaired view would leave the broken arguments on disk.
+// The snapshot must rewrite so the repair and new turn persist together.
+func TestSaveSnapshotAfterDirtyResumeWithTruncatedToolArgsPersistsRepair(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "session.jsonl")
+	s := NewSession("sys")
+	s.Add(provider.Message{Role: provider.RoleUser, Content: "run tests"})
+	s.Add(provider.Message{
+		Role:      provider.RoleAssistant,
+		Content:   "Running tests.",
+		ToolCalls: []provider.ToolCall{{ID: "call_1", Name: "bash", Arguments: `{"cmd":"go test ./...`}},
+	})
+	s.Add(provider.Message{Role: provider.RoleTool, Name: "bash", ToolCallID: "call_1", Content: "ok"})
+	if err := s.SaveSnapshot(path); err != nil {
+		t.Fatalf("SaveSnapshot with truncated args: %v", err)
+	}
+
+	resumed, err := LoadSession(path)
+	if err != nil {
+		t.Fatalf("LoadSession resume: %v", err)
+	}
+	if !resumed.normalizedDirty {
+		t.Fatal("resume load should carry a pending repair for truncated tool arguments")
+	}
+	const repairedArgs = `{"cmd":"go test ./..."}`
+	if got := resumed.Messages[2].ToolCalls[0].Arguments; got != repairedArgs {
+		t.Fatalf("repaired args on resume = %q, want %q", got, repairedArgs)
+	}
+
+	resumed.Add(provider.Message{Role: provider.RoleUser, Content: "summarize"})
+	resumed.Add(provider.Message{Role: provider.RoleAssistant, Content: "Tests passed."})
+	if err := resumed.SaveSnapshot(path); err != nil {
+		t.Fatalf("SaveSnapshot after truncated-args resume: %v", err)
+	}
+
+	events := readSessionEventsForTest(t, path)
+	if len(events) != 2 || events[1].Type != sessionEventTypeReplace || events[1].Reason != "snapshot" {
+		t.Fatalf("events after truncated-args repair = %+v, want trailing snapshot replace", events)
+	}
+	replay, err := replaySessionEventLog(SessionEventLogPath(path))
+	if err != nil {
+		t.Fatalf("replay event log: %v", err)
+	}
+	if replay.damaged {
+		t.Fatal("event log damaged after truncated-args repair rewrite")
+	}
+	loaded, err := LoadSession(path)
+	if err != nil {
+		t.Fatalf("LoadSession reload: %v", err)
+	}
+	if loaded.normalizedDirty {
+		t.Fatal("truncated-args repair was not persisted")
+	}
+	if got := loaded.Messages[2].ToolCalls[0].Arguments; got != repairedArgs {
+		t.Fatalf("persisted args = %q, want %q", got, repairedArgs)
+	}
+	if got := loaded.Messages[5].Content; got != "Tests passed." {
+		t.Fatalf("new turn after round-trip = %q, want %q", got, "Tests passed.")
 	}
 }
 
