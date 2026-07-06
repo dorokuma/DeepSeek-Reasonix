@@ -147,6 +147,7 @@ func sessionTrashArtifacts(sessionPath, key string) []sessionTrashArtifact {
 		{src: store.SessionGoalState(sessionPath), name: stem + ".goal-state.json"},
 		{src: store.SessionEventLog(sessionPath), name: stem + ".events.jsonl"},
 		{src: store.SessionEventIndex(sessionPath), name: stem + ".event-index.json"},
+		{src: store.SessionConflictLog(sessionPath), name: stem + ".conflicts.jsonl"},
 		{src: sessionTelemetryPath(sessionPath), name: key + ".telemetry.json"},
 		{src: store.SessionCheckpointDir(sessionPath), name: stem + ".ckpt"},
 		{src: store.SessionJobsDir(sessionPath), name: stem + ".jobs"},

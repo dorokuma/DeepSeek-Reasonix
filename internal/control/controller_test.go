@@ -1741,6 +1741,7 @@ func TestSnapshotConflictAtRecoveryDepthCapForceSavesCurrentBranch(t *testing.T)
 	exec := agent.New(nil, nil, stale, agent.Options{}, event.Discard)
 	sink := &noticeSink{}
 	c := New(Options{Executor: exec, SessionDir: dir, SessionPath: path, Label: "test", Sink: sink})
+	stale.IncrementRewrite()
 
 	if err := c.Snapshot(); err != nil {
 		t.Fatalf("Snapshot: %v", err)
@@ -1765,6 +1766,12 @@ func TestSnapshotConflictAtRecoveryDepthCapForceSavesCurrentBranch(t *testing.T)
 	notices := sink.notices()
 	if len(notices) == 0 || !strings.Contains(notices[len(notices)-1], "kept the transcript on the current recovery branch") {
 		t.Fatalf("notices = %v, want depth-cap notice", notices)
+	}
+	c.mu.Lock()
+	savedRewriteVersion := c.savedRewriteVersion
+	c.mu.Unlock()
+	if savedRewriteVersion != stale.RewriteVersion() {
+		t.Fatalf("rewrite baseline after depth-cap force save = %d, want %d", savedRewriteVersion, stale.RewriteVersion())
 	}
 
 	// The force save re-anchored the baseline: the next snapshot must not

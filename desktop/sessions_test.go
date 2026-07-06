@@ -170,6 +170,8 @@ func TestDeleteSessionFile(t *testing.T) {
 	os.WriteFile(eventLogPath, []byte(`{"schema_version":1,"type":"replace","messages":[{"role":"user","content":"event"}]}`+"\n"), 0o644)
 	eventIndexPath := store.SessionEventIndex(sessionPath)
 	os.WriteFile(eventIndexPath, []byte(`{"schema_version":1,"message_count":1}`), 0o644)
+	conflictLogPath := store.SessionConflictLog(sessionPath)
+	os.WriteFile(conflictLogPath, []byte(`{"outcome":"forked_recovery_branch"}`+"\n"), 0o644)
 	telemetryPath := sessionTelemetryPath(sessionPath)
 	os.WriteFile(telemetryPath, []byte(`{"version":2,"readFiles":[]}`), 0o644)
 	lockPath := store.SessionLockFile(sessionPath)
@@ -205,6 +207,7 @@ func TestDeleteSessionFile(t *testing.T) {
 	trashGoalPath := filepath.Join(dir, sessionTrashDir, "session.jsonl", "session.goal-state.json")
 	trashEventLogPath := filepath.Join(dir, sessionTrashDir, "session.jsonl", "session.events.jsonl")
 	trashEventIndexPath := filepath.Join(dir, sessionTrashDir, "session.jsonl", "session.event-index.json")
+	trashConflictLogPath := filepath.Join(dir, sessionTrashDir, "session.jsonl", "session.conflicts.jsonl")
 	trashTelemetryPath := filepath.Join(dir, sessionTrashDir, "session.jsonl", "session.jsonl.telemetry.json")
 	trashCkptDir := filepath.Join(dir, sessionTrashDir, "session.jsonl", "session.ckpt")
 	trashJobsDir := filepath.Join(dir, sessionTrashDir, "session.jsonl", "session.jobs")
@@ -224,6 +227,9 @@ func TestDeleteSessionFile(t *testing.T) {
 	}
 	if _, err := os.Stat(eventIndexPath); !os.IsNotExist(err) {
 		t.Error("session event index should be removed from active sessions")
+	}
+	if _, err := os.Stat(conflictLogPath); !os.IsNotExist(err) {
+		t.Error("session conflict log should be removed from active sessions")
 	}
 	if _, err := os.Stat(telemetryPath); !os.IsNotExist(err) {
 		t.Error("session telemetry should be removed from active sessions")
@@ -257,6 +263,9 @@ func TestDeleteSessionFile(t *testing.T) {
 	}
 	if _, err := os.Stat(trashEventIndexPath); err != nil {
 		t.Fatalf("session event index should be in trash: %v", err)
+	}
+	if _, err := os.Stat(trashConflictLogPath); err != nil {
+		t.Fatalf("session conflict log should be in trash: %v", err)
 	}
 	if _, err := os.Stat(trashTelemetryPath); err != nil {
 		t.Fatalf("session telemetry should be in trash: %v", err)
@@ -493,6 +502,10 @@ func TestRestoreTrashedSessionFile(t *testing.T) {
 	if err := os.WriteFile(eventIndexPath, []byte(`{"schema_version":1,"message_count":1}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	conflictLogPath := store.SessionConflictLog(sessionPath)
+	if err := os.WriteFile(conflictLogPath, []byte(`{"outcome":"forked_recovery_branch"}`+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	telemetryPath := sessionTelemetryPath(sessionPath)
 	if err := os.WriteFile(telemetryPath, []byte(`{"version":2,"readFiles":[]}`), 0o644); err != nil {
 		t.Fatal(err)
@@ -537,6 +550,9 @@ func TestRestoreTrashedSessionFile(t *testing.T) {
 	}
 	if _, err := os.Stat(eventIndexPath); err != nil {
 		t.Fatalf("session event index should be restored: %v", err)
+	}
+	if _, err := os.Stat(conflictLogPath); err != nil {
+		t.Fatalf("session conflict log should be restored: %v", err)
 	}
 	if _, err := os.Stat(telemetryPath); err != nil {
 		t.Fatalf("session telemetry should be restored: %v", err)
@@ -835,6 +851,7 @@ func TestRemoveDesktopSessionArtifactsRemovesOwnedSidecars(t *testing.T) {
 		store.SessionGoalState(sessionPath),
 		store.SessionEventLog(sessionPath),
 		store.SessionEventIndex(sessionPath),
+		store.SessionConflictLog(sessionPath),
 		sessionTelemetryPath(sessionPath),
 		store.SessionLockFile(sessionPath),
 		store.SessionLeaseLock(sessionPath),
@@ -872,6 +889,7 @@ func TestRemoveDesktopSessionArtifactsRemovesOwnedSidecars(t *testing.T) {
 		store.SessionGoalState(sessionPath),
 		store.SessionEventLog(sessionPath),
 		store.SessionEventIndex(sessionPath),
+		store.SessionConflictLog(sessionPath),
 		sessionTelemetryPath(sessionPath),
 		store.SessionLockFile(sessionPath),
 		store.SessionLeaseLock(sessionPath),
