@@ -1969,6 +1969,15 @@ func (a *App) indexedBlankTopicIDLocked(scope, workspaceRoot string) string {
 	if len(topicIDs) == 0 {
 		return ""
 	}
+	// Blank-tab reuse is an automatic write path: the reused ID flows into
+	// ensureTopicIndexed, whose intentional single-topic prepend clears delete
+	// tombstones. Picking a tombstoned topic here (its default title can
+	// linger title-only after a delete raced a scan save) would therefore
+	// fully resurrect a topic the user removed — skip them.
+	deletedTopics := make(map[string]bool, len(f.DeletedTopics))
+	for _, id := range f.DeletedTopics {
+		deletedTopics[id] = true
+	}
 
 	openTopics := map[string]bool{}
 	for _, tab := range a.tabs {
@@ -2002,7 +2011,7 @@ func (a *App) indexedBlankTopicIDLocked(scope, workspaceRoot string) string {
 		addSessionIndex(desktopSessionDir(globalWorkspaceRoot()))
 	}
 	for _, topicID := range topicIDs {
-		if openTopics[topicID] {
+		if deletedTopics[topicID] || openTopics[topicID] {
 			continue
 		}
 		if topicTitleForTab(scope, workspaceRoot, topicID) != defaultTopicTitle {
