@@ -126,24 +126,48 @@ func (g SessionDataGuard) denies(abs string) bool {
 	return len(parts) >= 2 && parts[1] == "sessions"
 }
 
-// CommandHint returns a warning to append to bash output when the command text
+// CommandHint returns a warning to append to bash output when the command
 // references the guarded state trees, and "" otherwise. bash cannot know what a
 // command actually wrote (off mode runs raw, and write roots may legitimately
 // cover the state root), so this is a lexical check on the command text —
 // enough to break the agent's "write → app overwrites it → looks like my write
 // failed → retry" loop, which is how session-data self-writes burn tokens in
 // the wild. It never blocks: reading session files for diagnostics is
-// legitimate.
-func (g SessionDataGuard) CommandHint(command string) string {
+// legitimate. workDir is the directory the command runs in: when it sits
+// inside the state root (the desktop Global workspace lives at
+// <state root>/global-workspace), relative references like ../sessions reach
+// the stores without ever spelling an absolute path, so relative forms are
+// matched too — and a workDir already inside a guarded store warns on every
+// command.
+func (g SessionDataGuard) CommandHint(workDir, command string) string {
 	if g.stateRoot == "" || command == "" {
 		return ""
 	}
+	warn := fmt.Sprintf("WARNING: this command referenced Reasonix's own session/state data under %s. "+
+		"The app is actively saving those files; external modifications conflict with its saves and are preserved as conflict copies, so an edit can look like it \"did not take\". "+
+		"Do not modify session files from a chat — stop retrying and report the underlying problem instead.", g.stateRoot)
 	haystack := strings.ToLower(filepath.ToSlash(command))
 	for _, needle := range g.hintNeedles {
 		if strings.Contains(haystack, needle) {
-			return fmt.Sprintf("WARNING: this command referenced Reasonix's own session/state data under %s. "+
-				"The app is actively saving those files; external modifications conflict with its saves and are preserved as conflict copies, so an edit can look like it \"did not take\". "+
-				"Do not modify session files from a chat — stop retrying and report the underlying problem instead.", g.stateRoot)
+			return warn
+		}
+	}
+	if workDir != "" {
+		if absWork, err := realPath(workDir); err == nil {
+			if g.denies(absWork) {
+				return warn // cwd is already inside a guarded store: every command operates on it
+			}
+			if withinFold(g.stateRoot, absWork) {
+				for _, sub := range []string{"sessions", "projects"} {
+					rel, err := filepath.Rel(absWork, filepath.Join(g.stateRoot, sub))
+					if err != nil {
+						continue
+					}
+					if needle := strings.ToLower(filepath.ToSlash(rel)); strings.Contains(haystack, needle) {
+						return warn
+					}
+				}
+			}
 		}
 	}
 	return ""
@@ -151,9 +175,11 @@ func (g SessionDataGuard) CommandHint(command string) string {
 
 // sessionHintNeedles precomputes the lowercase, slash-normalized textual forms
 // of the guarded trees as they may appear in a command: under the state root as
-// given, its symlink-resolved form, and "~/"-abbreviated variants when a form
-// sits under the user's home. A tree wholly covered by an allow_write root is
-// skipped — the user sanctioned raw access there, so warnings would only nag.
+// given, its symlink-resolved form, and abbreviated variants ("~/", "$HOME/",
+// "${HOME}/", and on the config-dir side "%APPDATA%"/"$env:APPDATA") when a
+// form sits under the respective base. A tree wholly covered by an allow_write
+// root is skipped — the user sanctioned raw access there, so warnings would
+// only nag.
 func sessionHintNeedles(rawRoot, realRoot string, allowRoots []string) []string {
 	prefixes := map[string]bool{}
 	addPrefix := func(p string) {
@@ -167,8 +193,22 @@ func sessionHintNeedles(rawRoot, realRoot string, allowRoots []string) []string 
 	addPrefix(rawRoot)
 	addPrefix(realRoot)
 	home, _ := os.UserHomeDir()
+	cfgDir, _ := os.UserConfigDir()
 
 	var needles []string
+	abbreviate := func(base, tree string, forms ...string) {
+		if base == "" {
+			return
+		}
+		rel, err := filepath.Rel(base, tree)
+		if err != nil || rel == "." || !filepath.IsLocal(rel) {
+			return
+		}
+		slashRel := strings.ToLower(filepath.ToSlash(rel))
+		for _, form := range forms {
+			needles = append(needles, form+"/"+slashRel)
+		}
+	}
 	for prefix := range prefixes {
 		for _, sub := range []string{"sessions", "projects", "desktop-", "heartbeat-tasks.json", "metrics-pending.json", "crash-pending.json"} {
 			tree := filepath.Join(prefix, sub)
@@ -183,11 +223,8 @@ func sessionHintNeedles(rawRoot, realRoot string, allowRoots []string) []string 
 				continue
 			}
 			needles = append(needles, strings.ToLower(filepath.ToSlash(tree)))
-			if home != "" {
-				if rel, err := filepath.Rel(home, tree); err == nil && rel != "." && filepath.IsLocal(rel) {
-					needles = append(needles, strings.ToLower(filepath.ToSlash(filepath.Join("~", rel))))
-				}
-			}
+			abbreviate(home, tree, "~", "$home", "${home}")
+			abbreviate(cfgDir, tree, "%appdata%", "$env:appdata")
 		}
 	}
 	return needles

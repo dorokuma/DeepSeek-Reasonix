@@ -214,7 +214,7 @@ func (b bash) Execute(ctx context.Context, args json.RawMessage) (string, error)
 			return "", normalizeBashRunError(jobCtx, runErr, p.PreserveBackgroundProcesses)
 		})
 		msg := fmt.Sprintf("Started background job %q. It keeps running across turns; read new output with bash_output(job_id=%q), wait for it with wait, or stop it with kill_shell(job_id=%q).", job.ID, job.ID, job.ID)
-		return appendSessionDataHint(msg, b.guard.CommandHint(p.Command)), nil
+		return appendSessionDataHint(msg, b.guard.CommandHint(b.workDir, p.Command)), nil
 	}
 
 	out, err := b.runForeground(ctx, p, sh, argv, wrapped, cmdEnv)
@@ -231,7 +231,7 @@ func (b bash) Execute(ctx context.Context, args json.RawMessage) (string, error)
 		}
 		out, err = b.runForeground(ctx, p, sh, unconfinedShellArgv(sh, p.Command), false, cmdEnv)
 	}
-	return appendSessionDataHint(out, b.guard.CommandHint(p.Command)), err
+	return appendSessionDataHint(out, b.guard.CommandHint(b.workDir, p.Command)), err
 }
 
 // appendSessionDataHint appends the session-data guard warning to command

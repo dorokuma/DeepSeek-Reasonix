@@ -126,7 +126,7 @@ func TestSessionDataGuardZeroValueUnconfined(t *testing.T) {
 	if err := g.Check("/anywhere/sessions/x.jsonl"); err != nil {
 		t.Errorf("zero-value guard should be unconfined, got %v", err)
 	}
-	if hint := g.CommandHint("rm -rf ~/.reasonix/sessions"); hint != "" {
+	if hint := g.CommandHint("", "rm -rf ~/.reasonix/sessions"); hint != "" {
 		t.Errorf("zero-value guard hint = %q, want empty", hint)
 	}
 }
@@ -206,7 +206,7 @@ func TestSessionDataGuardCommandHint(t *testing.T) {
 		"Get-Content " + strings.ToUpper(filepath.ToSlash(filepath.Join(root, "sessions"))) + "/x.jsonl", // case-insensitive
 	}
 	for _, cmd := range hinted {
-		if hint := g.CommandHint(cmd); hint == "" {
+		if hint := g.CommandHint("", cmd); hint == "" {
 			t.Errorf("CommandHint(%q) = empty, want warning", cmd)
 		} else if !strings.Contains(hint, "conflict cop") {
 			t.Errorf("CommandHint(%q) = %q, want conflict-copy explanation", cmd, hint)
@@ -217,9 +217,58 @@ func TestSessionDataGuardCommandHint(t *testing.T) {
 		"ls " + filepath.Join(t.TempDir(), "sessions"), // "sessions" under an unrelated root
 		"",
 	} {
-		if hint := g.CommandHint(cmd); hint != "" {
+		if hint := g.CommandHint("", cmd); hint != "" {
 			t.Errorf("CommandHint(%q) = %q, want empty", cmd, hint)
 		}
+	}
+}
+
+func TestSessionDataGuardCommandHintEnvVarForm(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	state := filepath.Join(home, ".reasonix")
+	if err := os.MkdirAll(filepath.Join(state, "sessions"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	g := NewSessionDataGuard(state, nil)
+
+	for _, cmd := range []string{
+		`python3 -c "open('$HOME/.reasonix/sessions/x.jsonl','w')"`,
+		"rm ${HOME}/.reasonix/projects/slug/sessions/y.jsonl",
+	} {
+		if hint := g.CommandHint("", cmd); hint == "" {
+			t.Errorf("CommandHint(%q) = empty, want warning for env-var path form", cmd)
+		}
+	}
+}
+
+func TestSessionDataGuardCommandHintRelativeFromStateRoot(t *testing.T) {
+	root, _, _ := stateRootFor(t)
+	g := NewSessionDataGuard(root, nil)
+	// The desktop Global workspace lives at <state root>/global-workspace, so a
+	// relative ../sessions reaches the store without an absolute path in the
+	// command text.
+	workDir := filepath.Join(root, "global-workspace")
+	if err := os.MkdirAll(workDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	if hint := g.CommandHint(workDir, "python3 fix.py ../sessions/x.jsonl"); hint == "" {
+		t.Error("relative reference from a state-root workDir should warn")
+	}
+	if hint := g.CommandHint(workDir, "go build ./..."); hint != "" {
+		t.Errorf("ordinary command in the Global workspace should stay clean, got %q", hint)
+	}
+	// A workDir already inside a guarded store warns on every command: any
+	// relative operation there touches the store.
+	inStore := filepath.Join(root, "projects", "slug", "sessions")
+	if hint := g.CommandHint(inStore, "python3 fix.py x.jsonl"); hint == "" {
+		t.Error("workDir inside a session store should warn unconditionally")
+	}
+	// An unrelated workDir does not fabricate warnings.
+	if hint := g.CommandHint(t.TempDir(), "cat ../sessions/x.jsonl"); hint != "" {
+		t.Errorf("relative form outside the state root should stay clean, got %q", hint)
 	}
 }
 
