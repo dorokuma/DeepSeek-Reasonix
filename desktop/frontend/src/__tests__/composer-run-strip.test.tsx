@@ -4,6 +4,9 @@
 // jump), stop has a fixed home next to send, and a pending approval/ask shifts
 // the strip into a waiting state instead of a ticking "working" spinner.
 
+import { readFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { JSDOM } from "jsdom";
 import React from "react";
 import { act } from "react";
@@ -262,6 +265,57 @@ console.log("\ncomposer run strip");
   const ticker = document.querySelector(".composer-run-strip__text")?.textContent ?? "";
   ok(/ 30s| 31s/.test(ticker), `ticker excludes the time spent waiting for approval (got "${ticker}")`);
   ok(!/ 32s| 33s/.test(ticker), "ticker does not count the ~2.4s approval wait as model time");
+
+  await act(async () => {
+    root.unmount();
+  });
+  dom.window.close();
+}
+
+// Resize consistency: --composer-height always carries the logical height in
+// every writer (React render, live drag, keyboard), with the run strip's
+// reservation isolated in a CSS calc — so dragging a resized composer during a
+// running turn cannot flash-shrink the card.
+{
+  const stylesSource = readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), "../styles.css"), "utf8");
+  ok(
+    stylesSource.includes("calc(var(--composer-height) + var(--composer-run-strip-reserved, 0px))"),
+    "resized card height combines logical height and strip reservation in CSS",
+  );
+
+  const dom = installDom();
+  const { root, rerender } = await renderComposer({ running: true, turnStartAt: Date.now() });
+
+  const handle = document.querySelector(".composer-resize-handle") as HTMLButtonElement;
+  await act(async () => {
+    handle.focus();
+    handle.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Home", bubbles: true }));
+    await flushTimers();
+  });
+
+  const card = document.querySelector(".composer-card") as HTMLElement;
+  eq(card.style.getPropertyValue("--composer-height"), "104px", "render path writes the logical height, not a compensated one");
+  eq(card.style.getPropertyValue("--composer-run-strip-reserved"), "30px", "running card reserves the strip height via its own variable");
+
+  // Drag while running: the live writer stays in logical-height space.
+  await act(async () => {
+    handle.dispatchEvent(new window.MouseEvent("pointerdown", { bubbles: true, clientY: 300 }));
+    await flushTimers();
+  });
+  eq(card.style.getPropertyValue("--composer-height"), "104px", "drag start does not flash-shrink the running card");
+
+  await act(async () => {
+    document.dispatchEvent(new window.MouseEvent("pointermove", { bubbles: true, clientY: 280 }));
+    document.dispatchEvent(new window.MouseEvent("pointerup", { bubbles: true, clientY: 280 }));
+    await flushTimers();
+  });
+  eq(card.style.getPropertyValue("--composer-height"), "124px", "drag release keeps the same logical-height space as the render path");
+  eq(card.style.getPropertyValue("--composer-run-strip-reserved"), "30px", "strip reservation survives the drag");
+  eq(handle.getAttribute("aria-valuenow"), "124", "separator reports the logical height");
+
+  await rerender({ running: false, turnStartAt: undefined });
+  eq(card.style.getPropertyValue("--composer-run-strip-reserved"), "0px", "idle card releases the strip reservation");
+  eq(card.style.getPropertyValue("--composer-height"), "124px", "idle card keeps the user's logical height");
 
   await act(async () => {
     root.unmount();

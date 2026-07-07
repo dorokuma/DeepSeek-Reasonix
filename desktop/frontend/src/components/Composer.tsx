@@ -51,6 +51,9 @@ const LONG_PASTE_MIN_CHARS = 2000;
 const LONG_PASTE_MIN_LINES = 20;
 const COMPOSER_MIN_HEIGHT = 104;
 const COMPOSER_MAX_HEIGHT = 360;
+// Height reserved for the in-card run strip while a turn runs; applied via a
+// CSS calc so --composer-height always stays in "logical height" space.
+const COMPOSER_RUN_STRIP_RESERVED = 30;
 const COMPOSER_MAX_VIEWPORT_RATIO = 0.4;
 const COMPOSER_AUTO_RESERVED_HEIGHT = 58;
 const PROMPT_HISTORY_PREFETCH_REMAINING = 3;
@@ -253,6 +256,14 @@ async function dataURLHash(dataUrl: string): Promise<string> {
 function composerMaxHeight(): number {
   if (typeof window === "undefined") return COMPOSER_MAX_HEIGHT;
   return Math.max(COMPOSER_MIN_HEIGHT, Math.min(COMPOSER_MAX_HEIGHT, Math.floor(window.innerHeight * COMPOSER_MAX_VIEWPORT_RATIO)));
+}
+
+// The rendered card includes the run strip while a turn runs; subtract it to
+// recover the user's logical height when measuring from the DOM.
+function composerLogicalHeight(card: HTMLElement): number {
+  const strip = card.querySelector(".composer-run-strip");
+  const stripHeight = strip ? strip.getBoundingClientRect().height : 0;
+  return card.getBoundingClientRect().height - stripHeight;
 }
 
 function clampComposerHeight(height: number): number {
@@ -1656,7 +1667,7 @@ export function Composer({
 
     e.preventDefault();
     const startY = e.clientY;
-    const startHeight = composerHeight ?? card.getBoundingClientRect().height;
+    const startHeight = composerHeight ?? composerLogicalHeight(card);
     let nextHeight = clampComposerHeight(startHeight);
     let moved = false;
     card.style.setProperty("--composer-height", `${nextHeight}px`);
@@ -1694,7 +1705,7 @@ export function Composer({
 
   const onComposerResizeKeyDown = (e: KeyboardEvent<HTMLButtonElement>) => {
     const card = composerCardRef.current;
-    const current = composerHeight ?? card?.getBoundingClientRect().height ?? COMPOSER_MIN_HEIGHT;
+    const current = composerHeight ?? (card ? composerLogicalHeight(card) : COMPOSER_MIN_HEIGHT);
     const step = e.shiftKey ? 32 : 16;
     let next: number | null = null;
     if (e.key === "ArrowUp" || e.key === "PageUp") next = current + step;
@@ -2025,14 +2036,18 @@ export function Composer({
     }
   };
 
-  // When the run strip is visible inside a user-resized card (fixed
-  // --composer-height), grow the card by the strip's reserved height so the
-  // meta row stays fully visible instead of being clipped.
-  const COMPOSER_RUN_STRIP_RESERVED = 30;
+  // When the run strip is visible inside a user-resized card, the card grows
+  // by the strip's reserved height so the meta row stays fully visible.
+  // --composer-height carries only the user's logical height; the reservation
+  // is a separate variable consumed by the CSS calc, so the live resize drag
+  // (which writes raw logical heights) stays consistent with this render path.
   const showRunStrip = Boolean(retry || running);
   const composerCardStyle = composerHeight === null
     ? undefined
-    : ({ "--composer-height": `${composerHeight + (showRunStrip ? COMPOSER_RUN_STRIP_RESERVED : 0)}px` } as CSSProperties);
+    : ({
+        "--composer-height": `${composerHeight}px`,
+        "--composer-run-strip-reserved": `${showRunStrip ? COMPOSER_RUN_STRIP_RESERVED : 0}px`,
+      } as CSSProperties);
   const textareaStyle = composerHeight === null && textareaAutoHeight !== null
     ? ({ height: `${textareaAutoHeight}px`, overflowY: textareaAutoOverflow ? "auto" : "hidden" } as CSSProperties)
     : undefined;

@@ -5450,7 +5450,10 @@ body > .mermaid-diagram--fullscreen {
   transition: border-color 0.12s;
 }
 .composer-card--resized {
-  height: var(--composer-height);
+  /* --composer-height is always the user's logical height; the run strip's
+     reservation lives in this calc so the live resize drag (which writes the
+     raw logical height) and the React render path can never disagree. */
+  height: calc(var(--composer-height) + var(--composer-run-strip-reserved, 0px));
   display: flex;
   flex-direction: column;
 }
