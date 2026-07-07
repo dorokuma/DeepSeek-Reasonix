@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"golang.org/x/text/encoding/simplifiedchinese"
+	"reasonix/internal/agent"
 	"reasonix/internal/checkpoint"
 	"reasonix/internal/config"
 	"reasonix/internal/control"
@@ -454,6 +455,58 @@ func TestSyncTabWorkspaceRootSpellingsOnWindows(t *testing.T) {
 	}
 	if got := app.tabs["tab_case"].WorkspaceRoot; got != projects[0].Root {
 		t.Fatalf("tab root = %q, want registry spelling %q", got, projects[0].Root)
+	}
+}
+
+func TestFindTopicSessionAfterCaseFlippedReaddOnWindows(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("case-insensitive root matching only applies to Windows paths")
+	}
+	isolateDesktopUserDirs(t)
+	projectRoot := t.TempDir()
+	flipped := flipPathASCIICase(t, projectRoot)
+
+	// Register under original spelling.
+	if err := addProject(projectRoot, "Project"); err != nil {
+		t.Fatalf("add project: %v", err)
+	}
+	if err := prependTopicInProjectsFile(projectRoot, "topic_case", true); err != nil {
+		t.Fatalf("prepend topic: %v", err)
+	}
+
+	// Write a session file with the original root spelling in its meta.
+	sessionDir := desktopSessionDir(projectRoot)
+	if err := os.MkdirAll(sessionDir, 0o755); err != nil {
+		t.Fatalf("mkdir session dir: %v", err)
+	}
+	sessionPath := filepath.Join(sessionDir, "topic-case.jsonl")
+	if err := os.WriteFile(sessionPath, []byte(`{"role":"user","content":"hello"}`+"\n"), 0o644); err != nil {
+		t.Fatalf("write session file: %v", err)
+	}
+	if err := agent.SaveBranchMeta(sessionPath, agent.BranchMeta{
+		TopicID:       "topic_case",
+		Scope:         "project",
+		WorkspaceRoot: projectRoot,
+		CreatedAt:     time.Now(),
+		UpdatedAt:     time.Now(),
+	}); err != nil {
+		t.Fatalf("save branch meta: %v", err)
+	}
+
+	// Re-add under the flipped-case spelling — simulates Windows Explorer
+	// or a different shell returning the same folder with different case.
+	app := NewApp()
+	installNoopRuntimeEvents(app)
+	app.registerProjectRoot(flipped)
+
+	// findTopicSessionForTarget must match the session whose meta carries
+	// the original case spelling against the registry's new (flipped) root.
+	path, _ := app.findTopicSessionForTarget("project", normalizeProjectRoot(flipped), "topic_case")
+	if path == "" {
+		t.Fatal("findTopicSessionForTarget returned empty path; session with old-case root should still match")
+	}
+	if path != sessionPath {
+		t.Fatalf("findTopicSessionForTarget = %q, want %q", path, sessionPath)
 	}
 }
 

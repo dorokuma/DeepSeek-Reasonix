@@ -1802,13 +1802,13 @@ func tabMatchesTopicTarget(tab *WorkspaceTab, scope, workspaceRoot, topicID stri
 	if scope == "global" {
 		return true
 	}
-	return normalizeProjectRoot(tab.WorkspaceRoot) == normalizeProjectRoot(workspaceRoot)
+	return sameProjectRoot(tab.WorkspaceRoot, workspaceRoot)
 }
 
 func tabInWorkspace(tab *WorkspaceTab, workspaceRoot string) bool {
 	return tab != nil &&
 		tab.Scope == "project" &&
-		normalizeProjectRoot(tab.WorkspaceRoot) == normalizeProjectRoot(workspaceRoot)
+		sameProjectRoot(tab.WorkspaceRoot, workspaceRoot)
 }
 
 // EnsureBlankTab activates the existing blank tab for the target scope, or
@@ -3065,7 +3065,7 @@ func (a *App) reconcileTabWithPinnedSessionMeta(tab *WorkspaceTab) (string, bool
 		return "", false
 	}
 	if tab.Scope == "project" && binding.scope != "project" && normalizeProjectRoot(tab.WorkspaceRoot) != "" {
-		if root, ok := safeControllerWorkspaceRoot(tab.Ctrl); ok && normalizeProjectRoot(root) == normalizeProjectRoot(tab.WorkspaceRoot) {
+		if root, ok := safeControllerWorkspaceRoot(tab.Ctrl); ok && sameProjectRoot(root, tab.WorkspaceRoot) {
 			return "", false
 		}
 	}
@@ -5693,9 +5693,9 @@ func legacySessionScopeMatchesMigrationTarget(meta agent.BranchMeta, scope, work
 	}
 	metaRoot := normalizeProjectRoot(meta.WorkspaceRoot)
 	if scope == "project" {
-		return metaRoot == "" || normalizeProjectRoot(workspaceRoot) == metaRoot
+		return metaRoot == "" || sameProjectRoot(workspaceRoot, metaRoot)
 	}
-	return metaRoot == "" || normalizeProjectRoot(globalWorkspaceRoot()) == metaRoot
+	return metaRoot == "" || sameProjectRoot(globalWorkspaceRoot(), metaRoot)
 }
 
 func cleanDesktopPath(path string) string {
@@ -7680,7 +7680,7 @@ func (a *App) knownSessionDirs() []string {
 
 func topicSessionMatchMatchesTarget(match topicSessionMatch, scope, workspaceRoot string) bool {
 	if scope == "project" {
-		return match.scope == "project" && normalizeProjectRoot(match.workspaceRoot) == normalizeProjectRoot(workspaceRoot)
+		return match.scope == "project" && sameProjectRoot(match.workspaceRoot, workspaceRoot)
 	}
 	return match.scope == "" || match.scope == "global"
 }
