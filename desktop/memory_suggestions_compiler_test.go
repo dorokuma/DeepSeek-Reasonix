@@ -108,3 +108,88 @@ func TestCompilerCandidatesRequireStablePattern(t *testing.T) {
 		}
 	}
 }
+
+// TestCompilerCandidateNamesUniqueForSimilarPatterns covers the review
+// finding: asciiSlug drops non-ASCII runes and truncates to 56 chars, so
+// patterns differing only in CJK text (or sharing a long English prefix) used
+// to collide on Name/ID — colliding IDs cross-wire the frontend's accepted
+// state and colliding Names make Store.Save overwrite the earlier memory.
+func TestCompilerCandidateNamesUniqueForSimilarPatterns(t *testing.T) {
+	isolateDesktopUserDirs(t)
+	userDir := t.TempDir()
+	cwd := t.TempDir()
+	sessionDir := t.TempDir()
+	store := memory.StoreFor(userDir, cwd)
+	// Same tool, errors differ only in CJK text: identical after asciiSlug.
+	seedCompilerFailures(t, cwd, 2, "编译失败：找不到模块甲")
+	seedCompilerFailures(t, cwd, 2, "编译失败：找不到模块乙")
+
+	app := NewApp()
+	app.setTestCtrl(control.New(control.Options{
+		Memory:     &memory.Set{Store: store, CWD: cwd, UserDir: userDir},
+		SessionDir: sessionDir,
+	}), "test-model")
+	app.tabs["test"].WorkspaceRoot = cwd
+
+	view := app.MemorySuggestions()
+	var candidates []MemorySuggestion
+	for _, item := range view.Memories {
+		if strings.HasPrefix(item.Name, "memory-v5-") {
+			candidates = append(candidates, item)
+		}
+	}
+	if len(candidates) != 2 {
+		t.Fatalf("candidates = %+v, want both CJK-only-diff patterns", candidates)
+	}
+	if candidates[0].Name == candidates[1].Name || candidates[0].ID == candidates[1].ID {
+		t.Fatalf("similar patterns collided on Name/ID: %q vs %q", candidates[0].Name, candidates[1].Name)
+	}
+
+	// Accepting both must persist two distinct memories, not overwrite one.
+	for _, c := range candidates {
+		if _, err := app.AcceptMemorySuggestion(c); err != nil {
+			t.Fatalf("AcceptMemorySuggestion(%s): %v", c.Name, err)
+		}
+	}
+	saved := store.List()
+	if len(saved) != 2 {
+		t.Fatalf("saved memories = %d (%+v), want 2 distinct files", len(saved), saved)
+	}
+}
+
+// TestCompilerCandidateNamesStableAcrossRefreshes: the hash suffix must be
+// derived from the pattern, not from ordering or randomness, so a refresh
+// keeps the same ID and the frontend's accepted-state map stays valid.
+func TestCompilerCandidateNamesStableAcrossRefreshes(t *testing.T) {
+	isolateDesktopUserDirs(t)
+	userDir := t.TempDir()
+	cwd := t.TempDir()
+	sessionDir := t.TempDir()
+	store := memory.StoreFor(userDir, cwd)
+	seedCompilerFailures(t, cwd, 2, "cannot find module providing package foo")
+
+	app := NewApp()
+	app.setTestCtrl(control.New(control.Options{
+		Memory:     &memory.Set{Store: store, CWD: cwd, UserDir: userDir},
+		SessionDir: sessionDir,
+	}), "test-model")
+	app.tabs["test"].WorkspaceRoot = cwd
+
+	first := app.MemorySuggestions()
+	second := app.MemorySuggestions()
+	firstIDs := compilerCandidateIDs(first.Memories)
+	secondIDs := compilerCandidateIDs(second.Memories)
+	if len(firstIDs) == 0 || strings.Join(firstIDs, ",") != strings.Join(secondIDs, ",") {
+		t.Fatalf("candidate IDs changed across refreshes: %v vs %v", firstIDs, secondIDs)
+	}
+}
+
+func compilerCandidateIDs(memories []MemorySuggestion) []string {
+	var out []string
+	for _, item := range memories {
+		if strings.HasPrefix(item.Name, "memory-v5-") {
+			out = append(out, item.ID)
+		}
+	}
+	return out
+}
