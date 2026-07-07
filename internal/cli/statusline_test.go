@@ -6,6 +6,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
@@ -52,8 +53,12 @@ func TestRunStatuslineCmdNormalizesQuotedNodeEval(t *testing.T) {
 	}
 	script := "const payload = JSON.parse(require('fs').readFileSync(0, 'utf8')); console.log(payload.model)"
 	cmd := `node -e "\"` + script + `\""`
+	timeout := statuslineCommandTimeout
+	if runtime.GOOS == "windows" {
+		timeout = 10 * time.Second
+	}
 
-	if got := runStatuslineCmd(cmd, `{"model":"deepseek"}`); got != "deepseek" {
+	if got := runStatuslineCmdWithTimeout(cmd, `{"model":"deepseek"}`, timeout); got != "deepseek" {
 		t.Fatalf("normalized statusline node -e output = %q, want deepseek", got)
 	}
 }
