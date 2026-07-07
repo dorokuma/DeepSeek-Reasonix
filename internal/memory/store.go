@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"reasonix/internal/config"
 	"reasonix/internal/frontmatter"
 )
 
@@ -77,7 +78,7 @@ func StoreFor(userDir, cwd string) Store {
 		return Store{}
 	}
 	return Store{
-		Dir:       filepath.Join(userDir, "projects", slugify(absOf(cwd)), "memory"),
+		Dir:       filepath.Join(userDir, "projects", config.WorkspaceSlug(absOf(cwd)), "memory"),
 		GlobalDir: filepath.Join(userDir, "memory", "global"),
 	}
 }
@@ -95,14 +96,6 @@ func (s Store) DirFor(t Type) string {
 
 // indexFile is the human-readable index of saved memories.
 const indexFile = "MEMORY.md"
-
-// slugify turns an absolute project path into a single filesystem-safe segment,
-// matching the auto-memory convention (path separators → '-'), e.g.
-// "/Users/me/proj" → "-Users-me-proj".
-func slugify(absPath string) string {
-	r := strings.NewReplacer(string(os.PathSeparator), "-", "/", "-", "\\", "-", ":", "-")
-	return r.Replace(absPath)
-}
 
 // dirs returns the directories to read from, in order: GlobalDir first (shared
 // memories), then Dir (project-specific).

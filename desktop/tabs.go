@@ -1551,6 +1551,42 @@ func (a *App) ListTabs() []TabMeta {
 	return enrichTabMetas(out)
 }
 
+// syncTabWorkspaceRootSpellings repoints open project tabs at the registry's
+// canonical root spelling after a registry write may have rewritten it
+// (addProject and friends adopt the caller's spelling). Tabs, the project
+// tree, and persisted tab state then agree on a single string form of each
+// root, which the frontend compares exactly. Callers must not hold a.mu.
+func (a *App) syncTabWorkspaceRootSpellings() {
+	projects := loadProjectsFile().Projects
+	a.mu.Lock()
+	changed := false
+	for _, tab := range a.tabs {
+		if tab == nil || tab.Scope != "project" {
+			continue
+		}
+		i := projectIndexByRoot(projects, tab.WorkspaceRoot)
+		if i < 0 || tab.WorkspaceRoot == projects[i].Root {
+			continue
+		}
+		tab.WorkspaceRoot = projects[i].Root
+		changed = true
+	}
+	if changed {
+		a.saveTabsLocked()
+	}
+	a.mu.Unlock()
+	if changed {
+		a.emitProjectTreeChanged()
+	}
+}
+
+// registerProjectRoot indexes workspaceRoot in the project registry and
+// realigns open tabs when the registry adopted a new spelling of the root.
+func (a *App) registerProjectRoot(workspaceRoot string) {
+	_ = addProject(workspaceRoot, "")
+	a.syncTabWorkspaceRootSpellings()
+}
+
 // OpenProjectTab builds a controller scoped to workspaceRoot and opens the
 // session selected by the given topic. Topic selection resolves to a concrete
 // session path first; the visible tab is then attached to that session runtime.
@@ -1562,7 +1598,7 @@ func (a *App) OpenProjectTab(workspaceRoot, topicID string) (TabMeta, error) {
 		workspaceRoot = abs
 	}
 	saveWorkspace(workspaceRoot)
-	_ = addProject(workspaceRoot, "")
+	a.registerProjectRoot(workspaceRoot)
 
 	sessionPath, _ := a.findTopicSessionForTarget("project", workspaceRoot, topicID)
 	return a.openTopicTab("project", workspaceRoot, topicID, sessionPath)
@@ -1579,7 +1615,7 @@ func (a *App) openProjectTabInactive(workspaceRoot, topicID string) (TabMeta, er
 	if abs, err := filepath.Abs(workspaceRoot); err == nil {
 		workspaceRoot = abs
 	}
-	_ = addProject(workspaceRoot, "")
+	a.registerProjectRoot(workspaceRoot)
 
 	sessionPath, _ := a.findTopicSessionForTarget("project", workspaceRoot, topicID)
 	return a.openTopicTabWithActivation("project", workspaceRoot, topicID, sessionPath, false)
@@ -1713,7 +1749,7 @@ func (a *App) OpenTopicSession(scope, workspaceRoot, topicID, sessionPath string
 			return TabMeta{}, fmt.Errorf("workspaceRoot is required")
 		}
 		saveWorkspace(workspaceRoot)
-		_ = addProject(workspaceRoot, "")
+		a.registerProjectRoot(workspaceRoot)
 	}
 	_, validPath, err := a.sessionDirForPath(sessionPath)
 	if err != nil {
@@ -1766,13 +1802,13 @@ func tabMatchesTopicTarget(tab *WorkspaceTab, scope, workspaceRoot, topicID stri
 	if scope == "global" {
 		return true
 	}
-	return normalizeProjectRoot(tab.WorkspaceRoot) == normalizeProjectRoot(workspaceRoot)
+	return sameProjectRoot(tab.WorkspaceRoot, workspaceRoot)
 }
 
 func tabInWorkspace(tab *WorkspaceTab, workspaceRoot string) bool {
 	return tab != nil &&
 		tab.Scope == "project" &&
-		normalizeProjectRoot(tab.WorkspaceRoot) == normalizeProjectRoot(workspaceRoot)
+		sameProjectRoot(tab.WorkspaceRoot, workspaceRoot)
 }
 
 // EnsureBlankTab activates the existing blank tab for the target scope, or
@@ -1794,7 +1830,7 @@ func (a *App) EnsureBlankTab(scope, workspaceRoot string) (TabMeta, error) {
 			workspaceRoot = abs
 		}
 		saveWorkspace(workspaceRoot)
-		_ = addProject(workspaceRoot, "")
+		a.registerProjectRoot(workspaceRoot)
 	} else {
 		workspaceRoot = ""
 		globalRoot = globalWorkspaceRoot()
@@ -1949,7 +1985,7 @@ func (a *App) blankTabMatchesTargetLocked(tab *WorkspaceTab, scope, workspaceRoo
 	if tab == nil || tab.Scope != scope {
 		return false
 	}
-	if scope == "project" && tab.WorkspaceRoot != workspaceRoot {
+	if scope == "project" && !sameProjectRoot(tab.WorkspaceRoot, workspaceRoot) {
 		return false
 	}
 	if tab.Ctrl == nil {
@@ -2051,13 +2087,8 @@ func (a *App) indexedBlankTopicIDLocked(scope, workspaceRoot string) string {
 	var topicIDs []string
 	if scope == "global" {
 		topicIDs = orderedTopicIDs(f.GlobalTopics, titles)
-	} else {
-		for _, project := range f.Projects {
-			if project.Root == workspaceRoot {
-				topicIDs = orderedTopicIDs(project.Topics, titles)
-				break
-			}
-		}
+	} else if i := projectIndexByRoot(f.Projects, workspaceRoot); i >= 0 {
+		topicIDs = orderedTopicIDs(f.Projects[i].Topics, titles)
 	}
 	if len(topicIDs) == 0 {
 		return ""
@@ -2077,7 +2108,7 @@ func (a *App) indexedBlankTopicIDLocked(scope, workspaceRoot string) string {
 		if tab == nil || tab.Scope != scope || strings.TrimSpace(tab.TopicID) == "" {
 			continue
 		}
-		if scope == "project" && tab.WorkspaceRoot != workspaceRoot {
+		if scope == "project" && !sameProjectRoot(tab.WorkspaceRoot, workspaceRoot) {
 			continue
 		}
 		openTopics[tab.TopicID] = true
@@ -3034,7 +3065,7 @@ func (a *App) reconcileTabWithPinnedSessionMeta(tab *WorkspaceTab) (string, bool
 		return "", false
 	}
 	if tab.Scope == "project" && binding.scope != "project" && normalizeProjectRoot(tab.WorkspaceRoot) != "" {
-		if root, ok := safeControllerWorkspaceRoot(tab.Ctrl); ok && normalizeProjectRoot(root) == normalizeProjectRoot(tab.WorkspaceRoot) {
+		if root, ok := safeControllerWorkspaceRoot(tab.Ctrl); ok && sameProjectRoot(root, tab.WorkspaceRoot) {
 			return "", false
 		}
 	}
@@ -3068,7 +3099,7 @@ func (a *App) applySessionBindingToTab(tab *WorkspaceTab, binding sessionBinding
 		if workspaceRoot == "" {
 			return
 		}
-		_ = addProject(workspaceRoot, "")
+		a.registerProjectRoot(workspaceRoot)
 	} else {
 		scope = "global"
 		workspaceRoot = globalTabWorkspaceRoot()
@@ -3090,7 +3121,9 @@ func (a *App) applySessionBindingToTab(tab *WorkspaceTab, binding sessionBinding
 	changed := tab.Scope != scope ||
 		tab.WorkspaceRoot != workspaceRoot ||
 		canonicalTabSessionPath(tab.SessionPath) != canonicalTabSessionPath(binding.path)
-	workspaceChanged := tab.Scope != scope || tab.WorkspaceRoot != workspaceRoot
+	// Spelling-only root updates still persist above, but an equivalent root is
+	// the same workspace — do not warn the user about a switch.
+	workspaceChanged := tab.Scope != scope || !sameProjectRoot(tab.WorkspaceRoot, workspaceRoot)
 	tab.Scope = scope
 	tab.WorkspaceRoot = workspaceRoot
 	tab.SessionPath = canonicalTabSessionPath(binding.path)
@@ -3875,10 +3908,11 @@ func desktopMCPMigrationRoots(tabs desktopTabsFile) []string {
 	var roots []string
 	add := func(root string) {
 		root = normalizeProjectRoot(root)
-		if root == "" || seen[root] {
+		key := projectRootKey(root)
+		if root == "" || seen[key] {
 			return
 		}
-		seen[root] = true
+		seen[key] = true
 		roots = append(roots, root)
 	}
 	if cur := loadWorkspace(); cur != "" {
@@ -3910,16 +3944,17 @@ func recoverLegacyProjectSidebarRoots(tabs desktopTabsFile) (bool, error) {
 		for _, project := range f.Projects {
 			root := normalizeProjectRoot(project.Root)
 			if root != "" {
-				seen[root] = true
+				seen[projectRootKey(root)] = true
 			}
 		}
 
 		add := func(root string) {
 			root = normalizeProjectRoot(root)
-			if root == "" || seen[root] || !existingDirectory(root) {
+			key := projectRootKey(root)
+			if root == "" || seen[key] || !existingDirectory(root) {
 				return
 			}
-			seen[root] = true
+			seen[key] = true
 			f.Projects = append(f.Projects, desktopProject{Root: root})
 			changed = true
 		}
@@ -4052,7 +4087,7 @@ func prependTopicsInProjectsFileOpts(workspaceRoot string, topicIDs []string, en
 			return true, nil
 		}
 		for i, p := range f.Projects {
-			if p.Root != workspaceRoot {
+			if !sameProjectRoot(p.Root, workspaceRoot) {
 				continue
 			}
 			next := uniqueStrings(append(append([]string(nil), live...), p.Topics...))
@@ -4114,6 +4149,36 @@ func normalizeProjectRoot(root string) string {
 	return root
 }
 
+func sameProjectRoot(a, b string) bool {
+	return sameDesktopPath(normalizeProjectRoot(a), normalizeProjectRoot(b))
+}
+
+func projectIndexByRoot(projects []desktopProject, root string) int {
+	root = normalizeProjectRoot(root)
+	if root == "" {
+		return -1
+	}
+	for i, project := range projects {
+		if sameProjectRoot(project.Root, root) {
+			return i
+		}
+	}
+	return -1
+}
+
+func projectRootInList(roots []string, root string) bool {
+	root = normalizeProjectRoot(root)
+	if root == "" {
+		return false
+	}
+	for _, candidate := range roots {
+		if sameProjectRoot(candidate, root) {
+			return true
+		}
+	}
+	return false
+}
+
 func normalizeProjectsFile(f desktopProjectFile) desktopProjectFile {
 	out := desktopProjectFile{
 		GlobalTitle:        strings.TrimSpace(f.GlobalTitle),
@@ -4122,7 +4187,6 @@ func normalizeProjectsFile(f desktopProjectFile) desktopProjectFile {
 		GlobalPinnedTopics: uniqueStrings(f.GlobalPinnedTopics),
 		DeletedTopics:      uniqueStrings(f.DeletedTopics),
 	}
-	index := map[string]int{}
 	for _, p := range f.Projects {
 		root := normalizeProjectRoot(p.Root)
 		if root == "" {
@@ -4133,7 +4197,7 @@ func normalizeProjectsFile(f desktopProjectFile) desktopProjectFile {
 		p.Color = normalizeProjectColor(p.Color)
 		p.Topics = uniqueStrings(p.Topics)
 		p.PinnedTopics = uniqueStrings(p.PinnedTopics)
-		if i, ok := index[root]; ok {
+		if i := projectIndexByRoot(out.Projects, root); i >= 0 {
 			if out.Projects[i].Title == "" && p.Title != "" {
 				out.Projects[i].Title = p.Title
 			}
@@ -4144,17 +4208,12 @@ func normalizeProjectsFile(f desktopProjectFile) desktopProjectFile {
 			out.Projects[i].PinnedTopics = uniqueStrings(append(out.Projects[i].PinnedTopics, p.PinnedTopics...))
 			continue
 		}
-		index[root] = len(out.Projects)
 		out.Projects = append(out.Projects, p)
-	}
-	projectRoots := make(map[string]bool, len(out.Projects))
-	for _, project := range out.Projects {
-		projectRoots[project.Root] = true
 	}
 	for _, root := range uniqueStrings(f.PinnedProjects) {
 		root = normalizeProjectRoot(root)
-		if root != "" && projectRoots[root] && !containsDesktopString(out.PinnedProjects, root) {
-			out.PinnedProjects = append(out.PinnedProjects, root)
+		if i := projectIndexByRoot(out.Projects, root); i >= 0 && !projectRootInList(out.PinnedProjects, out.Projects[i].Root) {
+			out.PinnedProjects = append(out.PinnedProjects, out.Projects[i].Root)
 		}
 	}
 	out.SidebarOrder = normalizeSidebarOrder(f.SidebarOrder, out.Projects)
@@ -4162,28 +4221,30 @@ func normalizeProjectsFile(f desktopProjectFile) desktopProjectFile {
 }
 
 func normalizeSidebarOrder(order []string, projects []desktopProject) []string {
-	projectRoots := make(map[string]bool, len(projects))
-	for _, project := range projects {
-		if project.Root != "" {
-			projectRoots[project.Root] = true
-		}
-	}
-	seen := make(map[string]bool, len(order))
+	seenGlobal := false
+	// Dedupe roots against a roots-only list: out also holds the global order
+	// token, which must never be path-compared against project roots.
+	var seenRoots []string
 	out := make([]string, 0, len(order))
 	for _, value := range order {
 		value = strings.TrimSpace(value)
 		if value == desktopGlobalOrderToken {
-			if !seen[value] {
-				seen[value] = true
+			if !seenGlobal {
+				seenGlobal = true
 				out = append(out, value)
 			}
 			continue
 		}
 		root := normalizeProjectRoot(value)
-		if root == "" || !projectRoots[root] || seen[root] {
+		i := projectIndexByRoot(projects, root)
+		if i < 0 {
 			continue
 		}
-		seen[root] = true
+		root = projects[i].Root
+		if projectRootInList(seenRoots, root) {
+			continue
+		}
+		seenRoots = append(seenRoots, root)
 		out = append(out, root)
 	}
 	return out
@@ -4400,7 +4461,7 @@ func projectColor(root string) string {
 		return globalProjectColor()
 	}
 	for _, p := range loadProjectsFile().Projects {
-		if p.Root == root {
+		if sameProjectRoot(p.Root, root) {
 			return normalizeProjectColor(p.Color)
 		}
 	}
@@ -4426,11 +4487,19 @@ func addProject(root, title string) error {
 	title = strings.TrimSpace(title)
 	return updateProjectsFile(func(f *desktopProjectFile) (bool, error) {
 		for i, p := range f.Projects {
-			if p.Root == root {
-				if title == "" || f.Projects[i].Title == title {
+			if sameProjectRoot(p.Root, root) {
+				changed := false
+				if f.Projects[i].Root != root {
+					f.Projects[i].Root = root
+					changed = true
+				}
+				if title != "" && f.Projects[i].Title != title {
+					f.Projects[i].Title = title
+					changed = true
+				}
+				if !changed {
 					return false, nil
 				}
-				f.Projects[i].Title = title
 				return true, nil
 			}
 		}
@@ -4451,10 +4520,11 @@ func renameProject(root, title string) error {
 			return true, nil
 		}
 		for i, p := range f.Projects {
-			if p.Root == root {
-				if f.Projects[i].Title == title {
+			if sameProjectRoot(p.Root, root) {
+				if f.Projects[i].Root == root && f.Projects[i].Title == title {
 					return false, nil
 				}
+				f.Projects[i].Root = root
 				f.Projects[i].Title = title
 				return true, nil
 			}
@@ -4476,10 +4546,11 @@ func setProjectColor(root, color string) error {
 			return true, nil
 		}
 		for i, p := range f.Projects {
-			if p.Root == root {
-				if f.Projects[i].Color == color {
+			if sameProjectRoot(p.Root, root) {
+				if f.Projects[i].Root == root && f.Projects[i].Color == color {
 					return false, nil
 				}
+				f.Projects[i].Root = root
 				f.Projects[i].Color = color
 				return true, nil
 			}
@@ -4494,7 +4565,7 @@ func removeProject(root string) error {
 	return updateProjectsFile(func(f *desktopProjectFile) (bool, error) {
 		projects := make([]desktopProject, 0, len(f.Projects))
 		for _, p := range f.Projects {
-			if p.Root != root {
+			if !sameProjectRoot(p.Root, root) {
 				projects = append(projects, p)
 			}
 		}
@@ -5482,11 +5553,8 @@ func repairIndexedSessionTopics(dir string) []string {
 	indexedTopics := projects.GlobalTopics
 	if scope == "project" {
 		indexedTopics = nil
-		for _, p := range projects.Projects {
-			if p.Root == workspaceRoot {
-				indexedTopics = p.Topics
-				break
-			}
+		if i := projectIndexByRoot(projects.Projects, workspaceRoot); i >= 0 {
+			indexedTopics = projects.Projects[i].Topics
 		}
 	}
 	indexedSet := make(map[string]bool, len(indexedTopics))
@@ -5625,9 +5693,9 @@ func legacySessionScopeMatchesMigrationTarget(meta agent.BranchMeta, scope, work
 	}
 	metaRoot := normalizeProjectRoot(meta.WorkspaceRoot)
 	if scope == "project" {
-		return metaRoot == "" || normalizeProjectRoot(workspaceRoot) == metaRoot
+		return metaRoot == "" || sameProjectRoot(workspaceRoot, metaRoot)
 	}
-	return metaRoot == "" || normalizeProjectRoot(globalWorkspaceRoot()) == metaRoot
+	return metaRoot == "" || sameProjectRoot(globalWorkspaceRoot(), metaRoot)
 }
 
 func cleanDesktopPath(path string) string {
@@ -5651,6 +5719,17 @@ func sameDesktopPath(a, b string) bool {
 		return strings.EqualFold(a, b)
 	}
 	return a == b
+}
+
+// projectRootKey is the map-key form of a project root: cleaned, absolute,
+// and case-folded on Windows — the same key form agent.CanonicalSessionPath
+// uses for session paths, so equivalent spellings never split lookups.
+func projectRootKey(root string) string {
+	root = cleanDesktopPath(root)
+	if os.PathSeparator == '\\' {
+		return strings.ToLower(root)
+	}
+	return root
 }
 
 func restoreSessionTopicIndex(dir, sessionPath string) error {
@@ -5821,6 +5900,7 @@ func (a *App) RenameProject(workspaceRoot, title string) error {
 	if err := renameProject(workspaceRoot, title); err != nil {
 		return err
 	}
+	a.syncTabWorkspaceRootSpellings()
 	a.emitProjectTreeChanged()
 	return nil
 }
@@ -5831,6 +5911,7 @@ func (a *App) SetProjectColor(workspaceRoot, color string) error {
 	if err := setProjectColor(workspaceRoot, color); err != nil {
 		return err
 	}
+	a.syncTabWorkspaceRootSpellings()
 	a.emitProjectTreeChanged()
 	return nil
 }
@@ -5843,19 +5924,19 @@ func (a *App) SetProjectPinned(workspaceRoot string, pinned bool) error {
 		return fmt.Errorf("workspaceRoot is required")
 	}
 	if err := updateProjectsFile(func(f *desktopProjectFile) (bool, error) {
-		found := false
-		for _, project := range f.Projects {
-			if project.Root == root {
-				found = true
-				break
-			}
-		}
-		if !found {
+		i := projectIndexByRoot(f.Projects, root)
+		if i < 0 {
 			return false, fmt.Errorf("project %q not found", root)
 		}
-		next := removeString(f.PinnedProjects, root)
+		root = f.Projects[i].Root
+		next := make([]string, 0, len(f.PinnedProjects))
+		for _, pinnedRoot := range f.PinnedProjects {
+			if !sameProjectRoot(pinnedRoot, root) {
+				next = append(next, pinnedRoot)
+			}
+		}
 		if pinned {
-			next = prependUniqueString(f.PinnedProjects, root)
+			next = prependUniqueString(next, root)
 		}
 		if sameStringList(next, f.PinnedProjects) {
 			return false, nil
@@ -5873,36 +5954,32 @@ func (a *App) SetProjectPinned(workspaceRoot string, pinned bool) error {
 // when present, the virtual Global sidebar section.
 func (a *App) ReorderProjects(workspaceRoots []string) error {
 	if err := updateProjectsFile(func(f *desktopProjectFile) (bool, error) {
-		byRoot := make(map[string]desktopProject, len(f.Projects))
-		for _, project := range f.Projects {
-			byRoot[project.Root] = project
-		}
-		seen := make(map[string]bool, len(workspaceRoots))
+		var seenProjects []string
 		next := make([]desktopProject, 0, len(workspaceRoots))
 		sidebarOrder := make([]string, 0, len(workspaceRoots))
 		hasGlobalOrder := false
 		for _, root := range workspaceRoots {
 			root = strings.TrimSpace(root)
 			if root == desktopGlobalOrderToken {
-				if seen[root] {
+				if hasGlobalOrder {
 					return false, fmt.Errorf("duplicate global section")
 				}
-				seen[root] = true
 				hasGlobalOrder = true
 				sidebarOrder = append(sidebarOrder, root)
 				continue
 			}
 			root = normalizeProjectRoot(root)
-			project, ok := byRoot[root]
-			if !ok {
+			i := projectIndexByRoot(f.Projects, root)
+			if i < 0 {
 				return false, fmt.Errorf("project %q not found", root)
 			}
-			if seen[root] {
+			project := f.Projects[i]
+			if projectRootInList(seenProjects, project.Root) {
 				return false, fmt.Errorf("duplicate project %q", root)
 			}
-			seen[root] = true
+			seenProjects = append(seenProjects, project.Root)
 			next = append(next, project)
-			sidebarOrder = append(sidebarOrder, root)
+			sidebarOrder = append(sidebarOrder, project.Root)
 		}
 		if len(next) != len(f.Projects) {
 			return false, fmt.Errorf("project order length mismatch")
@@ -6686,7 +6763,10 @@ func topicSummaryKey(scope, workspaceRoot, topicID string) string {
 	if scope == "global" {
 		return "global::" + topicID
 	}
-	return "project:" + workspaceRoot + ":" + topicID
+	// Producers key by the live tab's root spelling while the sidebar keys by
+	// the registry's canonical spelling; fold both so runtime status never
+	// splits across equivalent roots.
+	return "project:" + projectRootKey(workspaceRoot) + ":" + topicID
 }
 
 func projectSessionNodeKey(scope, sessionPath string) string {
@@ -7600,7 +7680,7 @@ func (a *App) knownSessionDirs() []string {
 
 func topicSessionMatchMatchesTarget(match topicSessionMatch, scope, workspaceRoot string) bool {
 	if scope == "project" {
-		return match.scope == "project" && normalizeProjectRoot(match.workspaceRoot) == normalizeProjectRoot(workspaceRoot)
+		return match.scope == "project" && sameProjectRoot(match.workspaceRoot, workspaceRoot)
 	}
 	return match.scope == "" || match.scope == "global"
 }

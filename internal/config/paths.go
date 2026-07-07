@@ -334,8 +334,16 @@ func MemoryCompilerDir(workspaceRoot string) string {
 }
 
 // WorkspaceSlug flattens an absolute workspace path into the directory name
-// used under <config root>/projects.
+// used under <config root>/projects. Windows spells the same folder with
+// varying case (drive-letter case, Explorer renames), so the slug folds case
+// there — matching agent.CanonicalSessionPath's key form — or equivalent
+// spellings of one workspace would produce distinct slug strings. Existing
+// mixed-case slug directories need no migration: NTFS resolves names
+// case-insensitively, so the folded slug opens the same directory.
 func WorkspaceSlug(absPath string) string {
+	if runtimeGOOS == "windows" {
+		absPath = strings.ToLower(absPath)
+	}
 	return strings.NewReplacer(string(os.PathSeparator), "-", "/", "-", "\\", "-", ":", "-").Replace(absPath)
 }
 
