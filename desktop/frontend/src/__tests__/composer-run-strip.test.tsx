@@ -217,5 +217,57 @@ console.log("\ncomposer run strip");
   dom.window.close();
 }
 
+// Cancel restores queued guidance: stop means "stop acting", never "discard
+// what I typed".
+{
+  const dom = installDom();
+  const { root, calls } = await renderComposer({
+    running: true,
+    turnStartAt: Date.now(),
+    guidanceQueuePreviewItems: ["数到一半改用英文", "最后给出一句总结"],
+  });
+
+  ok(document.querySelector(".composer-guidance-shelf") !== null, "queued guidance renders in the shelf");
+
+  const stop = document.querySelector(".composer__btn--stop") as HTMLButtonElement | null;
+  if (!stop) throw new Error("stop button did not render");
+  await act(async () => {
+    stop.click();
+    await flushTimers();
+  });
+
+  eq(calls.cancel, 1, "stop cancels the running turn");
+  const ta = document.querySelector("textarea") as HTMLTextAreaElement;
+  eq(ta.value, "数到一半改用英文\n最后给出一句总结", "stop folds unconsumed queued guidance back into the draft");
+  eq(document.querySelector(".composer-guidance-shelf"), null, "restored queue clears the shelf");
+
+  await act(async () => {
+    root.unmount();
+  });
+  dom.window.close();
+}
+
+// Waiting on the user pauses the ticker clock: elapsed time means model time.
+{
+  const dom = installDom();
+  const start = Date.now() - 30000;
+  const { root, rerender } = await renderComposer({ running: true, turnStartAt: start });
+
+  await rerender({ pendingApprovalLabel: "Run command", disabled: true });
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 2400));
+  });
+  await rerender({ pendingApprovalLabel: null, disabled: false });
+
+  const ticker = document.querySelector(".composer-run-strip__text")?.textContent ?? "";
+  ok(/ 30s| 31s/.test(ticker), `ticker excludes the time spent waiting for approval (got "${ticker}")`);
+  ok(!/ 32s| 33s/.test(ticker), "ticker does not count the ~2.4s approval wait as model time");
+
+  await act(async () => {
+    root.unmount();
+  });
+  dom.window.close();
+}
+
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed > 0) process.exit(1);

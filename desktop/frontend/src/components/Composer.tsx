@@ -1543,7 +1543,19 @@ export function Composer({
   const handleCancel = () => {
     const restored = onCancel();
     if (goalModeOn && activeGoal) onClearGoal();
-    if (typeof restored === "string") setTextCaretEnd(restored);
+    // Queued guidance the model never consumed would otherwise vanish when the
+    // cancelled turn ends (the running→false effect clears the shelf). Fold it
+    // back into the draft: cancelling means "stop acting", not "discard what I
+    // typed" — the same contract onCancel already honors for un-sent text.
+    const queued = pendingGuidance.map((item) => item.text).filter((part) => part.trim() !== "");
+    if (queued.length === 0) {
+      if (typeof restored === "string") setTextCaretEnd(restored);
+      return;
+    }
+    setPendingGuidance([]);
+    setGuidanceExpanded(false);
+    const base = typeof restored === "string" ? restored : text;
+    setTextCaretEnd([base, ...queued].filter((part) => part.trim() !== "").join("\n"));
   };
 
   const pickCommand = (c: CommandInfo) => setTextCaretEnd("/" + c.name + " ");
@@ -2013,7 +2025,14 @@ export function Composer({
     }
   };
 
-  const composerCardStyle = composerHeight === null ? undefined : ({ "--composer-height": `${composerHeight}px` } as CSSProperties);
+  // When the run strip is visible inside a user-resized card (fixed
+  // --composer-height), grow the card by the strip's reserved height so the
+  // meta row stays fully visible instead of being clipped.
+  const COMPOSER_RUN_STRIP_RESERVED = 30;
+  const showRunStrip = Boolean(retry || running);
+  const composerCardStyle = composerHeight === null
+    ? undefined
+    : ({ "--composer-height": `${composerHeight + (showRunStrip ? COMPOSER_RUN_STRIP_RESERVED : 0)}px` } as CSSProperties);
   const textareaStyle = composerHeight === null && textareaAutoHeight !== null
     ? ({ height: `${textareaAutoHeight}px`, overflowY: textareaAutoOverflow ? "auto" : "hidden" } as CSSProperties)
     : undefined;
@@ -2068,6 +2087,20 @@ export function Composer({
   // The pending approval itself disables the composer; keep the approval bar
   // usable in exactly that case so the mode can still be changed mid-prompt.
   const approvalBarDisabled = Boolean(disabled) && !pendingApprovalLabel;
+  // Waiting on the user (approval/ask) is not model work: pause the ticker's
+  // clock while a prompt is blocked so the elapsed time means "model time",
+  // matching what the waiting strip promises. Retries keep counting — they are
+  // system time, not user time. Accumulated in state via the effect cleanup so
+  // leaving the waiting state re-renders with the corrected time immediately.
+  const [waitAccumMs, setWaitAccumMs] = useState(0);
+  useEffect(() => {
+    setWaitAccumMs(0);
+  }, [turnStartAt]);
+  useEffect(() => {
+    if (!waitingPrompt) return;
+    const since = Date.now();
+    return () => setWaitAccumMs((total) => total + (Date.now() - since));
+  }, [waitingPrompt]);
   const runStateText = retry
     ? t("status.retrying", { attempt: retry.attempt, max: retry.max })
     : waitingPrompt === "approval"
@@ -2079,7 +2112,7 @@ export function Composer({
           : null;
   const runTicker = !retry && !waitingPrompt && running && turnStartAt
     ? (() => {
-        const elapsedMs = Math.max(0, now - turnStartAt);
+        const elapsedMs = Math.max(0, now - turnStartAt - waitAccumMs);
         const words = SPINNER_WORDS[locale];
         const word = words[Math.floor(elapsedMs / 3000) % words.length];
         const tok = turnTokens && turnTokens > 0 ? ` · ↓ ${fmtTokens(turnTokens)} ${t("status.tokens")}` : "";
