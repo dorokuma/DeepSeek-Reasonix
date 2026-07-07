@@ -406,7 +406,7 @@ func (m chatTUI) runStatusline() tea.Cmd {
 // keeps a slow script from stalling the UI; any failure collapses to "".
 func runStatuslineCmd(cmd, stdinPayload string) string {
 	res := hook.DefaultSpawner(context.Background(), hook.SpawnInput{
-		Command: hook.NormalizeCommand(cmd),
+		Command: cmd,
 		Stdin:   stdinPayload + "\n",
 		Timeout: 2 * time.Second,
 	})
