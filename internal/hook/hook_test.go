@@ -581,3 +581,32 @@ func TestDefaultSpawnerOutputCap(t *testing.T) {
 		t.Errorf("captured output %d exceeds cap %d", len(r.Stdout), outputCapBytes)
 	}
 }
+
+// TestWellFormedNodeEvalKeepsShellSemantics pins the execution contract for
+// commands that never needed repair: hook commands are documented to run
+// through the shell, and existing user hooks may rely on shell expansion.
+// A well-formed node -e stdin-hook command must therefore keep $VAR expansion
+// on POSIX — only repaired commands (whose broken quoting means they never
+// worked through a shell) may take the direct-exec path.
+func TestWellFormedNodeEvalKeepsShellSemantics(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("cmd does not perform POSIX $ expansion; Windows intentionally direct-execs recognized node evals")
+	}
+	requireNode(t)
+	command := `node -e "const payload = JSON.parse(require('fs').readFileSync(0, 'utf8')); console.log('$HOOK_TEST_MARKER' + payload.toolName)"`
+	if got := NormalizeCommand(command); got != command {
+		t.Fatalf("well-formed command was rewritten: %q", got)
+	}
+	r := DefaultSpawner(context.Background(), SpawnInput{
+		Command: command,
+		Stdin:   `{"toolName":"bash"}`,
+		Timeout: 2 * time.Second,
+		Env:     map[string]string{"HOOK_TEST_MARKER": "expanded-"},
+	})
+	if r.ExitCode != 0 {
+		t.Fatalf("spawn failed: %+v", r)
+	}
+	if r.Stdout != "expanded-bash" {
+		t.Fatalf("stdout = %q, want %q — $VAR expansion was lost (command bypassed the shell)", r.Stdout, "expanded-bash")
+	}
+}

@@ -596,9 +596,27 @@ func DefaultSpawner(ctx context.Context, in SpawnInput) SpawnResult {
 	return res
 }
 
+// spawnCommand picks the execution vehicle for a hook command. Commands run
+// through the shell by default — that is the documented contract, and scripts
+// may rely on shell expansion ($VAR, backticks). Direct exec (no shell) is
+// used only where it is strictly better:
+//   - a command this call just repaired (its broken quoting means it never
+//     worked through a shell, so there is no expansion behavior to preserve);
+//   - on Windows, a recognized node -e stdin-hook command: `cmd /c` mangles
+//     quoted JS (&, %, nested quotes), which is the breakage this repair
+//     exists for, and cmd performs no POSIX-style $ expansion to preserve.
+//
+// POSIX commands that were already well-formed keep their shell semantics
+// verbatim — normalizeStaticNodeEval's rendering escapes $ and backticks, so
+// even repaired commands re-entering here behave identically under sh -c.
 func spawnCommand(ctx context.Context, command string) *exec.Cmd {
-	if node, flag, script, ok := directNodeEvalArgs(command); ok {
+	if node, flag, script, ok := repairableNodeEvalArgs(command); ok {
 		return exec.CommandContext(ctx, node, flag, script)
+	}
+	if runtime.GOOS == "windows" {
+		if node, flag, script, ok := directNodeEvalArgs(command); ok {
+			return exec.CommandContext(ctx, node, flag, script)
+		}
 	}
 	name, args := shellInvocation(command)
 	return exec.CommandContext(ctx, name, args...)

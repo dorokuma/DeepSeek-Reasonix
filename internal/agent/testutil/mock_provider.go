@@ -8,7 +8,6 @@ package testutil
 import (
 	"context"
 	"fmt"
-	"runtime"
 	"sync"
 
 	"reasonix/internal/provider"
@@ -125,7 +124,6 @@ func (p *MockProvider) Stream(ctx context.Context, req provider.Request) (<-chan
 				ch <- provider.Chunk{Type: provider.ChunkError, Err: ctx.Err()}
 				return
 			case ch <- c:
-				runtime.Gosched()
 			}
 		}
 	}()

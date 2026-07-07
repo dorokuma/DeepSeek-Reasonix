@@ -101,30 +101,24 @@ func repairQuotedNodeEvalScript(script string) (string, bool) {
 }
 
 func trimDoubleQuotes(s string) (string, bool) {
-	if len(s) < 2 || s[0] != '"' {
+	if len(s) < 2 || s[0] != '"' || s[len(s)-1] != '"' {
 		return "", false
 	}
-	s = strings.TrimPrefix(s, `"`)
-	s = strings.TrimSuffix(s, `"`)
-	return s, true
+	return s[1 : len(s)-1], true
 }
 
 func trimEscapedQuotes(s string) (string, bool) {
-	if !strings.HasPrefix(s, `\"`) {
+	if len(s) < 4 || !strings.HasPrefix(s, `\"`) || !strings.HasSuffix(s, `\"`) {
 		return "", false
 	}
-	s = strings.TrimPrefix(s, `\"`)
-	s = strings.TrimSuffix(s, `\"`)
-	return unescapeJSONStyleQuotes(s), true
+	return unescapeJSONStyleQuotes(s[2 : len(s)-2]), true
 }
 
 func trimBackslashEscapedQuotes(s string) (string, bool) {
-	if !strings.HasPrefix(s, `\\"`) {
+	if len(s) < 6 || !strings.HasPrefix(s, `\\"`) || !strings.HasSuffix(s, `\\"`) {
 		return "", false
 	}
-	s = strings.TrimPrefix(s, `\\"`)
-	s = strings.TrimSuffix(s, `\\"`)
-	return unescapeJSONStyleQuotes(s), true
+	return unescapeJSONStyleQuotes(s[3 : len(s)-3]), true
 }
 
 func unescapeJSONStyleQuotes(s string) string {
