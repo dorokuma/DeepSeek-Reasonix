@@ -4114,6 +4114,36 @@ func normalizeProjectRoot(root string) string {
 	return root
 }
 
+func sameProjectRoot(a, b string) bool {
+	return sameDesktopPath(normalizeProjectRoot(a), normalizeProjectRoot(b))
+}
+
+func projectIndexByRoot(projects []desktopProject, root string) int {
+	root = normalizeProjectRoot(root)
+	if root == "" {
+		return -1
+	}
+	for i, project := range projects {
+		if sameProjectRoot(project.Root, root) {
+			return i
+		}
+	}
+	return -1
+}
+
+func projectRootInList(roots []string, root string) bool {
+	root = normalizeProjectRoot(root)
+	if root == "" {
+		return false
+	}
+	for _, candidate := range roots {
+		if sameProjectRoot(candidate, root) {
+			return true
+		}
+	}
+	return false
+}
+
 func normalizeProjectsFile(f desktopProjectFile) desktopProjectFile {
 	out := desktopProjectFile{
 		GlobalTitle:        strings.TrimSpace(f.GlobalTitle),
@@ -4122,7 +4152,6 @@ func normalizeProjectsFile(f desktopProjectFile) desktopProjectFile {
 		GlobalPinnedTopics: uniqueStrings(f.GlobalPinnedTopics),
 		DeletedTopics:      uniqueStrings(f.DeletedTopics),
 	}
-	index := map[string]int{}
 	for _, p := range f.Projects {
 		root := normalizeProjectRoot(p.Root)
 		if root == "" {
@@ -4133,7 +4162,7 @@ func normalizeProjectsFile(f desktopProjectFile) desktopProjectFile {
 		p.Color = normalizeProjectColor(p.Color)
 		p.Topics = uniqueStrings(p.Topics)
 		p.PinnedTopics = uniqueStrings(p.PinnedTopics)
-		if i, ok := index[root]; ok {
+		if i := projectIndexByRoot(out.Projects, root); i >= 0 {
 			if out.Projects[i].Title == "" && p.Title != "" {
 				out.Projects[i].Title = p.Title
 			}
@@ -4144,17 +4173,12 @@ func normalizeProjectsFile(f desktopProjectFile) desktopProjectFile {
 			out.Projects[i].PinnedTopics = uniqueStrings(append(out.Projects[i].PinnedTopics, p.PinnedTopics...))
 			continue
 		}
-		index[root] = len(out.Projects)
 		out.Projects = append(out.Projects, p)
-	}
-	projectRoots := make(map[string]bool, len(out.Projects))
-	for _, project := range out.Projects {
-		projectRoots[project.Root] = true
 	}
 	for _, root := range uniqueStrings(f.PinnedProjects) {
 		root = normalizeProjectRoot(root)
-		if root != "" && projectRoots[root] && !containsDesktopString(out.PinnedProjects, root) {
-			out.PinnedProjects = append(out.PinnedProjects, root)
+		if i := projectIndexByRoot(out.Projects, root); i >= 0 && !projectRootInList(out.PinnedProjects, out.Projects[i].Root) {
+			out.PinnedProjects = append(out.PinnedProjects, out.Projects[i].Root)
 		}
 	}
 	out.SidebarOrder = normalizeSidebarOrder(f.SidebarOrder, out.Projects)
@@ -4162,28 +4186,26 @@ func normalizeProjectsFile(f desktopProjectFile) desktopProjectFile {
 }
 
 func normalizeSidebarOrder(order []string, projects []desktopProject) []string {
-	projectRoots := make(map[string]bool, len(projects))
-	for _, project := range projects {
-		if project.Root != "" {
-			projectRoots[project.Root] = true
-		}
-	}
-	seen := make(map[string]bool, len(order))
+	seenGlobal := false
 	out := make([]string, 0, len(order))
 	for _, value := range order {
 		value = strings.TrimSpace(value)
 		if value == desktopGlobalOrderToken {
-			if !seen[value] {
-				seen[value] = true
+			if !seenGlobal {
+				seenGlobal = true
 				out = append(out, value)
 			}
 			continue
 		}
 		root := normalizeProjectRoot(value)
-		if root == "" || !projectRoots[root] || seen[root] {
+		i := projectIndexByRoot(projects, root)
+		if i < 0 {
 			continue
 		}
-		seen[root] = true
+		root = projects[i].Root
+		if projectRootInList(out, root) {
+			continue
+		}
 		out = append(out, root)
 	}
 	return out
@@ -4400,7 +4422,7 @@ func projectColor(root string) string {
 		return globalProjectColor()
 	}
 	for _, p := range loadProjectsFile().Projects {
-		if p.Root == root {
+		if sameProjectRoot(p.Root, root) {
 			return normalizeProjectColor(p.Color)
 		}
 	}
@@ -4426,11 +4448,19 @@ func addProject(root, title string) error {
 	title = strings.TrimSpace(title)
 	return updateProjectsFile(func(f *desktopProjectFile) (bool, error) {
 		for i, p := range f.Projects {
-			if p.Root == root {
-				if title == "" || f.Projects[i].Title == title {
+			if sameProjectRoot(p.Root, root) {
+				changed := false
+				if f.Projects[i].Root != root {
+					f.Projects[i].Root = root
+					changed = true
+				}
+				if title != "" && f.Projects[i].Title != title {
+					f.Projects[i].Title = title
+					changed = true
+				}
+				if !changed {
 					return false, nil
 				}
-				f.Projects[i].Title = title
 				return true, nil
 			}
 		}
@@ -4451,10 +4481,11 @@ func renameProject(root, title string) error {
 			return true, nil
 		}
 		for i, p := range f.Projects {
-			if p.Root == root {
-				if f.Projects[i].Title == title {
+			if sameProjectRoot(p.Root, root) {
+				if f.Projects[i].Root == root && f.Projects[i].Title == title {
 					return false, nil
 				}
+				f.Projects[i].Root = root
 				f.Projects[i].Title = title
 				return true, nil
 			}
@@ -4476,10 +4507,11 @@ func setProjectColor(root, color string) error {
 			return true, nil
 		}
 		for i, p := range f.Projects {
-			if p.Root == root {
-				if f.Projects[i].Color == color {
+			if sameProjectRoot(p.Root, root) {
+				if f.Projects[i].Root == root && f.Projects[i].Color == color {
 					return false, nil
 				}
+				f.Projects[i].Root = root
 				f.Projects[i].Color = color
 				return true, nil
 			}
@@ -4494,7 +4526,7 @@ func removeProject(root string) error {
 	return updateProjectsFile(func(f *desktopProjectFile) (bool, error) {
 		projects := make([]desktopProject, 0, len(f.Projects))
 		for _, p := range f.Projects {
-			if p.Root != root {
+			if !sameProjectRoot(p.Root, root) {
 				projects = append(projects, p)
 			}
 		}
@@ -5843,19 +5875,19 @@ func (a *App) SetProjectPinned(workspaceRoot string, pinned bool) error {
 		return fmt.Errorf("workspaceRoot is required")
 	}
 	if err := updateProjectsFile(func(f *desktopProjectFile) (bool, error) {
-		found := false
-		for _, project := range f.Projects {
-			if project.Root == root {
-				found = true
-				break
-			}
-		}
-		if !found {
+		i := projectIndexByRoot(f.Projects, root)
+		if i < 0 {
 			return false, fmt.Errorf("project %q not found", root)
 		}
-		next := removeString(f.PinnedProjects, root)
+		root = f.Projects[i].Root
+		next := make([]string, 0, len(f.PinnedProjects))
+		for _, pinnedRoot := range f.PinnedProjects {
+			if !sameProjectRoot(pinnedRoot, root) {
+				next = append(next, pinnedRoot)
+			}
+		}
 		if pinned {
-			next = prependUniqueString(f.PinnedProjects, root)
+			next = prependUniqueString(next, root)
 		}
 		if sameStringList(next, f.PinnedProjects) {
 			return false, nil
@@ -5873,36 +5905,32 @@ func (a *App) SetProjectPinned(workspaceRoot string, pinned bool) error {
 // when present, the virtual Global sidebar section.
 func (a *App) ReorderProjects(workspaceRoots []string) error {
 	if err := updateProjectsFile(func(f *desktopProjectFile) (bool, error) {
-		byRoot := make(map[string]desktopProject, len(f.Projects))
-		for _, project := range f.Projects {
-			byRoot[project.Root] = project
-		}
-		seen := make(map[string]bool, len(workspaceRoots))
+		var seenProjects []string
 		next := make([]desktopProject, 0, len(workspaceRoots))
 		sidebarOrder := make([]string, 0, len(workspaceRoots))
 		hasGlobalOrder := false
 		for _, root := range workspaceRoots {
 			root = strings.TrimSpace(root)
 			if root == desktopGlobalOrderToken {
-				if seen[root] {
+				if hasGlobalOrder {
 					return false, fmt.Errorf("duplicate global section")
 				}
-				seen[root] = true
 				hasGlobalOrder = true
 				sidebarOrder = append(sidebarOrder, root)
 				continue
 			}
 			root = normalizeProjectRoot(root)
-			project, ok := byRoot[root]
-			if !ok {
+			i := projectIndexByRoot(f.Projects, root)
+			if i < 0 {
 				return false, fmt.Errorf("project %q not found", root)
 			}
-			if seen[root] {
+			project := f.Projects[i]
+			if projectRootInList(seenProjects, project.Root) {
 				return false, fmt.Errorf("duplicate project %q", root)
 			}
-			seen[root] = true
+			seenProjects = append(seenProjects, project.Root)
 			next = append(next, project)
-			sidebarOrder = append(sidebarOrder, root)
+			sidebarOrder = append(sidebarOrder, project.Root)
 		}
 		if len(next) != len(f.Projects) {
 			return false, fmt.Errorf("project order length mismatch")

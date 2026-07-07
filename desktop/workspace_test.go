@@ -251,6 +251,71 @@ func TestProjectFileUpdatesSerializeReadModifyWrite(t *testing.T) {
 	}
 }
 
+func TestNormalizeProjectsFileMergesEquivalentProjectRoots(t *testing.T) {
+	isolateDesktopUserDirs(t)
+	projectRoot := t.TempDir()
+	equivalentRoot := filepath.Join(projectRoot, ".")
+
+	f := normalizeProjectsFile(desktopProjectFile{
+		Projects: []desktopProject{
+			{Root: projectRoot, Title: "Project", Topics: []string{"topic_a"}},
+			{Root: equivalentRoot, Color: "blue", Topics: []string{"topic_b"}, PinnedTopics: []string{"topic_b"}},
+		},
+		PinnedProjects: []string{equivalentRoot},
+		SidebarOrder:   []string{equivalentRoot, projectRoot},
+	})
+
+	if len(f.Projects) != 1 {
+		t.Fatalf("projects = %+v, want one merged project", f.Projects)
+	}
+	if f.Projects[0].Root != normalizeProjectRoot(projectRoot) {
+		t.Fatalf("merged root = %q, want %q", f.Projects[0].Root, normalizeProjectRoot(projectRoot))
+	}
+	if f.Projects[0].Title != "Project" || f.Projects[0].Color != "blue" {
+		t.Fatalf("merged metadata = %+v, want title and color preserved", f.Projects[0])
+	}
+	if got := f.Projects[0].Topics; len(got) != 2 || got[0] != "topic_a" || got[1] != "topic_b" {
+		t.Fatalf("merged topics = %v, want [topic_a topic_b]", got)
+	}
+	if len(f.PinnedProjects) != 1 || f.PinnedProjects[0] != f.Projects[0].Root {
+		t.Fatalf("pinned projects = %v, want canonical root %q", f.PinnedProjects, f.Projects[0].Root)
+	}
+	if len(f.SidebarOrder) != 1 || f.SidebarOrder[0] != f.Projects[0].Root {
+		t.Fatalf("sidebar order = %v, want canonical root %q", f.SidebarOrder, f.Projects[0].Root)
+	}
+}
+
+func TestSwitchWorkspaceReaddsRemovedProject(t *testing.T) {
+	isolateDesktopUserDirs(t)
+	projectRoot := t.TempDir()
+
+	if err := addProject(projectRoot, "Project"); err != nil {
+		t.Fatalf("add project: %v", err)
+	}
+	if err := removeProject(projectRoot); err != nil {
+		t.Fatalf("remove project: %v", err)
+	}
+	if got := loadProjectsFile().Projects; len(got) != 0 {
+		t.Fatalf("projects after remove = %+v, want none", got)
+	}
+
+	app := NewApp()
+	installNoopRuntimeEvents(app)
+	if got, err := app.SwitchWorkspace(filepath.Join(projectRoot, ".")); err != nil {
+		t.Fatalf("switch workspace: %v", err)
+	} else if got != normalizeProjectRoot(projectRoot) {
+		t.Fatalf("SwitchWorkspace root = %q, want %q", got, normalizeProjectRoot(projectRoot))
+	}
+
+	projects := loadProjectsFile().Projects
+	if len(projects) != 1 || projects[0].Root != normalizeProjectRoot(projectRoot) {
+		t.Fatalf("projects after re-add = %+v, want %q", projects, normalizeProjectRoot(projectRoot))
+	}
+	if got := loadWorkspace(); got != normalizeProjectRoot(projectRoot) {
+		t.Fatalf("active workspace = %q, want %q", got, normalizeProjectRoot(projectRoot))
+	}
+}
+
 func TestDialogDefaultDirectoryFallsBackFromMissingWorkspace(t *testing.T) {
 	parent := t.TempDir()
 	missing := filepath.Join(parent, "deleted", "project")
