@@ -181,7 +181,7 @@ console.log("\ncomposer run strip");
   const dom = installDom();
   const { root, rerender } = await renderComposer({ running: true, turnStartAt: Date.now() });
 
-  await rerender({ pendingApprovalLabel: "Run command" });
+  await rerender({ pendingApprovalLabel: "Run command", disabled: true });
 
   const strip = document.querySelector(".composer-run-strip");
   ok(strip?.classList.contains("composer-run-strip--waiting") === true, "pending approval shifts the strip into waiting");
@@ -191,14 +191,21 @@ console.log("\ncomposer run strip");
   eq(document.querySelector(".composer-card--running"), null, "waiting card hands the running accent off to the prompt card");
   ok(document.querySelector(".composer-card--waiting") !== null, "waiting card takes the waiting modifier");
 
+  const modeButtons = [...document.querySelectorAll(".composer-modebar--approval .composer-modebar__item")] as HTMLButtonElement[];
+  ok(modeButtons.length === 3 && modeButtons.every((b) => !b.disabled), "approval bar stays usable while its own prompt disables the composer");
+
   await rerender({ pendingApprovalLabel: null, pendingAsk: true });
   eq(
     document.querySelector(".composer-run-strip__text")?.textContent,
     "Waiting for your answer",
     "pending ask question shows the ask waiting state",
   );
+  ok(
+    modeButtons.every((b) => b.disabled),
+    "approval bar stays disabled for non-approval reasons",
+  );
 
-  await rerender({ pendingAsk: false });
+  await rerender({ pendingAsk: false, disabled: false });
   ok(
     document.querySelector(".composer-run-strip__text")?.getAttribute("aria-hidden") === "true",
     "resolving the prompt returns the strip to the ticking spinner",

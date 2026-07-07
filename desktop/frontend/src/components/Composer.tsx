@@ -2065,6 +2065,9 @@ export function Composer({
   // The waiting states replace the whimsical ticker — while a prompt is blocked
   // on the user, the strip must say so instead of counting "working" seconds.
   const waitingPrompt = pendingApprovalLabel ? "approval" : pendingAsk ? "ask" : null;
+  // The pending approval itself disables the composer; keep the approval bar
+  // usable in exactly that case so the mode can still be changed mid-prompt.
+  const approvalBarDisabled = Boolean(disabled) && !pendingApprovalLabel;
   const runStateText = retry
     ? t("status.retrying", { attempt: retry.attempt, max: retry.max })
     : waitingPrompt === "approval"
@@ -2661,13 +2664,17 @@ export function Composer({
               )}
             </div>
             <div className="composer-meta__control composer-meta__control--approval">
+              {/* A pending tool approval disables the composer, but the approval
+                  bar stays usable so mode changes remain possible mid-prompt;
+                  the approval card explains that the pending request still needs
+                  an explicit decision. */}
               <div className="composer-modebar composer-modebar--approval" data-mode={toolApprovalMode} title={t("composer.accessMenuTitle")}>
                 <span className="composer-modebar__thumb" aria-hidden="true" />
                 <button
                   type="button"
                   className={`composer-modebar__item composer-modebar__item--ask${toolApprovalMode === "ask" ? " composer-modebar__item--active" : ""}`}
                   onClick={() => chooseApprovalMode("ask")}
-                  disabled={disabled}
+                  disabled={approvalBarDisabled}
                   aria-pressed={toolApprovalMode === "ask"}
                   title={t("composer.accessAskTitle")}
                 >
@@ -2678,7 +2685,7 @@ export function Composer({
                   type="button"
                   className={`composer-modebar__item composer-modebar__item--auto${toolApprovalMode === "auto" ? " composer-modebar__item--active" : ""}`}
                   onClick={() => chooseApprovalMode("auto")}
-                  disabled={disabled}
+                  disabled={approvalBarDisabled}
                   aria-pressed={toolApprovalMode === "auto"}
                   title={t("composer.accessAutoTitle")}
                 >
@@ -2689,7 +2696,7 @@ export function Composer({
                   type="button"
                   className={`composer-modebar__item composer-modebar__item--yolo${toolApprovalMode === "yolo" ? " composer-modebar__item--active" : ""}`}
                   onClick={() => chooseApprovalMode("yolo")}
-                  disabled={disabled}
+                  disabled={approvalBarDisabled}
                   aria-pressed={toolApprovalMode === "yolo"}
                   title={t("composer.accessYoloTitle")}
                 >
