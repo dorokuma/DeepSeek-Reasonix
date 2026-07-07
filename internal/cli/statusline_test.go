@@ -51,7 +51,7 @@ func TestRunStatuslineCmdNormalizesQuotedNodeEval(t *testing.T) {
 	if _, err := exec.LookPath("node"); err != nil {
 		t.Skip("node not available")
 	}
-	script := "const payload = JSON.parse(require('fs').readFileSync(0, 'utf8')); console.log(payload.model)"
+	script := "let input = ''; process.stdin.setEncoding('utf8'); process.stdin.on('data', chunk => input += chunk); process.stdin.on('end', () => { const payload = JSON.parse(input); console.log(payload.model) })"
 	cmd := `node -e "\"` + script + `\""`
 	timeout := statuslineCommandTimeout
 	if runtime.GOOS == "windows" {
