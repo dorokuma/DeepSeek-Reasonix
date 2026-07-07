@@ -1765,7 +1765,7 @@ func (a *Agent) repeatedSuccessBlock(call provider.ToolCall, t tool.Tool) (strin
 		return "", false
 	}
 	return fmt.Sprintf(
-		"blocked: [loop guard] %q has already succeeded %d times with the same write-like arguments in this user turn. Re-running it is unlikely to help and may burn tokens or repeat file writes. Change approach: use edit_file or multi_edit for file changes, verify with a read/test command, or explain the blocker in your final answer.",
+		"blocked: [loop guard] %q has already succeeded %d times with the same write-like arguments in this user turn. Re-running it is unlikely to help and may burn tokens or repeat file writes. Change approach: use a file editing tool for file changes, verify with a read/test command, or explain the blocker in your final answer.",
 		call.Name, count), true
 }
 

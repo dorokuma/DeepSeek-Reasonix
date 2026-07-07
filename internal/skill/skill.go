@@ -567,7 +567,7 @@ func loadBodyWithScripts(skillPath, body string) string {
 	var b strings.Builder
 	b.WriteString(body)
 	b.WriteString("\n\n## Scripts\n\n")
-	b.WriteString("The skill has the following scripts. Run them with bash, for example `python " + filepath.Join(scriptsDir, "<name>") + "`. Read a script with read_file before running if unsure.\n\n")
+	b.WriteString("The skill has the following scripts. Run them with a shell command, for example `python " + filepath.Join(scriptsDir, "<name>") + "`. Read a script with a file reading tool before running if unsure.\n\n")
 	for _, n := range names {
 		b.WriteString("- `" + filepath.Join(scriptsDir, n) + "`\n")
 	}
@@ -598,7 +598,7 @@ func stubBody(name string) string {
 Replace this body with the playbook the model should follow when this skill is invoked.
 
 Tips:
-- Reference tools by name (bash, edit_file, grep, read_file, ...)
+- Reference tools by name
 - Add ` + "`runAs: subagent`" + ` to frontmatter to spawn an isolated subagent loop
 `
 }

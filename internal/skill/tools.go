@@ -282,7 +282,7 @@ func BuiltinSubagentTools(store *Store, runner SubagentRunner, bgRunner Backgrou
 		toolName, skillName, description, taskDesc string
 	}{
 		{"explore", "explore",
-			"Run a focused read-only codebase investigation in an isolated subagent. Use for broad survey questions across many files — 'find all places that X', 'how does Y work across the project', 'audit Z'. Returns one distilled answer with file:line citations. Its reads + reasoning never enter your context, unlike chained read_file.",
+			"Run a focused read-only codebase investigation in an isolated subagent. Use for broad survey questions across many files — 'find all places that X', 'how does Y work across the project', 'audit Z'. Returns one distilled answer with file:line citations. Its reads + reasoning never enter your context, unlike chained file reads.",
 			"Concrete investigation question. The subagent has none of your context — write a self-contained prompt naming the symbol / pattern / behavior to survey."},
 		{"research", "research",
 			"Combine web_fetch + code reading in an isolated subagent. Use when the answer needs both an external reference and local verification — 'is X supported by lib Y', 'compare our impl against the spec'. Returns one synthesis citing code (file:line) and web (URL).",
@@ -347,7 +347,7 @@ func (*installSkillTool) Schema() json.RawMessage {
   "runAs":{"type":"string","enum":["inline","subagent"],"description":"inline (default) folds the body into the parent turn; subagent spawns an isolated child loop returning only its final answer (use for context-heavy work)."},
   "model":{"type":"string","description":"Optional model override for runAs=subagent (a configured provider/model name). Ignored otherwise."},
   "effort":{"type":"string","description":"Optional effort for runAs=subagent (e.g. high, max). Ignored otherwise."},
-  "allowedTools":{"type":"array","items":{"type":"string"},"description":"Optional tool allowlist for runAs=subagent (e.g. ['read_file','grep'])."}
+  "allowedTools":{"type":"array","items":{"type":"string"},"description":"Optional tool allowlist for runAs=subagent."}
 },
 "required":["name","description","body"]
 }`)

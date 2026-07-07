@@ -69,7 +69,7 @@ type note struct {
 func (note) Name() string { return "note" }
 
 func (note) Description() string {
-	return "Append a long-form note (audit evidence, command output, file diffs) to the session's sidecar notes file and return a `note_id` you can cite in follow-up summaries. This keeps long evidence OUT of the conversation history (preserves the model context window) while keeping it on disk for the user to review. Default file is `<workdir>/.notes.md`; override with `path`. `kind` is `evidence` | `summary` | `scratch` (default `scratch`). Single content > 256 KiB is rejected — use `write_file` for that size.\n\n**Final-answer contract**: after writing notes you MUST (a) call `read_file` on the sidecar to re-load the content into context, (b) call `audit_finish(summary=...)` with a substantive summary, and (c) include the full audit findings in your final assistant message — the user sees THAT, not the file. The tool's return value includes a reminder so you don't forget."
+	return "Append a long-form note (audit evidence, command output, file diffs) to the session's sidecar notes file and return a `note_id` you can cite in follow-up summaries. This keeps long evidence OUT of the conversation history (preserves the model context window) while keeping it on disk for the user to review. Default file is `<workdir>/.notes.md`; override with `path`. `kind` is `evidence` | `summary` | `scratch` (default `scratch`). Single content > 256 KiB is rejected — use the file writing tool for larger payloads.\n\n**Final-answer contract**: after writing notes you MUST (a) re-read the sidecar file to load the content into context, (b) call `audit_finish(summary=...)` with a substantive summary, and (c) include the full audit findings in your final assistant message — the user sees THAT, not the file. The tool's return value includes a reminder so you don't forget."
 }
 
 func (note) Schema() json.RawMessage {
@@ -102,7 +102,7 @@ func (n note) Execute(ctx context.Context, args json.RawMessage) (string, error)
 		return "", fmt.Errorf("content is required — pass a non-empty string")
 	}
 	if len(p.Content) > maxNoteContentBytes {
-		return "", fmt.Errorf("content is %d bytes, max %d — use write_file for larger payloads", len(p.Content), maxNoteContentBytes)
+		return "", fmt.Errorf("content is %d bytes, max %d — too large, use a file instead", len(p.Content), maxNoteContentBytes)
 	}
 	kind := strings.TrimSpace(p.Kind)
 	switch kind {
@@ -232,7 +232,7 @@ func (n note) PostCallGuidance(args json.RawMessage) string {
 	}
 	// Full workflow for evidence notes (default).
 	return "You MUST:\n" +
-		"1. Call `read_file(\"" + path + "\")` to re-load the notes into context.\n" +
+		"1. Re-read \"" + path + "\" to load the notes into context.\n" +
 		"2. Call `audit_finish(summary=...)` with the user-facing report.\n" +
 		"3. Include the full report in your final assistant message — the user sees THAT, not this tool result."
 }

@@ -25,7 +25,7 @@ type steerJob struct{}
 
 func (steerJob) Name() string { return "steer-job" }
 func (steerJob) Description() string {
-	return `Send a new instruction to a running background sub-agent or bash job (queued to its inbox).
+	return `Send a new instruction to a running background sub-agent or shell job (queued to its inbox).
 
 CRITICAL — NOT FOR STATUS CHECKING: Never use steer-job to check whether a job finished. Never use steer-job to poll. Steer-job only queues a new instruction — it does not return the job's status or output. If you dispatched a task, wait for the automatic result delivery at the conversation tail. Only use steer-job when you have a genuine new instruction for the sub-agent.`
 }
@@ -80,7 +80,7 @@ func (steerJob) Execute(ctx context.Context, params json.RawMessage) (string, er
 type cancelJob struct{}
 
 func (cancelJob) Name() string        { return "cancel-job" }
-func (cancelJob) Description() string { return "Cancel a running background job (bash or task)" }
+func (cancelJob) Description() string { return "Cancel a running background job (shell or sub-agent)" }
 func (cancelJob) ReadOnly() bool      { return false }
 func (cancelJob) Schema() json.RawMessage {
 	return json.RawMessage(`{
@@ -118,9 +118,9 @@ type peekJob struct{}
 
 func (peekJob) Name() string { return "peek-job" }
 func (peekJob) Description() string {
-	return `Non-blocking snapshot of a background job (task or bash). Includes new stdout/stderr since the last peek for buffered jobs.
+	return `Non-blocking snapshot of a background job (task or shell). Includes new stdout/stderr since the last peek for buffered jobs.
 
-CRITICAL — DO NOT POLL: Background task results are delivered to you automatically when they finish — you will see them as a new tool result without calling peek-job. Never call peek-job more than once per task. Never call peek-job just to check whether a task is done. Only use peek-job when the user explicitly asks about a job's status, or when you need to read bash background output mid-flight.`
+CRITICAL — DO NOT POLL: Background task results are delivered to you automatically when they finish — you will see them as a new tool result without calling peek-job. Never call peek-job more than once per task. Never call peek-job just to check whether a task is done. Only use peek-job when the user explicitly asks about a job's status, or when you need to read shell background output mid-flight.`
 }
 func (peekJob) ReadOnly() bool { return true }
 func (peekJob) Schema() json.RawMessage {
