@@ -56,7 +56,17 @@ func TestRuntimeRebuildsEmitRuntimeRebuiltForTab(t *testing.T) {
 
 	var mu sync.Mutex
 	var rebuilt []string
-	app.runtimeEvents.emit = func(_ context.Context, name string, payload ...interface{}) {
+	// The App-level queue must stay silent: ordering against the tab's agent
+	// events only holds when the notice rides the tab sink's own queue, so a
+	// notice showing up here means the routing regressed to the fallback.
+	app.runtimeEvents.emit = func(_ context.Context, name string, _ ...interface{}) {
+		if name == "runtime:rebuilt" {
+			mu.Lock()
+			rebuilt = append(rebuilt, "VIA-APP-QUEUE")
+			mu.Unlock()
+		}
+	}
+	sinkEmit := func(_ context.Context, name string, payload ...interface{}) {
 		if name != "runtime:rebuilt" {
 			return
 		}
@@ -76,9 +86,10 @@ func TestRuntimeRebuildsEmitRuntimeRebuiltForTab(t *testing.T) {
 		Ready:         true,
 		model:         "old/old-model",
 		Ctrl:          ctrl,
-		sink:          &tabEventSink{tabID: "tab_rebuild_events", app: app},
+		sink:          &tabEventSink{tabID: "tab_rebuild_events", app: app, ctx: context.Background()},
 		disabledMCP:   map[string]ServerView{},
 	}
+	tab.sink.runtimeEvents.emit = sinkEmit
 	app.tabs = map[string]*WorkspaceTab{tab.ID: tab}
 	app.tabOrder = []string{tab.ID}
 	app.activeTabID = tab.ID
@@ -123,6 +134,9 @@ func TestRuntimeRebuildsEmitRuntimeRebuiltForTab(t *testing.T) {
 	mu.Lock()
 	defer mu.Unlock()
 	for i, id := range rebuilt {
+		if id == "VIA-APP-QUEUE" {
+			t.Fatalf("event %d took the App-level fallback queue; it must ride the tab sink queue so it orders before the rebuilt controller's agent events (full: %v)", i, rebuilt)
+		}
 		if id != tab.ID {
 			t.Fatalf("event %d carried tab id %q, want %q (full: %v)", i, id, tab.ID, rebuilt)
 		}

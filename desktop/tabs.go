@@ -1170,7 +1170,26 @@ func isBackgroundJobLifecycleNotice(e event.Event) bool {
 // frontend state keyed by prompt id (the attention-chime dedupe) must reset —
 // unlike agent:ready, this event carries no reload semantics, so emitting it
 // on every swap adds no hydration churn.
-func (a *App) notifyTabRuntimeRebuilt(tabID string) {
+//
+// Ordering matters: the reset must reach the frontend BEFORE the rebuilt
+// controller's first approval/ask event, or the stale key still mutes it. The
+// tab's agent events ride the tab sink's own async queue, so the notice goes
+// through THAT queue — same lane, FIFO, guaranteed to arrive first. The
+// App-level queue is only the fallback when the sink cannot deliver (no sink,
+// or its webview context is cleared); it cannot order against sink traffic,
+// but an unordered notice still beats none.
+func (a *App) notifyTabRuntimeRebuilt(tab *WorkspaceTab) {
+	if tab == nil {
+		return
+	}
+	a.mu.RLock()
+	sink := tab.sink
+	tabID := tab.ID
+	a.mu.RUnlock()
+	if sink != nil && sink.context() != nil {
+		sink.emitRuntimeEvent("runtime:rebuilt", tabID)
+		return
+	}
 	a.emitRuntimeEvent("runtime:rebuilt", tabID)
 }
 
