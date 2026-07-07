@@ -39,9 +39,9 @@ import { useWailsResizeFix } from "./lib/useWailsResizeFix";
 import { asArray } from "./lib/array";
 import { clearLegacyLangPref, normalizeLangPref, readLegacyLangPref, useI18n, useT, type Translator } from "./lib/i18n";
 import { useController, type Item, type LiveStream } from "./lib/useController";
-import { app, onEvent, onProjectTreeChanged, onSessionRecovered, onSessionRecoveryFailed } from "./lib/bridge";
+import { app, onEvent, onProjectTreeChanged, onReady, onSessionRecovered, onSessionRecoveryFailed } from "./lib/bridge";
 import { generativeMusic, isGenerativeMusicEnabled } from "./lib/generative-music";
-import { playAttentionChime, playSuccessChime, shouldPlayAttentionChimeForEvent } from "./lib/sound";
+import { clearAttentionChimeKeys, playAttentionChime, playSuccessChime, shouldPlayAttentionChimeForEvent } from "./lib/sound";
 import { Transcript } from "./components/Transcript";
 import { Composer } from "./components/Composer";
 import { TodoPanel } from "./components/TodoPanel";
@@ -1025,7 +1025,17 @@ export default function App() {
         if (!e.err) playSuccessChime();
       }
     });
-    return unsub;
+    // Runtime rebuilds (model/effort/settings switch) replace the controller,
+    // whose approval/ask ids restart from "1" — stale dedupe keys would mute
+    // the first prompt after a rebuild. agent:ready fires when a (re)build
+    // completes; clear that tab's keys (or all, for tab-less ready events).
+    const unsubReady = onReady((readyTabId) => {
+      clearAttentionChimeKeys(attentionChimeEvents.current, readyTabId);
+    });
+    return () => {
+      unsub();
+      unsubReady();
+    };
   }, []);
 
   const [workspacePanelResizing, setWorkspacePanelResizing] = useState(false);

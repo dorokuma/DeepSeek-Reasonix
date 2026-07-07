@@ -176,6 +176,26 @@ export function attentionChimeEventKey(event: AttentionChimeEvent): string | und
 // prompts, not the whole session history.
 const attentionChimeSeenCap = 512;
 
+// clearAttentionChimeKeys drops dedupe keys after a runtime rebuild. Approval
+// and ask ids are per-controller counters starting at "1", so a rebuilt
+// controller (model/effort/settings switch) reissues ids an earlier prompt on
+// the same tab already used — without this, the first prompt after a rebuild
+// is misread as a replay and stays silent. A ready event without a tab id
+// (settings rebuilds emit tab-less ready) clears everything: over-clearing
+// only re-chimes a replayed pending prompt, which is a desirable reminder,
+// while under-clearing mutes a live prompt.
+export function clearAttentionChimeKeys(seen: Set<string>, tabId?: string): void {
+  if (tabId === undefined || tabId === "") {
+    seen.clear();
+    return;
+  }
+  for (const key of [...seen]) {
+    if (key.startsWith(`approval:${tabId}:`) || key.startsWith(`ask:${tabId}:`)) {
+      seen.delete(key);
+    }
+  }
+}
+
 export function shouldPlayAttentionChimeForEvent(event: AttentionChimeEvent, seen: Set<string>): boolean {
   const key = attentionChimeEventKey(event);
   if (!key || seen.has(key)) return false;

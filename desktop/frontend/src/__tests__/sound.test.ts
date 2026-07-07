@@ -1,6 +1,6 @@
 // Run: tsx src/__tests__/sound.test.ts
 
-import { attentionChimeEventKey, shouldPlayAttentionChimeForEvent } from "../lib/sound";
+import { attentionChimeEventKey, clearAttentionChimeKeys, shouldPlayAttentionChimeForEvent } from "../lib/sound";
 
 let passed = 0;
 let failed = 0;
@@ -42,6 +42,18 @@ console.log("\nsound notifications");
   }
   eq(seen.size <= 1024, true, "dedupe set stays bounded after 2000 unique prompts");
   eq(shouldPlayAttentionChimeForEvent({ kind: "approval_request", tabId: "t", approval: { id: "1999" } }, seen), false, "most recent prompt id is still deduped after pruning");
+}
+
+{
+  // Runtime rebuild clears dedupe keys so reissued ids chime again.
+  const seen = new Set<string>();
+  shouldPlayAttentionChimeForEvent({ kind: "approval_request", tabId: "tab-a", approval: { id: "1" } }, seen);
+  shouldPlayAttentionChimeForEvent({ kind: "ask_request", tabId: "tab-b", ask: { id: "1" } }, seen);
+  clearAttentionChimeKeys(seen, "tab-a");
+  eq(shouldPlayAttentionChimeForEvent({ kind: "approval_request", tabId: "tab-a", approval: { id: "1" } }, seen), true, "rebuilt tab's reissued approval id chimes again");
+  eq(shouldPlayAttentionChimeForEvent({ kind: "ask_request", tabId: "tab-b", ask: { id: "1" } }, seen), false, "other tab's keys survive a scoped clear");
+  clearAttentionChimeKeys(seen);
+  eq(shouldPlayAttentionChimeForEvent({ kind: "ask_request", tabId: "tab-b", ask: { id: "1" } }, seen), true, "tab-less ready clears every key");
 }
 
 if (failed) {
