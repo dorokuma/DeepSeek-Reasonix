@@ -2142,13 +2142,17 @@ func (a *App) indexedBlankTopicIDLocked(scope, workspaceRoot string) string {
 			continue
 		}
 		hasSession := false
+		leaseHeld := false
 		for _, index := range sessionIndexes {
 			if topicSessionIndexHasContentTopic(index, topicID) {
 				hasSession = true
 				break
 			}
+			if topicSessionIndexHasForeignLeaseTopic(index, topicID) {
+				leaseHeld = true
+			}
 		}
-		if hasSession {
+		if hasSession || leaseHeld {
 			continue
 		}
 		return topicID
@@ -7984,6 +7988,25 @@ func topicSessionIndexHasContentTopic(index topicSessionDirIndex, topicID string
 	matches := index.byTopic[strings.TrimSpace(topicID)]
 	for _, match := range matches {
 		if sessionFileHasConversationContent(match.path) {
+			return true
+		}
+	}
+	return false
+}
+
+// topicSessionIndexHasForeignLeaseTopic reports whether any session file
+// indexed under topicID is currently lease-held by a runtime other than this
+// process. A blank topic can still be lease-held — its session lease keeper
+// keeps a leftover blank tab's lease alive across a hide-to-tray close, and a
+// stale-but-live holder blocks a genuinely new session from ever settling on
+// this path. Reusing it anyway would make the "new" tab collide with that
+// holder: every lease-gated switch (effort/model/token mode) would fail as if
+// a foreign window owned it, and creating another "new" conversation would
+// keep re-picking the same stuck topic (#6028, #6109).
+func topicSessionIndexHasForeignLeaseTopic(index topicSessionDirIndex, topicID string) bool {
+	matches := index.byTopic[strings.TrimSpace(topicID)]
+	for _, match := range matches {
+		if agent.SessionLeaseHeldByOtherRuntime(match.path) {
 			return true
 		}
 	}
