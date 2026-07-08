@@ -687,6 +687,31 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	// subagent skills run ephemerally with the same registry boundary as
 	// read_only_task, so they cannot write, install, mutate memory, resume/fork
 	// transcripts, or delegate further.
+	//
+	// subagentSkillOptions is the single construction point for skill sub-agent
+	// run options, so the read-only and writer-capable runners cannot drift on
+	// compaction or language settings — add new fields here, not per runner.
+	subagentSkillOptions := func(sctx context.Context, steps int, price *provider.Pricing, ctxWin, childDepth int) agent.Options {
+		return agent.Options{
+			MaxSteps:            steps,
+			Temperature:         cfg.Agent.Temperature,
+			Pricing:             price,
+			UsageSource:         event.UsageSourceSubagent,
+			Gate:                headlessGate,
+			ContextWindow:       ctxWin,
+			RecentKeep:          cfg.Agent.RecentKeep,
+			SoftCompactRatio:    cfg.Agent.SoftCompactRatio,
+			ToolResultSnipRatio: cfg.Agent.ToolResultSnipRatio,
+			CompactRatio:        cfg.Agent.CompactRatio,
+			CompactForceRatio:   cfg.Agent.CompactForceRatio,
+			ArchiveDir:          config.ArchiveDir(),
+			KeepPolicy:          keepPolicy,
+			ResponseLanguage:    agent.ResponseLanguageFromContext(sctx),
+			ReasoningLanguage:   agent.ReasoningLanguageFromContext(sctx),
+			SubagentDepth:       childDepth,
+			MaxSubagentDepth:    maxSubagentDepth,
+		}
+	}
 	readOnlySkillRunner := func(sctx context.Context, sk skill.Skill, task string, runOpts skill.SubagentRunOptions) (string, error) {
 		if strings.TrimSpace(runOpts.ContinueFrom) != "" || strings.TrimSpace(runOpts.ForkFrom) != "" {
 			return "", fmt.Errorf("read_only_skill does not support continue_from/fork_from")
@@ -717,24 +742,8 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 			}
 		}
 		sysPrompt := agent.DefaultReadOnlyTaskSystemPrompt + "\n\nSkill instructions:\n" + sk.Body
-		return agent.RunSubAgentWithSession(sctx, prov, subReg, agent.NewSession(sysPrompt), task, agent.Options{
-			MaxSteps:            steps,
-			Temperature:         cfg.Agent.Temperature,
-			Pricing:             price,
-			UsageSource:         event.UsageSourceSubagent,
-			Gate:                headlessGate,
-			ContextWindow:       ctxWin,
-			RecentKeep:          cfg.Agent.RecentKeep,
-			SoftCompactRatio:    cfg.Agent.SoftCompactRatio,
-			ToolResultSnipRatio: cfg.Agent.ToolResultSnipRatio,
-			CompactRatio:        cfg.Agent.CompactRatio,
-			CompactForceRatio:   cfg.Agent.CompactForceRatio,
-			ArchiveDir:          config.ArchiveDir(),
-			KeepPolicy:          keepPolicy,
-			ReasoningLanguage:   agent.ReasoningLanguageFromContext(sctx),
-			SubagentDepth:       childDepth,
-			MaxSubagentDepth:    maxSubagentDepth,
-		}, agent.NestedSink(sctx, event.Discard))
+		return agent.RunSubAgentWithSession(sctx, prov, subReg, agent.NewSession(sysPrompt), task,
+			subagentSkillOptions(sctx, steps, price, ctxWin, childDepth), agent.NestedSink(sctx, event.Discard))
 	}
 	// Writer-capable subagent skills reuse the sub-agent machinery via this
 	// runner: an isolated loop with the skill body as system prompt, a tool set
@@ -807,20 +816,8 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 				steps = 5
 			}
 		}
-		answer, err := agent.RunSubAgentWithSession(sctx, prov, subReg, run.Session, task, agent.Options{
-			MaxSteps:          steps,
-			Temperature:       cfg.Agent.Temperature,
-			Pricing:           price,
-			UsageSource:       event.UsageSourceSubagent,
-			Gate:              headlessGate,
-			ContextWindow:     ctxWin,
-			RecentKeep:        cfg.Agent.RecentKeep,
-			ArchiveDir:        config.ArchiveDir(),
-			KeepPolicy:        keepPolicy,
-			ReasoningLanguage: agent.ReasoningLanguageFromContext(sctx),
-			SubagentDepth:     childDepth,
-			MaxSubagentDepth:  maxSubagentDepth,
-		}, agent.NestedSink(sctx, event.Discard))
+		answer, err := agent.RunSubAgentWithSession(sctx, prov, subReg, run.Session, task,
+			subagentSkillOptions(sctx, steps, price, ctxWin, childDepth), agent.NestedSink(sctx, event.Discard))
 		if err != nil {
 			return "", errors.Join(err, subagentStore.SaveFailed(run))
 		}

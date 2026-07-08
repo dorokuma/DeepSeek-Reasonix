@@ -123,6 +123,25 @@ func TestParallelTasksInjectsWorkspaceContextIntoChildren(t *testing.T) {
 	}
 }
 
+// TestParallelTasksInheritLanguagePreferencesFromContext pins parallel children
+// to the same transient language injection the task tool applies: both the
+// response- and reasoning-language blocks must reach each child's user turn.
+func TestParallelTasksInheritLanguagePreferencesFromContext(t *testing.T) {
+	task := newTestTaskTool(t, promptRoutingProvider{}, tool.NewRegistry(), "sys", "", "", nil)
+	parallel := NewParallelTasksTool(task, tool.NewRegistry())
+	ctx := withCallContext(context.Background(), "parallel-call", event.Discard, nil, false)
+	ctx = WithResponseLanguagePreference(ctx, "zh")
+	ctx = WithReasoningLanguagePreference(ctx, "zh")
+
+	out, err := parallel.Execute(ctx, json.RawMessage(`{"tasks":[{"prompt":"inspect one"},{"prompt":"inspect two"}]}`))
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if !strings.Contains(out, "<response-language>") || !strings.Contains(out, "<reasoning-language>") {
+		t.Fatalf("parallel output = %q, want response/reasoning language blocks injected into child prompts", out)
+	}
+}
+
 func TestParallelTasksDoesNotExposeWriterToolsToChildren(t *testing.T) {
 	var writerCalls int32
 	parentReg := tool.NewRegistry()

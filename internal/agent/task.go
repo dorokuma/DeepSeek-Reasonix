@@ -522,6 +522,8 @@ func (t *TaskTool) prepareTranscriptRun(subReg *tool.Registry, modelRef, effortR
 	if continueFrom != "" && legacyForkFrom != "" {
 		return nil, fmt.Errorf("continue_from and fork_from are mutually exclusive; pass only continue_from")
 	}
+	// A task tool wired without a transcript store is a caller bug: fail loudly
+	// instead of silently dropping persistence (contract pinned since #3586).
 	if t.transcripts == nil {
 		return nil, fmt.Errorf("subagent transcript store is required")
 	}
@@ -749,7 +751,15 @@ func (t *TaskTool) resolveSubSessionRuntime(modelRef, effort string) (provider.P
 
 func (t *TaskTool) runSubSession(ctx context.Context, prompt string, subReg *tool.Registry, sink event.Sink, maxSteps int, prov provider.Provider, pricing *provider.Pricing, ctxWin int, sess *Session, childDepth int) (string, error) {
 	prompt = t.withWorkspaceContext(prompt)
-	return RunSubAgentWithSession(ctx, prov, subReg, sess, prompt, Options{
+	return RunSubAgentWithSession(ctx, prov, subReg, sess, prompt, t.subagentOptions(ctx, maxSteps, pricing, ctxWin, childDepth), sink)
+}
+
+// subagentOptions is the single construction point for the run options every
+// sub-agent spawned through this tool shares (task, read_only_task, and
+// parallel_tasks children). Compaction, language preferences, and depth limits
+// must stay uniform across those paths — add new fields here, not at call sites.
+func (t *TaskTool) subagentOptions(ctx context.Context, maxSteps int, pricing *provider.Pricing, ctxWin, childDepth int) Options {
+	return Options{
 		MaxSteps:            maxSteps,
 		Temperature:         t.temperature,
 		Pricing:             pricing,
@@ -767,7 +777,7 @@ func (t *TaskTool) runSubSession(ctx context.Context, prompt string, subReg *too
 		ReasoningLanguage:   ReasoningLanguageFromContext(ctx),
 		SubagentDepth:       childDepth,
 		MaxSubagentDepth:    t.maxDepth(),
-	}, sink)
+	}
 }
 
 func (t *TaskTool) withWorkspaceContext(prompt string) string {
