@@ -171,14 +171,11 @@ type ControllerBridge interface {
 }
 
 // subControllerBridge is a lightweight ControllerBridge implementation for
-// sub-agents. It manages an isolated taskResults map + pendingToolResult flag
-// so the sub-agent's drainNotify can independently consume grandchild results
-// without sharing state with the parent Controller.
+// headless sub-agents (no session-scoped background jobs).
 type subControllerBridge struct {
 	taskResults       map[string]string
 	taskResultsMu     sync.Mutex
 	pendingToolResult atomic.Bool
-	jobs              *jobs.Manager
 }
 
 func newSubControllerBridge() *subControllerBridge {
@@ -213,11 +210,6 @@ func (c *subControllerBridge) RegisterJobMeta(jobID string, toolCallID string) {
 	c.taskResultsMu.Lock()
 	c.taskResults[jobID] = toolCallID
 	c.taskResultsMu.Unlock()
-	if c.jobs != nil {
-		if _, ok := c.jobs.CompletedResult(jobID); ok {
-			c.pendingToolResult.Store(true)
-		}
-	}
 }
 
 // MakeOnComplete implements OnCompleteProvider. It returns a callback that sets
@@ -803,8 +795,8 @@ func (a *Agent) Run(ctx context.Context, input string) error {
 		if err != nil {
 			if interrupted && streamRecoveries < maxStreamRecoveries {
 				streamRecoveries++
-				if hasVisibleFinalAnswer(text) || reasoning != "" || partialToolStarted {
-					if hasVisibleFinalAnswer(text) || reasoning != "" {
+				if hasVisibleFinalAnswer(text, reasoning) || partialToolStarted {
+					if hasVisibleFinalAnswer(text, reasoning) {
 						// 如果已生成可见的最终回答，或者已生成了推理思考过程，则需要将当前的 assistant 消息添加进会话 session。
 						// 这样做是为了保留已经生成的推理思考过程（reasoning），避免在接下来的重试中丢失。
 						// 如果不保存该推理，模型在重试时需要从头重新进行长时间思考（长考），
@@ -816,7 +808,7 @@ func (a *Agent) Run(ctx context.Context, input string) error {
 							ReasoningSignature: signature,
 						})
 					}
-					a.session.AddUserNudge(streamRecoveryMessage(hasVisibleFinalAnswer(text), partialToolStarted))
+					a.session.AddUserNudge(streamRecoveryMessage(hasVisibleFinalAnswer(text, reasoning), partialToolStarted))
 				}
 				a.sink.Emit(event.Event{Kind: event.Retrying, RetryAttempt: streamRecoveries, RetryMax: maxStreamRecoveries})
 				step-- // recovery retries do not consume the tool-round maxSteps budget
@@ -857,8 +849,10 @@ func (a *Agent) Run(ctx context.Context, input string) error {
 
 		if len(calls) == 0 {
 			// text = a.surfaceBackgroundHandoffIfNeeded(wakeForBackground, text)  // removed by owner
-			if !hasVisibleFinalAnswer(text) {
-				emptyFinalBlocks++
+			if text == "" {
+				if reasoning == "" {
+					emptyFinalBlocks++
+				}
 				if emptyFinalBlocks >= maxEmptyFinalBlocks {
 					return fmt.Errorf("model finished without a visible final answer %d times", emptyFinalBlocks)
 				}
@@ -988,6 +982,7 @@ func (a *Agent) deliverPendingJobResults() (jobID, output string, ok bool) {
 	for _, id := range a.jobs.ActiveJobs() {
 		if id2, out, have := a.tryDeliverJobResult(id); have {
 			if a.commitBackgroundJobResult(id2, out) {
+				a.jobs.RemoveJob(id2)
 				return id2, out, true
 			}
 		}
@@ -1105,8 +1100,8 @@ Do not answer as the planner and do not ask how to trigger the executor.
 Use your available tools now to carry out the task. If a write or command is blocked by permissions or workspace boundaries, state that specific blocker and ask for the needed approval/path.`
 }
 
-func hasVisibleFinalAnswer(text string) bool {
-	return strings.TrimSpace(text) != ""
+func hasVisibleFinalAnswer(text, reasoning string) bool {
+	return strings.TrimSpace(text) != "" || strings.TrimSpace(reasoning) != ""
 }
 
 func emptyFinalRetryMessage() string {
@@ -2026,9 +2021,17 @@ func (a *Agent) CompleteBackgroundJob(jobID string) bool {
 	}
 	text, _, ok := a.jobs.Output(jobID)
 	if !ok || text == "" {
+		if n, ok2 := a.jobs.CompletedResult(jobID); ok2 && strings.TrimSpace(n.Output) != "" {
+			text = n.Output
+		} else {
+			return false
+		}
+	}
+	if !a.commitJobResult(jobID, text) {
 		return false
 	}
-	return a.commitJobResult(jobID, text)
+	a.jobs.RemoveJob(jobID)
+	return true
 }
 
 // tryDeliverJobResult reads a job's output and its tool-call metadata without
@@ -2038,10 +2041,13 @@ func (a *Agent) tryDeliverJobResult(id string) (string, string, bool) {
 		return "", "", false
 	}
 	text, _, ok := a.jobs.Output(id)
-	if !ok || text == "" {
-		return "", "", false
+	if ok && text != "" {
+		return id, text, true
 	}
-	return id, text, true
+	if n, ok := a.jobs.CompletedResult(id); ok && strings.TrimSpace(n.Output) != "" {
+		return id, n.Output, true
+	}
+	return "", "", false
 }
 
 // commitBackgroundJobResult commits a previously-read job result to the session.

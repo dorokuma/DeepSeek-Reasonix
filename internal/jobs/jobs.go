@@ -319,6 +319,9 @@ func (m *Manager) Start(ctx context.Context, kind, label string, run func(ctx co
 		default:
 			st = Done
 		}
+		if st == Killed && strings.TrimSpace(result) == "" {
+			result = fmt.Sprintf("background %s %q was cancelled or killed before producing a result", kind, id)
+		}
 
 		// Send result to resultCh before onComplete (per spec §5.3).
 		if st == Done || st == Failed {

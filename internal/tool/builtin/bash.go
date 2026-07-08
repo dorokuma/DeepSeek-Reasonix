@@ -180,6 +180,20 @@ func (b bash) Execute(ctx context.Context, args json.RawMessage) (string, error)
 			}
 		}
 		job, err := jm.Start(ctx, "bash", commandPreview(p.Command), func(jobCtx context.Context, out io.Writer) (string, error) {
+			heartbeatDone := make(chan struct{})
+			defer close(heartbeatDone)
+			go func() {
+				ticker := time.NewTicker(10 * time.Second)
+				defer ticker.Stop()
+				for {
+					select {
+					case <-heartbeatDone:
+						return
+					case <-ticker.C:
+						jobs.UpdateJobActivity(jobCtx)
+					}
+				}
+			}()
 			// Cap background output at 16 MB to prevent OOM from runaway commands.
 			const bgMaxOutput = 16 << 20
 			limitedOut := io.MultiWriter(out, &limitedWriter{limit: bgMaxOutput})
