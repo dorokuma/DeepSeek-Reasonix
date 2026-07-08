@@ -1,6 +1,7 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { app } from "../lib/bridge";
 import { useI18n } from "../lib/i18n";
+import { formatMoneyLocalized } from "../lib/money";
 import type { BalanceInfo, ContextInfo, ContextPanelInfo } from "../lib/types";
 import { AnchoredPopover } from "./AnchoredPopover";
 import {
@@ -29,12 +30,21 @@ function fmtCompact(n: number): string {
   return String(Math.round(n));
 }
 
+function fmtDuration(ms: number, t: ReturnType<typeof useI18n>['t']): string {
+  if (ms <= 0) return "-";
+  const totalSeconds = Math.max(1, Math.round(ms / 1000));
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  if (minutes <= 0) return t("context.durationSeconds", { seconds });
+  return t("context.durationMinutesSeconds", { minutes, seconds });
+}
+
 export function ContextWindowRing({ context, tabId, turnCost, cacheHitTokens, cacheMissTokens, balance }: ContextWindowRingProps) {
-  const { t } = useI18n();
+  const { locale, t } = useI18n();
   const [open, setOpen] = useState(false);
   const [info, setInfo] = useState<ContextPanelInfo | null>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
-  const loadedRef = useRef(false);
+  const loadingRef = useRef(false);
   const enterTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const leaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -46,9 +56,22 @@ export function ContextWindowRing({ context, tabId, turnCost, cacheHitTokens, ca
   const status = contextWindowStatus(usagePct, compactPct);
 
   const loadInfo = useCallback(() => {
-    if (!loadedRef.current && tabId) {
-      loadedRef.current = true;
-      app.ContextPanel(tabId).then(setInfo).catch(() => {});
+    if (!loadingRef.current && tabId) {
+      loadingRef.current = true;
+      app.ContextPanel(tabId).then(setInfo).catch(() => {}).finally(() => {
+        loadingRef.current = false;
+      });
+    }
+  }, [tabId]);
+
+  // Reset and reload when tabId changes (switching sessions)
+  useEffect(() => {
+    setInfo(null);
+    if (tabId && !loadingRef.current) {
+      loadingRef.current = true;
+      app.ContextPanel(tabId).then(setInfo).catch(() => {}).finally(() => {
+        loadingRef.current = false;
+      });
     }
   }, [tabId]);
 
@@ -81,6 +104,10 @@ export function ContextWindowRing({ context, tabId, turnCost, cacheHitTokens, ca
   const compactTokens = windowTokens > 0 ? Math.round(windowTokens * compactRatio) : 0;
   const tokensToCompact = compactTokens > used ? compactTokens - used : 0;
   const ringOffset = RING_C * (1 - usagePct / 100);
+  const elapsed = info?.elapsedMs && info.elapsedMs > 0 ? fmtDuration(info.elapsedMs, t) : undefined;
+  const sessionCost = info?.sessionCost && info.sessionCost > 0 
+    ? formatMoneyLocalized(info.sessionCost, info.sessionCurrency, { locale, empty: "dash" })
+    : undefined;
 
   return (
     <>
@@ -143,6 +170,12 @@ export function ContextWindowRing({ context, tabId, turnCost, cacheHitTokens, ca
                 <span className="context-ring-popover__value">{info.requestCount}</span>
               </div>
             )}
+            {elapsed && (
+              <div className="context-ring-popover__row">
+                <span className="context-ring-popover__label">{t("context.time")}</span>
+                <span className="context-ring-popover__value">{elapsed}</span>
+              </div>
+            )}
             <div className="context-ring-popover__row">
               <span className="context-ring-popover__label">{t("status.cacheLabel")}</span>
               <span className="context-ring-popover__value">{turnCacheRate}</span>
@@ -151,6 +184,12 @@ export function ContextWindowRing({ context, tabId, turnCost, cacheHitTokens, ca
               <div className="context-ring-popover__row">
                 <span className="context-ring-popover__label">{t("status.turnCostLabel")}</span>
                 <span className="context-ring-popover__value">{turnCost.toFixed(4)}</span>
+              </div>
+            )}
+            {sessionCost && (
+              <div className="context-ring-popover__row">
+                <span className="context-ring-popover__label">{t("context.sessionCost")}</span>
+                <span className="context-ring-popover__value">{sessionCost}</span>
               </div>
             )}
             {balance?.available && balance.display && (
