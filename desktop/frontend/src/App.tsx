@@ -221,15 +221,15 @@ function NoticePreviewPanel({ detailsLabel }: { detailsLabel: string }) {
           return (
             <div key={item.id} className={`notice-line notice-line--${item.level}`} data-entrance="true">
               <span className="notice-line__icon">{item.level === "warn" ? "⚠ " : "ℹ "}</span>
-              <span className="notice-line__text">
+              <div className="notice-line__text">
                 {item.text}
                 {item.detail ? (
                   <details className="notice-line__details">
                     <summary>{detailsLabel}</summary>
-                    <pre>{item.detail}</pre>
+                    <div>{item.detail}</div>
                   </details>
                 ) : null}
-              </span>
+              </div>
             </div>
           );
         })}
