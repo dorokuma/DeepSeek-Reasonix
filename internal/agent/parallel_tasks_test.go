@@ -269,3 +269,29 @@ func hasToolResult(req provider.Request, name string) bool {
 type stringsError string
 
 func (e stringsError) Error() string { return string(e) }
+
+// TestChildMaxStepsSharedDefault pins the single step-budget rule shared by
+// task, read_only_task, and parallel_tasks children: explicit request wins,
+// a finite parent yields half its budget (min 5), an unbounded parent yields
+// an unbounded child. parallel_tasks used to hardcode 20 instead.
+func TestChildMaxStepsSharedDefault(t *testing.T) {
+	cases := []struct {
+		name      string
+		parent    int
+		requested int
+		want      int
+	}{
+		{"explicit request wins", 30, 7, 7},
+		{"finite parent halves", 30, 0, 15},
+		{"half is floored at 5", 8, 0, 5},
+		{"unbounded parent stays unbounded", 0, 0, 0},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			task := &TaskTool{maxSteps: tc.parent}
+			if got := task.childMaxSteps(tc.requested); got != tc.want {
+				t.Fatalf("childMaxSteps(parent=%d, requested=%d) = %d, want %d", tc.parent, tc.requested, got, tc.want)
+			}
+		})
+	}
+}

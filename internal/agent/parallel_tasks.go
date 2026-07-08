@@ -48,7 +48,7 @@ func (p *ParallelTasksTool) Schema() json.RawMessage {
         "prompt":{"type":"string","description":"The task prompt for the sub-agent."},
         "description":{"type":"string","description":"Optional short label shown in the job list."},
         "tools":{"type":"array","items":{"type":"string"},"description":"Optional tool whitelist for the sub-agent."},
-        "max_steps":{"type":"integer","description":"Optional max tool-call rounds.","minimum":1},
+        "max_steps":{"type":"integer","description":"Optional max tool-call rounds. Defaults to half the parent agent's step budget (minimum 5), same as task.","minimum":1},
         "model":{"type":"string","description":"Optional model override."},
         "effort":{"type":"string","description":"Optional reasoning effort override."}
       },
@@ -167,10 +167,7 @@ func (p *ParallelTasksTool) Execute(ctx context.Context, args json.RawMessage) (
 			}
 			subReg := ReadOnlySubagentToolRegistryForDepth(p.taskTool.parentReg, t.Tools, childDepth, p.taskTool.maxDepth())
 
-			max := t.MaxSteps
-			if max <= 0 {
-				max = 20
-			}
+			max := p.taskTool.childMaxSteps(t.MaxSteps)
 
 			prov, pricing, ctxWin, err := resolveSubagentProvider(p.taskTool, modelRef, effortRef)
 			if err != nil {
