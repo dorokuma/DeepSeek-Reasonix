@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"reasonix/internal/pluginpkg"
+	"reasonix/internal/secrets"
 )
 
 func (t *installSourceTool) localPluginPackageAction(req request, root string) (action, []string, error) {
@@ -191,6 +192,7 @@ func (t *installSourceTool) preparePluginSource(ctx context.Context, source, mod
 		}
 		args = append(args, cloneURL, tmp)
 		cmd := exec.CommandContext(ctx, "git", args...)
+		cmd.Env = secrets.ProcessEnv()
 		if out, err := cmd.CombinedOutput(); err != nil {
 			_ = os.RemoveAll(tmp)
 			return "", func() {}, newErr(ErrSourceUnreadable, "git clone failed: %v: %s", err, strings.TrimSpace(string(out)))

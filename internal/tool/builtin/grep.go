@@ -306,6 +306,7 @@ func (g grepTool) runRipgrep(ctx context.Context, pattern, path string, to time.
 	}
 
 	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
+	cmd.Env = secrets.ProcessEnv()
 	proc.HideWindow(cmd)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {

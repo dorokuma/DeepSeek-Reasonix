@@ -17,7 +17,11 @@ var (
 	secretKeyNamePattern = regexp.MustCompile(`(?i)((^|[_-])(api[_-]?key|access[_-]?key|private[_-]?key|secret|token|password|passwd)([_-]|$)|[_-]pwd([_-]|$))`)
 	// keyValuePattern mirrors secretKeyNamePattern for KEY=value / key: value
 	// text: PWD requires a prefixed separator so "PWD=/home/user" stays intact.
-	keyValuePattern     = regexp.MustCompile(`(?i)\b([A-Z0-9_.-]*(?:API[_-]?KEY|ACCESS[_-]?KEY|PRIVATE[_-]?KEY|SECRET|TOKEN|PASSWORD|PASSWD)[A-Z0-9_.-]*|[A-Z0-9_.-]+[_-]PWD[A-Z0-9_.-]*|AUTHORIZATION)\b(\s*[:=]\s*)(?:Bearer\s+)?(['"]?)([^'"\s,;]+)(['"]?)`)
+	// The optional auth-scheme group keeps schemes like "Basic"/"Digest" out of
+	// the value capture, so the credential after the scheme word is what gets
+	// masked (an uncaptured scheme would itself be swallowed as the value,
+	// leaving the real credential in the clear right behind it).
+	keyValuePattern     = regexp.MustCompile(`(?i)\b([A-Z0-9_.-]*(?:API[_-]?KEY|ACCESS[_-]?KEY|PRIVATE[_-]?KEY|SECRET|TOKEN|PASSWORD|PASSWD)[A-Z0-9_.-]*|[A-Z0-9_.-]+[_-]PWD[A-Z0-9_.-]*|AUTHORIZATION)\b(\s*[:=]\s*)((?:Bearer|Basic|Digest|Negotiate|NTLM|Token|Bot|ApiKey)\s+)?(['"]?)([^'"\s,;]+)(['"]?)`)
 	bearerTokenPattern  = regexp.MustCompile(`(?i)\bBearer\s+([A-Za-z0-9._~+/=-]{16,})`)
 	openAIKeyPattern    = regexp.MustCompile(`\b((?:sk|rk)-(?:proj-)?[A-Za-z0-9_-]{12,})\b`)
 	githubTokenPattern  = regexp.MustCompile(`\b(gh[pousr]_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,})\b`)
@@ -120,18 +124,19 @@ func Redact(s string) string {
 	}
 	s = keyValuePattern.ReplaceAllStringFunc(s, func(match string) string {
 		parts := keyValuePattern.FindStringSubmatch(match)
-		if len(parts) != 6 {
+		if len(parts) != 7 {
 			return redactedValue
 		}
 		key := parts[1]
 		sep := parts[2]
-		quote := parts[3]
-		value := parts[4]
-		endQuote := parts[5]
+		scheme := parts[3]
+		quote := parts[4]
+		value := parts[5]
+		endQuote := parts[6]
 		if strings.EqualFold(key, "authorization") {
-			return key + sep + quote + redactedValue + endQuote
+			return key + sep + scheme + quote + redactedValue + endQuote
 		}
-		return key + sep + quote + mask(value) + endQuote
+		return key + sep + scheme + quote + mask(value) + endQuote
 	})
 	s = bearerTokenPattern.ReplaceAllStringFunc(s, func(match string) string {
 		token := strings.TrimSpace(strings.TrimPrefix(match, "Bearer"))

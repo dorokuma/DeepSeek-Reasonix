@@ -3,7 +3,9 @@ package doctor
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -200,13 +202,20 @@ func redactSessionTranscript(path string, dryRun bool) (int64, int64, error) {
 		}
 		return 0, 0, err
 	}
-	if !messagesNeedRedaction(s.Messages) {
-		return 0, 0, nil
-	}
 	files := int64(1)
 	eventLog := store.SessionEventLog(path)
+	eventLogExists := false
 	if _, err := os.Stat(eventLog); err == nil {
 		files++
+		eventLogExists = true
+	}
+	// The replayed view alone is not enough: a replace event supersedes
+	// earlier records without erasing them, so a raw secret can survive in a
+	// stale event while the current messages are already clean. Scan every
+	// record; Session.Save compacts the whole log into a single clean replace
+	// event, which erases the stale bytes.
+	if !messagesNeedRedaction(s.Messages) && !(eventLogExists && eventLogNeedsRedaction(eventLog)) {
+		return 0, 0, nil
 	}
 	if dryRun {
 		return files, redactedEncodedSize(s.Messages), nil
@@ -222,6 +231,33 @@ func redactSessionTranscript(path string, dryRun bool) (int64, int64, error) {
 		rewritten += info.Size()
 	}
 	return files, rewritten, nil
+}
+
+// eventLogNeedsRedaction reports whether any event record — including ones a
+// later replace event superseded — still carries redactable message content.
+// Undecodable trailing bytes also count: a torn tail can hold raw secret text,
+// and the compaction that a rewrite performs erases it either way.
+func eventLogNeedsRedaction(path string) bool {
+	f, err := os.Open(path)
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+	dec := json.NewDecoder(f)
+	for {
+		var rec struct {
+			Messages []provider.Message `json:"messages"`
+		}
+		if err := dec.Decode(&rec); err != nil {
+			if errors.Is(err, io.EOF) {
+				return false
+			}
+			return true
+		}
+		if messagesNeedRedaction(rec.Messages) {
+			return true
+		}
+	}
 }
 
 // messagesNeedRedaction reports whether RedactMessages would alter the

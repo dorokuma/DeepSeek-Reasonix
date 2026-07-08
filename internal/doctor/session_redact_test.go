@@ -188,3 +188,45 @@ func TestRedactSessionsSkipsLeasedSession(t *testing.T) {
 		t.Fatalf("leased session should not be rewritten:\n%s", data)
 	}
 }
+
+// TestRedactSessionsScrubsStaleEventLogRecords pins the stale-record gap: a
+// later replace event supersedes — but does not erase — earlier records, so a
+// raw key can survive in an old event while the replayed view is already
+// clean. Cleanup must compact the log anyway, and the replayed transcript
+// (the clean current view) must be what survives.
+func TestRedactSessionsScrubsStaleEventLogRecords(t *testing.T) {
+	dir := t.TempDir()
+	const secret = "sk-real-secret-value-123456"
+	sessionPath := filepath.Join(dir, "abc.jsonl")
+	events := `{"schema_version":1,"type":"replace","messages":[{"role":"tool","content":"DEEPSEEK_API_KEY=` + secret + `"}]}` + "\n" +
+		`{"schema_version":1,"type":"replace","messages":[{"role":"user","content":"clean"}]}` + "\n"
+	if err := os.WriteFile(sessionPath, []byte(`{"role":"user","content":"clean"}`+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	evPath := store.SessionEventLog(sessionPath)
+	if err := os.WriteFile(evPath, []byte(events), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	res := RedactSessions(RedactSessionsOptions{Dirs: []string{dir}})
+	if len(res.Errors) > 0 {
+		t.Fatalf("RedactSessions errors = %v", res.Errors)
+	}
+	if res.FilesChanged != 2 {
+		t.Fatalf("FilesChanged = %d, want 2 (anchor + event log)", res.FilesChanged)
+	}
+	data, err := os.ReadFile(evPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), secret) {
+		t.Fatalf("stale event log record still leaks secret:\n%s", data)
+	}
+	loaded, err := agent.LoadSession(sessionPath)
+	if err != nil {
+		t.Fatalf("session no longer loads after compaction: %v", err)
+	}
+	if len(loaded.Messages) != 1 || loaded.Messages[0].Content != "clean" {
+		t.Fatalf("compaction lost the current replayed view: %+v", loaded.Messages)
+	}
+}

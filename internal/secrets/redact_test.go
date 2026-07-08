@@ -26,10 +26,32 @@ func TestRedactMasksCommonSecretShapes(t *testing.T) {
 			t.Fatalf("secret leaked %q in:\n%s", leaked, got)
 		}
 	}
-	for _, want := range []string{"DEEPSEEK_API_KEY=sk-rea", "Authorization: [redacted]"} {
+	for _, want := range []string{"DEEPSEEK_API_KEY=sk-rea", "Authorization: Bearer [redacted]"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("redacted output missing %q:\n%s", want, got)
 		}
+	}
+}
+
+func TestRedactMasksNonBearerAuthorizationSchemes(t *testing.T) {
+	in := strings.Join([]string{
+		"Authorization: Basic dXNlcjpwYXNzd29yZA==",
+		"Proxy-Authorization: Digest username-hash-abcdef0123456789",
+		"Authorization: dXNlcjpwYXNzd29yZC1yYXc=",
+	}, "\n")
+	got := Redact(in)
+	for _, leaked := range []string{"dXNlcjpwYXNzd29yZA==", "username-hash-abcdef0123456789", "dXNlcjpwYXNzd29yZC1yYXc="} {
+		if strings.Contains(got, leaked) {
+			t.Fatalf("authorization credential leaked %q:\n%s", leaked, got)
+		}
+	}
+	for _, want := range []string{"Authorization: Basic [redacted]", "Digest [redacted]", "Authorization: [redacted]"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("redacted output missing %q:\n%s", want, got)
+		}
+	}
+	if again := Redact(got); again != got {
+		t.Fatalf("authorization redaction not idempotent:\nonce:  %q\ntwice: %q", got, again)
 	}
 }
 
