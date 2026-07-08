@@ -8,6 +8,7 @@ import (
 // TestWorkspaceSlugShortPathUnchanged: existing short paths must keep their
 // exact historical slug so on-disk project directories keep resolving.
 func TestWorkspaceSlugShortPathUnchanged(t *testing.T) {
+	setRuntimeGOOS(t, "linux")
 	got := WorkspaceSlug("/Users/me/proj")
 	if got != "-Users-me-proj" {
 		t.Fatalf("WorkspaceSlug short path = %q, want -Users-me-proj", got)
