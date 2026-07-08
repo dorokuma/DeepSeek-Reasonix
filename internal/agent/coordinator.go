@@ -249,9 +249,12 @@ func (c *Coordinator) Run(ctx context.Context, input string) error {
 
 // isNoOpPlan reports whether the plan explicitly concludes that nothing needs
 // to change. The primary contract is the [no_changes] marker requested from the
-// planner in DefaultPlannerPrompt: on the final non-empty line it is trusted
-// as-is, so research notes above it (which may mention tests, runs, or edits
-// that already exist) cannot veto the conclusion. The legacy phrase list stays
+// planner in DefaultPlannerPrompt: when the final non-empty line IS the marker
+// (exactly, as the prompt asks) it is trusted as-is, so research notes above it
+// (which may mention tests, runs, or edits that already exist) cannot veto the
+// conclusion. A final line that merely mentions the marker in prose ("do not
+// emit [no_changes] because…") is not a conclusion and falls through to the
+// veto-guarded heuristics below. The legacy phrase list stays
 // as a fallback for planners that ignore the marker, but it only matches
 // conclusion positions (the first or last non-empty line) and is vetoed by
 // action verbs anywhere in the plan: a wrong skip silently drops the task,
@@ -263,7 +266,7 @@ func isNoOpPlan(plan string) bool {
 	}
 	first := strings.ToLower(firstNonEmptyLine(trimmed))
 	last := strings.ToLower(lastNonEmptyLine(trimmed))
-	if strings.Contains(last, noChangesMarker) {
+	if last == noChangesMarker {
 		return true
 	}
 	if containsNoOpActionTerm(strings.ToLower(trimmed)) {
@@ -399,16 +402,29 @@ func (c *Coordinator) plan(ctx context.Context, input string) (string, error) {
 // read-only registry. That gives the planner the same tool-call contract as the
 // executor while preserving its separate session and cache prefix.
 func (c *Coordinator) planWithTools(ctx context.Context, input string) (string, error) {
-	before := len(c.plannerSess.Messages)
+	before := c.plannerSess.Snapshot()
 	if err := c.plannerAgent.Run(ctx, input); err != nil {
+		// Mirror plan()'s rollback: Run already appended the user message
+		// (and possibly partial assistant/tool rounds) to the planner
+		// session, and Coordinator.Run degrades to the executor on planner
+		// failure, so a dangling user message would produce consecutive
+		// user roles on the next plan. A max-steps pause is exempt: its
+		// saved work is what the user is asked to continue from.
+		var pause *maxStepsPause
+		if !errors.As(err, &pause) {
+			c.plannerSess.Replace(before)
+		}
 		return "", err
 	}
-	for i := len(c.plannerSess.Messages) - 1; i >= before; i-- {
+	for i := len(c.plannerSess.Messages) - 1; i >= len(before); i-- {
 		m := c.plannerSess.Messages[i]
 		if m.Role == provider.RoleAssistant && strings.TrimSpace(m.Content) != "" {
 			return m.Content, nil
 		}
 	}
+	// No usable plan came back: roll back too, so the executor-fallback turn
+	// does not leave the planner session ending in a user message.
+	c.plannerSess.Replace(before)
 	return "", fmt.Errorf("planner finished without producing a plan")
 }
 

@@ -751,7 +751,10 @@ func TestIsNoOpPlan(t *testing.T) {
 		{"already implemented with follow-up work", "The auth flow is already implemented; extend it to cover refresh tokens.", false},
 		{"mid-plan aside is not a conclusion", "Findings:\nThis part is already handled by the retry helper.\nConfirm the desired direction with the user.", false},
 		{"explicit marker on final line", "The retry logic exists in client.go and the tests already run this path.\n[no_changes]", true},
+		{"marker with surrounding whitespace", "Notes on the guard.\n  [no_changes]  ", true},
 		{"marker mentioned before remaining work", "[no_changes] does not apply here.\nEdit main.go to add the missing guard.", false},
+		{"final line mentions marker in prose", "The guard exists but the tests are missing.\nDo not emit [no_changes] because work remains.", false},
+		{"marker with trailing prose on final line", "[no_changes] — but confirm the flag default first.", false},
 		{"negated conclusion", "It is not already implemented.", false},
 		{"no-op phrase with action verb", "No changes are needed in code, but run the test suite.", false},
 		{"chinese conclusion", "无需改动,当前逻辑已经覆盖该场景。", true},
@@ -905,5 +908,106 @@ func TestCoordinatorPropagatesPlannerErrorWhenTurnCancelled(t *testing.T) {
 	}
 	if got := len(exec.requests); got != 0 {
 		t.Fatalf("executor requests = %d, want none after user cancellation", got)
+	}
+}
+
+// TestCoordinatorRollsBackPlannerSessionOnToolPlannerFailure covers the
+// production two-model wiring (boot passes PlannerToolRegistry, so planning
+// runs through planWithTools): when the tool-enabled planner fails, the
+// executor fallback must not leave the planner session with a dangling user
+// message or partial tool rounds — the next plan would otherwise start with
+// consecutive user roles, which some providers reject.
+func TestCoordinatorRollsBackPlannerSessionOnToolPlannerFailure(t *testing.T) {
+	cases := []struct {
+		name    string
+		planner provider.Provider
+	}{
+		{"stream call fails", &errorProvider{name: "planner"}},
+		{"fails after a tool round", &mockProvider{name: "planner", streams: [][]provider.Chunk{
+			{
+				{Type: provider.ChunkToolCall, ToolCall: &provider.ToolCall{ID: "call-1", Name: "read_file", Arguments: `{"path":"main.go"}`}},
+				{Type: provider.ChunkDone},
+			},
+			{
+				{Type: provider.ChunkError, Err: fmt.Errorf("rate limited")},
+			},
+		}}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			exec := &mockProvider{name: "executor", chunks: []provider.Chunk{
+				{Type: provider.ChunkText, Text: "Done."},
+				{Type: provider.ChunkDone},
+			}}
+			plannerReg := tool.NewRegistry()
+			plannerReg.Add(coordinatorTestTool{name: "read_file", readOnly: true, output: "package main"})
+
+			executor := New(exec, tool.NewRegistry(), NewSession("exec-sys"), Options{}, event.Discard)
+			plannerSess := NewSession("planner-sys")
+			coord := NewCoordinator(tc.planner, plannerSess, nil, plannerReg, Options{}, executor, 0, event.Discard, nil)
+
+			if err := coord.Run(context.Background(), "fix the bug"); err != nil {
+				t.Fatalf("Run should fall back to the executor, got: %v", err)
+			}
+			if got := len(exec.requests); got != 1 {
+				t.Fatalf("executor requests = %d, want 1 fallback run", got)
+			}
+			if n := len(plannerSess.Messages); n != 1 {
+				t.Fatalf("planner session messages = %d, want rollback to system only", n)
+			}
+		})
+	}
+}
+
+// TestCoordinatorKeepsPlannerSessionOnMaxStepsPause pins the rollback
+// exemption: a max-steps pause is control flow whose saved work the user is
+// asked to continue from, so planWithTools must not roll the planner session
+// back to the pre-turn snapshot.
+func TestCoordinatorKeepsPlannerSessionOnMaxStepsPause(t *testing.T) {
+	planner := &mockProvider{name: "planner", chunks: []provider.Chunk{
+		{Type: provider.ChunkToolCall, ToolCall: &provider.ToolCall{ID: "call-1", Name: "read_file", Arguments: `{"path":"main.go"}`}},
+		{Type: provider.ChunkDone},
+	}}
+	exec := &mockProvider{name: "executor"}
+	plannerReg := tool.NewRegistry()
+	plannerReg.Add(coordinatorTestTool{name: "read_file", readOnly: true, output: "package main"})
+
+	executor := New(exec, tool.NewRegistry(), NewSession("exec-sys"), Options{}, event.Discard)
+	plannerSess := NewSession("planner-sys")
+	coord := NewCoordinator(planner, plannerSess, nil, plannerReg, Options{MaxSteps: 1}, executor, 0, event.Discard, nil)
+
+	err := coord.Run(context.Background(), "fix the bug")
+	if err == nil || !strings.Contains(err.Error(), "planner:") {
+		t.Fatalf("Run = %v, want the propagated max-steps pause", err)
+	}
+	if got := len(exec.requests); got != 0 {
+		t.Fatalf("executor requests = %d, want none on a paused planner turn", got)
+	}
+	if n := len(plannerSess.Messages); n <= 1 {
+		t.Fatalf("planner session messages = %d, want the saved work preserved for continue", n)
+	}
+}
+
+// TestCoordinatorRunsExecutorWhenMarkerNotAlone is the F2 regression: a final
+// line that mentions [no_changes] in prose is not the no-op conclusion, so the
+// executor must still run.
+func TestCoordinatorRunsExecutorWhenMarkerNotAlone(t *testing.T) {
+	planner := &mockProvider{name: "planner", chunks: []provider.Chunk{
+		{Type: provider.ChunkText, Text: "The guard exists but the tests are missing.\nDo not emit [no_changes] because work remains."},
+		{Type: provider.ChunkDone},
+	}}
+	exec := &mockProvider{name: "executor", chunks: []provider.Chunk{
+		{Type: provider.ChunkText, Text: "Done."},
+		{Type: provider.ChunkDone},
+	}}
+
+	executor := New(exec, tool.NewRegistry(), NewSession("exec-sys"), Options{}, event.Discard)
+	coord := NewCoordinator(planner, NewSession("planner-sys"), nil, nil, Options{}, executor, 0, event.Discard, nil)
+
+	if err := coord.Run(context.Background(), "add the missing tests"); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if got := len(exec.requests); got == 0 {
+		t.Fatal("executor skipped: a final line mentioning the marker in prose was treated as a no-op conclusion")
 	}
 }
