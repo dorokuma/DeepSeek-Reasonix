@@ -398,7 +398,7 @@ export function HistoryPanel({
   };
 
   return (
-    <div className="management-modal-backdrop history-modal-backdrop" data-state={status} onClick={(e) => { if (e.target === e.currentTarget) requestClose(); }}>
+    <div className="management-modal-backdrop history-modal-backdrop" data-state={status} onMouseDown={(e) => { if (e.target === e.currentTarget) requestClose(); }}>
       <section
         className="management-modal history-modal"
         data-state={status}
