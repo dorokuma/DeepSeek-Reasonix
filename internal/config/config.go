@@ -16,6 +16,7 @@ import (
 
 	"github.com/BurntSushi/toml"
 
+	"reasonix/internal/jobs"
 	"reasonix/internal/netclient"
 	"reasonix/internal/provider"
 )
@@ -497,6 +498,82 @@ type AgentConfig struct {
 	// LogLevel controls the agent's diagnostic log verbosity: debug|info|warn|error.
 	// Default "info" — debug logs are only visible when explicitly set.
 	LogLevel string `toml:"log_level"`
+	// BackgroundJobs tunes stale killing and duplicate background-task detection.
+	BackgroundJobs BackgroundJobsConfig `toml:"background_jobs"`
+}
+
+// BackgroundJobsConfig controls session background jobs (bash/task/skill).
+type BackgroundJobsConfig struct {
+	IdleKillSecDefault int `toml:"idle_kill_sec_default"`
+	IdleKillSecBash    int `toml:"idle_kill_sec_bash"`
+	IdleKillSecTask    int `toml:"idle_kill_sec_task"`
+	IdleKillSecSkill   int `toml:"idle_kill_sec_skill"`
+	SemanticDedupEnabled          bool    `toml:"semantic_dedup_enabled"`
+	SemanticDedupThreshold        float64 `toml:"semantic_dedup_threshold"`
+	SemanticDedupRequireSameLabel bool    `toml:"semantic_dedup_require_same_label"`
+}
+
+// Normalize fills zero values with defaults.
+func (b *BackgroundJobsConfig) Normalize() {
+	if b == nil {
+		return
+	}
+	def := defaultBackgroundJobs()
+	if b.IdleKillSecDefault <= 0 {
+		b.IdleKillSecDefault = def.IdleKillSecDefault
+	}
+	if b.IdleKillSecBash <= 0 {
+		b.IdleKillSecBash = def.IdleKillSecBash
+	}
+	if b.IdleKillSecTask <= 0 {
+		b.IdleKillSecTask = def.IdleKillSecTask
+	}
+	if b.IdleKillSecSkill <= 0 {
+		b.IdleKillSecSkill = def.IdleKillSecSkill
+	}
+	if b.SemanticDedupThreshold <= 0 || b.SemanticDedupThreshold > 1 {
+		b.SemanticDedupThreshold = def.SemanticDedupThreshold
+	}
+}
+
+func defaultBackgroundJobs() BackgroundJobsConfig {
+	return BackgroundJobsConfig{
+		IdleKillSecDefault:            120,
+		IdleKillSecBash:               1800,
+		IdleKillSecTask:               600,
+		IdleKillSecSkill:              600,
+		SemanticDedupEnabled:          true,
+		SemanticDedupThreshold:        0.85,
+		SemanticDedupRequireSameLabel: false,
+	}
+}
+
+// JobsPolicies converts config to jobs.ManagerPolicies.
+func (b *BackgroundJobsConfig) JobsPolicies() jobs.ManagerPolicies {
+	b.Normalize()
+	return jobs.ManagerPolicies{
+		IdleKillSecDefault: b.IdleKillSecDefault,
+		IdleKillByKind: map[string]int{
+			"bash":  b.IdleKillSecBash,
+			"task":  b.IdleKillSecTask,
+			"skill": b.IdleKillSecSkill,
+		},
+		SemanticDedup: jobs.SemanticDedupPolicy{
+			Enabled:          b.SemanticDedupEnabled,
+			Threshold:        b.SemanticDedupThreshold,
+			RequireSameLabel: b.SemanticDedupRequireSameLabel,
+		},
+	}
+}
+
+// ResolvedBackgroundJobs returns [agent.background_jobs] with defaults applied.
+func (c *Config) ResolvedBackgroundJobs() BackgroundJobsConfig {
+	b := c.Agent.BackgroundJobs
+	if b == (BackgroundJobsConfig{}) {
+		return defaultBackgroundJobs()
+	}
+	b.Normalize()
+	return b
 }
 
 // ProviderEntry declares a model provider instance. ContextWindow is the model's
@@ -757,6 +834,7 @@ func Default() *Config {
 			CompactRatio:      0.8,
 			CompactForceRatio: 0.9,
 			EncryptSessions:   true,
+			BackgroundJobs:    defaultBackgroundJobs(),
 		},
 		// Mode "ask" with no rules keeps `reasonix run` autonomous (no TTY → ask
 		// resolves to allow) while `reasonix chat` prompts before writers. Users add

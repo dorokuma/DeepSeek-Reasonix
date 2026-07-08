@@ -16,7 +16,7 @@ func TestFindRunningDuplicateTask(t *testing.T) {
 		<-ctx.Done()
 		return "", ctx.Err()
 	}, nil)
-	jm.SetDispatchDigest(job.ID, taskDispatchFingerprint("explore api", "do the thing"))
+	RegisterBackgroundDispatchMeta(jm, job.ID, "explore api", "do the thing")
 	if got := findRunningDuplicateTask(jm, "explore api", "anything"); got != "" {
 		t.Fatalf("same label different prompt should not duplicate, got %q", got)
 	}
@@ -29,7 +29,7 @@ func TestFindRunningDuplicateTask(t *testing.T) {
 		<-ctx.Done()
 		return "", ctx.Err()
 	}, nil)
-	jm.SetDispatchDigest(job2.ID, taskDispatchFingerprint("task", "do the thing"))
+	RegisterBackgroundDispatchMeta(jm, job2.ID, "task", "do the thing")
 	if got := findRunningDuplicateTask(jm, "task", "do the thing"); got == "" {
 		t.Fatal("expected duplicate by label+prompt fingerprint")
 	}

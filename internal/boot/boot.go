@@ -204,6 +204,8 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 		sink.Emit(event.Event{Kind: event.Notice, Text: fmt.Sprintf("model %q is selected but its API key %s is not set — requests will fail until you set it", modelName, entry.APIKeyEnv)})
 	}
 	jm := jobs.NewManager(sink)
+	bgJobs := cfg.ResolvedBackgroundJobs()
+	jm.Configure(bgJobs.JobsPolicies())
 
 	proxySpec := cfg.NetworkProxySpec()
 	if err := netclient.Validate(proxySpec); err != nil {

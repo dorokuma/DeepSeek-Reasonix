@@ -71,6 +71,8 @@ type Job struct {
 	Label string
 	// dispatchDigest is set by the task tool for duplicate-dispatch detection (prompt/label fingerprint).
 	dispatchDigest string
+	// dispatchSemantic is a normalized label+prompt sketch for fuzzy duplicate detection.
+	dispatchSemantic string
 
 	mu         sync.Mutex
 	buf        bytes.Buffer
@@ -121,6 +123,31 @@ func (m *Manager) SetDispatchDigest(jobID, digest string) {
 	j.mu.Unlock()
 }
 
+// SetDispatchSemantic stores the normalized semantic key for fuzzy dedup.
+func (m *Manager) SetDispatchSemantic(jobID, semantic string) {
+	if m == nil || jobID == "" || semantic == "" {
+		return
+	}
+	j := m.get(jobID)
+	if j == nil {
+		return
+	}
+	j.mu.Lock()
+	j.dispatchSemantic = semantic
+	j.mu.Unlock()
+}
+
+// DispatchSemantic returns the semantic key stored for a job.
+func (m *Manager) DispatchSemantic(jobID string) string {
+	j := m.get(jobID)
+	if j == nil {
+		return ""
+	}
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	return j.dispatchSemantic
+}
+
 // DispatchDigest returns the fingerprint stored for a job.
 func (m *Manager) DispatchDigest(jobID string) string {
 	j := m.get(jobID)
@@ -146,6 +173,10 @@ type Manager struct {
 	monitorRunning bool
 	jobDone        chan struct{}
 	onCompletion   func(id string) // called after a job's completion is recorded
+
+	idleKillDefault int
+	idleKillByKind  map[string]int
+	semanticDedup   SemanticDedupPolicy
 }
 
 // NewManager returns a Manager whose jobs run under a fresh session-scoped
@@ -164,6 +195,7 @@ func NewManager(sink event.Sink) *Manager {
 		sem:     make(chan struct{}, 3),
 		jobDone: make(chan struct{}, 10),
 	}
+	m.Configure(DefaultManagerPolicies())
 	return m
 }
 
@@ -193,7 +225,8 @@ func (m *Manager) checkAndClean() bool {
 		if j.status == Running {
 			runningCount++
 			lastActive := j.lastActive.Load()
-			if lastActive > 0 && now-lastActive > 120 {
+			limit := int64(m.idleKillSeconds(j.Kind))
+			if lastActive > 0 && now-lastActive > limit {
 				j.status = Killed
 				j.cancel()
 			}

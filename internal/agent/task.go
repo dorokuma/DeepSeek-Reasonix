@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log/slog"
 	"strings"
 	"time"
 
@@ -170,6 +169,9 @@ func (t *TaskTool) Execute(ctx context.Context, args json.RawMessage) (string, e
 	if depth >= maxDepth {
 		return "", fmt.Errorf("sub-agent blocked: nesting depth limit (%d) reached", maxDepth)
 	}
+	if !MaySpawnAsyncSubagent(ctx) {
+		return "", fmt.Errorf("async sub-agents are parent→child only: a running sub-agent cannot start another background task")
+	}
 
 	var p struct {
 		Prompt      string `json:"prompt"`
@@ -189,19 +191,17 @@ func (t *TaskTool) Execute(ctx context.Context, args json.RawMessage) (string, e
 	maxSteps := 0
 	// Default is no limit (0). Only capped when explicitly set by the caller.
 
-	// When the next depth level is still below the limit, allow recursive
-	// nesting by including meta-tools in the sub-registry. At the limit we
-	// keep the default behaviour which excludes them.
-	allowMeta := depth+1 < maxDepth
-	subReg := t.buildSubReg(nil, allowMeta)
+	// Background sub-agents are one level deep only: children never receive
+	// task / meta-tools that could spawn async grandchildren.
+	subReg := t.buildSubReg(nil, false)
 
 	// Always run as a background job so the sub-agent survives across turns.
 	jm, ok := jobs.FromContext(ctx)
 	if !ok {
 		return "", fmt.Errorf("background execution is not available in this context")
 	}
-	if dupID := findRunningDuplicateTask(jm, label, p.Prompt); dupID != "" {
-		return "", fmt.Errorf("background task %s is already running with the same goal (label/description). Wait for its result at the conversation tail; do not dispatch a duplicate task", dupID)
+	if err := CheckBackgroundDuplicate(jm, label, p.Prompt); err != nil {
+		return "", err
 	}
 	parentID, _, _, _ := CallContext(ctx)
 	nested := event.Discard
@@ -210,7 +210,6 @@ func (t *TaskTool) Execute(ctx context.Context, args json.RawMessage) (string, e
 	if ctrl, ok := CtrlFromContext(ctx); ok {
 		registerMeta = func(jobID string) { ctrl.RegisterJobMeta(jobID, parentID) }
 	}
-	digest := taskDispatchFingerprint(label, p.Prompt)
 	job, err := jm.Start(ctx, "task", label, func(jobCtx context.Context, _ io.Writer) (string, error) {
 		// Heartbeat: keep lastActive fresh so the stale monitor (120s inactivity)
 		// won't kill a busy task sub-agent whose output doesn't flow through the writer.
@@ -241,7 +240,7 @@ func (t *TaskTool) Execute(ctx context.Context, args json.RawMessage) (string, e
 	if err != nil {
 		return "", err
 	}
-	jm.SetDispatchDigest(job.ID, digest)
+	RegisterBackgroundDispatchMeta(jm, job.ID, label, p.Prompt)
 	return FormatStartedTaskResult(job.ID, label), nil
 }
 
@@ -364,25 +363,10 @@ func (t *TaskTool) runSub(ctx context.Context, prompt string, subReg *tool.Regis
 func RunSubAgent(ctx context.Context, prov provider.Provider, reg *tool.Registry, sysPrompt, prompt string, opts Options, sink event.Sink) (string, error) {
 	sess := NewSession(sysPrompt)
 
-	// Create an independent jobs manager and ControllerBridge for this
-	// sub-agent so it can manage its own background jobs (grandchildren)
-	// without sharing state with the parent.
-	subJobs := jobs.NewManager(sink)
+	// Sub-agents do not get a session jobs manager: async work is parent→child
+	// only (main agent → one background child). No grandchildren.
 	subCtrl := newSubControllerBridge()
-	subCtrl.jobs = subJobs
-	subJobs.SetOnCompletion(func(id string) {
-		subCtrl.pendingToolResult.Store(true)
-	})
-	defer func() {
-		waitCtx, cancel := context.WithTimeout(context.Background(), 24*time.Hour)
-		defer cancel()
-		if err := subJobs.WaitRunning(waitCtx); err != nil {
-			slog.Warn("sub-agent background jobs still running at shutdown", "err", err)
-		}
-		subJobs.Close()
-	}()
-
-	opts.Jobs = subJobs
+	opts.Jobs = nil
 	opts.Ctrl = subCtrl
 
 	sub := New(prov, reg, sess, opts, sink)

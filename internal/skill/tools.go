@@ -11,6 +11,7 @@ import (
 
 	"reasonix/internal/agent"
 	"reasonix/internal/event"
+	"reasonix/internal/jobs"
 	"reasonix/internal/tool"
 )
 
@@ -98,14 +99,23 @@ func (t *runSkillTool) Execute(ctx context.Context, args json.RawMessage) (strin
 		if rawArgs == "" {
 			return "", fmt.Errorf("run_skill: skill %q is a subagent and requires 'arguments' — the subagent has no other context, so describe the concrete task", name)
 		}
-		if t.bgRunner != nil {
+		if t.bgRunner != nil && agent.MaySpawnAsyncSubagent(ctx) {
+			label := "run_skill:" + name
+			if jm, ok := jobs.FromContext(ctx); ok {
+				if err := agent.CheckBackgroundDuplicate(jm, label, rawArgs); err != nil {
+					return "", err
+				}
+			}
 			jobID, err := t.bgRunner(ctx, func(jobCtx context.Context, _ io.Writer) (string, error) {
 				return t.runner(jobCtx, sk, rawArgs)
-			}, "run_skill:"+name, agent.OnCompleteCallbackFrom(ctx))
+			}, label, agent.OnCompleteCallbackFrom(ctx))
 			if err != nil {
 				return "", err
 			}
-			return agent.FormatStartedTaskResult(jobID, "run_skill:"+name), nil
+			if jm, ok := jobs.FromContext(ctx); ok {
+				agent.RegisterBackgroundDispatchMeta(jm, jobID, label, rawArgs)
+			}
+			return agent.FormatStartedTaskResult(jobID, label), nil
 		}
 		if t.runner == nil {
 			return "", fmt.Errorf("run_skill: skill %q is runAs=subagent but no subagent runner is configured in this session", name)
@@ -237,12 +247,20 @@ func (t *subagentSkillTool) Execute(ctx context.Context, args json.RawMessage) (
 	if sk.RunAs != RunSubagent {
 		return "", fmt.Errorf("%s: skill %q is overridden as inline; invoke it via run_skill instead", t.toolName, t.skillName)
 	}
-	if t.bgRunner != nil {
+	if t.bgRunner != nil && agent.MaySpawnAsyncSubagent(ctx) {
+		if jm, ok := jobs.FromContext(ctx); ok {
+			if err := agent.CheckBackgroundDuplicate(jm, t.toolName, task); err != nil {
+				return "", err
+			}
+		}
 		jobID, err := t.bgRunner(ctx, func(jobCtx context.Context, _ io.Writer) (string, error) {
 			return t.runner(jobCtx, sk, task)
 		}, t.toolName, agent.OnCompleteCallbackFrom(ctx))
 		if err != nil {
 			return "", err
+		}
+		if jm, ok := jobs.FromContext(ctx); ok {
+			agent.RegisterBackgroundDispatchMeta(jm, jobID, t.toolName, task)
 		}
 		return agent.FormatStartedTaskResult(jobID, t.toolName), nil
 	}
