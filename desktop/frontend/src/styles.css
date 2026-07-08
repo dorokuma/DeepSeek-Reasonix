@@ -12040,16 +12040,17 @@ body > .mermaid-diagram--fullscreen {
 /* ── settings centre modal ──────────────────────────────────────────────────── */
 .settings-modal-backdrop {
   --wails-draggable: no-drag;
+  padding: clamp(0px, calc((900px - 100vw) * 0.114), 16px);
 }
 
 .settings-modal {
-  width: min(1360px, calc(100vw - 96px));
+  width: min(1360px, calc(100vw - clamp(32px, calc(96px - (900px - 100vw) * 0.457), 96px)));
 }
 
 /* ── settings centre layout ─────────────────────────────────────────────────── */
 .settings-center {
   display: grid;
-  grid-template-columns: 248px minmax(0, 1fr);
+  grid-template-columns: clamp(180px, calc(248px - (900px - 100vw) * 0.486), 248px) minmax(0, 1fr);
   flex: 1;
   min-height: 0;
   overflow: hidden;
@@ -13186,48 +13187,10 @@ body > .mermaid-diagram--fullscreen {
   }
 }
 
-/* ── responsive: stacked nav on narrow and mid screens ─────────────────────── */
+/* ── responsive: compact content on narrow screens ─────────────────────────── */
 @media (max-width: 900px) {
-  .settings-modal-backdrop {
-    padding: 16px;
-  }
-
   .settings-modal {
-    width: 100%;
     height: min(900px, calc(100vh - 32px));
-  }
-
-  .settings-center {
-    grid-template-columns: 1fr;
-    grid-template-rows: auto minmax(0, 1fr);
-  }
-
-  .settings-center__nav {
-    display: flex;
-    flex-direction: row;
-    overflow-x: auto;
-    overflow-y: hidden;
-    border-right: none;
-    border-bottom: 1px solid var(--border);
-    padding: 6px 8px;
-    gap: 4px;
-    flex: 0 0 auto;
-  }
-
-  .settings-center__navitem {
-    flex: 0 0 auto;
-    width: auto;
-    padding: 7px 12px;
-    border-radius: 7px;
-    white-space: nowrap;
-  }
-
-  .settings-center__navitem--active::before {
-    display: none;
-  }
-
-  .settings-center__navitem small {
-    display: none;
   }
 
   .settings-center__content {
@@ -26314,7 +26277,7 @@ body > .mermaid-diagram--fullscreen {
 
 .app--creation .settings-modal-backdrop,
 :root[data-theme-style] .app--creation .settings-modal-backdrop {
-  padding: clamp(24px, 5vh, 48px) clamp(32px, 6vw, 72px);
+  padding: clamp(24px, 5vh, 48px) clamp(0px, calc(54px - (900px - 100vw) * 0.3857), 54px);
   background: rgba(18, 20, 26, 0.36);
   backdrop-filter: blur(6px);
   -webkit-backdrop-filter: blur(6px);
@@ -26322,7 +26285,7 @@ body > .mermaid-diagram--fullscreen {
 
 .app--creation .settings-modal,
 :root[data-theme-style] .app--creation .settings-modal {
-  width: min(980px, calc(100vw - 160px));
+  width: min(980px, calc(100vw - clamp(32px, calc(160px - (900px - 100vw) * 0.914), 160px)));
   height: min(690px, calc(100vh - 112px));
   border-color: color-mix(in srgb, var(--fg-faint) 18%, transparent);
   border-radius: 18px;
@@ -26356,7 +26319,7 @@ body > .mermaid-diagram--fullscreen {
 
 .app--creation .settings-center,
 :root[data-theme-style] .app--creation .settings-center {
-  grid-template-columns: 184px minmax(0, 1fr);
+  grid-template-columns: clamp(150px, calc(184px - (900px - 100vw) * 0.243), 184px) minmax(0, 1fr);
 }
 
 .app--creation .settings-center__nav,
@@ -26709,22 +26672,6 @@ body > .mermaid-diagram--fullscreen {
 }
 
 @media (max-width: 900px) {
-  .app--creation .settings-modal-backdrop,
-  :root[data-theme-style] .app--creation .settings-modal-backdrop {
-    padding: 16px;
-  }
-
-  .app--creation .settings-modal,
-  :root[data-theme-style] .app--creation .settings-modal {
-    width: 100%;
-    height: min(900px, calc(100vh - 32px));
-  }
-
-  .app--creation .settings-center,
-  :root[data-theme-style] .app--creation .settings-center {
-    grid-template-columns: 1fr;
-  }
-
   .app--creation .settings-center__nav,
   :root[data-theme-style] .app--creation .settings-center__nav {
     padding: 8px 10px;
