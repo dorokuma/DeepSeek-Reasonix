@@ -20,14 +20,14 @@ func DefaultManagerPolicies() ManagerPolicies {
 	return ManagerPolicies{
 		IdleKillSecDefault: 120,
 		IdleKillByKind: map[string]int{
-			"bash": 1800,
-			"task": 600,
-			"skill": 600,
+			"bash":  7200,
+			"task":  3600,
+			"skill": 3600,
 		},
 		SemanticDedup: SemanticDedupPolicy{
 			Enabled:          true,
 			Threshold:        0.85,
-			RequireSameLabel: false,
+			RequireSameLabel: true,
 		},
 	}
 }

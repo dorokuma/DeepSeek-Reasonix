@@ -539,12 +539,12 @@ func (b *BackgroundJobsConfig) Normalize() {
 func defaultBackgroundJobs() BackgroundJobsConfig {
 	return BackgroundJobsConfig{
 		IdleKillSecDefault:            120,
-		IdleKillSecBash:               1800,
-		IdleKillSecTask:               600,
-		IdleKillSecSkill:              600,
+		IdleKillSecBash:               7200, // 2h: long builds/servers; heartbeat marks activity
+		IdleKillSecTask:               3600, // 1h sub-agent task
+		IdleKillSecSkill:              3600, // 1h sub-agent skill
 		SemanticDedupEnabled:          true,
 		SemanticDedupThreshold:        0.85,
-		SemanticDedupRequireSameLabel: false,
+		SemanticDedupRequireSameLabel: true, // semantic gate only when label matches (fewer false blocks)
 	}
 }
 
