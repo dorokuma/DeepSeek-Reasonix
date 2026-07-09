@@ -32,8 +32,8 @@ import (
 	"reasonix/internal/jobs"
 	"reasonix/internal/lsp"
 	"reasonix/internal/memory"
+	"reasonix/internal/multiagent"
 	"reasonix/internal/netclient"
-	"reasonix/internal/outputstyle"
 	"reasonix/internal/permission"
 	"reasonix/internal/plugin"
 	"reasonix/internal/provider"
@@ -233,24 +233,6 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	if err != nil {
 		return nil, err
 	}
-	// Output style: fold the selected persona/tone block into the base prompt
-	// before language/memory/skills append, so a "replace" style (keep-coding
-	// false) still keeps those. Applied once, into the cache-stable prefix.
-	if st, ok := outputstyle.Resolve(cfg.Agent.OutputStyle, outputstyle.Dirs()); ok {
-		sysPrompt = outputstyle.Apply(sysPrompt, st)
-	}
-	sysPrompt += "\n\n" + config.LanguagePolicy
-	// Wire reasoning_language config into the system prompt
-	if rl := cfg.ReasoningLanguage(); rl != "" {
-		switch rl {
-		case "zh":
-			sysPrompt += "\n\n请全程使用简体中文思考。"
-		case "en":
-			sysPrompt += "\n\nThink in English throughout."
-		}
-	}
-	sysPrompt += "\n\n" + config.VisibilityPolicy
-	sysPrompt += "\n\n" + config.ToolUseEnforcementPolicy
 
 	// Persistent memory (REASONIX.md / AGENTS.md hierarchy + auto-memory index)
 	// folds into the system prompt exactly here, once: it becomes part of the
@@ -498,12 +480,15 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	}
 
 	subAgentGate := permission.NewGate(policy, nil)
+	// Codex MultiAgent V2: spawn_agent / wait_agent / list_agents / send_message / followup_task / interrupt_agent.
+	// Legacy `task` tool is not registered.
+	maCtrl := multiagent.NewControl()
+	multiagent.RegisterTools(reg)
 	taskTool := agent.NewTaskTool(execProv, entry.Price, reg,
 		entry.ContextWindow, cfg.Agent.SoftCompactRatio, cfg.Agent.CompactRatio, cfg.Agent.CompactForceRatio,
 		cfg.Agent.Temperature, config.ArchiveDir(), agent.DefaultTaskSystemPrompt+"\n\n"+extractSharedSections(), subAgentGate,
 		resolveSubagentProviderForTask, hookRunner)
-	// Single sub-agent entry: freeform task only.
-	reg.Add(taskTool)
+	maCtrl.SetRunner(&agent.MultiAgentRunner{Tool: taskTool, Control: maCtrl})
 
 	// Session history tools let the AI discover and read past conversations.
 	// `list_sessions` returns all saved session files; `read_session` loads one
@@ -555,6 +540,7 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 		Gate:                      subAgentGate,
 		Hooks:                     hookRunner,
 		Jobs:                      jm,
+		MultiAgent:                maCtrl,
 		ProjectChecks:             projectChecks,
 		ContextWindow:             entry.ContextWindow,
 		SoftCompactRatio:          cfg.Agent.SoftCompactRatio,
@@ -606,7 +592,7 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 			return ok
 		},
 	}))
-	// One background door: task (freeform only).
+	// Sub-agents: Codex MultiAgent V2 tools (spawn_agent family).
 
 	execSess := agent.NewSession(sysPrompt)
 	executor := agent.New(execProv, reg, execSess, agentOpts, sink)

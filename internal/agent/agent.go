@@ -21,6 +21,7 @@ import (
 	"reasonix/internal/instruction"
 	"reasonix/internal/jobs"
 	"reasonix/internal/memory"
+	"reasonix/internal/multiagent"
 	"reasonix/internal/nilutil"
 	"reasonix/internal/provider"
 	"reasonix/internal/tool"
@@ -298,9 +299,12 @@ type Agent struct {
 
 	// jobs, when non-nil, is the session's background-job manager. executeOne
 	// stamps it onto each tool call's context so the background tools (bash
-	// run_in_background, task run_in_background, peek-job/cancel-job) can
-	// reach it. nil leaves those tools to degrade gracefully.
+	// run_in_background, peek-job/cancel-job) can reach it. nil leaves those
+	// tools to degrade gracefully.
 	jobs *jobs.Manager
+
+	// multiAgent is Codex MultiAgent V2 control (spawn_agent / wait_agent / ...).
+	multiAgent *multiagent.Control
 
 	// ctrl, when non-nil, is the Controller bridge for auto-reentry and job
 	// metadata lookup. Set via Options.
@@ -603,6 +607,9 @@ type Options struct {
 	// Jobs is the session's background-job manager (nil disables background tools).
 	Jobs *jobs.Manager
 
+	// MultiAgent is Codex MultiAgent V2 control for the session (nil disables).
+	MultiAgent *multiagent.Control
+
 	// Ctrl is the optional Controller bridge for auto-reentry and job metadata.
 	Ctrl ControllerBridge
 
@@ -696,6 +703,7 @@ func New(prov provider.Provider, tools *tool.Registry, session *Session, opts Op
 		gate:                      gate,
 		hooks:                     hooks,
 		jobs:                      opts.Jobs,
+		multiAgent:                opts.MultiAgent,
 		ctrl:                      opts.Ctrl,
 		ctxStore:                  ctxStore,
 		sentFragments:             make(map[string]string),
@@ -729,6 +737,9 @@ func (a *Agent) Run(ctx context.Context, input string) error {
 	// [REASONIX_IMAGE:data:image/jpeg;base64,...]) and convert them to
 	// ContentPart objects so the model can "see" images directly.
 	wakeForBackground := input == "" && a.ctrl != nil && a.ctrl.PendingToolResult()
+	if input == "" && a.multiAgent != nil && a.multiAgent.Mailbox().HasPending() {
+		wakeForBackground = true
+	}
 	if input != "" || !wakeForBackground {
 		cleanInput, parts := parseMultimodalInput(input)
 		a.session.Add(provider.Message{Role: provider.RoleUser, Content: cleanInput, Parts: parts})
@@ -736,6 +747,8 @@ func (a *Agent) Run(ctx context.Context, input string) error {
 			ctxmode.RecordUserPrompt(a.ctxStore.Journal(), input)
 		}
 	}
+	// Codex mailbox: inject any pending inter-agent mail into the session before the model runs.
+	a.flushMultiAgentMailbox()
 
 	finalReadinessBlocks := 0
 	emptyFinalBlocks := 0
@@ -749,6 +762,8 @@ func (a *Agent) Run(ctx context.Context, input string) error {
 			return ctx.Err()
 		default:
 		}
+		// After wait_agent wakes on mailbox activity, inject mail before the next model call.
+		a.flushMultiAgentMailbox()
 
 		if parentSteer := jobs.DrainJobSteer(ctx); parentSteer != "" {
 			jobs.RecordAck(ctx, "received: "+parentSteer)
@@ -907,7 +922,11 @@ func (a *Agent) Run(ctx context.Context, input string) error {
 
 // Steer injects a user message into the running agent's message loop.
 // Non-blocking: silently drops when the buffer is full.
+// Also notifies MultiAgent wait_agent (Codex Steer activity).
 func (a *Agent) Steer(input string) {
+	if a.multiAgent != nil {
+		a.multiAgent.NotifySteer()
+	}
 	if a.steerCh == nil {
 		return
 	}
@@ -926,6 +945,22 @@ func (a *Agent) drainSteer() string {
 	default:
 		return ""
 	}
+}
+
+// flushMultiAgentMailbox drains Codex-style inter-agent mail into the session as a user message.
+func (a *Agent) flushMultiAgentMailbox() {
+	if a == nil || a.multiAgent == nil || a.session == nil {
+		return
+	}
+	mails := a.multiAgent.Mailbox().Drain()
+	if len(mails) == 0 {
+		return
+	}
+	body := multiagent.FormatMailsForSession(mails)
+	if body == "" {
+		return
+	}
+	a.session.Add(provider.Message{Role: provider.RoleUser, Content: body})
 }
 
 // deliverPendingJobResults writes finished background job answers into the session.
@@ -1626,6 +1661,10 @@ func (a *Agent) executeOne(ctx context.Context, call provider.ToolCall) toolOutc
 	}
 	if a.jobs != nil {
 		cctx = jobs.WithManager(cctx, a.jobs)
+	}
+	if a.multiAgent != nil {
+		cctx = multiagent.WithControl(cctx, a.multiAgent)
+		cctx = multiagent.WithAgentPath(cctx, multiagent.RootPath)
 	}
 	if a.ctrl != nil {
 		cctx = withCtrl(cctx, a.ctrl)

@@ -23,8 +23,9 @@ Use the provided tools to investigate or act. Return a single final answer that 
 and self-contained — the parent will see only that answer, not your tool calls or reasoning.
 If you need to ask for clarification, fail with a precise question instead of guessing.`
 
+// Meta tools children must not inherit (Codex still allows spawn_agent on children).
 var subagentMetaTools = []string{
-	"task",
+	"task", // legacy
 	"run_skill",
 	"install_skill",
 	"install_source",
