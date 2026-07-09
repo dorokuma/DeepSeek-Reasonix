@@ -331,8 +331,8 @@ func (r *phasedBlockingRunner) Inputs() []string {
 }
 
 // TestAutoReenterDeferredWhileMainTurnBusy verifies that when a background job
-// completes while the main turn is still running, auto-reentry is queued via
-// pendingReentry and only fires Send("") after the busy turn finishes.
+// completes while the main turn is still running, delivery is deferred (no
+// mid-turn session splice), then flush + auto-reentry run after the busy turn ends.
 func TestAutoReenterDeferredWhileMainTurnBusy(t *testing.T) {
 	evCh := make(chan event.Event, 64)
 	sink := event.Sync(event.FuncSink(func(e event.Event) {
@@ -387,6 +387,7 @@ func TestAutoReenterDeferredWhileMainTurnBusy(t *testing.T) {
 	ctrl.mu.Lock()
 	queueLen := len(ctrl.pendingReentryQueue)
 	gotRunning := ctrl.running
+	deferredN := len(ctrl.deferredDeliverIDs)
 	ctrl.mu.Unlock()
 	if queueLen == 0 {
 		t.Fatal("pendingReentryQueue should have deferred auto-reentry while main turn is busy")
@@ -394,8 +395,17 @@ func TestAutoReenterDeferredWhileMainTurnBusy(t *testing.T) {
 	if !gotRunning {
 		t.Fatal("main turn should still be running when job completes")
 	}
+	if deferredN == 0 {
+		t.Fatal("completion while busy should queue deferredDeliverIDs (no mid-turn session splice)")
+	}
 	if !ctrl.pendingToolResult.Load() {
 		t.Fatal("pendingToolResult should be set after job completion")
+	}
+	// Must not have written task_result into the session yet while main turn is busy.
+	for _, m := range sess.Messages {
+		if m.Role == provider.RoleTool && m.ToolCallID == agent.BackgroundDeliveryCallID(job.ID) {
+			t.Fatal("task_result must not appear mid-turn before flushDeferredDeliveries")
+		}
 	}
 
 	close(runner.firstRelease)

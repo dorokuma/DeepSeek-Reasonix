@@ -997,10 +997,14 @@ func (a *Agent) deliverPendingJobResultsWithRetry(attempts int, delay time.Durat
 	return "", "", false
 }
 
-// drainNotify delivers finished auto-deliver job results into the session.
+// drainNotify used to pull finished jobs mid-turn; that spliced task_result into
+// the middle of an active model loop. Delivery is now owned by:
+//   - Controller.handleJobCompletion when idle
+//   - flushDeferredDeliveries after a busy turn ends
+//   - background wake (input=="") at the start of Run
+// So mid-turn drain is intentionally a no-op.
 func (a *Agent) drainNotify() bool {
-	_, _, r := a.deliverPendingJobResults()
-	return r
+	return false
 }
 
 type finalReadinessCheck struct {

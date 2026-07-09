@@ -154,6 +154,15 @@ type Controller struct {
 
 	pendingReentryQueue []string
 
+	// deferredDeliverIDs are auto-deliver task jobs that finished while a main
+	// turn was still running. Session write is deferred until the turn ends so
+	// results land at a clean conversation boundary (not mid-stream).
+	deferredDeliverIDs []string
+
+	// reentryCapPending is set when auto-reentry hit the depth cap; after the
+	// current turn ends we retry wake instead of waiting forever for user input.
+	reentryCapPending bool
+
 	wg        sync.WaitGroup
 	closeOnce sync.Once
 }
@@ -300,17 +309,66 @@ func (c *Controller) handleJobCompletion(id string) {
 	if !ok || !jobs.AutoDelivers(kind) {
 		return
 	}
+	c.mu.Lock()
+	busy := c.running
+	if busy {
+		// Defer session injection until the main turn ends (clean tail, no mid-stream splice).
+		already := false
+		for _, existing := range c.deferredDeliverIDs {
+			if existing == id {
+				already = true
+				break
+			}
+		}
+		if !already {
+			c.deferredDeliverIDs = append(c.deferredDeliverIDs, id)
+		}
+		hasEmpty := false
+		for _, q := range c.pendingReentryQueue {
+			if q == "" {
+				hasEmpty = true
+				break
+			}
+		}
+		if !hasEmpty {
+			c.pendingReentryQueue = append(c.pendingReentryQueue, "")
+		}
+		c.mu.Unlock()
+		c.pendingToolResult.Store(true)
+		return
+	}
+	c.mu.Unlock()
+
 	committed := false
 	if c.executor != nil {
 		committed = c.executor.CompleteBackgroundJob(id)
 	}
 	if !committed {
-		// Leave job for drain retry; still arm wake so Run can try deliverPendingJobResults.
 		slog.Warn("background job finished but result not committed to session", "job", id)
 	}
-	// Whether commit won this call or will retry on drain, arm wake once.
 	c.pendingToolResult.Store(true)
 	c.autoReenter()
+}
+
+// flushDeferredDeliveries commits task results that finished during a busy turn.
+// Call only when idle (after running=false).
+func (c *Controller) flushDeferredDeliveries() {
+	c.mu.Lock()
+	ids := c.deferredDeliverIDs
+	c.deferredDeliverIDs = nil
+	c.mu.Unlock()
+	if len(ids) == 0 {
+		return
+	}
+	for _, id := range ids {
+		if c.executor == nil {
+			break
+		}
+		if !c.executor.CompleteBackgroundJob(id) {
+			slog.Warn("deferred background job delivery failed", "job", id)
+		}
+	}
+	c.pendingToolResult.Store(true)
 }
 
 // ckptDir derives a session's checkpoint directory from its file path
@@ -380,9 +438,18 @@ func (c *Controller) runGuarded(input string, body func(ctx context.Context) err
 		if input == "" && c.autoReentryDepth > 0 {
 			c.autoReentryDepth--
 		}
+		retryAfterCap := c.reentryCapPending
+		c.reentryCapPending = false
 		c.mu.Unlock()
 		c.sink.Emit(event.Event{Kind: event.TurnDone, Err: explainError(err)})
+		// 1) commit deliveries deferred while we were busy
+		c.flushDeferredDeliveries()
+		// 2) run any queued reentry (including the empty wake for those deliveries)
 		c.drainReentryQueue()
+		// 3) if depth cap blocked a wake earlier, try again now that depth decremented
+		if retryAfterCap && c.pendingToolResult.Load() {
+			c.autoReenter()
+		}
 	}()
 }
 
@@ -445,8 +512,10 @@ func (c *Controller) autoReenter() {
 		return
 	}
 	if c.autoReentryDepth >= autoReentryDepthCap {
+		// Do not drop work: mark for retry when the current empty-turn chain unwinds.
+		c.reentryCapPending = true
 		c.mu.Unlock()
-		slog.Warn("auto-reentry depth cap reached; background completion waits for user input",
+		slog.Warn("auto-reentry depth cap reached; will retry after current turn ends",
 			"cap", autoReentryDepthCap)
 		return
 	}
