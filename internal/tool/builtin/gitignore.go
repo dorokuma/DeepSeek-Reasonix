@@ -304,12 +304,11 @@ func gitConfigPaths() []string {
 }
 
 func scanGitConfigExcludes(path string) string {
-	f, err := os.Open(path)
+	body, _, err := readFileEncoded(path)
 	if err != nil {
 		return ""
 	}
-	defer f.Close()
-	sc := bufio.NewScanner(f)
+	sc := bufio.NewScanner(strings.NewReader(body))
 	inCore := false
 	for sc.Scan() {
 		line := strings.TrimSpace(sc.Text())

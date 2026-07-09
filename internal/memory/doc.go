@@ -130,6 +130,7 @@ func readDoc(path string) (string, os.FileInfo, bool) {
 	if err != nil {
 		return "", nil, false
 	}
+	b = fileencoding.DecodeToUTF8(b)
 	body := strings.TrimSpace(string(b))
 	if body == "" {
 		return "", nil, false

@@ -137,6 +137,20 @@ func TestGrepDecodesGB18030Gitignore(t *testing.T) {
 	}
 }
 
+func TestScanGitConfigExcludesDecodesGB18030Path(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, ".gitconfig")
+	want := filepath.Join(dir, "中文忽略规则.txt")
+	body := "[core]\n\texcludesFile = " + want + "\n"
+	if err := os.WriteFile(path, fileencoding.Encode(body, fileencoding.GB18030), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := scanGitConfigExcludes(path); got != want {
+		t.Fatalf("scanGitConfigExcludes = %q, want %q", got, want)
+	}
+}
+
 func TestGrepExplicitIgnoredRootStillSearched(t *testing.T) {
 	dir := gitignoreRepo(t)
 	// Pointing grep straight at a gitignored directory still searches it — the
