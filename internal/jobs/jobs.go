@@ -97,8 +97,9 @@ type Job struct {
 	lastTool string
 	lastAck  string
 
-	completed bool // true after completion is recorded; task jobs are removed after parent delivery
-	sink      event.Sink
+	completed   bool  // true after completion is recorded; task jobs are removed after parent delivery
+	finishedAt  int64 // unix seconds when status became terminal; used for bash retention cleanup
+	sink        event.Sink
 }
 
 // KindTask is the auto-delivering async sub-agent job kind.
@@ -112,6 +113,13 @@ const KindBash = "bash"
 func AutoDelivers(kind string) bool {
 	return kind == KindTask
 }
+
+// completedBashRetainSec is how long finished shell jobs stay peekable before GC.
+// Task jobs are removed immediately after session delivery.
+const completedBashRetainSec int64 = 30 * 60
+
+// maxRetainedCompletedBash caps finished shell jobs kept for peek (oldest dropped).
+const maxRetainedCompletedBash = 20
 
 // SetDispatchDigest records a stable fingerprint for duplicate task detection.
 func (m *Manager) SetDispatchDigest(jobID, digest string) {
@@ -224,6 +232,11 @@ func (m *Manager) checkAndClean() bool {
 	defer m.mu.Unlock()
 	now := time.Now().Unix()
 	runningCount := 0
+	var dropIDs []string
+	var completedBash []struct {
+		id   string
+		when int64
+	}
 	for _, j := range m.jobs {
 		j.mu.Lock()
 		if j.status == Running {
@@ -235,10 +248,57 @@ func (m *Manager) checkAndClean() bool {
 				j.status = Killed
 				j.cancel()
 			}
+		} else if j.completed && !AutoDelivers(j.Kind) {
+			// Finished shell jobs: time-based GC + count cap (task jobs are removed on deliver).
+			when := j.finishedAt
+			if when <= 0 {
+				when = j.startedAt / 1000
+			}
+			if when > 0 && now-when > completedBashRetainSec {
+				dropIDs = append(dropIDs, j.ID)
+			} else {
+				completedBash = append(completedBash, struct {
+					id   string
+					when int64
+				}{j.ID, when})
+			}
 		}
 		j.mu.Unlock()
 	}
-	if runningCount == 0 {
+	// Cap retained completed bash jobs (drop oldest beyond max).
+	if len(completedBash) > maxRetainedCompletedBash {
+		// simple selection of oldest extras
+		for i := 0; i < len(completedBash); i++ {
+			for k := i + 1; k < len(completedBash); k++ {
+				if completedBash[k].when < completedBash[i].when {
+					completedBash[i], completedBash[k] = completedBash[k], completedBash[i]
+				}
+			}
+		}
+		extra := len(completedBash) - maxRetainedCompletedBash
+		for i := 0; i < extra; i++ {
+			dropIDs = append(dropIDs, completedBash[i].id)
+		}
+	}
+	for _, id := range dropIDs {
+		delete(m.jobs, id)
+		for i, oid := range m.order {
+			if oid == id {
+				m.order = append(m.order[:i], m.order[i+1:]...)
+				break
+			}
+		}
+	}
+	// Keep the monitor alive while completed bash jobs still need retention GC.
+	retainedBash := 0
+	for _, j := range m.jobs {
+		j.mu.Lock()
+		if j.completed && !AutoDelivers(j.Kind) {
+			retainedBash++
+		}
+		j.mu.Unlock()
+	}
+	if runningCount == 0 && retainedBash == 0 {
 		m.monitorRunning = false
 		return true
 	}
@@ -365,8 +425,8 @@ func (m *Manager) Start(ctx context.Context, kind, label string, run func(ctx co
 			result = fmt.Sprintf("background %s %q finished with an empty answer", kind, id)
 		}
 
-		// Send result to resultCh before onComplete (per spec §5.3).
-		if st == Done || st == Failed {
+		// Terminal results (including killed) go to resultCh before callbacks.
+		if st == Done || st == Failed || st == Killed {
 			if !safeChanSend(j.resultCh, JobNotify{JobID: id, Type: "result", Output: result}) {
 				slog.Warn("resultCh full or closed, dropping result for job", "id", id)
 			}
@@ -380,6 +440,7 @@ func (m *Manager) Start(ctx context.Context, kind, label string, run func(ctx co
 		j.result = result
 		j.status = st
 		j.completed = true
+		j.finishedAt = time.Now().Unix()
 		j.mu.Unlock()
 		// Single completion path: optional per-call hook, then global onCompletion.
 		// Controllers should wire only SetOnCompletion; per-call onComplete is nil for task/bash.
@@ -556,10 +617,14 @@ func (m *Manager) Close() {
 	m.mu.Lock()
 	// Cancel every job's context individually, since they may not derive from m.root.
 	for _, j := range m.jobs {
-		j.cancel()
+		if j.cancel != nil {
+			j.cancel()
+		}
 	}
 	m.mu.Unlock()
-	m.cancel()
+	if m.cancel != nil {
+		m.cancel()
+	}
 }
 
 // safeChanSend performs a non-blocking channel send. It recovers from send-on-

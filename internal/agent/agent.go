@@ -760,6 +760,14 @@ func (a *Agent) Run(ctx context.Context, input string) error {
 		if wakeForBackground && step == 0 {
 			_, _, _ = a.deliverPendingJobResultsWithRetry(16, 25*time.Millisecond)
 			a.clearBackgroundWakeIfCaughtUp()
+			// Abort empty wakes: nothing undelivered and no unread task_result at tail
+			// (avoids a no-op model call after a spurious second auto-reentry).
+			if !a.hasUndeliveredAutoJobs() && !a.sessionHasUnreadTaskResult() {
+				if a.ctrl != nil {
+					a.ctrl.PendingToolResultCAS(true, false)
+				}
+				return nil
+			}
 		} else {
 			if userInput := a.drainSteer(); userInput != "" {
 				a.session.Add(provider.Message{Role: provider.RoleUser, Content: userInput})
@@ -2030,14 +2038,62 @@ func (a *Agent) clearBackgroundWakeIfCaughtUp() {
 	if a.ctrl == nil {
 		return
 	}
-	if a.jobs != nil {
-		for _, id := range a.jobs.ActiveJobs() {
-			if kind, ok := a.jobs.Kind(id); ok && jobs.AutoDelivers(kind) {
-				return
-			}
-		}
+	if a.hasUndeliveredAutoJobs() {
+		return
 	}
 	a.ctrl.PendingToolResultCAS(true, false)
+}
+
+// hasUndeliveredAutoJobs reports task jobs still in the manager (awaiting deliver).
+func (a *Agent) hasUndeliveredAutoJobs() bool {
+	if a.jobs == nil {
+		return false
+	}
+	for _, id := range a.jobs.ActiveJobs() {
+		if kind, ok := a.jobs.Kind(id); ok && jobs.AutoDelivers(kind) {
+			return true
+		}
+	}
+	return false
+}
+
+// sessionHasUnreadTaskResult is true when the conversation tail is a synthetic
+// background delivery that the main agent has not yet answered.
+func (a *Agent) sessionHasUnreadTaskResult() bool {
+	if a.session == nil {
+		return false
+	}
+	msgs := a.session.Snapshot()
+	for i := len(msgs) - 1; i >= 0; i-- {
+		m := msgs[i]
+		switch m.Role {
+		case provider.RoleTool:
+			if strings.HasPrefix(m.ToolCallID, "bg-delivery-") || m.Name == BackgroundDeliveryToolName {
+				return true
+			}
+			// other tool rows — keep scanning past them
+		case provider.RoleAssistant:
+			if len(m.ToolCalls) > 0 {
+				for _, tc := range m.ToolCalls {
+					if tc.ID != "" && strings.HasPrefix(tc.ID, "bg-delivery-") {
+						// delivery assistant half; pair tool is usually next — keep scanning
+						continue
+					}
+				}
+				// non-delivery tool_calls: not an unread delivery tail
+				if strings.TrimSpace(m.Content) != "" {
+					return false
+				}
+				continue
+			}
+			if strings.TrimSpace(m.Content) != "" {
+				return false // model already answered after delivery
+			}
+		case provider.RoleUser:
+			return false
+		}
+	}
+	return false
 }
 
 

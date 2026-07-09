@@ -300,12 +300,18 @@ func (c *Controller) handleJobCompletion(id string) {
 	if !ok || !jobs.AutoDelivers(kind) {
 		return
 	}
-	c.pendingToolResult.Store(true)
+	committed := false
 	if c.executor != nil {
-		if !c.executor.CompleteBackgroundJob(id) {
-			slog.Warn("background job finished but result not committed to session", "job", id)
-		}
+		committed = c.executor.CompleteBackgroundJob(id)
 	}
+	if !committed {
+		// Leave job for drain retry; still arm wake so Run can try deliverPendingJobResults.
+		slog.Warn("background job finished but result not committed to session", "job", id)
+		c.pendingToolResult.Store(true)
+		c.autoReenter()
+		return
+	}
+	c.pendingToolResult.Store(true)
 	c.autoReenter()
 }
 
@@ -389,8 +395,14 @@ func (c *Controller) drainReentryQueue() {
 			c.mu.Unlock()
 			return
 		}
+		// Collapse consecutive empty auto-reentries into one wake.
 		next := c.pendingReentryQueue[0]
 		c.pendingReentryQueue = c.pendingReentryQueue[1:]
+		if next == "" {
+			for len(c.pendingReentryQueue) > 0 && c.pendingReentryQueue[0] == "" {
+				c.pendingReentryQueue = c.pendingReentryQueue[1:]
+			}
+		}
 		c.mu.Unlock()
 		c.Send(next)
 		return
@@ -409,17 +421,35 @@ func (c *Controller) MakeOnMessage() func(jobID string) {
 	return nil
 }
 
+// autoReentryDepthCap limits chained empty auto-reentries. Completions still arm
+// pendingToolResult when capped, so a later user turn can drain.
+const autoReentryDepthCap = 32
+
 // autoReenter starts a turn when a background task completes so the model can
 // report results without waiting for the user's next message.
+// Multiple concurrent completions coalesce into a single empty reentry.
 func (c *Controller) autoReenter() {
 	c.mu.Lock()
-	if c.autoReentryDepth >= 10 {
-		c.mu.Unlock()
-		slog.Warn("auto-reentry depth cap reached; background completion waits for user input")
-		return
-	}
 	if !c.pendingToolResult.Load() {
 		c.mu.Unlock()
+		return
+	}
+	// Coalesce: one empty wake is enough even if N tasks finish together.
+	if c.running {
+		for _, q := range c.pendingReentryQueue {
+			if q == "" {
+				c.mu.Unlock()
+				return
+			}
+		}
+		c.pendingReentryQueue = append(c.pendingReentryQueue, "")
+		c.mu.Unlock()
+		return
+	}
+	if c.autoReentryDepth >= autoReentryDepthCap {
+		c.mu.Unlock()
+		slog.Warn("auto-reentry depth cap reached; background completion waits for user input",
+			"cap", autoReentryDepthCap)
 		return
 	}
 	c.autoReentryDepth++

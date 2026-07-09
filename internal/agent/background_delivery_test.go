@@ -165,6 +165,38 @@ func TestToolCallIDForStartedTaskLine(t *testing.T) {
 	}
 }
 
+func TestSessionHasUnreadTaskResult(t *testing.T) {
+	ag := New(nil, nil, NewSession(""), Options{}, event.Discard)
+	if ag.sessionHasUnreadTaskResult() {
+		t.Fatal("empty session")
+	}
+	ag.session.AppendBackgroundTaskDelivery("task-1", BackgroundDeliveryToolName, "BODY")
+	if !ag.sessionHasUnreadTaskResult() {
+		t.Fatal("want unread after delivery")
+	}
+	ag.session.Add(provider.Message{Role: provider.RoleAssistant, Content: "summarized"})
+	if ag.sessionHasUnreadTaskResult() {
+		t.Fatal("assistant answer clears unread")
+	}
+}
+
+func TestEmptyBackgroundWakeAbortsWithoutWork(t *testing.T) {
+	jm := jobs.NewManager(event.Discard)
+	defer jm.Close()
+	sess := NewSession("sys")
+	ag := New(nil, nil, sess, Options{Jobs: jm}, event.Discard)
+	bridge := newSubControllerBridge()
+	bridge.SetPendingToolResult(true)
+	ag.SetControllerBridge(bridge)
+	// No undelivered jobs, no task_result — wake should no-op without panicking.
+	if err := ag.Run(context.Background(), ""); err != nil {
+		t.Fatalf("empty wake: %v", err)
+	}
+	if bridge.PendingToolResult() {
+		t.Fatal("pending flag should clear on empty wake")
+	}
+}
+
 // TestBashJobDoesNotAutoDeliver locks the product split: shell jobs stay peek-only.
 func TestBashJobDoesNotAutoDeliver(t *testing.T) {
 	sink := event.Discard
