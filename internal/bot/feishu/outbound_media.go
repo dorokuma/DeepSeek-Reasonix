@@ -64,12 +64,13 @@ func (a *adapter) sendOneMedia(ctx context.Context, msg bot.OutboundMessage, ref
 }
 
 // readOutboundFile reads a media file for outbound sending under a strict
-// policy. The ref must be an absolute path whose cleaned form is contained in
-// one of the configured OutboundMediaRoots (empty by default → disabled, so an
-// authenticated /send caller cannot read arbitrary files). The containment
-// check is inline on the cleaned path that is then read; a separate
-// symlink-resolved recheck rejects a symlink inside a root that points out of
-// it before any read happens.
+// policy: the ref is reduced to a bare filename and looked up directly inside a
+// configured OutboundMediaRoots directory (empty by default → disabled). Using
+// filepath.Base strips every directory component — including any traversal — so
+// the file can only ever come from directly within a root, which is both the
+// intended contract ("stage the file into a media root, then send it by name")
+// and a path-injection sanitizer. A symlink sitting in a root that resolves
+// outside it is rejected before any read.
 func (a *adapter) readOutboundFile(ref string) ([]byte, string, error) {
 	ref = strings.TrimSpace(ref)
 	if ref == "" {
@@ -78,49 +79,44 @@ func (a *adapter) readOutboundFile(ref string) ([]byte, string, error) {
 	if len(a.cfg.OutboundMediaRoots) == 0 {
 		return nil, "", fmt.Errorf("feishu outbound media: local file sending is disabled (set outbound_media_roots)")
 	}
-	clean := filepath.Clean(ref)
-	if !filepath.IsAbs(clean) {
-		return nil, "", fmt.Errorf("feishu outbound media: path must be absolute")
+	// Reject any traversal outright, then reduce to a bare filename so no
+	// directory component can survive into the lookup below.
+	if strings.Contains(ref, "..") {
+		return nil, "", fmt.Errorf("feishu outbound media: file name may not contain '..'")
 	}
-	// Inline containment barrier: `clean` must sit under a configured root before
-	// it is stat'd/read. Keeping the HasPrefix check in this function (not a
-	// helper) is what lets static analysis treat it as a path-injection sanitizer
-	// guarding the reads below.
-	matchedRoot := ""
+	name := filepath.Base(filepath.Clean(ref))
+	if name == "." || name == ".." || name == string(filepath.Separator) {
+		return nil, "", fmt.Errorf("feishu outbound media: invalid file name")
+	}
 	for _, root := range a.cfg.OutboundMediaRoots {
-		root = filepath.Clean(strings.TrimSpace(root))
-		if root == "" || root == "." {
+		root = strings.TrimSpace(root)
+		if root == "" {
 			continue
 		}
-		if clean == root || strings.HasPrefix(clean, root+string(filepath.Separator)) {
-			matchedRoot = root
-			break
+		full := filepath.Join(root, name)
+		info, err := os.Stat(full)
+		if err != nil || !info.Mode().IsRegular() {
+			continue
 		}
-	}
-	if matchedRoot == "" {
-		return nil, "", fmt.Errorf("feishu outbound media: path is outside the allow-listed roots")
-	}
-	// Defense in depth: reject a symlink under the root that resolves outside it,
-	// before any read. We still read `clean` (the value guarded above).
-	if resolved, err := filepath.EvalSymlinks(clean); err == nil {
-		if rootResolved, err2 := filepath.EvalSymlinks(matchedRoot); err2 == nil {
-			if resolved != rootResolved && !strings.HasPrefix(resolved, rootResolved+string(filepath.Separator)) {
-				return nil, "", fmt.Errorf("feishu outbound media: path escapes its root via a symlink")
+		// Defense in depth: a regular file inside the root could still be a
+		// symlink resolving outside it — reject that before reading.
+		if resolved, err := filepath.EvalSymlinks(full); err == nil {
+			if rootResolved, err2 := filepath.EvalSymlinks(root); err2 == nil {
+				if resolved != rootResolved && !strings.HasPrefix(resolved, rootResolved+string(filepath.Separator)) {
+					return nil, "", fmt.Errorf("feishu outbound media: %q escapes its root via a symlink", name)
+				}
 			}
 		}
+		if info.Size() == 0 || info.Size() > maxOutboundMediaBytes {
+			return nil, "", fmt.Errorf("feishu outbound media: %q must be between 1 byte and 25 MB", name)
+		}
+		raw, err := os.ReadFile(full)
+		if err != nil {
+			return nil, "", err
+		}
+		return raw, name, nil
 	}
-	info, err := os.Stat(clean)
-	if err != nil {
-		return nil, "", err
-	}
-	if !info.Mode().IsRegular() || info.Size() == 0 || info.Size() > maxOutboundMediaBytes {
-		return nil, "", fmt.Errorf("feishu outbound media: must be a regular file between 1 byte and 25 MB")
-	}
-	raw, err := os.ReadFile(clean)
-	if err != nil {
-		return nil, "", err
-	}
-	return raw, filepath.Base(clean), nil
+	return nil, "", fmt.Errorf("feishu outbound media: %q not found in any configured root", name)
 }
 
 func (a *adapter) uploadImage(ctx context.Context, data []byte) (string, error) {

@@ -613,11 +613,10 @@ type FeishuBotConfig struct {
 	WebhookPort       int    `toml:"webhook_port"`       // webhook 模式端口
 	RequireMention    bool   `toml:"require_mention"`
 	// OutboundMediaRoots whitelists local directories the loopback /send control
-	// API may read files from to attach as outbound image/file messages. Empty
-	// (the default) disables outbound file sending — a path outside every root is
-	// rejected, so an authenticated /send caller cannot exfiltrate arbitrary
-	// files. Containment is checked on the cleaned path and rechecked after
-	// symlink resolution.
+	// API may attach files from as outbound image/file messages. A media ref is
+	// reduced to its bare filename and looked up directly inside these roots, so
+	// an authenticated /send caller can only send files staged into a root — not
+	// arbitrary paths. Empty (the default) disables outbound file sending.
 	OutboundMediaRoots []string `toml:"outbound_media_roots"`
 }
 
