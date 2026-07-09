@@ -25,9 +25,12 @@ func DefaultManagerPolicies() ManagerPolicies {
 			"skill": 3600,
 		},
 		SemanticDedup: SemanticDedupPolicy{
+			// Lower threshold: models rephrase heavily when they distrust the
+			// ACCEPTED receipt ("retry with different wording"). 0.55 still
+			// allows clearly distinct goals while blocking paraphrases.
 			Enabled:          true,
-			Threshold:        0.85,
-			RequireSameLabel: true,
+			Threshold:        0.55,
+			RequireSameLabel: false, // goal-primary; labels are display-only
 		},
 	}
 }

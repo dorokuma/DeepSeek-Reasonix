@@ -92,7 +92,11 @@ func NewTaskTool(prov provider.Provider, pricing *provider.Pricing, parentReg *t
 func (t *TaskTool) Name() string { return "task" }
 
 func (t *TaskTool) Description() string {
-	return "Single entry to spawn a background sub-agent (the only sub-agent tool). Pass a self-contained prompt — the child does not see this conversation. Returns immediately with a JSON started stub (job_id) — receipt only, never the answer. When the job finishes, the runtime injects a <background-task-result job_id=…> observation at the conversation tail (not a tool you call). Wait for that observation; do not start another task for the same goal, and do not poll with peek-job."
+	return "Spawn one background sub-agent (only sub-agent entry). Pass a self-contained prompt — the child does not see this conversation. " +
+		"On success this tool call is ALREADY COMPLETE: you get a permanent ACCEPTED receipt with job_id (not a partial status, not something to retry). " +
+		"The sub-agent's answer is NOT in that receipt and will never rewrite it. When the job finishes, the runtime appends a separate " +
+		"<background-task-result job_id=…> observation at the conversation tail (not a tool — you cannot call it). " +
+		"Wait for that observation. Do not re-call task for the same/similar goal because the receipt 'looks short'. Do not poll with peek-job."
 }
 
 func (t *TaskTool) Schema() json.RawMessage {
@@ -130,29 +134,23 @@ func extractJobID(result string) string {
 }
 
 func taskPostCallGuidance(jobID string) string {
-	rule := `⚠ BACKGROUND SUB-AGENT STARTED — RESULT AUTO-DELIVERS
-
-The Started stub above is only a receipt that the job began — it will NEVER change. Do not wait for that mid-history card to update.
-
-When the job finishes, the RUNTIME injects an observation at the END of the conversation:
-  <background-task-result job_id="…" status="completed">
-  … full sub-agent answer …
-  </background-task-result>
-
-That block is authoritative. It is NOT a tool call and there is no tool to fetch it — wait for it.
-
-While waiting, do NOT:
-• Invent a tool call to read the result (no task_result or similar tool exists)
-• Call peek-job to poll a task sub-agent (results arrive without polling; peek is for shell/bash jobs)
-• Call steer-job to ask "are you done" (steer is for genuine new instructions only)
-• Dispatch another task for the same goal (exact or paraphrased)
-
-Polling wastes context and delays responses. Continue other work or reply to the user instead.`
-	idClause := " job_id=task-N (from the started stub above)"
+	id := "task-N"
 	if jobID != "" {
-		idClause = fmt.Sprintf(" job_id=%q (from the started stub above)", jobID)
+		id = jobID
 	}
-	return rule + "\n" + idClause
+	return fmt.Sprintf(`The ACCEPTED receipt above means the task tool call succeeded completely.
+job_id=%q is running (or queued). That receipt will never grow into the answer.
+
+Next signal is ONLY a new conversation-tail message:
+  <background-task-result job_id=%q status="completed">…answer…</background-task-result>
+
+Hard rules until that message appears for job_id=%q:
+• Do NOT re-call task for this goal (including paraphrases / "retry because started looked unreliable")
+• Do NOT invent task_result / get_result tools
+• Do NOT peek-job this job_id (auto-delivery; peek is for shell/bash only)
+• Do NOT steer-job just to ask "are you done"
+
+If you need something else while waiting, do other work or answer the user — never re-dispatch the same goal.`, id, id, id)
 }
 
 func (t *TaskTool) Execute(ctx context.Context, args json.RawMessage) (string, error) {
