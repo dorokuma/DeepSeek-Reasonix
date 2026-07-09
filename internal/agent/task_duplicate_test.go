@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"io"
+	"strings"
 	"testing"
 
 	"reasonix/internal/event"
@@ -37,4 +38,16 @@ func TestFindRunningDuplicateTask(t *testing.T) {
 		t.Fatalf("unexpected dup %q", got)
 	}
 	jm.Kill(job2.ID)
+}
+
+func TestFingerprintDoesNotCollideOnLongSharedPrefix(t *testing.T) {
+	head := strings.Repeat("same-prefix-block ", 40)
+	a := taskDispatchFingerprint("explore", head+"TAIL-A")
+	b := taskDispatchFingerprint("explore", head+"TAIL-B")
+	if a == "" || b == "" {
+		t.Fatal("expected non-empty fingerprints")
+	}
+	if a == b {
+		t.Fatal("long prompts that only share a prefix must not share fingerprint")
+	}
 }

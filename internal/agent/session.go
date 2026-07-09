@@ -54,6 +54,34 @@ func (s *Session) ToolCallIDForStartedTaskLine(jobID string) string {
 	return ""
 }
 
+// ToolNameForCallID returns the tool name associated with a tool_call_id
+// (from an existing tool result row or the assistant tool call). Empty if unknown.
+func (s *Session) ToolNameForCallID(toolCallID string) string {
+	if s == nil || toolCallID == "" {
+		return ""
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for i := len(s.Messages) - 1; i >= 0; i-- {
+		m := s.Messages[i]
+		if m.Role == provider.RoleTool && m.ToolCallID == toolCallID && m.Name != "" {
+			return m.Name
+		}
+	}
+	for i := len(s.Messages) - 1; i >= 0; i-- {
+		m := s.Messages[i]
+		if m.Role != provider.RoleAssistant {
+			continue
+		}
+		for _, tc := range m.ToolCalls {
+			if tc.ID == toolCallID && tc.Name != "" {
+				return tc.Name
+			}
+		}
+	}
+	return ""
+}
+
 // ReplaceTaskStartedWithResult overwrites a started-task tool row with the terminal answer (same tool_call_id).
 func (s *Session) ReplaceTaskStartedWithResult(toolCallID, jobID, output string) bool {
 	if toolCallID == "" || jobID == "" || strings.TrimSpace(output) == "" {

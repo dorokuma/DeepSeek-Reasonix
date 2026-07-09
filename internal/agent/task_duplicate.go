@@ -72,10 +72,9 @@ func taskDispatchFingerprint(label, prompt string) string {
 	if p == "" && l == "" {
 		return ""
 	}
+	// Hash the full payload (no prefix truncation) so long prompts that share a
+	// common head never collide as false exact-duplicates.
 	payload := l + "\x00" + p
-	if len(payload) > 600 {
-		payload = payload[:600]
-	}
 	sum := sha256.Sum256([]byte(payload))
 	return "fp:" + hex.EncodeToString(sum[:8])
 }
