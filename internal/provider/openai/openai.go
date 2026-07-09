@@ -466,6 +466,17 @@ func (c *client) buildRequest(req provider.Request) chatRequest {
 		switch {
 		case c.vision && m.Role == provider.RoleUser && len(m.Images) > 0:
 			cm.Content = imageContentParts(m.Content, m.Images, c.visionDetail)
+		case c.vision && m.Role == provider.RoleTool && m.Content != "":
+			textParts, toolImages := provider.SplitToolResultContent(m.Content)
+			if len(toolImages) == 0 {
+				cm.Content = m.Content
+			} else {
+				imgURLs := make([]string, len(toolImages))
+				for i, img := range toolImages {
+					imgURLs[i] = "data:" + img.MimeType + ";base64," + img.Data
+				}
+				cm.Content = imageContentParts(strings.Join(textParts, ""), imgURLs, c.visionDetail)
+			}
 		case m.Role != provider.RoleAssistant || len(cm.ToolCalls) == 0 || m.Content != "":
 			cm.Content = m.Content
 		}
