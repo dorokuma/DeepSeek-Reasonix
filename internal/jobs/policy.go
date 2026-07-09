@@ -76,6 +76,12 @@ func (m *Manager) idleKillSeconds(kind string) int {
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	return m.idleKillSecondsLocked(kind)
+}
+
+// idleKillSecondsLocked returns the idle-kill limit. Caller must hold m.mu.
+// Used by checkAndClean which already holds the manager lock (avoid deadlock).
+func (m *Manager) idleKillSecondsLocked(kind string) int {
 	if sec, ok := m.idleKillByKind[kind]; ok && sec > 0 {
 		return sec
 	}

@@ -225,7 +225,8 @@ func (m *Manager) checkAndClean() bool {
 		if j.status == Running {
 			runningCount++
 			lastActive := j.lastActive.Load()
-			limit := int64(m.idleKillSeconds(j.Kind))
+			// Already hold m.mu; must not call idleKillSeconds (re-locks).
+			limit := int64(m.idleKillSecondsLocked(j.Kind))
 			if lastActive > 0 && now-lastActive > limit {
 				j.status = Killed
 				j.cancel()

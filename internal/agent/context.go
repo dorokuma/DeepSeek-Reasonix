@@ -54,6 +54,16 @@ func WithNestingDepth(ctx context.Context, depth int) context.Context {
 	return context.WithValue(ctx, depthKey{}, depth)
 }
 
+// MainAgentDepth is the nesting depth of the session root (main) agent.
+const MainAgentDepth = 0
+
+// MaySpawnAsyncSubagent reports whether this context may start a background
+// sub-agent job. Async delegation is parent→child only: the main agent may
+// spawn children; an already-running sub-agent may not spawn further async jobs.
+func MaySpawnAsyncSubagent(ctx context.Context) bool {
+	return NestingDepthFrom(ctx) == MainAgentDepth
+}
+
 // NestingDepthFrom extracts the nesting depth from the context.
 // Returns 0 when not set.
 func NestingDepthFrom(ctx context.Context) int {

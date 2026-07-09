@@ -16,7 +16,7 @@ var rewriteSamples = []struct {
 	{cmd: "ls .", wantRTK: "rtk ls"},
 	{cmd: "tree -L 2 .", wantRTK: "rtk tree"},
 	{cmd: "cat README.md", wantRTK: "rtk read"},
-	{cmd: "rg foo .", wantRTK: "rtk grep"},
+	{cmd: "rg foo .", wantRTK: "rtk rg"},
 	{cmd: `find . -name '*.go'`, wantRTK: "rtk find"},
 
 	// VCS / cloud / ops

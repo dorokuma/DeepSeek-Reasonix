@@ -63,7 +63,7 @@ func (s *Session) ReplaceTaskStartedWithResult(toolCallID, jobID, output string)
 	defer s.mu.Unlock()
 	for i := len(s.Messages) - 1; i >= 0; i-- {
 		m := &s.Messages[i]
-		if m.Role != provider.RoleTool || m.ToolCallID != toolCallID || m.Name != "task" {
+		if m.Role != provider.RoleTool || m.ToolCallID != toolCallID {
 			continue
 		}
 		if !TaskToolContentReferencesJob(m.Content, jobID) || !IsStartedTaskPlaceholder(m.Content) {

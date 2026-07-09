@@ -212,8 +212,10 @@ func TestNote_PostCallGuidance_ReturnsWorkflow(t *testing.T) {
 	if guidance == "" {
 		t.Fatal("PostCallGuidance should return non-empty guidance")
 	}
-	if !strings.Contains(guidance, "read_file") {
-		t.Fatalf("guidance should mention read_file, got: %q", guidance)
+	// Guidance intentionally says "Re-read" without naming the tool (avoids
+	// banned tool-name leaks into post-call text). Assert the re-load step.
+	if !strings.Contains(guidance, "Re-read") {
+		t.Fatalf("guidance should mention Re-read step, got: %q", guidance)
 	}
 	if !strings.Contains(guidance, "audit_finish") {
 		t.Fatalf("guidance should mention audit_finish, got: %q", guidance)
