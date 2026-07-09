@@ -3859,6 +3859,9 @@ func (c *Controller) UnregisterMCPServerTools(name string) bool {
 // Label returns the human-readable model label, e.g. "deepseek-flash".
 func (c *Controller) Label() string { return c.label }
 
+// ModelRef returns the canonical provider/model reference for the session.
+func (c *Controller) ModelRef() string { return c.modelRef }
+
 // WorkspaceRoot returns the workspace root for this controller's session
 // (the directory that file-writers and @-references are scoped to).
 // Empty means no scoping is in effect.
