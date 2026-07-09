@@ -252,7 +252,7 @@ func (s *Server) switchEffort(ctx context.Context, level string) error {
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
 	}
-	ref := cur.Label()
+	ref := currentModelRef(cur)
 	entry, ok := cfg.ResolveModel(ref)
 	if !ok {
 		return fmt.Errorf("cannot resolve current provider %q", ref)
@@ -1020,7 +1020,8 @@ func (s *Server) models(w http.ResponseWriter, _ *http.Request) {
 		Active   bool   `json:"active,omitempty"`
 		Default  bool   `json:"default,omitempty"`
 	}
-	current := s.ctl().Label()
+	current := currentModelRef(s.ctl())
+	label := s.ctl().Label()
 	modelCounts := make(map[string]int)
 	for i := range cfg.Providers {
 		p := &cfg.Providers[i]
@@ -1048,7 +1049,7 @@ func (s *Server) models(w http.ResponseWriter, _ *http.Request) {
 		for _, model := range models {
 			ref := p.Name + "/" + model
 			active := ref == current || p.Name == current
-			if !active && model == current {
+			if !active && current == label && model == label {
 				if modelCounts[model] == 1 {
 					active = true
 				} else {
@@ -1068,7 +1069,15 @@ func (s *Server) models(w http.ResponseWriter, _ *http.Request) {
 	if out == nil {
 		out = []modelEntry{}
 	}
-	writeJSON(w, map[string]any{"current": current, "default": cfg.DefaultModel, "models": out})
+	writeJSON(w, map[string]any{"current": current, "label": label, "default": cfg.DefaultModel, "models": out})
+}
+
+func currentModelRef(c control.SessionAPI) string {
+	ref := strings.TrimSpace(c.ModelRef())
+	if ref != "" {
+		return ref
+	}
+	return strings.TrimSpace(c.Label())
 }
 
 // status returns a combined status snapshot.
