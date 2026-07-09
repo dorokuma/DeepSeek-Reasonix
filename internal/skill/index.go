@@ -17,14 +17,14 @@ const SkillNamespace = "skill/"
 
 // indexHeader introduces the skills block in the system prompt.
 const indexHeader = "# Skills (namespace skill/* only)\n\n" +
-	"Playbook index — completely separate from Saved memories (memory/*). " +
-	"Every skill id looks like skill/<id>. Invoke with run_skill({skill:\"<id>\"}) or read_skill({skill:\"<id>\"}) — parameter is \"skill\", never \"memory\". " +
-	"Never use memory_get/memory_save/memory_forget on skill/* ids. " +
-	"Bodies are inlined into your context. For isolated background work use the task tool. Users may also type /<id>."
+	"Playbook index — separate from Saved memories (memory/*). " +
+	"Ids look like skill/<id>. Only tool: run_skill({skill:\"<id>\"}) — parameter is skill, never memory. " +
+	"Memories use recall/remember/forget with parameter memory. " +
+	"run_skill inlines the playbook this turn. Background work uses task. Users may type /<id>."
 
 // ApplyIndex appends the skills index to basePrompt, or returns it unchanged
 // when there are no skills. Only namespaced ids + descriptions are listed;
-// bodies load on demand via run_skill/read_skill.
+// bodies load on demand via run_skill.
 func ApplyIndex(basePrompt string, skills []Skill) string {
 	if len(skills) == 0 {
 		return basePrompt

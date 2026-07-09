@@ -13,20 +13,20 @@ func TestRememberToolSaves(t *testing.T) {
 	store := Store{Dir: t.TempDir()}
 	tl := NewRememberTool(store)
 
-	if tl.Name() != "memory_save" || tl.ReadOnly() {
+	if tl.Name() != "remember" || tl.ReadOnly() {
 		t.Fatalf("unexpected tool identity: name=%q readonly=%v", tl.Name(), tl.ReadOnly())
 	}
 	// Schema must be valid JSON the provider can forward.
 	if !json.Valid(tl.Schema()) {
-		t.Fatal("memory_save schema is not valid JSON")
+		t.Fatal("remember schema is not valid JSON")
 	}
 
-	args := []byte(`{"name":"likes-go","title":"Likes Go","description":"User likes Go","type":"user","body":"Default to Go for backend work."}`)
+	args := []byte(`{"memory":"likes-go","title":"Likes Go","description":"User likes Go","type":"user","body":"Default to Go for backend work."}`)
 	out, err := tl.Execute(context.Background(), args)
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
-	if !strings.Contains(out, "Saved memory") {
+	if !strings.Contains(out, "Saved memory/") {
 		t.Fatalf("unexpected tool output: %q", out)
 	}
 

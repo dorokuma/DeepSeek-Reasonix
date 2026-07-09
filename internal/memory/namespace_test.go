@@ -6,17 +6,21 @@ import (
 	"testing"
 )
 
-func TestMemoryGetRejectsSkillNamespace(t *testing.T) {
+func TestRecallRejectsSkillNamespace(t *testing.T) {
 	store := Store{Dir: t.TempDir()}
-	isSkill := func(id string) bool { return id == "init" }
-	tl := NewRecallTool(store, isSkill)
+	tl := NewRecallTool(store)
 	_, err := tl.Execute(context.Background(), []byte(`{"memory":"skill/init"}`))
-	if err == nil || !strings.Contains(err.Error(), "SKILL") {
-		t.Fatalf("expected skill redirect error, got %v", err)
+	if err == nil || !strings.Contains(err.Error(), "run_skill") {
+		t.Fatalf("expected skill redirect to run_skill, got %v", err)
 	}
-	_, err = tl.Execute(context.Background(), []byte(`{"memory":"init"}`))
+}
+
+func TestRememberRejectsSkillNamespace(t *testing.T) {
+	store := Store{Dir: t.TempDir()}
+	tl := NewRememberTool(store)
+	_, err := tl.Execute(context.Background(), []byte(`{"memory":"skill/init","description":"d","body":"b"}`))
 	if err == nil || !strings.Contains(err.Error(), "skill/") {
-		t.Fatalf("expected skill collision error when memory missing, got %v", err)
+		t.Fatalf("expected skill/* rejection, got %v", err)
 	}
 }
 

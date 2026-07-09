@@ -334,9 +334,9 @@ func (r *Registry) Suggest(name string) (string, bool) {
 		"list": "ls", "dir": "ls",
 		"explore": "explore", "research": "research",
 		"install": "install_skill", "delete": "delete_range", "remove": "delete_range",
-		"remember": "memory_save", "forget": "memory_forget", "recall": "memory_get",
-		"memory_save": "memory_save", "memory_forget": "memory_forget", "memory_get": "memory_get",
-		"memory": "memory_get",
+		"remember": "remember", "forget": "forget", "recall": "recall",
+		"memory_save": "remember", "memory_forget": "forget", "memory_get": "recall",
+		"memory": "recall",
 	}
 
 	// Normalise: lowercase, collapse whitespace, replace non-alnum with underscores

@@ -16,11 +16,11 @@ func TestForgetToolDeletes(t *testing.T) {
 	}
 
 	tl := NewForgetTool(store)
-	if tl.Name() != "memory_forget" || tl.ReadOnly() {
+	if tl.Name() != "forget" || tl.ReadOnly() {
 		t.Fatalf("unexpected tool identity: name=%q readonly=%v", tl.Name(), tl.ReadOnly())
 	}
 	if !json.Valid(tl.Schema()) {
-		t.Fatal("memory_forget schema is not valid JSON")
+		t.Fatal("forget schema is not valid JSON")
 	}
 
 	out, err := tl.Execute(context.Background(), []byte(`{"memory":"stale-fact"}`))

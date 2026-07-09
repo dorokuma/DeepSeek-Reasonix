@@ -13,8 +13,8 @@ func TestSavedMemoriesUseMemoryNamespaceNotSkills(t *testing.T) {
 		Store: Store{Dir: "/tmp/mem-store"},
 	}
 	block := set.Block()
-	if !strings.Contains(block, "memory_get") {
-		t.Fatalf("saved memories must point at memory_get:\n%s", block)
+	if !strings.Contains(block, "recall") || !strings.Contains(block, "remember") || !strings.Contains(block, "forget") {
+		t.Fatalf("saved memories must point at recall/remember/forget:\n%s", block)
 	}
 	if !strings.Contains(block, "memory/tabs-rule") {
 		t.Fatalf("index must use memory/ namespace:\n%s", block)
@@ -22,8 +22,14 @@ func TestSavedMemoriesUseMemoryNamespaceNotSkills(t *testing.T) {
 	if strings.Contains(block, "](tabs-rule.md)") {
 		t.Fatalf("legacy markdown link form must not appear in prompt block:\n%s", block)
 	}
-	if !strings.Contains(block, "never read_skill") && !strings.Contains(block, "Never read_skill") {
-		t.Fatalf("must warn against skill tools:\n%s", block)
+	if !strings.Contains(block, "Never run_skill") && !strings.Contains(block, "Never run_skill on these lines") {
+		// Block uses "Never run_skill on these lines."
+		if !strings.Contains(block, "run_skill") {
+			t.Fatalf("must warn against skill tools:\n%s", block)
+		}
+	}
+	if strings.Contains(block, "read_skill") || strings.Contains(block, "memory_get") {
+		t.Fatalf("removed tool names must not appear:\n%s", block)
 	}
 }
 

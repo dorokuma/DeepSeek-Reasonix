@@ -107,19 +107,28 @@ func TestInstallSkill(t *testing.T) {
 	}
 }
 
-func TestReadSkillLoadsInlineAndIsReadOnly(t *testing.T) {
-	home := t.TempDir()
-	writeSkill(t, home, ".reasonix/skills/note.md", "---\ndescription: take a note\n---\nDo the thing.")
-	tl := NewReadSkillTool(New(Options{HomeDir: home, DisableBuiltins: true}))
+func TestRunSkillIsNotReadOnly(t *testing.T) {
+	// Invoking a skill is not a pure read: the playbook may direct writer tools.
+	// There is no separate read_skill / plan-mode path.
+	tl := NewRunSkillTool(New(Options{HomeDir: t.TempDir(), DisableBuiltins: true}))
+	if tl.ReadOnly() {
+		t.Fatal("run_skill must not be ReadOnly")
+	}
+}
 
-	if !tl.ReadOnly() {
-		t.Fatal("read_skill must be ReadOnly so it works in plan mode")
+func TestRunSkillRejectsMemoryNamespace(t *testing.T) {
+	tl := NewRunSkillTool(New(Options{HomeDir: t.TempDir(), DisableBuiltins: true}))
+	_, err := tl.Execute(context.Background(), json.RawMessage(`{"skill":"memory/tabs-rule"}`))
+	if err == nil || !strings.Contains(err.Error(), "memory") {
+		t.Fatalf("expected memory/* rejection, got %v", err)
 	}
-	out, err := tl.Execute(context.Background(), json.RawMessage(`{"skill":"note","arguments":"with args"}`))
-	if err != nil {
-		t.Fatalf("execute: %v", err)
+}
+
+func TestCleanSkillNameStripsNamespace(t *testing.T) {
+	if got := cleanSkillName("skill/explore"); got != "explore" {
+		t.Errorf("cleanSkillName(skill/explore) = %q", got)
 	}
-	if !strings.Contains(out, "Do the thing.") {
-		t.Errorf("body missing:\n%s", out)
+	if got := cleanSkillName("memory/x"); got != "" {
+		t.Errorf("cleanSkillName must reject memory/*, got %q", got)
 	}
 }
