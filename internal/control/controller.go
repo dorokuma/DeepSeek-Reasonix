@@ -633,10 +633,10 @@ func (c *Controller) runTurnWithRaw(ctx context.Context, input, raw string) erro
 	// Block dynamic tools that the model should not call in this turn.
 	blocked := map[string]string{}
 	if !wantsPeek {
-		blocked["peek-job"] = "peek-job is for shell/bash background jobs (or owner diagnostics). Task sub-agent answers auto-deliver as <background-task-result> at conversation tail — do not poll task jobs with peek-job."
+		blocked["peek-job"] = "peek-job is for background shell jobs (or owner diagnostics). The task tool returns its answer when the call finishes — do not poll it."
 	}
 	if c.jobs == nil || len(c.jobs.Running()) == 0 {
-		blocked["steer-job"] = "steer-job sends new instructions to a running job. No jobs are running. For task status — wait for <background-task-result>. For shell jobs that already finished — use peek-job when exposed."
+		blocked["steer-job"] = "steer-job needs a running background shell job. No jobs are running."
 	}
 	if c.subAgentGate != nil && len(blocked) > 0 {
 		c.subAgentGate.SetBlockedTools(blocked)

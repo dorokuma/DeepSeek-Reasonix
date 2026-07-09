@@ -1,10 +1,9 @@
 package agent
 
-// BackgroundJobPostCallGuidance returns post-call text for any tool that returned a Started line.
+// BackgroundJobPostCallGuidance used to append long wait/poll rules after a
+// started-task receipt. Task is synchronous now; keep a no-op so old call sites
+// and tests still compile without re-teaching the model phantom tools.
 func BackgroundJobPostCallGuidance(result string) string {
-	id := ExtractJobIDFromStartedResult(result)
-	if id == "" {
-		return ""
-	}
-	return taskPostCallGuidance(id)
+	_ = result
+	return ""
 }

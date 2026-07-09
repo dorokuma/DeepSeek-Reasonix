@@ -5,7 +5,7 @@ import (
 )
 
 // peekTurnOperatorNote is appended for one turn when peek-job is exposed.
-const peekTurnOperatorNote = `[Operator] peek-job is available this turn only (read-only). Prefer peek for shell/bash jobs. Task sub-agents auto-deliver as <background-task-result> at conversation tail — do not re-dispatch the same task while it is running.`
+const peekTurnOperatorNote = `[Operator] peek-job is available this turn only (read-only), for background shell jobs. The task tool is synchronous — its tool result is the answer.`
 
 // UserRequestsJobPeek is true when the user's raw line asks to expose peek-job.
 // Product rule: only the substring "peek" (case-insensitive), with explicit negation filtered.

@@ -37,11 +37,9 @@ func BackgroundDeliveryCallID(jobID string) string {
 	return legacyDeliveryCallIDPrefix + jobID
 }
 
-// FormatStartedTaskResult is the synchronous tool return when a background delegate starts.
-//
-// Models treat bare short JSON as an incomplete/unreliable status object and re-call task.
-// This receipt is deliberately plain-language + authoritative: this tool call is already
-// COMPLETE; the answer arrives later as a separate observation (never by mutating this row).
+// FormatStartedTaskResult builds a short legacy start receipt for historical
+// transcripts and tests. Live task tool calls are synchronous and return the
+// child's answer directly (they no longer emit this form).
 func FormatStartedTaskResult(jobID, label string) string {
 	if label == "" {
 		label = "task"
@@ -51,29 +49,9 @@ func FormatStartedTaskResult(jobID, label string) string {
 		Status:           "started",
 		Label:            label,
 		ToolCallComplete: true,
-		AnswerDelivery:   "conversation-tail <background-task-result> observation (not a tool)",
+		AnswerDelivery:   "legacy",
 	})
-	return fmt.Sprintf(`ACCEPTED — background sub-agent is running.
-
-job_id: %s
-label: %s
-tool_result: COMPLETE
-
-This is the full successful result of the task tool call. It is a permanent receipt, not a partial status and not "unreliable JSON".
-Nothing about this tool call will update later. Do not re-call task because this looks short.
-
-Final answer path (runtime only — you never call a tool for this):
-  when the sub-agent finishes, a NEW message is appended at the conversation tail:
-  <background-task-result job_id=%q status="completed">
-  … full sub-agent answer …
-  </background-task-result>
-
-Until that <background-task-result job_id=%q> message exists:
-  • do NOT call task again for the same or similar goal (exact or paraphrased)
-  • do NOT invent task_result / get_result / poll tools
-  • do NOT peek-job this job_id (task results auto-deliver; peek is for shell jobs)
-
-%s`, jobID, label, jobID, jobID, string(machine))
+	return fmt.Sprintf("ACCEPTED job_id: %s label: %s tool_result: COMPLETE\n%s", jobID, label, string(machine))
 }
 
 // FormatBackgroundTaskResult builds the runtime-injected observation the parent

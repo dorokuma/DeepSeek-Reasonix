@@ -71,11 +71,8 @@ func CheckBackgroundDuplicate(jm *jobs.Manager, label, prompt string) error {
 			open = dupID
 		}
 		return fmt.Errorf(
-			"Reject: duplicate task. job %s is already open with the same or similar goal (running or awaiting tail delivery). "+
-				"Open task jobs: [%s]. "+
-				"The earlier task tool return was a COMPLETE ACCEPTED receipt — not unreliable status. "+
-				"Wait for <background-task-result job_id=%q>; do not re-dispatch (exact or paraphrased)",
-			dupID, open, dupID,
+			"Reject: duplicate task. job %s is already open with the same or similar goal. Open: [%s]. Do not re-dispatch.",
+			dupID, open,
 		)
 	}
 	return nil

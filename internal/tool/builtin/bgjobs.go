@@ -28,11 +28,7 @@ type steerJob struct{}
 
 func (steerJob) Name() string { return "steer-job" }
 func (steerJob) Description() string {
-	return `Send a new instruction to a running background sub-agent (task) or shell job.
-
-CRITICAL — NOT FOR STATUS CHECKING: Never use steer-job to poll. It only queues a new instruction.
-For task sub-agents: wait for automatic <background-task-result> at conversation tail.
-For shell (bash) jobs: use peek-job for status/output.`
+	return `Queue a new instruction to a running background shell job. Not a status check — use peek-job for shell output.`
 }
 func (steerJob) ReadOnly() bool { return false }
 func (steerJob) Schema() json.RawMessage {
@@ -48,7 +44,7 @@ func (steerJob) Schema() json.RawMessage {
 
 func (steerJob) PostCallGuidanceAfter(_ json.RawMessage, result string) string {
 	if strings.Contains(result, `"status":"queued"`) || strings.Contains(result, "queued") {
-		return "steer-job only queued a new instruction; that is not a final answer. For task sub-agents wait for <background-task-result> at the conversation tail. For shell jobs use peek-job."
+		return "Instruction queued only. For shell jobs, read output with peek-job."
 	}
 	return ""
 }
@@ -123,13 +119,7 @@ type peekJob struct{}
 
 func (peekJob) Name() string { return "peek-job" }
 func (peekJob) Description() string {
-	return `Non-blocking snapshot of a background job.
-
-PRIMARY USE — shell (bash) jobs: read status and new stdout/stderr since last peek. Shell output is NOT auto-delivered to chat.
-
-TASK SUB-AGENTS: results auto-deliver as a <background-task-result> observation at conversation tail (not a tool). Do not poll task jobs with peek-job. Only peek a task when the user explicitly asks for mid-flight status.
-
-Never call peek-job more than once per turn unless the user asks again.`
+	return `Non-blocking status/output snapshot for background shell jobs. Prefer this for long-running bash; not needed for the task tool (task returns its answer when the call finishes).`
 }
 func (peekJob) ReadOnly() bool { return true }
 func (peekJob) Schema() json.RawMessage {
@@ -171,10 +161,10 @@ func (peekJob) Execute(ctx context.Context, params json.RawMessage) (string, err
 		out["kind"] = kind
 		if jobs.AutoDelivers(kind) {
 			out["delivery"] = "auto_observation"
-			out["note"] = "task sub-agent: final answer auto-delivers as <background-task-result>; peek is diagnostic only"
+			out["note"] = "legacy auto-deliver job (if any); task tool itself is synchronous"
 		} else {
 			out["delivery"] = "peek_only"
-			out["note"] = "shell job: use new_output below; not auto-delivered to chat"
+			out["note"] = "shell job: use new_output below"
 		}
 	}
 	if status.StartedAtMs > 0 {
