@@ -165,6 +165,55 @@ func TestToolCallIDForStartedTaskLine(t *testing.T) {
 	}
 }
 
+func TestHasUndeliveredAutoJobsIgnoresRunning(t *testing.T) {
+	jm := jobs.NewManager(event.Discard)
+	defer jm.Close()
+	// Long-running task still in map.
+	_, err := jm.Start(context.Background(), jobs.KindTask, "slow", func(ctx context.Context, _ io.Writer) (string, error) {
+		<-ctx.Done()
+		return "", ctx.Err()
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ag := New(nil, nil, NewSession(""), Options{Jobs: jm}, event.Discard)
+	if ag.hasUndeliveredAutoJobs() {
+		t.Fatal("running task must not count as undelivered")
+	}
+	// Instant completed task still present → undelivered until RemoveJob.
+	done, err := jm.Start(context.Background(), jobs.KindTask, "fast", func(_ context.Context, _ io.Writer) (string, error) {
+		return "ok", nil
+	}, nil)
+	if err != nil {
+		// may hit concurrency if slow holds slot — wait and retry once
+		time.Sleep(50 * time.Millisecond)
+		done, err = jm.Start(context.Background(), jobs.KindTask, "fast", func(_ context.Context, _ io.Writer) (string, error) {
+			return "ok", nil
+		}, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	deadline := time.After(2 * time.Second)
+	for {
+		if _, ok := jm.CompletedResult(done.ID); ok {
+			break
+		}
+		select {
+		case <-deadline:
+			t.Fatal("fast job did not complete")
+		case <-time.After(5 * time.Millisecond):
+		}
+	}
+	if !ag.hasUndeliveredAutoJobs() {
+		t.Fatal("completed task still in map should count as undelivered")
+	}
+	jm.RemoveJob(done.ID)
+	if ag.hasUndeliveredAutoJobs() {
+		t.Fatal("after RemoveJob should be clear")
+	}
+}
+
 func TestSessionHasUnreadTaskResult(t *testing.T) {
 	ag := New(nil, nil, NewSession(""), Options{}, event.Discard)
 	if ag.sessionHasUnreadTaskResult() {

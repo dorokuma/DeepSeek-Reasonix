@@ -307,10 +307,8 @@ func (c *Controller) handleJobCompletion(id string) {
 	if !committed {
 		// Leave job for drain retry; still arm wake so Run can try deliverPendingJobResults.
 		slog.Warn("background job finished but result not committed to session", "job", id)
-		c.pendingToolResult.Store(true)
-		c.autoReenter()
-		return
 	}
+	// Whether commit won this call or will retry on drain, arm wake once.
 	c.pendingToolResult.Store(true)
 	c.autoReenter()
 }

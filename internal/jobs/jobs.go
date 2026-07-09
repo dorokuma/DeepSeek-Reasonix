@@ -246,7 +246,9 @@ func (m *Manager) checkAndClean() bool {
 			limit := int64(m.idleKillSecondsLocked(j.Kind))
 			if lastActive > 0 && now-lastActive > limit {
 				j.status = Killed
-				j.cancel()
+				if j.cancel != nil {
+					j.cancel()
+				}
 			}
 		} else if j.completed && !AutoDelivers(j.Kind) {
 			// Finished shell jobs: time-based GC + count cap (task jobs are removed on deliver).

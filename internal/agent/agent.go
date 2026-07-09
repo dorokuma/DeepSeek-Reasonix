@@ -2044,13 +2044,19 @@ func (a *Agent) clearBackgroundWakeIfCaughtUp() {
 	a.ctrl.PendingToolResultCAS(true, false)
 }
 
-// hasUndeliveredAutoJobs reports task jobs still in the manager (awaiting deliver).
+// hasUndeliveredAutoJobs reports finished task jobs still in the manager
+// (terminal, not yet RemoveJob'd). Running tasks do NOT count — otherwise a
+// second in-flight task would pin pendingToolResult and trigger empty wakes.
 func (a *Agent) hasUndeliveredAutoJobs() bool {
 	if a.jobs == nil {
 		return false
 	}
 	for _, id := range a.jobs.ActiveJobs() {
-		if kind, ok := a.jobs.Kind(id); ok && jobs.AutoDelivers(kind) {
+		kind, ok := a.jobs.Kind(id)
+		if !ok || !jobs.AutoDelivers(kind) {
+			continue
+		}
+		if _, done := a.jobs.CompletedResult(id); done {
 			return true
 		}
 	}
