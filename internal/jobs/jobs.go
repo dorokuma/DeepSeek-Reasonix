@@ -356,6 +356,10 @@ func (m *Manager) Start(ctx context.Context, kind, label string, run func(ctx co
 		if st == Killed && strings.TrimSpace(result) == "" {
 			result = fmt.Sprintf("background %s %q was cancelled or killed before producing a result", kind, id)
 		}
+		// Empty Done answers still need a non-empty payload so parent dual-delivery commits.
+		if st == Done && strings.TrimSpace(result) == "" {
+			result = fmt.Sprintf("background %s %q finished with an empty answer", kind, id)
+		}
 
 		// Send result to resultCh before onComplete (per spec §5.3).
 		if st == Done || st == Failed {
@@ -658,7 +662,8 @@ func (m *Manager) CompletedResult(jobID string) (JobNotify, bool) {
 	if !j.completed {
 		return JobNotify{}, false
 	}
-	if j.status != Done && j.status != Failed {
+	// Done / Failed / Killed all carry a terminal result string for parent delivery.
+	if j.status != Done && j.status != Failed && j.status != Killed {
 		return JobNotify{}, false
 	}
 	return JobNotify{JobID: jobID, Type: "result", Output: j.result}, true

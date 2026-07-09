@@ -417,10 +417,22 @@ func (a *Agent) FlushBackgroundJobResults() (jobID, output string, ok bool) {
 }
 
 // AppendBackgroundTaskResultDelivery records the sub-agent final answer in a
-// machine-readable envelope (no prompt rules). The next model turn consumes it.
+// machine-readable envelope at the conversation TAIL.
+//
+// MUST stay a RoleUser message (not RoleTool): provider.SanitizeToolPairing drops
+// orphan tool rows that are not immediately after an assistant tool_calls turn.
+// Pure "append tool at tail" was tried and silently discarded at request build time;
+// pure mid-history patch is valid for APIs but invisible on auto-reentry.
+// Dual delivery (patch + this envelope) is the only combination that survives both.
 func (a *Agent) AppendBackgroundTaskResultDelivery(jobID, output string) {
+	if a.session == nil {
+		return
+	}
 	output = strings.TrimSpace(output)
 	if output == "" {
+		return
+	}
+	if a.session.HasBackgroundTaskResultEnvelope(jobID) {
 		return
 	}
 	const max = 12000
@@ -937,30 +949,36 @@ func (a *Agent) drainSteer() string {
 	}
 }
 
-func (a *Agent) deliverBackgroundToolResult(toolCallID, output string) {
-	name := "task"
-	if a.session != nil {
-		if n := a.session.ToolNameForCallID(toolCallID); n != "" {
-			name = n
-		}
-	}
-	a.session.Add(provider.Message{
-		Role:       provider.RoleTool,
-		Name:       name,
-		Content:    output,
-		ToolCallID: toolCallID,
-	})
-}
-
-// deliverPendingJobResults writes finished background job answers into the session
-// (patching the Started placeholder or appending a tool row).
+// deliverPendingJobResults writes finished background job answers into the session.
 
 // commitJobResult is shared by CompleteBackgroundJob and commitBackgroundJobResult.
-// It writes the job output into the session, replacing the started-task placeholder
-// or appending a new tool result as fallback.
+//
+// Delivery contract (do not "simplify" — three prior regressions):
+//  1. Patch the Started placeholder in-place when toolCallID is known.
+//     Keeps assistant tool_calls ↔ tool result pairing valid for providers.
+//  2. ALWAYS append a RoleUser <background-task-result> envelope at the tail.
+//     Auto-reentry attention is at the end of the transcript; mid-history-only
+//     patches are effectively invisible. Orphan RoleTool tails are dropped by
+//     provider.SanitizeToolPairing, so a plain tool append is NOT sufficient.
 func (a *Agent) commitJobResult(jobID, output string) bool {
+	output = strings.TrimSpace(output)
 	if output == "" {
 		return false
+	}
+	if a.session != nil && a.session.HasBackgroundTaskResultEnvelope(jobID) {
+		// Already delivered (completion hook raced drainNotify). Ensure mid-history
+		// placeholder is still patched when possible, then treat as success.
+		var toolCallID string
+		if a.ctrl != nil {
+			toolCallID, _ = a.ctrl.TakeJobMeta(jobID)
+		}
+		if toolCallID == "" {
+			toolCallID = a.session.ToolCallIDForStartedTaskLine(jobID)
+		}
+		if toolCallID != "" {
+			_ = a.session.ReplaceTaskStartedWithResult(toolCallID, jobID, output)
+		}
+		return true
 	}
 	var toolCallID string
 	if a.ctrl != nil {
@@ -969,15 +987,12 @@ func (a *Agent) commitJobResult(jobID, output string) bool {
 	if toolCallID == "" && a.session != nil {
 		toolCallID = a.session.ToolCallIDForStartedTaskLine(jobID)
 	}
-	if toolCallID == "" {
-		a.deliverBackgroundToolResult("", output)
-		return true
+	if toolCallID != "" && a.session != nil {
+		_ = a.session.ReplaceTaskStartedWithResult(toolCallID, jobID, output)
 	}
-	if a.session != nil && a.session.ReplaceTaskStartedWithResult(toolCallID, jobID, output) {
-		return true
-	}
-	a.deliverBackgroundToolResult(toolCallID, output)
-	return true
+	// Tail envelope is mandatory even when the mid-history patch succeeded.
+	a.AppendBackgroundTaskResultDelivery(jobID, output)
+	return a.session != nil && a.session.HasBackgroundTaskResultEnvelope(jobID)
 }
 
 

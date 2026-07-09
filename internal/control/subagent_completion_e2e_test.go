@@ -222,7 +222,8 @@ func TestAutoReenterWithoutPerJobOnComplete(t *testing.T) {
 }
 
 // TestAutoReentryDrainsToolResultIntoSession verifies the auto-reentry turn folds the
-// completed sub-agent output into the session as a tool message.
+// completed sub-agent output into the session as a tail envelope (and mid-history
+// tool row when a Started placeholder exists).
 func TestAutoReentryDrainsToolResultIntoSession(t *testing.T) {
 	sink := event.Discard
 	jm := jobs.NewManager(sink)
@@ -234,9 +235,20 @@ func TestAutoReentryDrainsToolResultIntoSession(t *testing.T) {
 	ctrl := New(Options{Executor: ag, Sink: sink, SessionDir: t.TempDir(), Label: "test"})
 	ag.SetControllerBridge(ctrl)
 
+	sess.Add(provider.Message{Role: provider.RoleAssistant, ToolCalls: []provider.ToolCall{{ID: "tool-call-1", Name: "task"}}})
+	sess.Add(provider.Message{Role: provider.RoleTool, ToolCallID: "tool-call-1", Name: "task", Content: agent.FormatStartedTaskResult("task-pending", "drain")})
+
 	job, err := jm.Start(context.Background(), "task", "drain", func(ctx context.Context, _ io.Writer) (string, error) {
 		return "sub-result", nil
-	}, nil, func(id string) { ctrl.RegisterJobMeta(id, "tool-call-1") })
+	}, nil, func(id string) {
+		// Patch started stub to reference real job id so Replace can match.
+		for i := range sess.Messages {
+			if sess.Messages[i].Role == provider.RoleTool && sess.Messages[i].ToolCallID == "tool-call-1" {
+				sess.Messages[i].Content = agent.FormatStartedTaskResult(id, "drain")
+			}
+		}
+		ctrl.RegisterJobMeta(id, "tool-call-1")
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -250,13 +262,20 @@ func TestAutoReentryDrainsToolResultIntoSession(t *testing.T) {
 	}
 
 	var toolMsgs int
+	var envelopes int
 	for _, m := range sess.Messages {
 		if m.Role == provider.RoleTool && m.ToolCallID == "tool-call-1" && m.Content == "sub-result" {
 			toolMsgs++
 		}
+		if m.Role == provider.RoleUser && strings.Contains(m.Content, "background-task-result") && strings.Contains(m.Content, "sub-result") {
+			envelopes++
+		}
 	}
 	if toolMsgs != 1 {
-		t.Fatalf("expected 1 tool result message, got %d; messages=%d", toolMsgs, len(sess.Messages))
+		t.Fatalf("expected 1 mid-history tool result, got %d; messages=%d", toolMsgs, len(sess.Messages))
+	}
+	if envelopes != 1 {
+		t.Fatalf("expected 1 tail envelope, got %d; messages=%d", envelopes, len(sess.Messages))
 	}
 }
 
@@ -349,9 +368,19 @@ func TestAutoReenterDeferredWhileMainTurnBusy(t *testing.T) {
 		t.Fatal("main turn did not start")
 	}
 
+	sess.Add(provider.Message{Role: provider.RoleAssistant, ToolCalls: []provider.ToolCall{{ID: "tool-call-deferred", Name: "task"}}})
+	sess.Add(provider.Message{Role: provider.RoleTool, ToolCallID: "tool-call-deferred", Name: "task", Content: agent.FormatStartedTaskResult("task-deferred", "deferred")})
+
 	job, err := jm.Start(context.Background(), "task", "deferred", func(ctx context.Context, _ io.Writer) (string, error) {
 		return "sub-result", nil
-	}, ctrl.MakeOnComplete(), func(id string) { ctrl.RegisterJobMeta(id, "tool-call-deferred") })
+	}, ctrl.MakeOnComplete(), func(id string) {
+		for i := range sess.Messages {
+			if sess.Messages[i].Role == provider.RoleTool && sess.Messages[i].ToolCallID == "tool-call-deferred" {
+				sess.Messages[i].Content = agent.FormatStartedTaskResult(id, "deferred")
+			}
+		}
+		ctrl.RegisterJobMeta(id, "tool-call-deferred")
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -397,20 +426,27 @@ func TestAutoReenterDeferredWhileMainTurnBusy(t *testing.T) {
 		t.Fatalf("deferred auto-reentry should Send(\"\"), got %q", inputs[1])
 	}
 
-	var toolMsgs int
+	var toolMsgs, envelopes int
 	for _, m := range sess.Messages {
 		if m.Role == provider.RoleTool && m.ToolCallID == "tool-call-deferred" && m.Content == "sub-result" {
 			toolMsgs++
 		}
+		if m.Role == provider.RoleUser && strings.Contains(m.Content, "background-task-result") && strings.Contains(m.Content, "sub-result") {
+			envelopes++
+		}
 	}
 	if toolMsgs != 1 {
-		t.Fatalf("auto-reentry turn should drain tool result into session, got %d tool messages; messages=%d", toolMsgs, len(sess.Messages))
+		t.Fatalf("auto-reentry should patch mid-history tool result, got %d; messages=%d", toolMsgs, len(sess.Messages))
+	}
+	if envelopes != 1 {
+		t.Fatalf("auto-reentry should append tail envelope, got %d; messages=%d", envelopes, len(sess.Messages))
 	}
 }
 
-// TestAutoReentryPatchesStartedToolPlaceholder verifies async completion updates
-// the in-flight "Started task …" tool row instead of appending an orphan tool message.
-func TestAutoReentryPatchesStartedToolPlaceholder(t *testing.T) {
+// TestAutoReentryDeliversStartedAndTailEnvelope verifies dual delivery:
+// mid-history Started placeholder is patched (API pairing) AND a user envelope
+// lands at the conversation tail (auto-reentry visibility).
+func TestAutoReentryDeliversStartedAndTailEnvelope(t *testing.T) {
 	sink := event.Discard
 	jm := jobs.NewManager(sink)
 	defer jm.Close()
@@ -422,6 +458,7 @@ func TestAutoReentryPatchesStartedToolPlaceholder(t *testing.T) {
 
 	sess.Add(provider.Message{Role: provider.RoleAssistant, ToolCalls: []provider.ToolCall{{ID: "tool-call-1", Name: "task"}}})
 	sess.Add(provider.Message{Role: provider.RoleTool, ToolCallID: "tool-call-1", Name: "task", Content: "Started task task-1 (explore)"})
+	sess.Add(provider.Message{Role: provider.RoleAssistant, Content: "I'll wait for explore."})
 
 	job, err := jm.Start(context.Background(), "task", "explore", func(_ context.Context, _ io.Writer) (string, error) {
 		return "explore-result", nil
@@ -437,18 +474,25 @@ func TestAutoReentryPatchesStartedToolPlaceholder(t *testing.T) {
 	_ = ag.Run(ctx, "")
 
 	var toolRows int
-	var lastContent string
+	var midContent string
 	for _, m := range sess.Messages {
 		if m.Role == provider.RoleTool && m.ToolCallID == "tool-call-1" {
 			toolRows++
-			lastContent = m.Content
+			midContent = m.Content
 		}
 	}
 	if toolRows != 1 {
 		t.Fatalf("want one tool row (started replaced by result), got %d", toolRows)
 	}
-	if lastContent != "explore-result" {
-		t.Fatalf("last tool content = %q, want explore-result", lastContent)
+	if midContent != "explore-result" {
+		t.Fatalf("mid tool content = %q, want explore-result", midContent)
+	}
+	last := sess.Messages[len(sess.Messages)-1]
+	if last.Role != provider.RoleUser || !strings.Contains(last.Content, "background-task-result") {
+		t.Fatalf("want tail user envelope, got role=%s content=%q", last.Role, last.Content)
+	}
+	if !strings.Contains(last.Content, "explore-result") {
+		t.Fatalf("tail envelope missing explore-result: %q", last.Content)
 	}
 }
 
@@ -465,9 +509,19 @@ func TestInstantCompletionDrainsToolResult(t *testing.T) {
 	ctrl := New(Options{Executor: ag, Sink: sink, SessionDir: t.TempDir(), Label: "test"})
 	ag.SetControllerBridge(ctrl)
 
+	sess.Add(provider.Message{Role: provider.RoleAssistant, ToolCalls: []provider.ToolCall{{ID: "tool-call-instant", Name: "task"}}})
+	sess.Add(provider.Message{Role: provider.RoleTool, ToolCallID: "tool-call-instant", Name: "task", Content: agent.FormatStartedTaskResult("task-instant", "instant")})
+
 	job, err := jm.Start(context.Background(), "task", "instant", func(_ context.Context, _ io.Writer) (string, error) {
 		return "instant-result", nil
-	}, nil, func(id string) { ctrl.RegisterJobMeta(id, "tool-call-instant") })
+	}, nil, func(id string) {
+		for i := range sess.Messages {
+			if sess.Messages[i].Role == provider.RoleTool && sess.Messages[i].ToolCallID == "tool-call-instant" {
+				sess.Messages[i].Content = agent.FormatStartedTaskResult(id, "instant")
+			}
+		}
+		ctrl.RegisterJobMeta(id, "tool-call-instant")
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -480,13 +534,19 @@ func TestInstantCompletionDrainsToolResult(t *testing.T) {
 		t.Fatal("expected nil-provider Run to error")
 	}
 
-	var toolMsgs int
+	var toolMsgs, envelopes int
 	for _, m := range sess.Messages {
 		if m.Role == provider.RoleTool && m.ToolCallID == "tool-call-instant" && m.Content == "instant-result" {
 			toolMsgs++
 		}
+		if m.Role == provider.RoleUser && strings.Contains(m.Content, "background-task-result") && strings.Contains(m.Content, "instant-result") {
+			envelopes++
+		}
 	}
 	if toolMsgs != 1 {
-		t.Fatalf("expected 1 instant tool result, got %d; messages=%d", toolMsgs, len(sess.Messages))
+		t.Fatalf("expected 1 mid-history tool result, got %d; messages=%d", toolMsgs, len(sess.Messages))
+	}
+	if envelopes != 1 {
+		t.Fatalf("expected 1 tail envelope, got %d; messages=%d", envelopes, len(sess.Messages))
 	}
 }

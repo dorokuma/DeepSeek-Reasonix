@@ -165,7 +165,7 @@ func extractJobID(result string) string {
 func taskPostCallGuidance(jobID string) string {
 	rule := `⚠ BACKGROUND JOB STARTED — RESULT AUTO-DELIVERS
 
-The task is running in the background. Wait for its final result — it will appear automatically as a new tool result at the end of this conversation.
+The task is running in the background. When it finishes you will receive a user message tagged <background-task-result job="…"> at the END of this conversation (the original Started tool row is also updated). Use that tail message as the authoritative answer — do not re-dispatch.
 
 While waiting, do NOT:
 • Call peek-job to check progress (results arrive without polling)

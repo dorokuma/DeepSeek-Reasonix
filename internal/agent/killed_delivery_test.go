@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"io"
+	"strings"
 	"testing"
 	"time"
 
@@ -43,5 +44,9 @@ func TestCompleteBackgroundJobAfterKill(t *testing.T) {
 	}
 	if IsStartedTaskPlaceholder(sess.Messages[1].Content) {
 		t.Fatal("started placeholder should be replaced")
+	}
+	last := sess.Messages[len(sess.Messages)-1]
+	if last.Role != provider.RoleUser || !strings.Contains(last.Content, "background-task-result") {
+		t.Fatalf("killed delivery must also append tail envelope, got %+v", last)
 	}
 }

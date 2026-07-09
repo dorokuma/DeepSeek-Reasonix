@@ -83,6 +83,9 @@ func (s *Session) ToolNameForCallID(toolCallID string) string {
 }
 
 // ReplaceTaskStartedWithResult overwrites a started-task tool row with the terminal answer (same tool_call_id).
+// This keeps OpenAI/Anthropic tool-call pairing valid for the original assistant tool_calls turn.
+// Callers that deliver sub-agent answers MUST still append a conversation-tail envelope
+// (see Agent.commitJobResult); mid-history patch alone is invisible to auto-reentry attention.
 func (s *Session) ReplaceTaskStartedWithResult(toolCallID, jobID, output string) bool {
 	if toolCallID == "" || jobID == "" || strings.TrimSpace(output) == "" {
 		return false
@@ -99,6 +102,24 @@ func (s *Session) ReplaceTaskStartedWithResult(toolCallID, jobID, output string)
 		}
 		m.Content = output
 		return true
+	}
+	return false
+}
+
+// HasBackgroundTaskResultEnvelope reports whether a tail delivery for jobID is already present.
+// Used to keep dual delivery (mid-history patch + tail envelope) idempotent under races.
+func (s *Session) HasBackgroundTaskResultEnvelope(jobID string) bool {
+	if s == nil || jobID == "" {
+		return false
+	}
+	needle := fmt.Sprintf("<background-task-result job=%q", jobID)
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for i := len(s.Messages) - 1; i >= 0; i-- {
+		m := s.Messages[i]
+		if m.Role == provider.RoleUser && strings.Contains(m.Content, needle) {
+			return true
+		}
 	}
 	return false
 }
