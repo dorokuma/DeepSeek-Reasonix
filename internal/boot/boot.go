@@ -462,8 +462,11 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 		}
 		return p, me.Price, me.ContextWindow, nil
 	}
-	resolveSubagentProviderForTask := func(modelRef, effort string) (provider.Provider, *provider.Pricing, int, error) {
-		return resolveSubagentProvider("task", modelRef, effort)
+	resolveSubagentProviderForTask := func(role, modelRef, effort string) (provider.Provider, *provider.Pricing, int, error) {
+		if strings.TrimSpace(role) == "" {
+			role = "task"
+		}
+		return resolveSubagentProvider(role, modelRef, effort)
 	}
 
 	// extractSharedSections reads the reasonix-system.md prompt and extracts
@@ -498,10 +501,24 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	}
 
 	subAgentGate := permission.NewGate(policy, nil)
-	reg.Add(agent.NewTaskTool(execProv, entry.Price, reg,
+	taskTool := agent.NewTaskTool(execProv, entry.Price, reg,
 		entry.ContextWindow, cfg.Agent.SoftCompactRatio, cfg.Agent.CompactRatio, cfg.Agent.CompactForceRatio,
 		cfg.Agent.Temperature, config.ArchiveDir(), agent.DefaultTaskSystemPrompt+"\n\n"+extractSharedSections(), subAgentGate,
-		resolveSubagentProviderForTask, hookRunner))
+		resolveSubagentProviderForTask, hookRunner)
+	// Unified entry: freeform task or skill= playbook (explore/research/…).
+	taskTool.SetSkillLookup(func(name string) (agent.SkillPlaybook, bool) {
+		sk, ok := skillStore.Read(name)
+		if !ok || sk.RunAs != skill.RunSubagent {
+			return agent.SkillPlaybook{}, false
+		}
+		return agent.SkillPlaybook{
+			Name:   sk.Name,
+			Body:   sk.Body + "\n\n" + extractSharedSections(),
+			Model:  sk.Model,
+			Effort: sk.Effort,
+		}, true
+	})
+	reg.Add(taskTool)
 
 	// Session history tools let the AI discover and read past conversations.
 	// `list_sessions` returns all saved session files; `read_session` loads one
@@ -555,12 +572,9 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 		MaxMainAgentReadonlyCalls: cfg.Agent.MaxMainAgentReadonlyCalls,
 	}
 
-	// Skill tools: run_skill / install_skill plus the dedicated subagent wrappers
-	// (explore / research / review / security_review). A subagent skill reuses the
-	// sub-agent machinery via this runner — an isolated loop with the skill body
-	// as system prompt, a tool set scoped to the skill's allowed-tools (minus the
-	// task/skill meta-tools, to bar recursion), and an optional per-skill model.
-	// Its tool activity nests under the invoking call, like `task`.
+	// Skill tools: run_skill (inline only for subagent redirect) / install_skill /
+	// read_skill. Background subagents use the unified `task` tool (optional skill=).
+	// skillRunner remains for any sync fallback path still wired through run_skill.
 	skillRunner := func(sctx context.Context, sk skill.Skill, task string) (string, error) {
 		p, pr, cw, err := resolveSubagentProvider(sk.Name, subagentModelRef(cfg, sk), subagentEffortRef(cfg, sk))
 		if err != nil {
@@ -580,38 +594,6 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 			ArchiveDir:    config.ArchiveDir(),
 		}, event.Discard)
 	}
-	bgRunner := func(ctx context.Context, work func(context.Context, io.Writer) (string, error), label string, onComplete func(string)) (string, error) {
-		jm, ok := jobs.FromContext(ctx)
-		if !ok {
-			return "", fmt.Errorf("background execution is not available in this context")
-		}
-		parentID, _, _, _ := agent.CallContext(ctx)
-		var registerMeta jobs.BeforeRunFunc
-		if ctrl, ok := agent.CtrlFromContext(ctx); ok {
-			registerMeta = func(jobID string) { ctrl.RegisterJobMeta(jobID, parentID) }
-		}
-		job, err := jm.Start(ctx, "skill", label, func(jobCtx context.Context, _ io.Writer) (string, error) {
-			heartbeatDone := make(chan struct{})
-			defer close(heartbeatDone)
-			go func() {
-				ticker := time.NewTicker(10 * time.Second)
-				defer ticker.Stop()
-				for {
-					select {
-					case <-heartbeatDone:
-						return
-					case <-ticker.C:
-						jobs.UpdateJobActivity(jobCtx)
-					}
-				}
-			}()
-			return work(jobCtx, nil)
-		}, onComplete, registerMeta)
-		if err != nil {
-			return "", err
-		}
-		return job.ID, nil
-	}
 	skillProfile := func(sk skill.Skill) *event.Profile {
 		model := subagentModelRef(cfg, sk)
 		if model == "" {
@@ -619,7 +601,8 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 		}
 		return &event.Profile{Model: model, Effort: "max"}
 	}
-	reg.Add(skill.NewRunSkillTool(skillStore, skillRunner, bgRunner, skillProfile))
+	// bgRunner is nil: subagent skills must go through task(skill=...), not a second entry.
+	reg.Add(skill.NewRunSkillTool(skillStore, skillRunner, nil, skillProfile))
 	reg.Add(skill.NewReadSkillTool(skillStore))
 	reg.Add(skill.NewInstallSkillTool(skillStore, nil))
 	reg.Add(installsource.NewTool(installsource.Options{
@@ -658,9 +641,8 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 			return ok
 		},
 	}))
-	for _, t := range skill.BuiltinSubagentTools(skillStore, skillRunner, bgRunner, skillProfile) {
-		reg.Add(t)
-	}
+	// Dedicated explore/research/review tools are intentionally not registered —
+	// one background door: task (optional skill= playbook).
 
 	execSess := agent.NewSession(sysPrompt)
 	executor := agent.New(execProv, reg, execSess, agentOpts, sink)

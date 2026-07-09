@@ -63,7 +63,7 @@ func (*runSkillTool) Name() string { return "run_skill" }
 func (*runSkillTool) ReadOnly() bool { return false }
 
 func (*runSkillTool) Description() string {
-	return "Invoke a playbook from the Skills index pinned in the system prompt. For the built-in subagent skills (explore / research / review / security_review), prefer the dedicated top-level tools of the same name — they're easier to pick and do the same thing. Pass `name` as the BARE identifier (e.g. 'explore'), NOT the `[🧬 subagent]` tag that follows it in the index. `[🧬 subagent]` skills spawn an isolated subagent — only the final distilled answer returns; supply `arguments` describing the concrete task since the subagent has no other context. Untagged skills are inlined: the body becomes a tool result you read and follow."
+	return "Invoke an inline playbook from the Skills index (untagged entries). Pass `name` as the BARE identifier. Skills tagged `[🧬 subagent]` are NOT started here — use the task tool with skill=<name> and prompt=<goal> (single background entry). Untagged skills are inlined: the body becomes a tool result you read and follow."
 }
 
 func (*runSkillTool) Schema() json.RawMessage {
@@ -96,31 +96,9 @@ func (t *runSkillTool) Execute(ctx context.Context, args json.RawMessage) (strin
 	rawArgs := strings.TrimSpace(p.Arguments)
 
 	if sk.RunAs == RunSubagent {
-		if rawArgs == "" {
-			return "", fmt.Errorf("run_skill: skill %q is a subagent and requires 'arguments' — the subagent has no other context, so describe the concrete task", name)
-		}
-		if t.bgRunner != nil && agent.MaySpawnAsyncSubagent(ctx) {
-			label := "run_skill:" + name
-			if jm, ok := jobs.FromContext(ctx); ok {
-				if err := agent.CheckBackgroundDuplicate(jm, label, rawArgs); err != nil {
-					return "", err
-				}
-			}
-			jobID, err := t.bgRunner(ctx, func(jobCtx context.Context, _ io.Writer) (string, error) {
-				return t.runner(jobCtx, sk, rawArgs)
-			}, label, agent.OnCompleteCallbackFrom(ctx))
-			if err != nil {
-				return "", err
-			}
-			if jm, ok := jobs.FromContext(ctx); ok {
-				agent.RegisterBackgroundDispatchMeta(jm, jobID, label, rawArgs)
-			}
-			return agent.FormatStartedTaskResult(jobID, label), nil
-		}
-		if t.runner == nil {
-			return "", fmt.Errorf("run_skill: skill %q is runAs=subagent but no subagent runner is configured in this session", name)
-		}
-		return t.runner(ctx, sk, rawArgs)
+		// Single background entry is `task` with skill=. Refuse a second door so
+		// models cannot start explore via run_skill and then also call task.
+		return "", fmt.Errorf("subagent skill %q: call task with skill=%q and prompt set to the concrete goal (one background entry). Do not start another task for the same goal while it runs", name, name)
 	}
 	return renderInline(sk, rawArgs), nil
 }

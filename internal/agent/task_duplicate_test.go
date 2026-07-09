@@ -22,7 +22,11 @@ func TestFindRunningDuplicateTask(t *testing.T) {
 		t.Fatalf("same label different prompt should not duplicate, got %q", got)
 	}
 	if got := findRunningDuplicateTask(jm, "explore api", "do the thing"); got == "" {
-		t.Fatal("expected duplicate when label and prompt match fingerprint")
+		t.Fatal("expected duplicate when prompt matches fingerprint")
+	}
+	// Different display label, same goal → still duplicate (goal-primary).
+	if got := findRunningDuplicateTask(jm, "task", "do the thing"); got == "" {
+		t.Fatal("expected cross-label duplicate for the same prompt")
 	}
 	jm.Kill(job.ID)
 
@@ -31,8 +35,8 @@ func TestFindRunningDuplicateTask(t *testing.T) {
 		return "", ctx.Err()
 	}, nil)
 	RegisterBackgroundDispatchMeta(jm, job2.ID, "task", "do the thing")
-	if got := findRunningDuplicateTask(jm, "task", "do the thing"); got == "" {
-		t.Fatal("expected duplicate by label+prompt fingerprint")
+	if got := findRunningDuplicateTask(jm, "explore", "do the thing"); got == "" {
+		t.Fatal("expected goal-primary duplicate across labels")
 	}
 	if got := findRunningDuplicateTask(jm, "task", "unique prompt xyz"); got != "" {
 		t.Fatalf("unexpected dup %q", got)

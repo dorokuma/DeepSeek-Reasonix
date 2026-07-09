@@ -36,33 +36,29 @@ func TestRunSkillUnknown(t *testing.T) {
 	}
 }
 
-func TestRunSkillSubagentNeedsRunner(t *testing.T) {
+func TestRunSkillSubagentRedirectsToTask(t *testing.T) {
 	home := t.TempDir()
 	writeSkill(t, home, ".reasonix/skills/dig.md", "---\ndescription: dig\nrunAs: subagent\n---\nbody")
-	tl := NewRunSkillTool(New(Options{HomeDir: home, DisableBuiltins: true}), nil, nil) // nil runner
-	if _, err := tl.Execute(context.Background(), json.RawMessage(`{"name":"dig","arguments":"go"}`)); err == nil {
-		t.Error("subagent skill with no runner should error, not silently inline")
+	tl := NewRunSkillTool(New(Options{HomeDir: home, DisableBuiltins: true}), nil, nil)
+	_, err := tl.Execute(context.Background(), json.RawMessage(`{"name":"dig","arguments":"go"}`))
+	if err == nil {
+		t.Fatal("subagent skill via run_skill should error and redirect to task")
+	}
+	if !strings.Contains(err.Error(), "task") || !strings.Contains(err.Error(), "skill=") {
+		t.Fatalf("error should point at task skill=, got %v", err)
 	}
 }
 
-func TestRunSkillSubagentRuns(t *testing.T) {
+func TestRunSkillSubagentDoesNotRunInline(t *testing.T) {
 	home := t.TempDir()
 	writeSkill(t, home, ".reasonix/skills/dig.md", "---\ndescription: dig\nrunAs: subagent\n---\nbody")
-	var gotTask string
 	runner := func(_ context.Context, sk Skill, task string) (string, error) {
-		gotTask = task
-		return "answer from " + sk.Name, nil
+		t.Fatal("runner must not be called for subagent via run_skill")
+		return "", nil
 	}
 	tl := NewRunSkillTool(New(Options{HomeDir: home, DisableBuiltins: true}), runner, nil)
-	out, err := tl.Execute(context.Background(), json.RawMessage(`{"name":"dig","arguments":"find X"}`))
-	if err != nil {
-		t.Fatalf("execute: %v", err)
-	}
-	if gotTask != "find X" {
-		t.Errorf("runner got task %q", gotTask)
-	}
-	if out != "answer from dig" {
-		t.Errorf("runner output not returned: %q", out)
+	if _, err := tl.Execute(context.Background(), json.RawMessage(`{"name":"dig","arguments":"find X"}`)); err == nil {
+		t.Fatal("expected redirect error")
 	}
 }
 
@@ -83,13 +79,13 @@ func TestRunSkillSubagentResolvesProfile(t *testing.T) {
 	}
 }
 
-func TestRunSkillSubagentRequiresArgs(t *testing.T) {
+func TestRunSkillSubagentAlwaysRedirects(t *testing.T) {
 	home := t.TempDir()
 	writeSkill(t, home, ".reasonix/skills/dig.md", "---\ndescription: dig\nrunAs: subagent\n---\nbody")
-	runner := func(_ context.Context, _ Skill, _ string) (string, error) { return "x", nil }
-	tl := NewRunSkillTool(New(Options{HomeDir: home, DisableBuiltins: true}), runner, nil)
+	tl := NewRunSkillTool(New(Options{HomeDir: home, DisableBuiltins: true}), nil, nil)
+	// Even without arguments, redirect (no silent inline of subagent body).
 	if _, err := tl.Execute(context.Background(), json.RawMessage(`{"name":"dig"}`)); err == nil {
-		t.Error("subagent skill should require arguments")
+		t.Error("subagent skill should redirect to task, not succeed")
 	}
 }
 

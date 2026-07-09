@@ -14,11 +14,13 @@ func findRunningDuplicateTask(jm *jobs.Manager, label, prompt string) string {
 	if jm == nil {
 		return ""
 	}
-	key := taskDispatchFingerprint(label, prompt)
+	// Goal-primary: same prompt/goal collides across skill/task labels and job kinds.
+	_ = label
+	key := taskDispatchFingerprint("", prompt)
 	if key == "" {
 		return ""
 	}
-	semKey := taskDispatchSemanticKey(label, prompt)
+	semKey := taskDispatchSemanticKey("", prompt)
 	pol := jm.SemanticDedupPolicy()
 	for _, v := range jm.Running() {
 		if v.Kind != "task" && v.Kind != "skill" {
@@ -33,9 +35,6 @@ func findRunningDuplicateTask(jm *jobs.Manager, label, prompt string) string {
 	}
 	for _, v := range jm.Running() {
 		if v.Kind != "task" && v.Kind != "skill" {
-			continue
-		}
-		if pol.RequireSameLabel && !strings.EqualFold(strings.TrimSpace(v.Label), strings.TrimSpace(label)) {
 			continue
 		}
 		other := jm.DispatchSemantic(v.ID)
@@ -62,30 +61,28 @@ func RegisterBackgroundDispatchMeta(jm *jobs.Manager, jobID, label, prompt strin
 	if jm == nil || jobID == "" {
 		return
 	}
-	jm.SetDispatchDigest(jobID, taskDispatchFingerprint(label, prompt))
-	jm.SetDispatchSemantic(jobID, taskDispatchSemanticKey(label, prompt))
+	// Labels are display-only; dedup keys are prompt/goal only so explore+task
+	// (or two skills) cannot double-book the same work.
+	_ = label
+	jm.SetDispatchDigest(jobID, taskDispatchFingerprint("", prompt))
+	jm.SetDispatchSemantic(jobID, taskDispatchSemanticKey("", prompt))
 }
 
 func taskDispatchFingerprint(label, prompt string) string {
-	l := strings.TrimSpace(strings.ToLower(label))
+	_ = label
 	p := normalizeTaskPrompt(prompt)
-	if p == "" && l == "" {
+	if p == "" {
 		return ""
 	}
-	// Hash the full payload (no prefix truncation) so long prompts that share a
+	// Hash the full prompt (no prefix truncation) so long prompts that share a
 	// common head never collide as false exact-duplicates.
-	payload := l + "\x00" + p
-	sum := sha256.Sum256([]byte(payload))
+	sum := sha256.Sum256([]byte(p))
 	return "fp:" + hex.EncodeToString(sum[:8])
 }
 
 func taskDispatchSemanticKey(label, prompt string) string {
-	l := strings.TrimSpace(strings.ToLower(label))
-	p := normalizeTaskPromptSemantic(prompt)
-	if p == "" && l == "" {
-		return ""
-	}
-	return l + "\x00" + p
+	_ = label
+	return normalizeTaskPromptSemantic(prompt)
 }
 
 func normalizeTaskPrompt(prompt string) string {

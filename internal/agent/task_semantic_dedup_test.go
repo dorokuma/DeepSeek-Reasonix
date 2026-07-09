@@ -26,6 +26,10 @@ func TestSemanticDuplicateDetectsParaphrase(t *testing.T) {
 	if got := findRunningDuplicateTask(jm, "explore", "find all uses of foo in the repository"); got == "" {
 		t.Fatal("expected semantic duplicate for paraphrased prompt")
 	}
+	// Different label (task vs explore) must still match on goal text.
+	if got := findRunningDuplicateTask(jm, "task", "find all uses of foo in the repository"); got == "" {
+		t.Fatal("expected cross-label semantic duplicate for same goal")
+	}
 	if got := findRunningDuplicateTask(jm, "explore", "audit database migration scripts"); got != "" {
 		t.Fatalf("unrelated prompt should not duplicate, got %q", got)
 	}

@@ -235,10 +235,19 @@ func acpBuiltinTools(cfg *config.Config, cwd string, writeRoots []string) []tool
 	return ws.Tools(cfg.Tools.Enabled...)
 }
 
-func newACPSubagentProviderResolver(cfg *config.Config, parent *config.ProviderEntry, proxySpec netclient.ProxySpec) func(string, string) (provider.Provider, *provider.Pricing, int, error) {
-	return func(modelRef, effort string) (provider.Provider, *provider.Pricing, int, error) {
+func newACPSubagentProviderResolver(cfg *config.Config, parent *config.ProviderEntry, proxySpec netclient.ProxySpec) func(string, string, string) (provider.Provider, *provider.Pricing, int, error) {
+	return func(role, modelRef, effort string) (provider.Provider, *provider.Pricing, int, error) {
 		_ = parent
+		role = strings.TrimSpace(role)
+		if role == "" {
+			role = "task"
+		}
 		modelRef = strings.TrimSpace(modelRef)
+		if modelRef == "" {
+			if m := strings.TrimSpace(cfg.Agent.SubagentModels[role]); m != "" {
+				modelRef = m
+			}
+		}
 		if modelRef == "" {
 			modelRef = strings.TrimSpace(cfg.Agent.SubagentModel)
 			for _, key := range []string{"task", "explore", "research", "review", "security_review", "security-review"} {
