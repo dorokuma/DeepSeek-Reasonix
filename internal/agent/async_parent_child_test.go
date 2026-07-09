@@ -23,7 +23,7 @@ func TestTaskToolRejectsAsyncSpawnFromSubagentDepth(t *testing.T) {
 
 	_, err := tt.Execute(ctx, json.RawMessage(`{"prompt":"nested","description":"x"}`))
 	if err == nil {
-		t.Fatal("expected error when sub-agent depth tries to spawn another task")
+		t.Fatal("expected error when sub-agent depth tries to start background task")
 	}
 }
 

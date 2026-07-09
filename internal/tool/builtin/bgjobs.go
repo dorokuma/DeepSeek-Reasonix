@@ -28,7 +28,7 @@ type steerJob struct{}
 
 func (steerJob) Name() string { return "steer-job" }
 func (steerJob) Description() string {
-	return `Queue a new instruction to a running background shell job. Not a status check — use peek-job for shell output.`
+	return `Queue a new instruction to a running background job (task sub-agent or shell). Not a status check.`
 }
 func (steerJob) ReadOnly() bool { return false }
 func (steerJob) Schema() json.RawMessage {
@@ -44,7 +44,7 @@ func (steerJob) Schema() json.RawMessage {
 
 func (steerJob) PostCallGuidanceAfter(_ json.RawMessage, result string) string {
 	if strings.Contains(result, `"status":"queued"`) || strings.Contains(result, "queued") {
-		return "Instruction queued only. For shell jobs, read output with peek-job."
+		return "Instruction queued only — not the job's final answer."
 	}
 	return ""
 }
@@ -119,7 +119,7 @@ type peekJob struct{}
 
 func (peekJob) Name() string { return "peek-job" }
 func (peekJob) Description() string {
-	return `Non-blocking status/output snapshot for background shell jobs. Prefer this for long-running bash; not needed for the task tool (task returns its answer when the call finishes).`
+	return `Non-blocking status/output for background shell jobs. Task sub-agent answers auto-arrive as a conversation-tail observation — do not poll those with peek.`
 }
 func (peekJob) ReadOnly() bool { return true }
 func (peekJob) Schema() json.RawMessage {
@@ -161,7 +161,7 @@ func (peekJob) Execute(ctx context.Context, params json.RawMessage) (string, err
 		out["kind"] = kind
 		if jobs.AutoDelivers(kind) {
 			out["delivery"] = "auto_observation"
-			out["note"] = "legacy auto-deliver job (if any); task tool itself is synchronous"
+			out["note"] = "task job: answer auto-arrives as conversation-tail observation"
 		} else {
 			out["delivery"] = "peek_only"
 			out["note"] = "shell job: use new_output below"

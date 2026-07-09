@@ -209,7 +209,7 @@ func (b bash) Execute(ctx context.Context, args json.RawMessage) (string, error)
 		if err != nil {
 			return "", err
 		}
-		return fmt.Sprintf("Started background shell job %q. Use peek-job(%q) for output; cancel-job(%q) to stop.", job.ID, job.ID, job.ID), nil
+		return fmt.Sprintf("Started background shell job %q. Use peek-job(%q) for output; cancel-job(%q) to stop. (task sub-agents are separate: their answers auto-arrive at conversation tail.)", job.ID, job.ID, job.ID), nil
 	}
 
 	runCtx := ctx

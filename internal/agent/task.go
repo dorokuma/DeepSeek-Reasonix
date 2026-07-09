@@ -4,11 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"strings"
+	"time"
 
 	"reasonix/internal/ctxmode"
 	"reasonix/internal/event"
 	"reasonix/internal/hook"
+	"reasonix/internal/jobs"
 	"reasonix/internal/provider"
 	"reasonix/internal/tool"
 )
@@ -37,9 +40,9 @@ func SubagentMetaTools() []string {
 	return out
 }
 
-// TaskTool runs a synchronous sub-agent — freeform prompt only. The child uses a
-// filtered tool set; this tool blocks until the child finishes and returns the
-// child's final answer as the tool result (no background job, no later delivery).
+// TaskTool is the single entry for spawning a background sub-agent — freeform
+// prompt only. The sub-agent runs with a filtered tool whitelist; only its final
+// assistant message is returned to the parent (via a runtime observation message).
 type TaskTool struct {
 	prov              provider.Provider
 	pricing           *provider.Pricing
@@ -89,8 +92,11 @@ func NewTaskTool(prov provider.Provider, pricing *provider.Pricing, parentReg *t
 func (t *TaskTool) Name() string { return "task" }
 
 func (t *TaskTool) Description() string {
-	return "Run one focused sub-agent with a self-contained prompt (child does not see this conversation). " +
-		"Blocks until the child finishes. The tool result is the child's final answer — use it directly."
+	// Keep short: long "do not invent X" lists train models to invent X.
+	return "Spawn one background sub-agent with a self-contained prompt (child does not see this conversation). " +
+		"Returns an ACCEPTED receipt with job_id immediately — that call is done. " +
+		"The child's answer arrives later as a conversation-tail observation for that job_id. " +
+		"Do not re-call task for the same goal while waiting."
 }
 
 func (t *TaskTool) Schema() json.RawMessage {
@@ -113,6 +119,23 @@ func (t *TaskTool) ReadOnly() bool { return false }
 // each sub-agent operates in an isolated session.
 func (t *TaskTool) Concurrent() bool { return true }
 
+// PostCallGuidance implements tool.PostCallGuidance.
+func (t *TaskTool) PostCallGuidance(args json.RawMessage) string {
+	return taskPostCallGuidance("")
+}
+
+// PostCallGuidanceAfter implements tool.PostCallGuidanceWithResult.
+func (t *TaskTool) PostCallGuidanceAfter(args json.RawMessage, result string) string {
+	return taskPostCallGuidance(ExtractJobIDFromStartedResult(result))
+}
+
+func taskPostCallGuidance(jobID string) string {
+	if jobID == "" {
+		return "ACCEPTED means the spawn succeeded. Wait for the later conversation-tail observation with the answer; do not re-dispatch the same goal."
+	}
+	return fmt.Sprintf("ACCEPTED job_id=%s — spawn complete. Wait for that job's conversation-tail observation; do not re-dispatch the same goal.", jobID)
+}
+
 func (t *TaskTool) Execute(ctx context.Context, args json.RawMessage) (string, error) {
 	// Depth guard: enforce nesting limit from Agent Options.
 	depth := NestingDepthFrom(ctx)
@@ -124,9 +147,8 @@ func (t *TaskTool) Execute(ctx context.Context, args json.RawMessage) (string, e
 	if depth >= maxDepth {
 		return "", fmt.Errorf("sub-agent blocked: nesting depth limit (%d) reached", maxDepth)
 	}
-	// Parent→child only: a running sub-agent must not spawn further tasks.
 	if !MaySpawnAsyncSubagent(ctx) {
-		return "", fmt.Errorf("sub-agents cannot spawn further task sub-agents")
+		return "", fmt.Errorf("async sub-agents are parent→child only: a running sub-agent cannot start another background task")
 	}
 
 	var p struct {
@@ -139,28 +161,70 @@ func (t *TaskTool) Execute(ctx context.Context, args json.RawMessage) (string, e
 	if p.Prompt == "" {
 		return "", fmt.Errorf("prompt is required")
 	}
-	_ = strings.TrimSpace(p.Description) // label is UI-only; sync path has no job table entry
-
+	label := strings.TrimSpace(p.Description)
+	if label == "" {
+		label = "task"
+	}
 	sysPrompt := t.sysPrompt
 	role := "task"
 	modelRef, effort := "", ""
-	maxSteps := 0 // 0 = no limit unless caller configures otherwise
 
-	// Children never inherit task/meta tools that could re-delegate.
+	maxSteps := 0
+	// Default is no limit (0). Only capped when explicitly set by the caller.
+
+	// Background sub-agents are one level deep only: children never receive
+	// task / meta-tools that could spawn async grandchildren.
 	subReg := t.buildSubReg(nil, false)
 
-	parentID, parentSink, _, _ := CallContext(ctx)
-	nested := subSinkFor(parentID, parentSink)
+	// Always run as a background job so the sub-agent survives across turns.
+	jm, ok := jobs.FromContext(ctx)
+	if !ok {
+		return "", fmt.Errorf("background execution is not available in this context")
+	}
+	if err := CheckBackgroundDuplicate(jm, label, p.Prompt); err != nil {
+		return "", err
+	}
+	parentID, _, _, _ := CallContext(ctx)
+	nested := event.Discard
+	// Completion is exclusively jobs.Manager.SetOnCompletion → Controller.handleJobCompletion.
+	// Do not pass a per-job onComplete (avoids double wake / dual paths).
+	var registerMeta jobs.BeforeRunFunc
+	if ctrl, ok := CtrlFromContext(ctx); ok {
+		registerMeta = func(jobID string) { ctrl.RegisterJobMeta(jobID, parentID) }
+	}
+	job, err := jm.Start(ctx, jobs.KindTask, label, func(jobCtx context.Context, _ io.Writer) (string, error) {
+		// Heartbeat: keep lastActive fresh so the stale monitor (per-kind idle
+		// kill, default 1h for task) won't kill a busy sub-agent whose output
+		// doesn't flow through the writer.
+		heartbeatDone := make(chan struct{})
+		defer close(heartbeatDone)
+		go func() {
+			ticker := time.NewTicker(10 * time.Second)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-heartbeatDone:
+					return
+				case <-ticker.C:
+					jobs.UpdateJobActivity(jobCtx)
+				}
+			}
+		}()
 
-	childCtx := WithNestingDepth(ctx, depth+1)
-	if parentAgent := AgentFromContext(ctx); parentAgent != nil {
-		childCtx = WithAgent(childCtx, parentAgent)
+		bgCtx := WithNestingDepth(jobCtx, depth+1)
+		if parentAgent := AgentFromContext(ctx); parentAgent != nil {
+			bgCtx = WithAgent(bgCtx, parentAgent)
+		}
+		if opts := OptionsFromContext(ctx); opts != nil {
+			bgCtx = WithOptions(bgCtx, opts)
+		}
+		return t.runSub(bgCtx, p.Prompt, subReg, nested, maxSteps, sysPrompt, role, modelRef, effort)
+	}, nil, registerMeta)
+	if err != nil {
+		return "", err
 	}
-	if opts := OptionsFromContext(ctx); opts != nil {
-		childCtx = WithOptions(childCtx, opts)
-	}
-	// Synchronous: block until the child finishes; tool result is the answer.
-	return t.runSub(childCtx, p.Prompt, subReg, nested, maxSteps, sysPrompt, role, modelRef, effort)
+	RegisterBackgroundDispatchMeta(jm, job.ID, label, p.Prompt)
+	return FormatStartedTaskResult(job.ID, label), nil
 }
 
 // buildSubReg returns the sub-agent's tool set: the named whitelist (minus

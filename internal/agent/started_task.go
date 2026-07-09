@@ -37,9 +37,8 @@ func BackgroundDeliveryCallID(jobID string) string {
 	return legacyDeliveryCallIDPrefix + jobID
 }
 
-// FormatStartedTaskResult builds a short legacy start receipt for historical
-// transcripts and tests. Live task tool calls are synchronous and return the
-// child's answer directly (they no longer emit this form).
+// FormatStartedTaskResult is the tool return when a background sub-agent starts.
+// Short on purpose: long ban-lists name phantom tools and train models to invent them.
 func FormatStartedTaskResult(jobID, label string) string {
 	if label == "" {
 		label = "task"
@@ -49,9 +48,10 @@ func FormatStartedTaskResult(jobID, label string) string {
 		Status:           "started",
 		Label:            label,
 		ToolCallComplete: true,
-		AnswerDelivery:   "legacy",
+		AnswerDelivery:   "conversation-tail observation",
 	})
-	return fmt.Sprintf("ACCEPTED job_id: %s label: %s tool_result: COMPLETE\n%s", jobID, label, string(machine))
+	return fmt.Sprintf("ACCEPTED job_id: %s label: %s tool_result: COMPLETE\nanswer: later conversation-tail observation for this job_id\n%s",
+		jobID, label, string(machine))
 }
 
 // FormatBackgroundTaskResult builds the runtime-injected observation the parent
