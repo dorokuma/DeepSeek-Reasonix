@@ -209,9 +209,7 @@ func (r *Registry) Add(t Tool) {
 		return
 	}
 	name := t.Name()
-	// Refuse empty names and removed legacy model-facing tools.
-	if name == "" || name == "task" || name == "explore" || name == "research" ||
-		name == "review" || name == "security_review" || name == "security-review" {
+	if name == "" {
 		return
 	}
 	r.mu.Lock()

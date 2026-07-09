@@ -155,9 +155,6 @@ func (f *acpFactory) NewSession(ctx context.Context, p acp.SessionParams) (*cont
 	if len(cfg.Permissions.MainAgentAllowed) > 0 {
 		mainAgentAllowed = make(map[string]bool)
 		for _, name := range cfg.Permissions.MainAgentAllowed {
-			if name == "task" || name == "explore" || name == "research" || name == "review" || name == "security_review" || name == "security-review" {
-				continue
-			}
 			mainAgentAllowed[name] = true
 		}
 	}

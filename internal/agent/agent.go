@@ -1545,22 +1545,7 @@ type toolOutcome struct {
 // — the caller emits ToolDispatch/ToolResult — so it is safe to invoke from
 // parallel goroutines.
 
-// removedToolRedirect returns a non-empty error body when name is a deleted model-facing tool.
-func removedToolRedirect(name string) string {
-	switch name {
-	case "task", "explore", "research", "review", "security_review", "security-review":
-		return "tool \"" + name + "\" was removed. Use spawn_agent (then wait_agent / list_agents / send_message / followup_task / interrupt_agent). Do not call \"" + name + "\" again."
-	default:
-		return ""
-	}
-}
-
 func (a *Agent) executeOne(ctx context.Context, call provider.ToolCall) toolOutcome {
-	// Legacy async tool names removed (Codex MultiAgent V2). History may still train the model to call them.
-	if removedToolRedirect(call.Name) != "" {
-		msg := removedToolRedirect(call.Name)
-		return toolOutcome{output: "error: " + msg, errMsg: "removed tool " + call.Name}
-	}
 	t, ok := a.tools.Get(call.Name)
 	if !ok {
 		// Tool not found — auto-correct via fuzzy matching instead of just
