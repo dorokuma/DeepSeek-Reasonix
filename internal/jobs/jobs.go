@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"reasonix/internal/event"
+	fileencoding "reasonix/internal/fileutil/encoding"
 	"reasonix/internal/nilutil"
 	"reasonix/internal/secrets"
 )
@@ -659,7 +660,7 @@ func (j *Job) readArtifactAllLocked() string {
 	if j.artifactPath == "" {
 		return ""
 	}
-	b, err := os.ReadFile(j.artifactPath)
+	b, err := fileencoding.ReadFileUTF8(j.artifactPath)
 	if err != nil {
 		if j.artifactErr == "" {
 			j.artifactErr = err.Error()

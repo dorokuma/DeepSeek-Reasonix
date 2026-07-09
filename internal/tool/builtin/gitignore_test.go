@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	fileencoding "reasonix/internal/fileutil/encoding"
 )
 
 func writeFileT(t *testing.T, path, body string) {
@@ -115,6 +117,23 @@ func TestGrepSkipsGitignored(t *testing.T) {
 	}
 	if strings.Contains(out, "out.txt") {
 		t.Fatalf("files under a .gitignore'd dir must be skipped: %q", out)
+	}
+}
+
+func TestGrepDecodesGB18030Gitignore(t *testing.T) {
+	dir := mkRepo(t)
+	if err := os.WriteFile(filepath.Join(dir, ".gitignore"), fileencoding.Encode("秘密.txt\n", fileencoding.GB18030), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	writeFileT(t, filepath.Join(dir, "秘密.txt"), "NEEDLE ignored\n")
+	writeFileT(t, filepath.Join(dir, "公开.txt"), "NEEDLE kept\n")
+
+	out := runTool(t, grepTool{}, map[string]any{"pattern": "NEEDLE", "path": dir})
+	if !strings.Contains(out, "公开.txt") {
+		t.Fatalf("kept Chinese file must be searched: %q", out)
+	}
+	if strings.Contains(out, "秘密.txt") {
+		t.Fatalf("GB18030 .gitignore pattern should skip Chinese file: %q", out)
 	}
 }
 

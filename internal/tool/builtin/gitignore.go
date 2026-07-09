@@ -210,11 +210,11 @@ func relSlash(base, target string) string {
 }
 
 func readIgnoreLines(path string) []string {
-	b, err := os.ReadFile(path)
+	body, _, err := readFileEncoded(path)
 	if err != nil {
 		return nil
 	}
-	return strings.Split(string(b), "\n")
+	return strings.Split(body, "\n")
 }
 
 // ancestorsBetween returns the directories in (repoRoot, root], shallow-first.
