@@ -22412,6 +22412,27 @@ body > .mermaid-diagram--fullscreen {
   --fg-faint: #8791a1;
 }
 
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme]) {
+    --bg: #e9edf3;
+    --bg-soft: #f0f3f8;
+    --bg-elev: #ffffff;
+    --bg-elev-2: #eef2f7;
+    --sidebar-bg: #f3f6fa;
+    --sidebar-hover: #e7edf5;
+    --sidebar-active: color-mix(in srgb, var(--accent) 9%, #ffffff);
+    --chat-bg: #f8fafc;
+    --workspace-preview-bg: #f8fafc;
+    --workspace-files-bg: #f1f4f8;
+    --workspace-files-hover: #e8edf5;
+    --border: #d5dde8;
+    --border-soft: #e3e9f1;
+    --fg: #121722;
+    --fg-dim: #4d5666;
+    --fg-faint: #8791a1;
+  }
+}
+
 .layout {
   --chat-min-width: 700px;
   --topicbar-height: 58px;
@@ -28319,6 +28340,12 @@ body > .mermaid-diagram--fullscreen {
 
 :root[data-theme="light"] .app--creation .msg--assistant .msg__body {
   color: color-mix(in srgb, var(--fg) 90%, var(--bg));
+}
+
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme]) .app--creation .msg--assistant .msg__body {
+    color: color-mix(in srgb, var(--fg) 90%, var(--bg));
+  }
 }
 
 .app--creation .md,
