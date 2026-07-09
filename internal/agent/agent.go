@@ -760,7 +760,7 @@ func (a *Agent) Run(ctx context.Context, input string) error {
 		if wakeForBackground && step == 0 {
 			_, _, _ = a.deliverPendingJobResultsWithRetry(16, 25*time.Millisecond)
 			a.clearBackgroundWakeIfCaughtUp()
-			// Abort empty wakes: nothing undelivered and no unread task_result at tail
+			// Abort empty wakes: nothing undelivered and no unread delivery at tail
 			// (avoids a no-op model call after a spurious second auto-reentry).
 			if !a.hasUndeliveredAutoJobs() && !a.sessionHasUnreadTaskResult() {
 				if a.ctrl != nil {
@@ -997,7 +997,7 @@ func (a *Agent) deliverPendingJobResultsWithRetry(attempts int, delay time.Durat
 	return "", "", false
 }
 
-// drainNotify used to pull finished jobs mid-turn; that spliced task_result into
+// drainNotify used to pull finished jobs mid-turn; that spliced delivery into
 // the middle of an active model loop. Delivery is now owned by:
 //   - Controller.handleJobCompletion when idle
 //   - flushDeferredDeliveries after a busy turn ends
