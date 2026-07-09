@@ -955,6 +955,7 @@ export interface SandboxView {
   effectiveWorkspaceRoot: string;
   effectiveWriteRoots: string[];
   shell: string; // "auto" | "bash" | "powershell" | "pwsh"
+  effectiveShell?: string; // "bash" | "git-bash" | "powershell" | "pwsh"
 }
 
 export interface NetworkProxyView {

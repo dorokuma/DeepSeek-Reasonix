@@ -1205,7 +1205,7 @@ function normalizeProviderPresetView(p: ProviderPresetView): ProviderPresetView 
 function normalizeSettingsView(view: SettingsView | null | undefined): SettingsView | null {
   if (!view) return null;
   const permissions = view.permissions ?? { mode: "ask", allow: [], ask: [], deny: [] };
-  const sandbox = view.sandbox ?? { bash: "enforce", network: false, workspaceRoot: "", allowWrite: [], effectiveWorkspaceRoot: "", effectiveWriteRoots: [], shell: "auto" };
+  const sandbox = view.sandbox ?? { bash: "enforce", network: false, workspaceRoot: "", allowWrite: [], effectiveWorkspaceRoot: "", effectiveWriteRoots: [], shell: "auto", effectiveShell: "" };
   const network = view.network ?? {
     proxyMode: "auto",
     proxyUrl: "",
@@ -1234,6 +1234,7 @@ function normalizeSettingsView(view: SettingsView | null | undefined): SettingsV
       allowWrite: asArray(sandbox.allowWrite),
       effectiveWorkspaceRoot: String(sandbox.effectiveWorkspaceRoot ?? ""),
       effectiveWriteRoots: asArray(sandbox.effectiveWriteRoots),
+      effectiveShell: String(sandbox.effectiveShell ?? sandbox.shell ?? ""),
     },
     network: {
       ...network,
@@ -6514,11 +6515,23 @@ function normalizeHookConfig(h: HookConfigView): HookConfigView {
   };
 }
 
+function effectiveShellLabel(value: string, t: ReturnType<typeof useT>): string {
+  switch (value) {
+    case "git-bash": return t("settings.effectiveShellGitBash");
+    case "pwsh": return t("settings.effectiveShellPwsh");
+    case "powershell": return t("settings.effectiveShellPowershell");
+    case "bash": return t("settings.effectiveShellBash");
+    case "auto": return t("common.auto");
+    default: return value.trim() || t("common.none");
+  }
+}
+
 function SandboxSection({ s, busy, apply, windows }: SectionProps & { windows: boolean }) {
   const t = useT();
   const sb = s.sandbox;
   const [root, setRoot] = useState(sb.workspaceRoot);
   const effectiveWriteRoots = asArray(sb.effectiveWriteRoots).filter((path) => String(path).trim());
+  const effectiveShell = effectiveShellLabel(String(sb.effectiveShell || sb.shell || ""), t);
   const set = (next: Partial<typeof sb>) =>
     apply(() => app.SetSandbox(next.bash ?? sb.bash, next.network ?? sb.network, next.workspaceRoot ?? sb.workspaceRoot, next.allowWrite ?? sb.allowWrite, next.shell ?? sb.shell));
   const reload = () => apply(() => app.ReloadSettings());
@@ -6538,11 +6551,14 @@ function SandboxSection({ s, busy, apply, windows }: SectionProps & { windows: b
     >
       <SettingsField label={t("settings.shellInterpreter")}>
         <select className="mem-select set-grow" value={sb.shell || "auto"} disabled={busy} onChange={(e) => void set({ shell: e.target.value })}>
-          <option value="auto">{t("settings.shellAuto")}</option>
+          <option value="auto">{windows ? t("settings.shellAutoWindows") : t("settings.shellAuto")}</option>
           <option value="bash">{t("settings.shellBash")}</option>
           <option value="powershell">{t("settings.shellPowershell")}</option>
           <option value="pwsh">{t("settings.shellPwsh")}</option>
         </select>
+      </SettingsField>
+      <SettingsField label={t("settings.effectiveShell")}>
+        <div className="settings-readonly-field">{effectiveShell}</div>
       </SettingsField>
       <SettingsField label={t("settings.bashSandbox")}>
         {/* Windows force-resolves bash to "off" (see config.BashModeForGOOS), so

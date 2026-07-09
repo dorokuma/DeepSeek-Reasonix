@@ -15,6 +15,7 @@ import (
 	"reasonix/internal/control"
 	"reasonix/internal/hook"
 	"reasonix/internal/provider"
+	"reasonix/internal/sandbox"
 )
 
 type captureTurnRunner struct {
@@ -164,6 +165,27 @@ func TestSettingsExposesEffectiveSandboxWriteRoots(t *testing.T) {
 	}
 	if !reflect.DeepEqual(got.AllowWrite, cfg.Sandbox.AllowWrite) {
 		t.Fatalf("AllowWrite = %v, want raw configured paths %v", got.AllowWrite, cfg.Sandbox.AllowWrite)
+	}
+	if got.EffectiveShell == "" {
+		t.Fatal("EffectiveShell is empty")
+	}
+}
+
+func TestSandboxEffectiveShellViewLabels(t *testing.T) {
+	cases := []struct {
+		name  string
+		shell sandbox.Shell
+		want  string
+	}{
+		{"bash", sandbox.Shell{Kind: sandbox.ShellBash, Path: "bash"}, "bash"},
+		{"git bash", sandbox.Shell{Kind: sandbox.ShellBash, Path: `C:\Program Files\Git\bin\bash.exe`}, "git-bash"},
+		{"windows powershell", sandbox.Shell{Kind: sandbox.ShellPowerShell, Path: "powershell"}, "powershell"},
+		{"pwsh", sandbox.Shell{Kind: sandbox.ShellPowerShell, Path: "pwsh"}, "pwsh"},
+	}
+	for _, tc := range cases {
+		if got := sandboxEffectiveShellView(tc.shell); got != tc.want {
+			t.Errorf("%s: sandboxEffectiveShellView() = %q, want %q", tc.name, got, tc.want)
+		}
 	}
 }
 

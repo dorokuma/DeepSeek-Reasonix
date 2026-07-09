@@ -742,6 +742,16 @@ function browserPlatformOverride(): "darwin" | "windows" | "linux" | "" {
   return value === "darwin" || value === "windows" || value === "linux" ? value : "";
 }
 
+function browserPreviewBashSandboxMode(): "enforce" | "off" {
+  return browserPlatformOverride() === "windows" ? "off" : "enforce";
+}
+
+function browserPreviewEffectiveShell(prefer = "auto"): "bash" | "git-bash" | "powershell" | "pwsh" {
+  const normalized = prefer.trim().toLowerCase();
+  if (normalized === "powershell" || normalized === "pwsh") return normalized;
+  return browserPlatformOverride() === "windows" ? "git-bash" : "bash";
+}
+
 function mockScenario(): "demo" | "fresh" | "running" | "guidance" | "sandbox_escape" | "notice" {
   if (typeof window === "undefined") return "demo";
   const value = new URLSearchParams(window.location.search).get("mock")?.trim().toLowerCase();
@@ -1080,7 +1090,7 @@ function makeMockApp(): AppBindings {
     ],
     providerPresets: mockProviderPresetViews(),
     permissions: { mode: "ask", allow: ["ls", "read_file"], ask: [], deny: ["Bash(rm:*)"] },
-    sandbox: { bash: "enforce", network: true, workspaceRoot: "", allowWrite: [], effectiveWorkspaceRoot: cwd, effectiveWriteRoots: [cwd], shell: "auto" },
+    sandbox: { bash: browserPreviewBashSandboxMode(), network: true, workspaceRoot: "", allowWrite: [], effectiveWorkspaceRoot: cwd, effectiveWriteRoots: [cwd], shell: "auto", effectiveShell: browserPreviewEffectiveShell("auto") },
     network: {
       proxyMode: "auto",
       proxyUrl: "",
@@ -3220,7 +3230,7 @@ function makeMockApp(): AppBindings {
         async ReloadSettings() {},
         async SetSandbox(bash: string, network: boolean, workspaceRoot: string, allowWrite: string[], shell: string) {
           const effectiveWorkspaceRoot = workspaceRoot.trim() || cwd;
-          settings.sandbox = { bash, network, workspaceRoot, allowWrite, effectiveWorkspaceRoot, effectiveWriteRoots: [effectiveWorkspaceRoot, ...allowWrite], shell };
+          settings.sandbox = { bash, network, workspaceRoot, allowWrite, effectiveWorkspaceRoot, effectiveWriteRoots: [effectiveWorkspaceRoot, ...allowWrite], shell, effectiveShell: browserPreviewEffectiveShell(shell) };
         },
         async SetNetwork(n: NetworkView) {
           settings.network = n;

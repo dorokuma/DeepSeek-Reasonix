@@ -14081,6 +14081,18 @@ body > .mermaid-diagram--fullscreen {
   font-weight: 500;
   line-height: 1.35;
 }
+.settings-readonly-field {
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  padding: 0 12px;
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--bg-elev-1) 72%, transparent);
+  color: var(--fg);
+  font-size: var(--font-control);
+  font-weight: 650;
+}
 .provider-models-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
