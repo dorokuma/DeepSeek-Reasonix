@@ -205,10 +205,18 @@ func NewRegistry() *Registry {
 // canonicalized once here — it never changes after registration, so Schemas()
 // (called every turn) reuses the result instead of re-marshaling.
 func (r *Registry) Add(t Tool) {
+	if t == nil {
+		return
+	}
+	name := t.Name()
+	// Refuse empty names and removed legacy model-facing tools.
+	if name == "" || name == "task" || name == "explore" || name == "research" ||
+		name == "review" || name == "security_review" || name == "security-review" {
+		return
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	name := t.Name()
 	if _, ok := r.tools[name]; !ok {
 		r.order = append(r.order, name)
 	}

@@ -3,27 +3,26 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 
-	"reasonix/internal/event"
-	"reasonix/internal/jobs"
 	"reasonix/internal/tool"
 )
 
-func TestTaskToolRejectsAsyncSpawnFromSubagentDepth(t *testing.T) {
-	jm := jobs.NewManager(event.Discard)
-	defer jm.Close()
-
+func TestTaskToolExecuteAlwaysRefuses(t *testing.T) {
 	reg := tool.NewRegistry()
 	tt := NewTaskTool(nil, nil, reg, 0, 0, 0, 0, 0, "", "", nil, nil, nil)
+	// Must not be registerable as a model tool.
 	reg.Add(tt)
-
-	ctx := WithNestingDepth(context.Background(), 1)
-	ctx = jobs.WithManager(ctx, jm)
-
-	_, err := tt.Execute(ctx, json.RawMessage(`{"prompt":"nested","description":"x"}`))
-	if err == nil {
-		t.Fatal("expected error when sub-agent depth tries to start background task")
+	if _, ok := reg.Get("task"); ok {
+		t.Fatal("registry must not accept legacy task tool")
+	}
+	if _, ok := reg.Get(""); ok {
+		t.Fatal("registry must not accept empty-name tool")
+	}
+	_, err := tt.Execute(context.Background(), json.RawMessage(`{"prompt":"nested","description":"x"}`))
+	if err == nil || !strings.Contains(err.Error(), "spawn_agent") {
+		t.Fatalf("expected refuse with spawn_agent redirect, got %v", err)
 	}
 }
 
@@ -33,5 +32,14 @@ func TestMaySpawnAsyncSubagentOnlyAtMainDepth(t *testing.T) {
 	}
 	if MaySpawnAsyncSubagent(WithNestingDepth(context.Background(), 1)) {
 		t.Fatal("depth 1 must not spawn async sub-agents")
+	}
+}
+
+func TestRemovedToolRedirect(t *testing.T) {
+	if removedToolRedirect("task") == "" {
+		t.Fatal("task must be blocked")
+	}
+	if removedToolRedirect("spawn_agent") != "" {
+		t.Fatal("spawn_agent must not be blocked")
 	}
 }

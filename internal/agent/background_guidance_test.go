@@ -1,16 +1,9 @@
 package agent
 
-import (
-	"strings"
-	"testing"
-)
+import "testing"
 
-func TestBackgroundJobPostCallGuidance_SkillJobID(t *testing.T) {
-	g := BackgroundJobPostCallGuidance(`{"job_id":"skill-9","status":"started","label":"explore"}`)
-	if g == "" {
-		t.Fatal("expected guidance for explore Started line")
-	}
-	if !strings.Contains(g, "skill-9") {
-		t.Fatalf("want skill-9 in guidance, got %q", g)
+func TestBackgroundJobPostCallGuidance_Empty(t *testing.T) {
+	if g := BackgroundJobPostCallGuidance(`{"job_id":"skill-9","status":"started"}`); g != "" {
+		t.Fatalf("want empty, got %q", g)
 	}
 }

@@ -4,14 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"strings"
-	"time"
 
 	"reasonix/internal/ctxmode"
 	"reasonix/internal/event"
 	"reasonix/internal/hook"
-	"reasonix/internal/jobs"
 	"reasonix/internal/provider"
 	"reasonix/internal/tool"
 )
@@ -25,7 +22,7 @@ If you need to ask for clarification, fail with a precise question instead of gu
 
 // Meta tools children must not inherit (Codex still allows spawn_agent on children).
 var subagentMetaTools = []string{
-	"task", // legacy
+	"task", // removed legacy name — never re-expose
 	"run_skill",
 	"install_skill",
 	"install_source",
@@ -90,142 +87,29 @@ func NewTaskTool(prov provider.Provider, pricing *provider.Pricing, parentReg *t
 	}
 }
 
-func (t *TaskTool) Name() string { return "task" }
+// TaskTool is an INTERNAL sub-agent kernel only (runSub). It is NOT a model-facing
+// tool. Codex MultiAgent V2 uses spawn_agent / wait_agent / …. Do not register this
+// type on a tool.Registry — Name is deliberately not a public tool name.
+//
+// Deprecated model name "task" is hard-blocked in Agent.executeOne.
 
-func (t *TaskTool) Description() string {
-	// Keep short: long "do not invent X" lists train models to invent X.
-	return "Spawn one background sub-agent with a self-contained prompt (child does not see this conversation). " +
-		"Returns an ACCEPTED receipt with job_id immediately — that call is done. " +
-		"The child's answer arrives later as a conversation-tail observation for that job_id. " +
-		"Do not re-call task for the same goal while waiting."
-}
+// Name is intentionally empty so accidental registry.Add is skipped/ignored.
+func (t *TaskTool) Name() string { return "" }
 
-func (t *TaskTool) Schema() json.RawMessage {
-	return json.RawMessage(`{
-"type":"object",
-"properties":{
-  "prompt":{"type":"string","description":"What the sub-agent should accomplish. Be specific about the deliverable — the sub-agent does not see this conversation."},
-  "description":{"type":"string","description":"Short label for the sub-task (3-7 words). Surfaced in the dispatch line so the user sees what's running."}
-},
-"required":["prompt"]
-}`)
-}
+// Description is unused (not model-facing).
+func (t *TaskTool) Description() string { return "" }
 
-// ReadOnly returns false because a sub-agent can invoke any whitelisted tool,
-// including writers. Concurrent() returns true because each sub-agent runs in
-// an isolated session, so parallel dispatch is safe.
+// Schema is unused (not model-facing).
+func (t *TaskTool) Schema() json.RawMessage { return json.RawMessage(`{"type":"object"}`) }
+
+// ReadOnly is unused (not model-facing).
 func (t *TaskTool) ReadOnly() bool { return false }
 
-// Concurrent reports that the task tool is safe to run concurrently because
-// each sub-agent operates in an isolated session.
-func (t *TaskTool) Concurrent() bool { return true }
-
-// PostCallGuidance implements tool.PostCallGuidance.
-func (t *TaskTool) PostCallGuidance(args json.RawMessage) string {
-	return taskPostCallGuidance("")
-}
-
-// PostCallGuidanceAfter implements tool.PostCallGuidanceWithResult.
-func (t *TaskTool) PostCallGuidanceAfter(args json.RawMessage, result string) string {
-	return taskPostCallGuidance(ExtractJobIDFromStartedResult(result))
-}
-
-func taskPostCallGuidance(jobID string) string {
-	if jobID == "" {
-		return "ACCEPTED means the spawn succeeded. Wait for the later conversation-tail observation with the answer; do not re-dispatch the same goal."
-	}
-	return fmt.Sprintf("ACCEPTED job_id=%s — spawn complete. Wait for that job's conversation-tail observation; do not re-dispatch the same goal.", jobID)
-}
-
+// Execute refuses if ever invoked as a tool.
 func (t *TaskTool) Execute(ctx context.Context, args json.RawMessage) (string, error) {
-	// Depth guard: enforce nesting limit from Agent Options.
-	depth := NestingDepthFrom(ctx)
-	const defaultMaxNestingDepth = 3
-	maxDepth := defaultMaxNestingDepth
-	if opts := OptionsFromContext(ctx); opts != nil && opts.MaxNestingDepth > 0 {
-		maxDepth = opts.MaxNestingDepth
-	}
-	if depth >= maxDepth {
-		return "", fmt.Errorf("sub-agent blocked: nesting depth limit (%d) reached", maxDepth)
-	}
-	if !MaySpawnAsyncSubagent(ctx) {
-		return "", fmt.Errorf("async sub-agents are parent→child only: a running sub-agent cannot start another background task")
-	}
-
-	var p struct {
-		Prompt      string `json:"prompt"`
-		Description string `json:"description"`
-	}
-	if err := json.Unmarshal(args, &p); err != nil {
-		return "", fmt.Errorf("invalid args: %w", err)
-	}
-	if p.Prompt == "" {
-		return "", fmt.Errorf("prompt is required")
-	}
-	label := strings.TrimSpace(p.Description)
-	if label == "" {
-		label = "task"
-	}
-	sysPrompt := t.sysPrompt
-	role := "task"
-	modelRef, effort := "", ""
-
-	maxSteps := 0
-	// Default is no limit (0). Only capped when explicitly set by the caller.
-
-	// Background sub-agents are one level deep only: children never receive
-	// task / meta-tools that could spawn async grandchildren.
-	subReg := t.buildSubReg(nil, false)
-
-	// Always run as a background job so the sub-agent survives across turns.
-	jm, ok := jobs.FromContext(ctx)
-	if !ok {
-		return "", fmt.Errorf("background execution is not available in this context")
-	}
-	if err := CheckBackgroundDuplicate(jm, label, p.Prompt); err != nil {
-		return "", err
-	}
-	parentID, _, _, _ := CallContext(ctx)
-	nested := event.Discard
-	// Completion is exclusively jobs.Manager.SetOnCompletion → Controller.handleJobCompletion.
-	// Do not pass a per-job onComplete (avoids double wake / dual paths).
-	var registerMeta jobs.BeforeRunFunc
-	if ctrl, ok := CtrlFromContext(ctx); ok {
-		registerMeta = func(jobID string) { ctrl.RegisterJobMeta(jobID, parentID) }
-	}
-	job, err := jm.Start(ctx, jobs.KindTask, label, func(jobCtx context.Context, _ io.Writer) (string, error) {
-		// Heartbeat: keep lastActive fresh so the stale monitor (per-kind idle
-		// kill, default 1h for task) won't kill a busy sub-agent whose output
-		// doesn't flow through the writer.
-		heartbeatDone := make(chan struct{})
-		defer close(heartbeatDone)
-		go func() {
-			ticker := time.NewTicker(10 * time.Second)
-			defer ticker.Stop()
-			for {
-				select {
-				case <-heartbeatDone:
-					return
-				case <-ticker.C:
-					jobs.UpdateJobActivity(jobCtx)
-				}
-			}
-		}()
-
-		bgCtx := WithNestingDepth(jobCtx, depth+1)
-		if parentAgent := AgentFromContext(ctx); parentAgent != nil {
-			bgCtx = WithAgent(bgCtx, parentAgent)
-		}
-		if opts := OptionsFromContext(ctx); opts != nil {
-			bgCtx = WithOptions(bgCtx, opts)
-		}
-		return t.runSub(bgCtx, p.Prompt, subReg, nested, maxSteps, sysPrompt, role, modelRef, effort)
-	}, nil, registerMeta)
-	if err != nil {
-		return "", err
-	}
-	RegisterBackgroundDispatchMeta(jm, job.ID, label, p.Prompt)
-	return FormatStartedTaskResult(job.ID, label), nil
+	_ = ctx
+	_ = args
+	return "", fmt.Errorf("tool \"task\" was removed; use spawn_agent (Codex multi-agent V2)")
 }
 
 // buildSubReg returns the sub-agent's tool set: the named whitelist (minus

@@ -85,7 +85,12 @@ var toolVerb = map[string]string{
 	"grep":          "Search",
 	"ls":            "List",
 	"web_search":    "Search",
-	"task":          "Task",
+	"spawn_agent":     "Spawn agent",
+	"wait_agent":      "Wait agent",
+	"list_agents":     "List agents",
+	"send_message":    "Send message",
+	"followup_task":   "Follow-up",
+	"interrupt_agent": "Interrupt agent",
 	"note":          "Note",
 	"audit_finish":  "Report",
 }
@@ -108,7 +113,7 @@ var toolArgKey = map[string]string{
 	"grep":          "pattern",
 	"ls":            "path",
 	"web_search":    "query",
-	"task":          "description",
+	"spawn_agent":     "task_name",
 	"note":          "kind",
 	"audit_finish":  "summary",
 }

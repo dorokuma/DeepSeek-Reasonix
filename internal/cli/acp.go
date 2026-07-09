@@ -11,6 +11,7 @@ import (
 
 	"reasonix/internal/acp"
 	"reasonix/internal/agent"
+	"reasonix/internal/multiagent"
 	"reasonix/internal/boot"
 	"reasonix/internal/command"
 	"reasonix/internal/config"
@@ -141,15 +142,22 @@ func (f *acpFactory) NewSession(ctx context.Context, p acp.SessionParams) (*cont
 	policy := permission.New(cfg.Permissions.Mode, cfg.Permissions.Allow, cfg.Permissions.Ask, cfg.Permissions.Deny)
 	headlessGate := permission.NewGate(policy, nil)
 	resolveSubagentProvider := newACPSubagentProviderResolver(cfg, entry, proxySpec)
-	reg.Add(agent.NewTaskTool(execProv, entry.Price, reg,
+	// Codex MultiAgent V2 (no legacy `task` tool).
+	maCtrl := multiagent.NewControl()
+	multiagent.RegisterTools(reg)
+	kernel := agent.NewTaskTool(execProv, entry.Price, reg,
 		entry.ContextWindow, cfg.Agent.SoftCompactRatio, cfg.Agent.CompactRatio, cfg.Agent.CompactForceRatio,
 		cfg.Agent.Temperature, config.ArchiveDir(), "", headlessGate,
-		resolveSubagentProvider, nil))
+		resolveSubagentProvider, nil)
+	maCtrl.SetRunner(&agent.MultiAgentRunner{Tool: kernel, Control: maCtrl})
 
 	var mainAgentAllowed map[string]bool
 	if len(cfg.Permissions.MainAgentAllowed) > 0 {
 		mainAgentAllowed = make(map[string]bool)
 		for _, name := range cfg.Permissions.MainAgentAllowed {
+			if name == "task" || name == "explore" || name == "research" || name == "review" || name == "security_review" || name == "security-review" {
+				continue
+			}
 			mainAgentAllowed[name] = true
 		}
 	}
@@ -175,6 +183,7 @@ func (f *acpFactory) NewSession(ctx context.Context, p acp.SessionParams) (*cont
 		MainAgentAllowed:          mainAgentAllowed,
 		ToolsDynamic:              toolsDynamic,
 		MaxMainAgentReadonlyCalls: cfg.Agent.MaxMainAgentReadonlyCalls,
+		MultiAgent:                maCtrl,
 	}, p.Sink)
 
 	cmds, _ := command.Load(config.CommandDirs()...)

@@ -516,8 +516,9 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 			"memory_get": "recall", "memory_save": "remember", "memory_forget": "forget",
 		}
 		for _, name := range cfg.Permissions.MainAgentAllowed {
-			if name == "read_skill" {
-				continue // removed tool
+			if name == "read_skill" || name == "task" || name == "explore" || name == "research" ||
+				name == "review" || name == "security_review" || name == "security-review" {
+				continue // removed tools
 			}
 			mainAgentAllowed[name] = true
 			if canon, ok := alias[name]; ok {
