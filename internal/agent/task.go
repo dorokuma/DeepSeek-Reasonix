@@ -211,8 +211,9 @@ func (t *TaskTool) Execute(ctx context.Context, args json.RawMessage) (string, e
 		registerMeta = func(jobID string) { ctrl.RegisterJobMeta(jobID, parentID) }
 	}
 	job, err := jm.Start(ctx, "task", label, func(jobCtx context.Context, _ io.Writer) (string, error) {
-		// Heartbeat: keep lastActive fresh so the stale monitor (120s inactivity)
-		// won't kill a busy task sub-agent whose output doesn't flow through the writer.
+		// Heartbeat: keep lastActive fresh so the stale monitor (per-kind idle
+		// kill, default 1h for task) won't kill a busy sub-agent whose output
+		// doesn't flow through the writer.
 		heartbeatDone := make(chan struct{})
 		defer close(heartbeatDone)
 		go func() {
