@@ -158,7 +158,7 @@ api_key_env = "REASONIX_TEST_KEY_UNSET"
 		switch s.Name {
 		case "projskill":
 			hasProj = true
-		case "explore":
+		case "init", "test", "install-capability":
 			hasBuiltin = true
 		}
 	}
@@ -170,8 +170,11 @@ api_key_env = "REASONIX_TEST_KEY_UNSET"
 	if !strings.Contains(sys, "# Skills") {
 		t.Fatalf("skills index missing from system prompt:\n%s", sys)
 	}
-	if !strings.Contains(sys, "projskill") || !strings.Contains(sys, "explore") {
+	if !strings.Contains(sys, "projskill") || !strings.Contains(sys, "init") {
 		t.Fatalf("skill names missing from index:\n%s", sys)
+	}
+	if strings.Contains(sys, "explore") {
+		t.Fatalf("retired explore skill must not appear in index:\n%s", sys)
 	}
 }
 

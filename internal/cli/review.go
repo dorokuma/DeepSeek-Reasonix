@@ -11,9 +11,34 @@ import (
 	"reasonix/internal/boot"
 	"reasonix/internal/config"
 	"reasonix/internal/event"
-	"reasonix/internal/skill"
 	"reasonix/internal/tool"
 )
+
+// reviewSystemPrompt is the persona for `reasonix review` (standalone CLI).
+// Subagent skills were removed — this is not loaded from the skills store.
+const reviewSystemPrompt = `You are running as a code-review subagent. Inspect the changes the user is about to ship — usually the current git branch vs its upstream — and produce a focused review the parent can hand back.
+
+How to operate:
+- Default scope: the current branch's diff vs the default branch. If the task names a specific commit range or files, honor that instead.
+- Discover scope first: bash git status, git diff --stat, git log --oneline. Then git diff (or git diff <base>...HEAD) for the hunks.
+- Read touched files (read_file) when the diff alone lacks context — signatures, surrounding invariants, callers.
+- For "any callers depending on this?" questions: use grep to find references BEFORE asserting impact.
+- Stay read-only. Never commit, never write files, never propose edits as applied changes.
+- Cap yourself at ~12 tool calls. If the diff is too big, pick the riskiest 2-3 files and say so.
+
+What to look for, in priority order:
+1. Correctness bugs — off-by-one, nil handling, races, wrong operator, unhandled edge cases.
+2. Security — injection, secrets, missing authz, unsafe deserialization.
+3. Behavior changes the diff hides — renames missing callers, removed load-bearing branches.
+4. Tests — does the change have tests for the new behavior?
+5. Style + consistency — only flag deviations that matter.
+
+Your final answer:
+- Lead with a one-sentence verdict: "ship as-is" / "minor nits, OK to ship after" / "blocking issues, do not ship".
+- Then a short bulleted list, each with file:line + the problem in one sentence + what to change.
+- Group by severity if more than 4 items: Blocking, Should-fix, Nits.
+- If everything looks clean, say so plainly. Don't manufacture concerns.
+Keep the final answer compact.`
 
 func reviewCommand(args []string) int {
 	fs := flag.NewFlagSet("review", flag.ContinueOnError)
@@ -63,32 +88,19 @@ func reviewCommand(args []string) int {
 		return 1
 	}
 
-	// 4. Get the built-in review skill.
-	root, _ := os.Getwd()
-	skillStore := skill.New(skill.Options{ProjectRoot: root, Stderr: os.Stderr})
-	reviewSk, ok := skillStore.Read("review")
-	if !ok {
-		fmt.Fprintln(os.Stderr, "error: built-in review skill not found")
-		return 1
-	}
-	if reviewSk.RunAs != skill.RunSubagent {
-		fmt.Fprintln(os.Stderr, "error: review skill is not a subagent skill")
-		return 1
-	}
-
-	// 5. Build tool registry via FilterRegistry (allows all built-in tools minus meta-tools).
+	// 4. Build tool registry via FilterRegistry (allows all built-in tools minus meta-tools).
 	reg := tool.NewRegistry()
 	for _, t := range tool.Builtins() {
 		reg.Add(t)
 	}
 	reg = agent.FilterRegistry(reg, nil, agent.SubagentMetaTools()...)
 
-	// 6. Prepare the review prompt.
+	// 5. Prepare the review prompt (no subagent skill — freeform task persona).
 	task := buildReviewTask(diff, *instructions)
 
-	// 7. Run the review subagent.
+	// 6. Run a one-shot review sub-agent with an embedded persona.
 	ctx := context.Background()
-	result, err := agent.RunSubAgent(ctx, prov, reg, reviewSk.Body, task, agent.Options{
+	result, err := agent.RunSubAgent(ctx, prov, reg, reviewSystemPrompt, task, agent.Options{
 		MaxSteps:      12,
 		Temperature:   cfg.Agent.Temperature,
 		Pricing:       entry.Price,

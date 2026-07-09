@@ -12,8 +12,8 @@ import (
 func TestSlashItemsIncludesSkills(t *testing.T) {
 	m := newTestChatTUI()
 	m.skills = []skill.Skill{
-		{Name: "init", Description: "bootstrap AGENTS.md", RunAs: skill.RunInline},
-		{Name: "explore", Description: "investigate", RunAs: skill.RunSubagent},
+		{Name: "init", Description: "bootstrap AGENTS.md"},
+		{Name: "explore", Description: "investigate"},
 	}
 
 	got := map[string]bool{}

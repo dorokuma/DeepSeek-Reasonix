@@ -45,7 +45,7 @@ func (r *rtkRewriter) PostToolRewrite(_ context.Context, name string, args json.
 // rtkPipeFilter determines the rtk pipe filter for a tool call.
 func rtkPipeFilter(name string, args json.RawMessage, jm *jobs.Manager) string {
 	switch name {
-	case "bash", "bash_output":
+	case "bash", "peek-job":
 		cmd := extractShellCommand(name, args, jm)
 		if filter, ok := rtk.PipeFilterForShell(cmd); ok {
 			return filter
@@ -68,7 +68,7 @@ func extractShellCommand(name string, args json.RawMessage, jm *jobs.Manager) st
 		if json.Unmarshal(args, &p) == nil {
 			return p.Command
 		}
-	case "bash_output":
+	case "peek-job":
 		var p struct {
 			JobID string `json:"job_id"`
 		}

@@ -93,7 +93,7 @@ type AgentLayer string
 const (
 	// AgentLayerMain fires only in the top-level agent (default).
 	AgentLayerMain AgentLayer = "main"
-	// AgentLayerSubagent fires only in sub-agents (task tool / subagent skills).
+	// AgentLayerSubagent fires only in sub-agents spawned by the task tool.
 	AgentLayerSubagent AgentLayer = "subagent"
 	// AgentLayerAll fires in every agent layer.
 	AgentLayerAll AgentLayer = "all"

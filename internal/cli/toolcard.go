@@ -70,8 +70,9 @@ func userBlock(rendered string) string {
 // toolVerb maps a tool's snake_case id to the verb shown in its card.
 var toolVerb = map[string]string{
 	"bash":          "Bash",
-	"bash_output":   "Output",
-	"kill_shell":    "Kill",
+	"peek-job":      "Peek",
+	"cancel-job":    "Cancel",
+	"steer-job":     "Steer",
 	"read_file":     "Read",
 	"write_file":    "Write",
 	"edit_file":     "Update",
@@ -85,6 +86,7 @@ var toolVerb = map[string]string{
 	"ls":            "List",
 	"web_search":    "Search",
 	"task":          "Task",
+	"task_result":   "Result",
 	"note":          "Note",
 	"audit_finish":  "Report",
 }
@@ -92,8 +94,9 @@ var toolVerb = map[string]string{
 // toolArgKey is the JSON field shown in parentheses for each tool.
 var toolArgKey = map[string]string{
 	"bash":          "command",
-	"bash_output":   "job_id",
-	"kill_shell":    "job_id",
+	"peek-job":      "job_id",
+	"cancel-job":    "job_id",
+	"steer-job":     "job_id",
 	"read_file":     "path",
 	"write_file":    "path",
 	"edit_file":     "path",
@@ -107,6 +110,7 @@ var toolArgKey = map[string]string{
 	"ls":            "path",
 	"web_search":    "query",
 	"task":          "description",
+	"task_result":   "job_id",
 	"note":          "kind",
 	"audit_finish":  "summary",
 }
@@ -133,13 +137,14 @@ func toolDot(name string) string {
 
 var toolCategory = map[string]string{
 	"read_file": "read", "ls": "read", "glob": "read", "grep": "read",
-	"web_search": "read", "bash_output": "read",
+	"web_search": "read", "peek-job": "read", "task_result": "read",
 	"write_file": "write", "edit_file": "write", "multi_edit": "write",
 	"move_file": "write", "delete_range": "write", "delete_symbol": "write", "notebook_edit": "write",
 	"note":         "write",
 	"audit_finish": "write",
 	"bash":         "exec",
-	"kill_shell":   "proc",
+	"cancel-job":   "proc",
+	"steer-job":    "proc",
 }
 
 // toolDisplayName returns the card verb for a tool: a mapped builtin verb, the

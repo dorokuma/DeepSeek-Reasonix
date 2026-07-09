@@ -1,58 +1,8 @@
 package skill
 
-// Built-in skills ship with Reasonix and back the dedicated subagent tools
-// (explore / research / review / security_review) plus the inline `test`
-// playbook. A user/project file with the same name overrides the built-in (see
-// Store.List / Store.Read). Tool names in the bodies match internal/tool/builtin.
-
-// negativeClaimRule keeps subagents honest about "found nothing" answers.
-const negativeClaimRule = `When you claim something does NOT exist (no caller, no usage, not implemented), say which searches you ran to reach that conclusion — a negative claim is only as trustworthy as the search behind it.`
-
-// tuiFormatting nudges concise, terminal-friendly output.
-const tuiFormatting = `Keep the final answer compact and terminal-friendly: short paragraphs or bullets, no walls of text, no restating the question.`
-
-const builtinExploreBody = `You are running as an exploration subagent. Investigate the codebase the parent pointed you at, then return one focused, distilled answer.
-
-How to operate:
-- Use read_file, grep, glob, ls as your PRIMARY tools for code investigation. Stay read-only.
-- read_file for detailed file reading, grep for content/search across files, ls/glob for project structure.
-- Cast a wide net first (grep for content, ls/glob for structure) to map the territory; then read the 3-10 most relevant files in full.
-- Don't read every file — be selective. Breadth on the first pass, depth only where the question demands it.
-- Stop exploring as soon as you can answer. The parent doesn't see your tool calls, so over-exploration is pure waste.
-
-Your final answer:
-- One paragraph (or a few short bullets). Lead with the conclusion.
-- Cite specific file paths + line ranges when they support the answer.
-- If the question can't be answered from what you found, say so plainly and suggest where to look next.
-
-` + negativeClaimRule + `
-
-` + tuiFormatting + `
-
-The 'task' the parent gave you is the question you must answer. Treat any other reading of it as scope creep.`
-
-const builtinResearchBody = `You are running as a research subagent. Gather information from code AND the web, synthesize it, and return one focused conclusion.
-
-How to operate:
-- Combine code reading (read_file, grep, glob) with mcp_jina_read_url / mcp_jina_search_web as appropriate.
-- For "how does X work" questions: use read_file for full context, grep for cross-references.
-- For "is Y supported" questions: fetch the canonical reference, then verify against the local code.
-- For "what's our policy on Z" / "where do we use Q": local code first, web only to compare against external standards.
-- Cap yourself at ~10 tool calls. If you can't converge, return what you have plus a note on what's missing.
-
-Output rule: If you write a document file (research notes, analysis reports, design docs, etc.), you MUST write it to /root/docs/<type>/ (where <type> is research, design, or notes). Never write documents to /root/ directly. Use write_file with the appropriate path.
-
-Your final answer:
-- One paragraph (or short bullets). Lead with the conclusion.
-- Cite both code (file:line) AND web sources (URL) when they back the answer.
-- Distinguish "I verified this in code" from "I read this on a docs page" — the parent trusts the former more.
-- If the answer is uncertain, say so. Don't invent confidence.
-
-` + negativeClaimRule + `
-
-` + tuiFormatting + `
-
-The 'task' the parent gave you is the research question. Stay on it.`
+// Built-in skills ship with Reasonix (init / test / install-capability).
+// A user/project file with the same name overrides the built-in.
+// Tool names in the bodies match internal/tool/builtin.
 
 const builtinInstallCapabilityBody = `This skill is INLINED. Use it when the user asks to install a Reasonix MCP server or skill from a URL, local file, local folder, .mcp.json, or package name. For removing a previously installed skill or MCP server, follow the "Uninstall" rules at the bottom — same tool, different op.
 
@@ -83,68 +33,11 @@ Uninstall (op=uninstall):
 
 Stop rather than guessing when the source is only a documentation page, README without a manifest, or a repo whose install command cannot be determined.`
 
-const builtinReviewBody = `You are running as a code-review subagent. Inspect the changes the user is about to ship — usually the current git branch vs its upstream — and produce a focused review the parent can hand back.
-
-How to operate:
-- Default scope: the current branch's diff vs the default branch. If the task names a specific commit range or files, honor that instead.
-- Discover scope first: ` + "`bash git status`" + `, ` + "`git diff --stat`" + `, ` + "`git log --oneline`" + `. Then ` + "`git diff`" + ` (or ` + "`git diff <base>...HEAD`" + `) for the hunks.
-- Read touched files (read_file) when the diff alone lacks context — signatures, surrounding invariants, callers.
-- For "any callers depending on this?" questions: use grep to find references BEFORE asserting impact.
-- Stay read-only. Never commit, never write files, never propose edits as applied changes. The parent decides whether to act.
-- Cap yourself at ~12 tool calls. If the diff is too big, pick the riskiest 2-3 files and say so.
-
-What to look for, in priority order:
-1. Correctness bugs — off-by-one, nil handling, races, wrong operator, unhandled edge cases.
-2. Security — injection (SQL, shell, path traversal), secrets, missing authz, unsafe deserialization.
-3. Behavior changes the diff hides — renames missing callers, removed load-bearing branches, error-handling that now swallows what used to surface.
-4. Tests — does the change have tests for the new behavior? Are existing tests still meaningful?
-5. Style + consistency — only flag deviations that matter; don't pile on cosmetic nits if the substance is clean.
-
-Your final answer:
-- Lead with a one-sentence verdict: "ship as-is" / "minor nits, OK to ship after" / "blocking issues, do not ship".
-- Then a short bulleted list, each with file:line + the problem in one sentence + what to change.
-- Group by severity if more than 4 items: Blocking, Should-fix, Nits.
-- If everything looks clean, say so plainly. Don't manufacture concerns.
-
-` + negativeClaimRule + `
-
-` + tuiFormatting + `
-
-The 'task' names WHAT to review (a branch, a file set, or "the pending changes"). Stay on it; don't redesign the feature.`
-
-const builtinSecurityReviewBody = `You are running as a security-review subagent. Inspect the changes the user is about to ship — usually the current git branch vs its upstream — through a security lens specifically, and report exploitable issues.
-
-How to operate:
-- Default scope: the current branch's diff vs the default branch. Honor a named range or directory if given.
-- Discover scope first: ` + "`bash git status`" + `, ` + "`git diff --stat`" + `, ` + "`git diff <base>...HEAD`" + `. Read touched files (read_file) when the diff lacks security context — auth checks, input validation, the handler that calls the changed code.
-- Use grep to verify "is this user-controlled input ever sanitized later?" / "what other call sites depend on this validation?" before asserting impact.
-- Stay read-only. Never write, never run destructive commands. The parent decides what to act on.
-- Cap yourself at ~12 tool calls. If the diff is too big, focus on the riskiest 2-3 files and say so.
-
-Threat model — flag with severity:
-
-CRITICAL (do-not-ship): SQL/NoSQL/shell/template injection; path traversal; missing authn/authz; hardcoded secrets; deserialization of untrusted input; cryptographic mistakes (homemade crypto, MD5/SHA-1 for passwords, ECB, predictable nonces).
-HIGH: XSS; SSRF; TOCTOU on auth/file checks; open redirects.
-MEDIUM: verbose errors leaking internals; missing rate limiting on credential endpoints; missing cookie flags (Secure/HttpOnly/SameSite).
-
-Out of scope here (regular review covers them): style, naming, performance, non-security test gaps, "extract this helper".
-
-Your final answer:
-- Lead with a one-sentence verdict: "no security issues found", "minor concerns", or "blocking issues".
-- Then a list grouped by severity. Each item: file:line + 1-sentence threat + 1-sentence fix direction.
-- If clean, say so plainly. Don't manufacture findings.
-
-` + negativeClaimRule + `
-
-` + tuiFormatting + `
-
-The 'task' names what to review. Stay on it; don't redesign the feature.`
-
 const builtinTestBody = `This skill is INLINED — you run in the parent loop. The user asked you to run the tests and fix failures. Run the project's test suite, diagnose any failure, propose and apply fixes, then re-run. Repeat until green or you hit a wall worth escalating.
 
 How to operate:
 1. Detect the test command. Look at the project: go.mod → ` + "`go test ./...`" + `; package.json scripts.test → ` + "`npm test`" + ` (or pnpm/yarn); pyproject.toml/requirements.txt → ` + "`pytest`" + `; Cargo.toml → ` + "`cargo test`" + `. If you can't tell, ASK — don't guess.
-2. Run it via a shell command. Capture stdout + stderr; for intentionally long-running commands, start them in the background and use bash_output.
+2. Run it via bash. Capture stdout + stderr; for intentionally long-running commands, use bash with run_in_background=true and poll with peek-job (not bash_output — that tool does not exist).
 3. Read the failures: which tests failed, the actual error, the file + line that threw. Locate the exact assertion or stack frame.
 4. Fix each distinct failure:
    - Production bug (test caught a real defect) → fix the production code.
@@ -190,23 +83,6 @@ func builtinSkills() []Skill {
 			Body:        builtinInitBody,
 			Scope:       ScopeBuiltin,
 			Path:        "(builtin)",
-			RunAs:       RunInline,
-		},
-		{
-			Name:        "explore",
-			Description: "Explore the codebase in an isolated subagent — wide-net read-only investigation that returns one distilled answer. Best for: 'find all places that...', 'how does X work across the project', 'survey the code for Y'.",
-			Body:        builtinExploreBody,
-			Scope:       ScopeBuiltin,
-			Path:        "(builtin)",
-			RunAs:       RunSubagent,
-		},
-		{
-			Name:        "research",
-			Description: "Research a question by combining web search/read (via Jina MCP) + code reading in an isolated subagent. Best for: 'is X supported by lib Y', 'what's the canonical way to do Z', 'compare our impl against the spec'.",
-			Body:        builtinResearchBody,
-			Scope:       ScopeBuiltin,
-			Path:        "(builtin)",
-			RunAs:       RunSubagent,
 		},
 		{
 			Name:        "install-capability",
@@ -214,23 +90,6 @@ func builtinSkills() []Skill {
 			Body:        builtinInstallCapabilityBody,
 			Scope:       ScopeBuiltin,
 			Path:        "(builtin)",
-			RunAs:       RunInline,
-		},
-		{
-			Name:        "review",
-			Description: "Review the pending changes (current branch diff by default) in an isolated subagent — flags correctness, security, missing tests, hidden behavior changes; reports a verdict + per-issue file:line. Read-only.",
-			Body:        builtinReviewBody,
-			Scope:       ScopeBuiltin,
-			Path:        "(builtin)",
-			RunAs:       RunSubagent,
-		},
-		{
-			Name:        "security-review",
-			Description: "Security-focused review of the current branch diff in an isolated subagent — flags injection/authz/secrets/deserialization/path-traversal/crypto issues, severity-tagged. Read-only.",
-			Body:        builtinSecurityReviewBody,
-			Scope:       ScopeBuiltin,
-			Path:        "(builtin)",
-			RunAs:       RunSubagent,
 		},
 		{
 			Name:        "test",
@@ -238,7 +97,6 @@ func builtinSkills() []Skill {
 			Body:        builtinTestBody,
 			Scope:       ScopeBuiltin,
 			Path:        "(builtin)",
-			RunAs:       RunInline,
 		},
 	}
 }

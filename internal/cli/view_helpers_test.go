@@ -17,9 +17,9 @@ func TestRenderSkillListUsesSharedVisualLanguage(t *testing.T) {
 	width := 72
 	got := renderSkillList(width, []skill.Skill{
 		{Name: "explore", Description: strings.Repeat("long ", 30), Scope: skill.ScopeProject},
-		{Name: "deep", Description: "run in isolation", Scope: skill.ScopeGlobal, RunAs: skill.RunSubagent},
+		{Name: "deep", Description: "run in isolation", Scope: skill.ScopeGlobal},
 	}, map[string]bool{"explore": true})
-	for _, want := range []string{"skills (2)", "/explore", "(project)", "…", "/deep", "subagent", "disabled", "invoke:"} {
+	for _, want := range []string{"skills (2)", "/explore", "(project)", "…", "/deep", "disabled", "invoke:"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("skill list missing %q:\n%s", want, got)
 		}

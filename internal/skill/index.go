@@ -11,14 +11,15 @@ const IndexMaxChars = 4000
 
 const missingDescPlaceholder = `(no description — frontmatter is missing a "description:" line; tell the user to add one)`
 
-// indexHeader introduces the skills block in the system prompt: the invocation
-// policy (mandatory for inline, judgment-based for subagent) and how to call one.
+// indexHeader introduces the skills block in the system prompt.
 const indexHeader = "# Skills — playbooks you can invoke\n\n" +
-	"One-liner index. Before non-trivial work, scan it: if an untagged (inline) skill is even plausibly relevant, invoke it with `run_skill({ name: \"<skill-name>\", arguments: \"...\" })` — `name` is JUST the identifier, not any tag. Untagged skills inline their body into your context. Skills tagged `[🧬 subagent]` are the heavy path: call the **task** tool once with `skill: \"<skill-name>\"` and `prompt: \"<concrete goal>\"` (single background entry — do not also call run_skill or a second task for the same goal). The user can also invoke a skill via `/<name>`."
+	"One-liner index of Skills only (not the Memory section). Memory slugs and `[label](slug.md)` lines under # Memory are auto-memory facts — use `recall`, never run_skill/read_skill with those names. " +
+	"Before non-trivial work, scan this Skills list: if a skill is even plausibly relevant, invoke it with `run_skill({ name: \"<skill-name>\", arguments: \"...\" })` — `name` is JUST the identifier. The skill body is inlined into your context. " +
+	"For isolated background work, use the **task** tool with a self-contained prompt. The user can also invoke a skill via `/<name>`."
 
 // ApplyIndex appends the skills index to basePrompt, or returns it unchanged
-// when there are no skills. Only names + descriptions (+ a subagent tag) are
-// listed; bodies load on demand via run_skill.
+// when there are no skills. Only names + descriptions are listed; bodies load
+// on demand via run_skill.
 func ApplyIndex(basePrompt string, skills []Skill) string {
 	if len(skills) == 0 {
 		return basePrompt
@@ -34,24 +35,18 @@ func ApplyIndex(basePrompt string, skills []Skill) string {
 	return basePrompt + "\n\n" + indexHeader + "\n\n```\n" + joined + "\n```"
 }
 
-// indexLine renders one skill as "- name [tag] — description", clipped to a
-// stable width. The subagent tag goes after the name so a model copying the line
-// into run_skill's `name` arg still yields a clean identifier.
+// indexLine renders one skill as "- name — description", clipped to a stable width.
 func indexLine(sk Skill) string {
 	desc := strings.TrimSpace(strings.ReplaceAll(sk.Description, "\n", " "))
 	if desc == "" {
 		desc = missingDescPlaceholder
 	}
-	tag := ""
-	if sk.RunAs == RunSubagent {
-		tag = " [🧬 subagent]"
-	}
-	max := 130 - len([]rune(sk.Name)) - len([]rune(tag))
+	max := 130 - len([]rune(sk.Name))
 	clipped := clipRunes(desc, max)
 	if clipped == "" {
-		return "- " + sk.Name + tag
+		return "- " + sk.Name
 	}
-	return "- " + sk.Name + tag + " — " + clipped
+	return "- " + sk.Name + " — " + clipped
 }
 
 // clipRunes truncates s to at most max runes (ellipsis included), never

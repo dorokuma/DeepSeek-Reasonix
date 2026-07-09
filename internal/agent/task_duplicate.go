@@ -22,36 +22,51 @@ func findRunningDuplicateTask(jm *jobs.Manager, label, prompt string) string {
 	}
 	semKey := taskDispatchSemanticKey("", prompt)
 	pol := jm.SemanticDedupPolicy()
-	for _, v := range jm.Running() {
-		if v.Kind != "task" && v.Kind != "skill" {
-			continue
-		}
-		if jm.DispatchDigest(v.ID) == key {
-			return v.ID
+	// Include finished-but-not-yet-removed jobs (awaiting task_result delivery).
+	// Only checking Running() let models re-dispatch the same goal after Done
+	// but before the tail delivery was flushed into the session.
+	ids := taskDispatchJobIDs(jm)
+	for _, id := range ids {
+		if jm.DispatchDigest(id) == key {
+			return id
 		}
 	}
 	if !pol.Enabled || semKey == "" {
 		return ""
 	}
-	for _, v := range jm.Running() {
-		if v.Kind != "task" && v.Kind != "skill" {
-			continue
-		}
-		other := jm.DispatchSemantic(v.ID)
+	for _, id := range ids {
+		other := jm.DispatchSemantic(id)
 		if other == "" {
 			continue
 		}
 		if semanticSimilarity(semKey, other) >= pol.Threshold {
-			return v.ID
+			return id
 		}
 	}
 	return ""
 }
 
-// CheckBackgroundDuplicate reports an error when a matching or similar job is already running.
+// taskDispatchJobIDs lists task/skill jobs still retained by the manager
+// (running or completed pending delivery/GC).
+func taskDispatchJobIDs(jm *jobs.Manager) []string {
+	if jm == nil {
+		return nil
+	}
+	var out []string
+	for _, id := range jm.ActiveJobs() {
+		kind, ok := jm.Kind(id)
+		if !ok || (kind != "task" && kind != "skill") {
+			continue
+		}
+		out = append(out, id)
+	}
+	return out
+}
+
+// CheckBackgroundDuplicate reports an error when a matching or similar job is already open.
 func CheckBackgroundDuplicate(jm *jobs.Manager, label, prompt string) error {
 	if dupID := findRunningDuplicateTask(jm, label, prompt); dupID != "" {
-		return fmt.Errorf("background task %s is already running with the same or similar goal. Wait for its result at the conversation tail; do not dispatch a duplicate task", dupID)
+		return fmt.Errorf("background task %s is already open with the same or similar goal (running or awaiting tail delivery as task_result). Wait for that result; do not dispatch a duplicate task", dupID)
 	}
 	return nil
 }

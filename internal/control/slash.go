@@ -390,11 +390,7 @@ func (c *Controller) skillListText() string {
 	var b strings.Builder
 	fmt.Fprintf(&b, i18n.M.ListSkillsHeaderFmt+"\n", len(c.skills))
 	for _, s := range c.skills {
-		tag := ""
-		if s.RunAs == "subagent" {
-			tag = " 🧬"
-		}
-		fmt.Fprintf(&b, "  /%s%s — %s\n", s.Name, tag, s.Description)
+		fmt.Fprintf(&b, "  /%s — %s\n", s.Name, s.Description)
 	}
 	return strings.TrimRight(b.String(), "\n")
 }

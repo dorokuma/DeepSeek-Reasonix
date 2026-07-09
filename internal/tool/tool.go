@@ -47,6 +47,25 @@ type OnlyForSubAgent interface {
 	OnlyForSubAgent() bool
 }
 
+// OmitFromModelSchema marks tools that stay in the registry (so history validators
+// and Execute can resolve the name) but must never be advertised in provider tool
+// schemas. Use for system-only delivery channels like task_result — listing them
+// as callable tools trains the model to invent calls that always fail.
+type OmitFromModelSchema interface {
+	OmitFromModelSchema() bool
+}
+
+// omitFromModel reports whether t must stay out of model-facing schemas/lists.
+func omitFromModel(t Tool) bool {
+	if t == nil {
+		return false
+	}
+	if o, ok := t.(OmitFromModelSchema); ok && o.OmitFromModelSchema() {
+		return true
+	}
+	return false
+}
+
 // Previewer is an optional capability a writer Tool may implement: given the
 // same raw JSON args Execute would receive, compute the file change the call
 // *would* make — without touching disk. A front-end uses it to show an approval
@@ -285,12 +304,19 @@ func (r *Registry) Len() int {
 }
 
 // Names returns the registered tool names in insertion order.
+// System-only tools (OmitFromModelSchema) are excluded so "available tools"
+// errors never advertise names the model must not call.
 func (r *Registry) Names() []string {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
-	out := make([]string, len(r.order))
-	copy(out, r.order)
+	out := make([]string, 0, len(r.order))
+	for _, name := range r.order {
+		if t := r.tools[name]; omitFromModel(t) {
+			continue
+		}
+		out = append(out, name)
+	}
 	return out
 }
 
@@ -331,8 +357,8 @@ func (r *Registry) Suggest(name string) (string, bool) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
-	// Try exact match on normalized name first
-	if _, ok := r.tools[normalized]; ok {
+	// Try exact match on normalized name first (never suggest system-only tools).
+	if t, ok := r.tools[normalized]; ok && !omitFromModel(t) {
 		return normalized, true
 	}
 
@@ -342,7 +368,7 @@ func (r *Registry) Suggest(name string) (string, bool) {
 	})
 	if len(inputWords) > 0 {
 		if mapped, ok := verbMap[inputWords[0]]; ok {
-			if _, exists := r.tools[mapped]; exists {
+			if t, exists := r.tools[mapped]; exists && !omitFromModel(t) {
 				return mapped, true
 			}
 		}
@@ -364,7 +390,10 @@ func (r *Registry) Suggest(name string) (string, bool) {
 	var best scored
 	bestSet := false
 
-	for candidate := range r.tools {
+	for candidate, t := range r.tools {
+		if omitFromModel(t) {
+			continue
+		}
 		candWords := strings.FieldsFunc(candidate, func(r rune) bool {
 			return r == '_' || !((r >= 'a' && r <= 'z') || (r >= '0' && r <= '9'))
 		})
@@ -449,6 +478,8 @@ func levenshtein(a, b string) int {
 }
 
 // Schemas exports tool definitions in stable name order for the provider.
+// Tools implementing OmitFromModelSchema are kept in the registry but omitted
+// here so the model never sees them as invocable.
 func (r *Registry) Schemas() []provider.ToolSchema {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -460,7 +491,7 @@ func (r *Registry) Schemas() []provider.ToolSchema {
 	out := make([]provider.ToolSchema, 0, len(names))
 	for _, name := range names {
 		t := r.tools[name]
-		if t == nil {
+		if t == nil || omitFromModel(t) {
 			continue
 		}
 		out = append(out, provider.ToolSchema{

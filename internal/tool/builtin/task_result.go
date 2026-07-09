@@ -12,8 +12,9 @@ import (
 const taskResultToolName = "task_result"
 
 // task_result is system-delivered when a background sub-agent finishes. It is
-// registered so request validators accept the synthetic history tool name, and
-// so the model never invents a call to a phantom tool.
+// registered so history validators and Execute can resolve the synthetic tool
+// name, but OmitFromModelSchema keeps it out of provider tool lists — listing
+// it as callable taught models to invent calls that always fail.
 func init() {
 	tool.RegisterBuiltin(taskResultGuard{})
 }
@@ -22,20 +23,20 @@ type taskResultGuard struct{}
 
 func (taskResultGuard) Name() string { return taskResultToolName }
 func (taskResultGuard) Description() string {
-	return `System delivery channel for finished background sub-agents (task tool).
-
-When a background task completes, the runtime appends a paired tool round with this name at the conversation tail — you will see it automatically. Do NOT call this tool yourself. Wait for that automatic result instead of polling or re-dispatching.`
+	// Not sent to the model (OmitFromModelSchema); kept for registry dumps/tests.
+	return "System-only delivery channel for finished background sub-agents. Not model-callable."
 }
-func (taskResultGuard) ReadOnly() bool { return true }
+func (taskResultGuard) ReadOnly() bool             { return true }
+func (taskResultGuard) OmitFromModelSchema() bool { return true }
 func (taskResultGuard) Schema() json.RawMessage {
 	return json.RawMessage(`{
 		"type": "object",
 		"properties": {
-			"job_id": {"type": "string", "description": "Unused — system fills this on auto-delivery"}
+			"job_id": {"type": "string", "description": "System-filled on auto-delivery"}
 		}
 	}`)
 }
 
 func (taskResultGuard) Execute(_ context.Context, _ json.RawMessage) (string, error) {
-	return "", fmt.Errorf("%s is delivered automatically when a background sub-agent finishes — do not invoke it; wait for the automatic result at the conversation tail", taskResultToolName)
+	return "", fmt.Errorf("%s is not a callable tool — the runtime appends it automatically when a background sub-agent finishes. Wait for that tail delivery; do not invent a %s call", taskResultToolName, taskResultToolName)
 }

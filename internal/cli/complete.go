@@ -12,7 +12,6 @@ import (
 	"reasonix/internal/control"
 	"reasonix/internal/fileref"
 	"reasonix/internal/i18n"
-	"reasonix/internal/skill"
 )
 
 // compKind distinguishes the two completion menus.
@@ -88,11 +87,7 @@ func (m *chatTUI) slashItems() []compItem {
 		items = append(items, compItem{label: "/" + c.Name, insert: "/" + c.Name + " ", hint: c.Description})
 	}
 	for _, s := range m.skills {
-		hint := s.Description
-		if s.RunAs == skill.RunSubagent {
-			hint = "🧬 " + hint
-		}
-		items = append(items, compItem{label: "/" + s.Name, insert: "/" + s.Name + " ", hint: hint})
+		items = append(items, compItem{label: "/" + s.Name, insert: "/" + s.Name + " ", hint: s.Description})
 	}
 	for _, p := range m.prompts() {
 		items = append(items, compItem{label: "/" + p.Name, insert: "/" + p.Name + " ", hint: p.Description})

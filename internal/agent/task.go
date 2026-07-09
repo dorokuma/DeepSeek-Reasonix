@@ -29,24 +29,7 @@ var subagentMetaTools = []string{
 	"read_skill",
 	"install_skill",
 	"install_source",
-	// Legacy dedicated wrappers (no longer registered on main agent; still excluded
-	// if a session still carries them or a parent registry is reused).
-	"explore",
-	"research",
-	"review",
-	"security_review",
 }
-
-// SkillPlaybook is a runAs=subagent skill resolved for the unified task entry.
-type SkillPlaybook struct {
-	Name   string
-	Body   string // system prompt body (caller may already append shared sections)
-	Model  string
-	Effort string
-}
-
-// SkillLookup resolves a subagent playbook by name. ok is false when unknown or not subagent.
-type SkillLookup func(name string) (SkillPlaybook, bool)
 
 // SubagentMetaTools returns the tool names that spawned agents should not inherit
 // from the parent registry unless a future call site deliberately opts into a
@@ -58,14 +41,9 @@ func SubagentMetaTools() []string {
 	return out
 }
 
-// TaskTool spawns a sub-agent in its own session for a focused sub-task. The
-// sub-agent runs with a filtered tool whitelist and the same step budget shape
-// as the parent (see Execute); its tool calls are forwarded to the parent's
-// event stream nested under this call, while only its final assistant message is
-// returned to the parent model. Use cases: keep noisy tool sequences (multi-file
-// exploration, repeated grep / read_file) out of the parent's context budget, or
-// parallel research across independent areas (the parallel-dispatch path picks
-// these up only when readOnly, which task is not).
+// TaskTool is the single entry for spawning a background sub-agent — freeform
+// prompt only. The sub-agent runs with a filtered tool whitelist; only its final
+// assistant message is returned to the parent (via automatic task_result delivery).
 type TaskTool struct {
 	prov              provider.Provider
 	pricing           *provider.Pricing
@@ -78,18 +56,16 @@ type TaskTool struct {
 	archiveDir        string
 	sysPrompt         string
 	gate              Gate
-	// resolveProvider picks the child model. role is "task" or a skill name for config maps.
+	// resolveProvider picks the child model. role is always "task" for freeform work.
 	resolveProvider func(role, modelRef, effort string) (provider.Provider, *provider.Pricing, int, error)
 	hooks           ToolHooks
-	skillLookup     SkillLookup
 }
 
 // NewTaskTool wires a task tool to the parent agent's environment so its
 // sub-agents can use the same provider and tools. sysPrompt is the system
-// prompt every freeform sub-agent starts with; pass "" for DefaultTaskSystemPrompt.
-// resolveProvider(role, modelRef, effort) selects the child model — role is "task"
-// or a skill name. gate is the permission gate sub-agents inherit. hooks is the
-// parent's hook runner; the task tool derives a sub-agent copy from it.
+// prompt every sub-agent starts with; pass "" for DefaultTaskSystemPrompt.
+// resolveProvider(role, modelRef, effort) selects the child model — role is "task".
+// gate is the permission gate sub-agents inherit. hooks is the parent's hook runner.
 func NewTaskTool(prov provider.Provider, pricing *provider.Pricing, parentReg *tool.Registry,
 	contextWindow int, softCompactRatio, compactRatio, compactForceRatio, temperature float64, archiveDir, sysPrompt string, gate Gate,
 	resolveProvider func(string, string, string) (provider.Provider, *provider.Pricing, int, error),
@@ -114,17 +90,10 @@ func NewTaskTool(prov provider.Provider, pricing *provider.Pricing, parentReg *t
 	}
 }
 
-// SetSkillLookup enables optional skill= playbooks on the unified task entry.
-func (t *TaskTool) SetSkillLookup(fn SkillLookup) {
-	if t != nil {
-		t.skillLookup = fn
-	}
-}
-
 func (t *TaskTool) Name() string { return "task" }
 
 func (t *TaskTool) Description() string {
-	return "Single entry to spawn a background sub-agent. Returns immediately with a JSON started stub (job_id); the final answer is delivered later as a tool result (name=task) — wait for it, do not start another job for the same goal. Freeform: pass prompt only. Playbook: also set skill to a subagent playbook name from the Skills index (e.g. explore, research, review, security-review). Never pair this with run_skill for the same goal."
+	return "Single entry to spawn a background sub-agent (the only sub-agent tool). Pass a self-contained prompt — the child does not see this conversation. Returns immediately with a JSON started stub (job_id) — receipt only, never the answer. When the job finishes, the runtime auto-appends a NEW tool round at the conversation tail with name=task_result (you do not call task_result; it is not in your tool list). Wait for that tail delivery; do not start another task for the same goal, and do not poll with peek-job."
 }
 
 func (t *TaskTool) Schema() json.RawMessage {
@@ -132,8 +101,7 @@ func (t *TaskTool) Schema() json.RawMessage {
 "type":"object",
 "properties":{
   "prompt":{"type":"string","description":"What the sub-agent should accomplish. Be specific about the deliverable — the sub-agent does not see this conversation."},
-  "description":{"type":"string","description":"Short label for the sub-task (3-7 words). Surfaced in the dispatch line so the user sees what's running."},
-  "skill":{"type":"string","description":"Optional subagent playbook name from the Skills index (e.g. explore, research, review, security-review). Uses that playbook as the child system prompt. Omit for freeform work."}
+  "description":{"type":"string","description":"Short label for the sub-task (3-7 words). Surfaced in the dispatch line so the user sees what's running."}
 },
 "required":["prompt"]
 }`)
@@ -167,17 +135,18 @@ func taskPostCallGuidance(jobID string) string {
 
 The Started stub above is only a receipt that the job began — it will NEVER change. Do not wait for that mid-history card to update.
 
-When the job finishes, a NEW tool round appears at the END of the conversation:
-  tool name = task_result
+When the job finishes, the RUNTIME appends a NEW tool round at the END of the conversation:
+  tool name = task_result   (system delivery — NOT a tool you call; it is not in your tool list)
   arguments include job_id + status=completed
   content = the full sub-agent answer
 
-That tail task_result is authoritative. Do not re-dispatch the same goal.
+That automatic tail delivery is authoritative. Do not re-dispatch the same goal while this job is still open or its result has not yet appeared at the tail.
 
 While waiting, do NOT:
+• Call task_result yourself (it always fails; wait for auto-delivery)
 • Call peek-job to poll a task sub-agent (results arrive without polling; peek is for shell/bash jobs)
 • Call steer-job to ask "are you done" (steer is for genuine new instructions only)
-• Dispatch another task for the same goal
+• Dispatch another task for the same goal (exact or paraphrased)
 
 Polling wastes context and delays responses. Continue other work or reply to the user instead.`
 	idClause := " job_id=task-N (from the started stub above)"
@@ -205,7 +174,6 @@ func (t *TaskTool) Execute(ctx context.Context, args json.RawMessage) (string, e
 	var p struct {
 		Prompt      string `json:"prompt"`
 		Description string `json:"description"`
-		Skill       string `json:"skill"`
 	}
 	if err := json.Unmarshal(args, &p); err != nil {
 		return "", fmt.Errorf("invalid args: %w", err)
@@ -213,32 +181,13 @@ func (t *TaskTool) Execute(ctx context.Context, args json.RawMessage) (string, e
 	if p.Prompt == "" {
 		return "", fmt.Errorf("prompt is required")
 	}
-	skillName := normalizeTaskSkillName(p.Skill)
 	label := strings.TrimSpace(p.Description)
-	sysPrompt := t.sysPrompt
-	role := "task"
-	modelRef, effort := "", ""
-	if skillName != "" {
-		if t.skillLookup == nil {
-			return "", fmt.Errorf("skill playbooks are not available in this session")
-		}
-		pb, ok := t.skillLookup(skillName)
-		if !ok {
-			return "", fmt.Errorf("unknown subagent skill %q — use task without skill for freeform work, or a name from the Skills index tagged subagent", skillName)
-		}
-		sysPrompt = pb.Body
-		role = pb.Name
-		if role == "" {
-			role = skillName
-		}
-		modelRef, effort = pb.Model, pb.Effort
-		if label == "" {
-			label = role
-		}
-	}
 	if label == "" {
 		label = "task"
 	}
+	sysPrompt := t.sysPrompt
+	role := "task"
+	modelRef, effort := "", ""
 
 	maxSteps := 0
 	// Default is no limit (0). Only capped when explicitly set by the caller.
@@ -298,20 +247,9 @@ func (t *TaskTool) Execute(ctx context.Context, args json.RawMessage) (string, e
 	return FormatStartedTaskResult(job.ID, label), nil
 }
 
-// normalizeTaskSkillName maps model-facing aliases to skill identifiers.
-func normalizeTaskSkillName(name string) string {
-	name = strings.TrimSpace(strings.ToLower(name))
-	if name == "" {
-		return ""
-	}
-	name = strings.ReplaceAll(name, "_", "-")
-	return name
-}
-
 // buildSubReg returns the sub-agent's tool set: the named whitelist (minus
-// subagent/skill meta-tools, to bar recursive nesting), or every parent tool
-// except those meta-tools. When allowMeta is true, meta-tools are included
-// to permit deeper recursive nesting.
+// meta-tools that could re-spawn work), or every parent tool except those
+// meta-tools. When allowMeta is true, meta-tools are included.
 func (t *TaskTool) buildSubReg(names []string, allowMeta bool) *tool.Registry {
 	if allowMeta {
 		return FilterRegistry(t.parentReg, names)
@@ -321,8 +259,7 @@ func (t *TaskTool) buildSubReg(names []string, allowMeta bool) *tool.Registry {
 
 // FilterRegistry builds a sub-registry from parent: the named whitelist (empty =
 // every parent tool), minus any excluded names. Used to scope what a spawned
-// sub-agent — a `task` sub-agent or a subagent skill — may call, e.g. excluding
-// `task` to bar recursive nesting, or restricting to a skill's allowed-tools.
+// sub-agent (via `task`) may call, e.g. excluding `task` to bar recursive nesting.
 func FilterRegistry(parent *tool.Registry, names []string, exclude ...string) *tool.Registry {
 	ex := make(map[string]bool, len(exclude))
 	for _, e := range exclude {
@@ -427,9 +364,8 @@ func (t *TaskTool) runSub(ctx context.Context, prompt string, subReg *tool.Regis
 
 // RunSubAgent runs prompt to completion in a fresh sub-agent session over reg,
 // emitting tool activity to sink, and returns the sub-agent's final assistant
-// answer. It is the shared core behind the `task` tool and subagent skills: a
-// caller supplies the system prompt (the task persona or the skill body), the
-// tool registry (already filtered), and the run Options (model budget, gate).
+// answer. It is the shared core behind the `task` tool: the caller supplies the
+// system prompt, tool registry (already filtered), and run Options.
 func RunSubAgent(ctx context.Context, prov provider.Provider, reg *tool.Registry, sysPrompt, prompt string, opts Options, sink event.Sink) (string, error) {
 	sess := NewSession(sysPrompt)
 

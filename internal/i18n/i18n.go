@@ -240,7 +240,6 @@ type Messages struct {
 	SkillPickerScopeCustom       string
 	SkillPickerScopeGlobal       string
 	SkillPickerScopeBuiltin      string
-	SkillPickerSubagent          string
 	SkillPickerAvailableLabel    string
 	SkillPickerDisabledLabel     string
 	SkillPickerNoChanges         string
@@ -256,7 +255,7 @@ type Messages struct {
 	SkillPickerMoreAboveFmt      string // "↑ %d more above"
 	SkillPickerMoreBelowFmt      string // "↓ %d more below"
 	SkillPickerTokenFmt          string // "~%d tok"
-	SkillPickerDetailMetaFmt     string // "Scope: %s  Run as: %s"
+	SkillPickerDetailMetaFmt     string // "Scope: %s"
 	SkillPickerSkillsUnit        string // "skills" (used as "%d skills")
 	SkillPickerLinesUnit         string // "lines" (used as "+N more lines")
 	SkillPickerStatusLabel       string // shown in the TUI status bar while picker is open

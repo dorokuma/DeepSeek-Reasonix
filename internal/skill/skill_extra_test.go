@@ -73,40 +73,7 @@ func TestSplitFrontmatterQuotedValues(t *testing.T) {
 	}
 }
 
-// --- parseRunAs ---
 
-func TestParseRunAsExplicit(t *testing.T) {
-	if parseRunAs("subagent", "", "") != RunSubagent {
-		t.Error("explicit subagent should return RunSubagent")
-	}
-	if parseRunAs("inline", "", "") != RunInline {
-		t.Error("explicit inline should return RunInline")
-	}
-}
-
-func TestParseRunAsContextFork(t *testing.T) {
-	if parseRunAs("", "fork", "") != RunSubagent {
-		t.Error("context: fork should return RunSubagent")
-	}
-	if parseRunAs("", "FORK", "") != RunSubagent {
-		t.Error("context: FORK should return RunSubagent")
-	}
-}
-
-func TestParseRunAsAgent(t *testing.T) {
-	if parseRunAs("", "", "some-agent") != RunSubagent {
-		t.Error("non-empty agent should return RunSubagent")
-	}
-}
-
-func TestParseRunAsDefault(t *testing.T) {
-	if parseRunAs("", "", "") != RunInline {
-		t.Error("all empty should default to RunInline")
-	}
-	if parseRunAs("unknown", "", "") != RunInline {
-		t.Error("unknown runAs should default to RunInline")
-	}
-}
 
 // --- resolveCustomPaths ---
 

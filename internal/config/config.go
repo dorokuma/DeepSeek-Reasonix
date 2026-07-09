@@ -466,7 +466,7 @@ func (c *Config) BashMode() string {
 // to another provider's name it enables two-model collaboration, where the
 // planner handles low-frequency planning in its own session (kept separate so
 // each model's prompt prefix stays cache-stable). SubagentModel is the optional
-// default for runAs=subagent skills; SubagentModels overrides it per skill name.
+// default for task sub-agents; SubagentModels overrides it per role name (usually "task").
 type AgentConfig struct {
 	SystemPrompt              string            `toml:"system_prompt"`
 	SystemPromptFile          string            `toml:"system_prompt_file"`

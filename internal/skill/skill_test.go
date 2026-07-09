@@ -195,18 +195,10 @@ func TestFrontmatterFields(t *testing.T) {
 	writeSkill(t, home, ".reasonix/skills/plain.md", "---\ndescription: p\n---\nbody")
 
 	st := New(Options{HomeDir: home, DisableBuiltins: true})
-	sub, _ := st.Read("sub")
-	if sub.RunAs != RunSubagent {
-		t.Error("runAs: subagent not parsed")
-	}
-	if sub.Model != "deepseek-pro" {
-		t.Errorf("model mis-parsed: %q", sub.Model)
-	}
-	if fork, _ := st.Read("fork"); fork.RunAs != RunSubagent {
-		t.Error("context: fork should imply subagent")
-	}
-	if plain, _ := st.Read("plain"); plain.RunAs != RunInline {
-		t.Error("default runAs should be inline")
+	for _, name := range []string{"sub", "fork", "plain"} {
+		if _, ok := st.Read(name); !ok {
+			t.Fatalf("skill %q missing", name)
+		}
 	}
 }
 
@@ -291,8 +283,8 @@ func TestBuiltinInitIsInlineSkill(t *testing.T) {
 	if !ok {
 		t.Fatal("built-in init skill not found")
 	}
-	if sk.Scope != ScopeBuiltin || sk.RunAs != RunInline {
-		t.Errorf("init should be a builtin inline skill, got scope=%s runAs=%s", sk.Scope, sk.RunAs)
+	if sk.Scope != ScopeBuiltin {
+		t.Errorf("init should be a builtin skill, got scope=%s", sk.Scope)
 	}
 	if _, listed := find(st.List(), "init"); !listed {
 		t.Error("init should appear in List() so it reaches the slash menu")
@@ -301,16 +293,19 @@ func TestBuiltinInitIsInlineSkill(t *testing.T) {
 
 func TestBuiltinsPresentAndOverridable(t *testing.T) {
 	st := New(Options{HomeDir: t.TempDir()})
-	if _, ok := find(st.List(), "explore"); !ok {
-		t.Error("built-in explore should be present")
+	if _, ok := find(st.List(), "init"); !ok {
+		t.Error("built-in init should be present")
+	}
+	if _, ok := find(st.List(), "explore"); ok {
+		t.Error("built-in explore must be gone")
 	}
 	// A user file named after a built-in overrides it.
 	home := t.TempDir()
-	writeSkill(t, home, ".reasonix/skills/explore.md", "---\ndescription: mine\nrunAs: inline\n---\nbody")
+	writeSkill(t, home, ".reasonix/skills/init.md", "---\ndescription: mine\n---\nbody")
 	st2 := New(Options{HomeDir: home})
-	ex, _ := st2.Read("explore")
+	ex, _ := st2.Read("init")
 	if ex.Scope == ScopeBuiltin || ex.Description != "mine" {
-		t.Errorf("user explore should override builtin: scope=%s desc=%q", ex.Scope, ex.Description)
+		t.Errorf("user init should override builtin: scope=%s desc=%q", ex.Scope, ex.Description)
 	}
 }
 
@@ -322,9 +317,6 @@ func TestInstallCapabilityBuiltinIsInlineWithExpectedMetadata(t *testing.T) {
 	}
 	if sk.Scope != ScopeBuiltin {
 		t.Errorf("install-capability scope = %s, want builtin", sk.Scope)
-	}
-	if sk.RunAs != RunInline {
-		t.Errorf("install-capability runAs = %s, want inline (it folds into the parent turn)", sk.RunAs)
 	}
 	if !strings.Contains(sk.Description, "install_source") {
 		t.Errorf("description should mention install_source, got %q", sk.Description)
@@ -436,30 +428,29 @@ func TestApplyIndex(t *testing.T) {
 		t.Errorf("empty skills should leave base unchanged, got %q", got)
 	}
 	skills := []Skill{
-		{Name: "alpha", Description: "the alpha", RunAs: RunInline},
-		{Name: "beta", Description: "the beta", RunAs: RunSubagent},
+		{Name: "alpha", Description: "the alpha"},
+		{Name: "beta", Description: "the beta"},
 	}
 	out := ApplyIndex("BASE", skills)
 	if !strings.HasPrefix(out, "BASE\n\n# Skills") {
 		t.Error("index should append after the base")
 	}
 	if !strings.Contains(out, "- alpha — the alpha") {
-		t.Errorf("inline skill line missing: %s", out)
+		t.Errorf("skill line missing: %s", out)
 	}
-	if !strings.Contains(out, "- beta [🧬 subagent] — the beta") {
-		t.Errorf("subagent tag missing: %s", out)
+	if !strings.Contains(out, "- beta — the beta") {
+		t.Errorf("skill line missing: %s", out)
 	}
 }
 
-func TestApplyIndexMandatesInlineButRestrainsSubagent(t *testing.T) {
-	out := ApplyIndex("BASE", []Skill{{Name: "alpha", Description: "the alpha", RunAs: RunInline}})
+func TestApplyIndexPointsAtRunSkillAndTask(t *testing.T) {
+	out := ApplyIndex("BASE", []Skill{{Name: "alpha", Description: "the alpha"}})
 
-	if !strings.Contains(out, "untagged (inline) skill is even plausibly relevant") ||
-		!strings.Contains(out, "run_skill") {
-		t.Errorf("inline skills should be invoked via run_skill on plausible relevance:\n%s", out)
+	if !strings.Contains(out, "run_skill") {
+		t.Errorf("skills should be invoked via run_skill:\n%s", out)
 	}
-	if !strings.Contains(out, "task") || !strings.Contains(out, "skill:") {
-		t.Errorf("subagent skills should route through task skill=:\n%s", out)
+	if !strings.Contains(out, "task") {
+		t.Errorf("index should mention task for background work:\n%s", out)
 	}
 }
 

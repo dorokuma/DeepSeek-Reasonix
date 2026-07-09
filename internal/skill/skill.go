@@ -1,13 +1,12 @@
 // Package skill loads invokable playbooks ("skills") from Markdown files. A skill
 // is a named, described prompt body the model can invoke via the run_skill tool
-// (or the user via "/<name>"): an "inline" skill folds its body into the turn as
-// a tool result, a "subagent" skill runs in an isolated child loop and returns
-// only its final answer. Project scope wins over global; only names+descriptions
-// enter the cache-stable system-prompt index (see index.go) — bodies load on
-// demand. Discovery scans several conventions (.reasonix / .agents / .agent /
-// .claude under the project root and the home dir — see config.ConventionDirs) so
-// skills authored for other agent tools migrate in unchanged, and follows
-// symlinks, so a linked skill directory or flat <name>.md is picked up like a real one.
+// (or the user via "/<name>"): the body is inlined into the parent turn as a tool
+// result. Background isolation uses the separate task tool. Project scope wins
+// over global; only names+descriptions enter the cache-stable system-prompt
+// index (see index.go) — bodies load on demand. Discovery scans several
+// conventions (.reasonix / .agents / .agent / .claude under the project root and
+// the home dir — see config.ConventionDirs) so skills authored for other agent
+// tools migrate in unchanged, and follows symlinks.
 package skill
 
 import (
@@ -34,16 +33,6 @@ const (
 	ScopeBuiltin Scope = "builtin"
 )
 
-// RunAs selects how an invoked skill executes. Inline folds the body into the
-// parent turn; subagent spawns an isolated child loop and returns only the final
-// answer (its tool calls and reasoning never enter the parent context).
-type RunAs string
-
-const (
-	RunInline   RunAs = "inline"
-	RunSubagent RunAs = "subagent"
-)
-
 const (
 	// SkillsDirname is the directory under each root that holds skills.
 	SkillsDirname = "skills"
@@ -51,17 +40,13 @@ const (
 	SkillFile = "SKILL.md"
 )
 
-// Skill is a loaded playbook.
+// Skill is a loaded playbook (always inlined when invoked).
 type Skill struct {
 	Name        string // canonical identifier; matches the directory / filename stem
 	Description string // one-liner shown in the pinned index
 	Body        string // full markdown body (post-frontmatter), loaded eagerly
 	Scope       Scope  // where it came from
 	Path        string // absolute path to the SKILL.md / <name>.md, or "(builtin)"
-
-	RunAs  RunAs  // inline | subagent
-	Model  string // optional model override for runAs=subagent (frontmatter `model:`)
-	Effort string // optional effort for runAs=subagent (frontmatter `effort:`)
 }
 
 // IsValidName reports whether name is a usable skill identifier.
@@ -297,15 +282,10 @@ func (s *Store) Read(name string) (Skill, bool) {
 	return Skill{}, false
 }
 
-// ReadInline resolves one skill by name but only returns inline skills.
-// Subagent skills are silently treated as non-existent — the caller never
-// receives (or loads) subagent bodies.
+// ReadInline resolves one skill by name. All skills are inline; this is
+// equivalent to Read for normal stores (kept for call-site compatibility).
 func (s *Store) ReadInline(name string) (Skill, bool) {
-	sk, ok := s.Read(name)
-	if !ok || sk.RunAs == RunSubagent {
-		return Skill{}, false
-	}
-	return sk, true
+	return s.Read(name)
 }
 
 func (s *Store) discoverRoot(r Root) []Skill {
@@ -435,10 +415,6 @@ func (s *Store) parse(path, stem string, scope Scope) (Skill, bool) {
 		Body:        loadBodyWithScripts(path, loadBodyWithReferences(path, strings.TrimSpace(body))),
 		Scope:       scope,
 		Path:        path,
-
-		RunAs:  parseRunAs(fm["runas"], fm["context"], fm["agent"]),
-		Model:  strings.TrimSpace(fm["model"]),
-		Effort: strings.TrimSpace(fm["effort"]),
 	}, true
 }
 
@@ -574,22 +550,6 @@ func loadBodyWithScripts(skillPath, body string) string {
 	return b.String()
 }
 
-// parseRunAs maps frontmatter to a run mode. An unknown value defaults to the
-// safe (non-spawning) inline mode; a `context: fork` or a non-empty `agent:`
-// field (cross-tool conventions) signals subagent isolation.
-func parseRunAs(runAs, context, agent string) RunAs {
-	if strings.TrimSpace(runAs) == "subagent" {
-		return RunSubagent
-	}
-	if strings.EqualFold(strings.TrimSpace(context), "fork") {
-		return RunSubagent
-	}
-	if strings.TrimSpace(agent) != "" {
-		return RunSubagent
-	}
-	return RunInline
-}
-
 // stubBody is the scaffold written by `/skill new` — minimal frontmatter plus
 // guidance the author fills in.
 func stubBody(name string) string {
@@ -599,7 +559,7 @@ Replace this body with the playbook the model should follow when this skill is i
 
 Tips:
 - Reference tools by name
-- Add ` + "`runAs: subagent`" + ` to frontmatter to spawn an isolated subagent loop
+- Invoke via run_skill or /name; use the task tool for background work
 `
 }
 

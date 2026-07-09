@@ -90,7 +90,7 @@ var Chinese = Messages{
 
 	SlashUnavailable: "当前不可用",
 	SlashUnknown:     "未知命令",
-	SlashHelp:        "命令：/compact · /new · /resume · /rewind · /tree · /branch · /switch · /todo · /verbose · /model · /effort · /theme · /language · /mcp · /skills · /hooks · /paste-image · /memory · /remember · /quit · /help · 以及技能（/init, /explore, …）",
+	SlashHelp:        "命令：/compact · /new · /resume · /rewind · /tree · /branch · /switch · /todo · /verbose · /model · /effort · /theme · /language · /mcp · /skills · /hooks · /paste-image · /memory · /remember · /quit · /help · 以及技能（/init, /test, …）",
 	SlashPromptEmpty: "输入命令",
 	SlashMCPNone:     "无 MCP 服务器",
 
@@ -224,7 +224,6 @@ var Chinese = Messages{
 	SkillPickerScopeGlobal:   "全局",
 	SkillPickerScopeBuiltin:  "内置",
 
-	SkillPickerSubagent:         "子代理",
 	SkillPickerAvailableLabel:   "开",
 	SkillPickerDisabledLabel:    "关",
 	SkillPickerNoChanges:        "技能对话框已关闭：无变更",
@@ -243,7 +242,7 @@ var Chinese = Messages{
 	SkillPickerMoreBelowFmt: "↓ 还有 %d 个",
 
 	SkillPickerTokenFmt:      "~%d tok",
-	SkillPickerDetailMetaFmt: "范围：%s  运行方式：%s",
+	SkillPickerDetailMetaFmt: "范围：%s",
 	SkillPickerSkillsUnit:    "个",
 	SkillPickerLinesUnit:     "行",
 	SkillPickerStatusLabel:   "技能选择器",

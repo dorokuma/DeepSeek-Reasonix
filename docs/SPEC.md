@@ -356,7 +356,7 @@ max_steps         = 0    # executor tool-call rounds; 0 = no limit
 planner_max_steps = 12   # planner read-only tool-call rounds; 0 = no limit
 temperature       = 0.0
 # planner_model = "mimo"   # optional: two-model collaboration (low-frequency planner)
-# subagent_model = "deepseek-pro"   # optional default for runAs=subagent skills
+# subagent_model = "deepseek-pro"   # optional default for task sub-agents
 # subagent_models = { review = "deepseek-pro", security_review = "deepseek-pro" }
 
 # A vendor endpoint exposing several models under one base_url/key.

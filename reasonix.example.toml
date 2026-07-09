@@ -39,8 +39,8 @@ compact_ratio       = 0.8   # try compacting when prompt reaches this fraction
 compact_force_ratio = 0.9   # force compacting at this high-water mark
 # log_level = "debug"   # debug|info|warn|error; agent diagnostic verbosity; empty=info
 # planner_model = "deepseek-pro"   # optional: enable two-model collaboration
-# subagent_model = "deepseek-pro"   # optional default for runAs=subagent skills
-# subagent_models = { review = "deepseek-pro", security_review = "deepseek-pro" }   # per-skill overrides
+# subagent_model = "deepseek-pro"   # optional default for task sub-agents
+# subagent_models = { task = "deepseek-pro" }   # optional per-role overrides
 # output_style = "explanatory"   # persona/tone folded into the prompt: explanatory | learning | concise,
 #                                  or a custom .reasonix/output-styles/<name>.md ; empty = default
 
@@ -105,15 +105,16 @@ bash_timeout_seconds = 120   # foreground safety cap; set 0 for no tool-local ca
 [tools.background_jobs]
 stalled_warning_seconds = 900   # warn once per background job after this many quiet seconds; 0 disables
 
-# Skills are invokable playbooks (SKILL.md / <name>.md with frontmatter), found
+# Skills are invokable inline playbooks (SKILL.md / <name>.md with frontmatter), found
 # under .reasonix/skills, .agents/skills, .agent/skills, .claude/skills (project)
-# and the same dirs under ~ (global). Built-ins (explore/research/review/security-review/test)
-# ship out of the box. The model invokes them via run_skill / explore / …; you
-# invoke them via /<name>. Manage with /skill (list, show, enable, disable, new, paths).
+# and the same dirs under ~ (global). Built-ins (init / test / install-capability)
+# ship out of the box. The model invokes them via run_skill; you invoke them via /<name>.
+# Background sub-agents use the task tool only.
+# Manage with /skill (list, show, enable, disable, new, paths).
 # [skills]
 # paths = ["~/my-skills", "../shared/skills"]   # extra "custom"-scope skill roots
 # excluded_paths = ["~/.agents/skills"]         # hide convention roots without deleting folders
-# disabled_skills = ["review"]                  # hide from prompt, slash invocation, and skill tools
+# disabled_skills = ["test"]                    # hide from prompt, slash invocation, and skill tools
 
 # Hooks run shell commands around the loop (PreToolUse / PostToolUse /
 # PermissionRequest / UserPromptSubmit / Stop). They are NOT configured here — put them in

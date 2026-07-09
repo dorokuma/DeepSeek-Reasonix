@@ -167,24 +167,24 @@ func RenderTOMLForScope(c *Config, scope RenderScope) string {
 		b.WriteString("# planner_model = \"mimo\"   # optional: enable two-model collaboration\n")
 	}
 	if c.Agent.SubagentModel != "" {
-		fmt.Fprintf(&b, "subagent_model = %q   # default model for runAs=subagent skills\n", c.Agent.SubagentModel)
+		fmt.Fprintf(&b, "subagent_model = %q   # default model for task sub-agents\n", c.Agent.SubagentModel)
 	} else {
-		b.WriteString("# subagent_model = \"deepseek-pro\"   # optional default for runAs=subagent skills\n")
+		b.WriteString("# subagent_model = \"deepseek-pro\"   # optional default for task sub-agents\n")
 	}
 	if len(c.Agent.SubagentModels) > 0 {
-		fmt.Fprintf(&b, "subagent_models = %s   # per-skill overrides\n", renderStringMap(c.Agent.SubagentModels))
+		fmt.Fprintf(&b, "subagent_models = %s   # per-role overrides (role is \"task\")\n", renderStringMap(c.Agent.SubagentModels))
 	} else {
-		b.WriteString("# subagent_models = { review = \"deepseek-pro\", security_review = \"deepseek-pro\" }   # per-skill overrides\n")
+		b.WriteString("# subagent_models = { task = \"deepseek-pro\" }   # optional per-role overrides\n")
 	}
 	if c.Agent.SubagentEffort != "" {
-		fmt.Fprintf(&b, "subagent_effort = %q   # default effort for subagent entry points\n", c.Agent.SubagentEffort)
+		fmt.Fprintf(&b, "subagent_effort = %q   # default effort for task sub-agents\n", c.Agent.SubagentEffort)
 	} else {
-		b.WriteString("# subagent_effort = \"high\"   # optional default effort for subagents\n")
+		b.WriteString("# subagent_effort = \"high\"   # optional default effort for task sub-agents\n")
 	}
 	if len(c.Agent.SubagentEfforts) > 0 {
-		fmt.Fprintf(&b, "subagent_efforts = %s   # per-tool/skill effort overrides\n", renderStringMap(c.Agent.SubagentEfforts))
+		fmt.Fprintf(&b, "subagent_efforts = %s   # per-role effort overrides\n", renderStringMap(c.Agent.SubagentEfforts))
 	} else {
-		b.WriteString("# subagent_efforts = { review = \"max\", task = \"high\" }   # per-tool/skill effort overrides\n")
+		b.WriteString("# subagent_efforts = { task = \"high\" }   # optional per-role effort overrides\n")
 	}
 	if c.Agent.OutputStyle != "" {
 		fmt.Fprintf(&b, "output_style = %q   # persona/tone folded into the prompt\n", c.Agent.OutputStyle)
@@ -296,7 +296,7 @@ func RenderTOMLForScope(c *Config, scope RenderScope) string {
 	if len(c.Permissions.MainAgentAllowed) > 0 {
 		fmt.Fprintf(&b, "main_agent_allowed = %s\n", renderStringArray(c.Permissions.MainAgentAllowed))
 	} else {
-		b.WriteString("# main_agent_allowed = [\"task\", \"ask\", \"note\", \"audit_finish\", \"read_skill\", \"run_skill\", \"slash_command\", \"remember\", \"forget\", \"bash_output\", \"kill_shell\"]\n")
+		b.WriteString("# main_agent_allowed = [\"task\", \"ask\", \"note\", \"audit_finish\", \"read_skill\", \"run_skill\", \"slash_command\", \"remember\", \"forget\", \"recall\", \"peek-job\", \"cancel-job\", \"steer-job\"]\n")
 	}
 	b.WriteString("\n")
 

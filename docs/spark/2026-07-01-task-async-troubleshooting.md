@@ -37,7 +37,7 @@
 - 空自动续轮：末尾无未读 `task_result` 且无待投递 task 时直接跳过，不打空模型请求
 - 多任务同时结束：空续轮合并为一次；深度上限 32
 - bash 完成后保留最多 20 个 / 30 分钟，超时 GC（task 投递后立即移除）
-- `task_result` 已注册为系统工具（不可手调），避免历史工具名「幽灵」
+- `task_result` 仍注册在 registry（历史校验 / Execute 可解析），但 `OmitFromModelSchema` 不进 provider 工具表，避免模型当可调工具去调
 
 ## 禁止再引入
 

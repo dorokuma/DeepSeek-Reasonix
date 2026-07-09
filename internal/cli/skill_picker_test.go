@@ -14,9 +14,9 @@ import (
 
 func makeTestSkills() []skill.Skill {
 	return []skill.Skill{
-		{Name: "review", Description: "Review code changes for correctness", Scope: skill.ScopeProject, Path: "/fake/proj/.reasonix/skills/review/SKILL.md", RunAs: skill.RunSubagent, Body: "# Review\n\nReview code."},
-		{Name: "explore", Description: "Fast read-only search agent", Scope: skill.ScopeBuiltin, Path: "(builtin)", RunAs: skill.RunSubagent, Body: "# Explore\n\nSearch the codebase."},
-		{Name: "test", Description: "Run tests and validate behavior", Scope: skill.ScopeProject, Path: "/fake/proj/.reasonix/skills/test.md", RunAs: skill.RunInline, Body: "# Test\n\nRun the tests."},
+		{Name: "review", Description: "Review code changes for correctness", Scope: skill.ScopeProject, Path: "/fake/proj/.reasonix/skills/review/SKILL.md", Body: "# Review\n\nReview code."},
+		{Name: "explore", Description: "Fast read-only search agent", Scope: skill.ScopeBuiltin, Path: "(builtin)", Body: "# Explore\n\nSearch the codebase."},
+		{Name: "test", Description: "Run tests and validate behavior", Scope: skill.ScopeProject, Path: "/fake/proj/.reasonix/skills/test.md", Body: "# Test\n\nRun the tests."},
 	}
 }
 
@@ -270,9 +270,6 @@ func TestSkillPickerDetail(t *testing.T) {
 	}
 
 	out := m.renderSkillPicker()
-	if !strings.Contains(out, "subagent") {
-		t.Fatalf("detail should show subagent tag:\n%s", out)
-	}
 	if !strings.Contains(out, "Scope") && !strings.Contains(out, "范围") {
 		t.Fatalf("detail should show scope:\n%s", out)
 	}
@@ -532,7 +529,7 @@ func TestSkillPickerDetailDeleteRequiresConfirmation(t *testing.T) {
 		t.Fatal(err)
 	}
 	skills := []skill.Skill{
-		{Name: "review", Description: "Review code", Scope: skill.ScopeProject, Path: path, RunAs: skill.RunSubagent, Body: "# Review"},
+		{Name: "review", Description: "Review code", Scope: skill.ScopeProject, Path: path, Body: "# Review"},
 	}
 	p := &skillPicker{
 		mode:         pickerDetail,
@@ -559,7 +556,6 @@ func TestSkillPickerDetailShowsActionsBeforeBodyPreview(t *testing.T) {
 		Description: "Review code",
 		Scope:       skill.ScopeProject,
 		Path:        "/proj/.reasonix/skills/review/SKILL.md",
-		RunAs:       skill.RunSubagent,
 		Body:        "# Review\n\n" + strings.Repeat("BODY_LINE\n", 40),
 	}
 	m := chatTUI{
@@ -598,7 +594,7 @@ func TestDeleteSkillPickRemovesDirectoryTarget(t *testing.T) {
 	if err := os.WriteFile(path, []byte("# Review"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	s := skill.Skill{Name: "review", Scope: skill.ScopeProject, Path: path, RunAs: skill.RunSubagent, Body: "# Review"}
+	s := skill.Skill{Name: "review", Scope: skill.ScopeProject, Path: path, Body: "# Review"}
 	m := newTestChatTUI()
 	m.skills = []skill.Skill{s}
 	m.skillPick = &skillPicker{
@@ -672,19 +668,16 @@ func TestClampSel(t *testing.T) {
 	}
 }
 
-func TestSkillRowLabelHasSubagentTag(t *testing.T) {
-	s := skill.Skill{Name: "review", Description: "Review code", Scope: skill.ScopeProject, RunAs: skill.RunSubagent}
+func TestSkillRowLabelNoSubagentTag(t *testing.T) {
+	s := skill.Skill{Name: "review", Description: "Review code", Scope: skill.ScopeProject}
 	row := renderSkillRow(1, false, s, true, 80)
-	if !strings.Contains(row, "subagent") && !strings.Contains(row, "子代理") {
-		t.Fatalf("subagent skill missing tag: %q", row)
-	}
 	if !strings.Contains(row, "review") {
 		t.Fatalf("missing skill name: %q", row)
 	}
 }
 
 func TestRenderSkillRowSelected(t *testing.T) {
-	s := skill.Skill{Name: "test", Description: "A test skill", Scope: skill.ScopeGlobal, RunAs: skill.RunInline}
+	s := skill.Skill{Name: "test", Description: "A test skill", Scope: skill.ScopeGlobal}
 	row := renderSkillRow(5, true, s, true, 80)
 	if !strings.Contains(row, "›") {
 		t.Fatalf("selected row missing arrow: %q", row)
@@ -697,7 +690,7 @@ func TestRenderSkillRowSelected(t *testing.T) {
 }
 
 func TestRenderSkillRowScopeMeta(t *testing.T) {
-	s := skill.Skill{Name: "example", Description: "desc", Scope: skill.ScopeGlobal, RunAs: skill.RunInline}
+	s := skill.Skill{Name: "example", Description: "desc", Scope: skill.ScopeGlobal}
 	row := renderSkillRow(1, false, s, true, 80)
 	if !strings.Contains(row, "global") && !strings.Contains(row, "全局") {
 		t.Fatalf("row missing scope label: %q", row)
@@ -727,7 +720,6 @@ func TestRenderSkillRowChineseBadgeFitsWidth(t *testing.T) {
 		Name:        "browser-testing-with-devtools",
 		Description: "Tests in real browsers. Use when building or debugging anything that runs in a browser.",
 		Scope:       skill.ScopeGlobal,
-		RunAs:       skill.RunSubagent,
 	}
 	row := renderSkillRow(13, true, s, true, 80)
 	if got := visibleWidth(row); got > 80 {
@@ -905,16 +897,12 @@ func TestRenderSkillDetailUsesI18nMeta(t *testing.T) {
 		Description: "Review code",
 		Scope:       skill.ScopeProject,
 		Path:        "/proj/.reasonix/skills/review/SKILL.md",
-		RunAs:       skill.RunSubagent,
 		Body:        "# Review\n\nLine 1\nLine 2",
 	}
 	out := renderSkillDetail(s, 80)
-	// Detail should use i18n meta format (not raw "Scope:" when in Chinese).
+	// Detail should use i18n scope format.
 	if !strings.Contains(out, "Scope") && !strings.Contains(out, "范围") {
 		t.Fatalf("detail missing scope label:\n%s", out)
-	}
-	if !strings.Contains(out, "Run as") && !strings.Contains(out, "运行") {
-		t.Fatalf("detail missing run-as label:\n%s", out)
 	}
 }
 

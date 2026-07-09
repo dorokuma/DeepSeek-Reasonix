@@ -288,9 +288,6 @@ func skillGroupLabel(sc skill.Scope) string {
 
 func skillRowMeta(s skill.Skill) string {
 	parts := []string{scopeLabel(s.Scope)}
-	if s.RunAs == skill.RunSubagent {
-		parts = append(parts, i18n.M.SkillPickerSubagent)
-	}
 	parts = append(parts, fmt.Sprintf(i18n.M.SkillPickerTokenFmt, approxSkillTokens(s)))
 	return strings.Join(parts, " · ")
 }
@@ -373,7 +370,7 @@ func renderSkillDetailHeader(s skill.Skill, w int) string {
 	b.WriteString(accent("/" + s.Name))
 	b.WriteByte('\n')
 
-	meta := fmt.Sprintf(i18n.M.SkillPickerDetailMetaFmt, scopeLabel(s.Scope), string(s.RunAs))
+	meta := fmt.Sprintf(i18n.M.SkillPickerDetailMetaFmt, scopeLabel(s.Scope))
 	b.WriteString(dim("  " + meta))
 	b.WriteByte('\n')
 

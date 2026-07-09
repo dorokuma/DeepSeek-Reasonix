@@ -4,7 +4,7 @@ import "testing"
 
 // TestSplitParsesYAMLList probes a YAML list value (the form skills authored for
 // other agent tools use for allowed-tools). The parser must surface the items so
-// a subagent skill keeps its tool scoping; dropping them silently widens the
+// list-valued frontmatter (e.g. allowed-tools) is preserved; dropping them silently widens the
 // skill to the full parent registry.
 func TestSplitParsesYAMLList(t *testing.T) {
 	in := "---\n" +
