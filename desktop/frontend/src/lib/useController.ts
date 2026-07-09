@@ -58,7 +58,7 @@ const HISTORY_PAGE_TURNS = 60;
 
 export type Item =
   | { kind: "user"; id: string; text: string; submitText?: string; failed?: boolean; createdAt?: number; checkpointTurn?: number }
-  | { kind: "assistant"; id: string; text: string; reasoning: string; streaming: boolean; reasoningComplete?: boolean; reasoningDurationMs?: number; memoryCitations?: MemoryCitation[] }
+  | { kind: "assistant"; id: string; text: string; reasoning: string; streaming: boolean; reasoningComplete?: boolean; reasoningDurationMs?: number; workDurationMs?: number; memoryCitations?: MemoryCitation[] }
   | { kind: "phase"; id: string; text: string }
   | { kind: "notice"; id: string; level: "info" | "warn"; text: string; detail?: string }
   | {
@@ -438,6 +438,7 @@ export function historyMessagesToItems(messages: HistoryMessage[], idPrefix: str
           text: m.content,
           reasoning: m.reasoning ?? "",
           streaming: false,
+          workDurationMs: m.workDurationMs,
           memoryCitations: memoryCitations.length > 0 ? memoryCitations : undefined,
         });
         seq++;
@@ -587,6 +588,11 @@ function completeLiveReasoning(live: LiveStream, now = Date.now()): LiveStream {
   };
 }
 
+function currentTurnDurationMs(s: Pick<State, "turnStartAt">, now = Date.now()): number | undefined {
+  if (!Number.isFinite(s.turnStartAt) || s.turnStartAt <= 0 || now < s.turnStartAt) return undefined;
+  return Math.max(1, now - s.turnStartAt);
+}
+
 function flushPendingUser(s: State): State {
   if (s.pendingUser === undefined) return s;
   const lastItem = s.items[s.items.length - 1];
@@ -661,8 +667,10 @@ function applyEvent(s: State, e: WireEvent): State {
         return { ...s, items, live: undefined, currentAssistant: undefined };
       }
       const { items, id, seq } = ensureAssistant(s);
-      const completedLive = s.live?.id === id ? completeLiveReasoning({ ...s.live, text, reasoning }) : undefined;
+      const now = Date.now();
+      const completedLive = s.live?.id === id ? completeLiveReasoning({ ...s.live, text, reasoning }, now) : undefined;
       const reasoningDurationMs = liveReasoningDurationMs(completedLive);
+      const workDurationMs = currentTurnDurationMs(s, now);
       const next = items.map((it) =>
         it.kind === "assistant" && it.id === id
           ? (() => {
@@ -674,6 +682,7 @@ function applyEvent(s: State, e: WireEvent): State {
                 streaming: false,
                 reasoningComplete: reasoning !== "" || it.reasoningComplete,
                 reasoningDurationMs: reasoningDurationMs ?? it.reasoningDurationMs,
+                workDurationMs: Math.max(it.workDurationMs ?? 0, workDurationMs ?? 0) || undefined,
                 memoryCitations: memoryCitations.length > 0 ? memoryCitations : undefined,
               };
             })()
@@ -798,9 +807,21 @@ function applyEvent(s: State, e: WireEvent): State {
     }
     case "turn_done": {
       if (s.pendingUser !== undefined) s = flushPendingUser(s);
-      const finalized = s.items.map((it) => {
+      const now = Date.now();
+      const workDurationMs = currentTurnDurationMs(s, now);
+      let lastUserIndex = -1;
+      let lastAssistantIndex = -1;
+      for (let i = 0; i < s.items.length; i++) {
+        if (s.items[i].kind === "user") {
+          lastUserIndex = i;
+          lastAssistantIndex = -1;
+        } else if (i > lastUserIndex && s.items[i].kind === "assistant") {
+          lastAssistantIndex = i;
+        }
+      }
+      const finalized = s.items.map((it, index) => {
         if (it.kind === "assistant" && s.live && it.id === s.live.id) {
-          const completedLive = completeLiveReasoning(s.live);
+          const completedLive = completeLiveReasoning(s.live, now);
           return {
             ...it,
             text: completedLive.text,
@@ -808,9 +829,20 @@ function applyEvent(s: State, e: WireEvent): State {
             streaming: false,
             reasoningComplete: completedLive.reasoning !== "" || completedLive.reasoningComplete,
             reasoningDurationMs: liveReasoningDurationMs(completedLive) ?? it.reasoningDurationMs,
+            workDurationMs: index === lastAssistantIndex
+              ? Math.max(it.workDurationMs ?? 0, workDurationMs ?? 0) || undefined
+              : it.workDurationMs,
           };
         }
-        if (it.kind === "assistant" && it.streaming) return { ...it, streaming: false };
+        if (it.kind === "assistant") {
+          return {
+            ...it,
+            streaming: false,
+            workDurationMs: index === lastAssistantIndex
+              ? Math.max(it.workDurationMs ?? 0, workDurationMs ?? 0) || undefined
+              : it.workDurationMs,
+          };
+        }
         if (it.kind === "tool" && it.status === "running") return { ...it, status: "stopped" as const };
         return it;
       });

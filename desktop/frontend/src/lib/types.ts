@@ -330,6 +330,7 @@ export interface HistoryMessage {
   checkpointTurn?: number;
   createdAt?: number;
   reasoning?: string;
+  workDurationMs?: number;
   memoryCitations?: MemoryCitation[];
   level?: "info" | "warn";
   toolCalls?: HistoryToolCall[];

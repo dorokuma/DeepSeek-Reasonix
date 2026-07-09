@@ -4067,6 +4067,7 @@ type HistoryMessage struct {
 	CheckpointTurn     *int                      `json:"checkpointTurn,omitempty"`
 	Reasoning          string                    `json:"reasoning,omitempty"`
 	MemoryCitations    []provider.MemoryCitation `json:"memoryCitations,omitempty"`
+	WorkDurationMs     int64                     `json:"workDurationMs,omitempty"`
 	Level              string                    `json:"level,omitempty"`
 	ToolCalls          []HistoryToolCall         `json:"toolCalls,omitempty"`
 	ToolCallID         string                    `json:"toolCallId,omitempty"`
@@ -4325,7 +4326,7 @@ func historyMessagesWithPlannerDisplaysAndLookups(
 		if m.Role == provider.RoleAssistant {
 			reasoning = m.ReasoningContent
 		}
-		hm := HistoryMessage{Role: string(m.Role), Content: content, CheckpointTurn: checkpointTurn, Reasoning: reasoning}
+		hm := HistoryMessage{Role: string(m.Role), Content: content, CheckpointTurn: checkpointTurn, Reasoning: reasoning, WorkDurationMs: m.WorkDurationMs}
 		if m.Role == provider.RoleAssistant && len(m.MemoryCitations) > 0 {
 			hm.MemoryCitations = append([]provider.MemoryCitation(nil), m.MemoryCitations...)
 		}

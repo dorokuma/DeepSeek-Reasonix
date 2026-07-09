@@ -1,13 +1,15 @@
 // Run: tsx src/__tests__/transcript-process-fold.test.ts
 
-import { readFileSync } from "node:fs";
-import { dirname, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { JSDOM } from "jsdom";
+import React from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { createServer, type ViteDevServer } from "vite";
+import type { Item } from "../lib/useController";
 
 let passed = 0;
 let failed = 0;
 
-function ok(value: boolean, label: string) {
+function ok(value: unknown, label: string) {
   if (value) {
     process.stdout.write(`  PASS  ${label}\n`);
     passed += 1;
@@ -19,80 +21,115 @@ function ok(value: boolean, label: string) {
 
 console.log("\ntranscript process fold");
 
-const here = dirname(fileURLToPath(import.meta.url));
-const source = readFileSync(resolve(here, "../components/Transcript.tsx"), "utf8");
+let displayMode = "standard";
+Object.defineProperty(globalThis, "localStorage", {
+  configurable: true,
+  value: {
+    getItem(key: string) {
+      return key === "reasonix-display-mode" ? displayMode : null;
+    },
+    setItem() {},
+    removeItem() {},
+    clear() {},
+    key() { return null; },
+    length: 0,
+  },
+});
 
-ok(
-  source.includes("preferredKind=\"reasoning\""),
-  "completed compact process batches render as one reasoning fold",
-);
-ok(
-  source.includes("assistantAnswerOnly(assistant)") && source.includes("assistantReasoningOnly(assistant)"),
-  "final assistant reasoning is folded while the answer renders without a second top-level reasoning panel",
-);
-ok(
-  source.includes("pushProcessItems(nonAssistantItems)") && source.includes("processBatch.push(assistantReasoningOnly(assistant))"),
-  "tools and final reasoning are inserted into the same turn-level process batch",
-);
-ok(
-  source.includes("Active step") &&
-    source.includes("pushProcessItems(nonAssistantItems)") &&
-    source.includes("reasoningDisplay=\"hide\""),
-  "live compact process stays inside the reasoning fold while streaming answer text renders outside",
-);
-ok(
-  source.includes("InlineAssistantReasoning") &&
-    source.includes("turn-collapse__reasoning-head") &&
-    source.includes("workStatusLabel(effectiveDurationMs, hasRunningWork, t)") &&
-    !source.includes("reasoningDisplay=\"only\"") &&
-    source.includes("case \"notice\"") &&
-    source.includes("case \"compaction\""),
-  "the single work fold renders an inner reasoning phase plus notices and compaction",
-);
-ok(
-  source.includes("Standard mode keeps the answer body flat") &&
-    source.includes("standard-process-${processBatchStart}") &&
-    source.includes("assistantHasVisibleAnswer(assistant, liveId, liveHasAnswerText)") &&
-    source.includes("pushProcessItem(assistantReasoningOnly(assistant))"),
-  "standard mode also folds per-turn process items into the single reasoning entry",
-);
-// The answer rendered outside the fold must never grow a second reasoning
-// panel from the live-stream merge: every answer-only LiveAssistantMessage
-// call site passes reasoningDisplay="hide".
-ok(
-  source.split("assistantAnswerOnly(assistant)").length - 1 > 0 &&
-    source.split("reasoningDisplay=\"hide\"").length - 1 >=
-      source.split("assistantAnswerOnly(assistant)").length - 1,
-  "every answer-only render site hides the live-merged reasoning panel",
-);
-// Warn-level notices must survive the fold auto-closing on completion: both
-// zones route them around the process batch instead of into it.
-ok(
-  source.includes("it.level === \"warn\"") &&
-    (source.match(/level === "warn"/g) ?? []).length >= 3,
-  "warn notices render outside the process fold in compact, standard, and warm paths",
-);
-// The hot-zone memo must depend on live presence flags only — depending on
-// live.text/live.reasoning would rebuild the hot zone on every token.
-ok(
-  source.includes("liveId, liveHasAnswerText, liveHasReasoning]") &&
-    !source.includes("live?.text, live?.reasoning]"),
-  "hot-zone memo depends on live presence flags, not per-token stream content",
-);
-// Warm turns reuse the same fold structure so scrolling back does not flip a
-// turn from folded to flat.
-ok(
-  source.includes("warm-process-${processBatchStart}") &&
-    source.includes("warmDisplayMode"),
-  "expanded warm turns render the same turn-level process fold",
-);
-ok(
-  source.includes("turnStartAt={turnStartAt}") &&
-    source.includes("useTick(hasRunningWork)") &&
-    source.includes("transcript.workingDuration") &&
-    source.includes("transcript.workedDuration"),
-  "the outer fold uses running/completed work labels with live elapsed time",
-);
+let server: ViteDevServer | undefined;
+try {
+  server = await createServer({
+    appType: "custom",
+    logLevel: "silent",
+    server: { middlewareMode: true },
+  });
+  const { Transcript } = await server.ssrLoadModule("/src/components/Transcript.tsx");
+  const { LocaleProvider } = await server.ssrLoadModule("/src/lib/i18n.tsx");
+
+  function render(items: Item[], options: { mode?: "standard" | "compact"; running?: boolean; turnStartAt?: number } = {}) {
+    displayMode = options.mode ?? "standard";
+    const markup = renderToStaticMarkup(
+      React.createElement(
+        LocaleProvider,
+        null,
+        React.createElement(Transcript, {
+          items,
+          onPrompt: () => {},
+          questionNavigator: false,
+          running: options.running ?? false,
+          turnStartAt: options.turnStartAt,
+        }),
+      ),
+    );
+    return new JSDOM(markup).window.document;
+  }
+
+  const warningTurn: Item[] = [
+    { kind: "user", id: "u1", text: "inspect" },
+    { kind: "assistant", id: "a1", text: "", reasoning: "first thought", streaming: false },
+    { kind: "tool", id: "t1", name: "read_file", args: "{}", readOnly: true, status: "done", durationMs: 400 },
+    { kind: "notice", id: "n1", level: "warn", text: "gateway warning" },
+    { kind: "assistant", id: "a2", text: "", reasoning: "second thought", streaming: false },
+    { kind: "tool", id: "t2", name: "bash", args: "{}", readOnly: false, status: "done", durationMs: 600 },
+    { kind: "assistant", id: "a3", text: "final answer", reasoning: "final thought", streaming: false, workDurationMs: 24_000 },
+  ];
+
+  for (const mode of ["standard", "compact"] as const) {
+    const doc = render(warningTurn, { mode });
+    const warning = doc.querySelector(".notice-line--warn");
+    const finalAnswer = Array.from(doc.querySelectorAll(".msg--assistant")).find((node) => node.textContent?.includes("final answer"));
+    ok(doc.querySelectorAll(".turn-collapse").length === 1, `${mode} mode renders one work fold for the turn`);
+    ok(warning && !warning.closest(".turn-collapse"), `${mode} warning remains visible without splitting the fold`);
+    ok(finalAnswer && !finalAnswer.closest(".turn-collapse"), `${mode} final answer renders outside the work fold`);
+  }
+
+  const intermediateDoc = render([
+    { kind: "user", id: "u2", text: "continue" },
+    { kind: "assistant", id: "a4", text: "I will inspect the files", reasoning: "plan", streaming: false },
+    { kind: "tool", id: "t3", name: "read_file", args: "{}", readOnly: true, status: "done" },
+    { kind: "assistant", id: "a5", text: "all done", reasoning: "verify", streaming: false },
+  ]);
+  const intermediate = Array.from(intermediateDoc.querySelectorAll(".msg--assistant")).find((node) => node.textContent?.includes("I will inspect the files"));
+  const final = Array.from(intermediateDoc.querySelectorAll(".msg--assistant")).find((node) => node.textContent?.includes("all done"));
+  ok(intermediateDoc.querySelectorAll(".turn-collapse").length === 1, "intermediate assistant text does not create another fold");
+  ok(intermediate?.closest(".turn-collapse"), "intermediate assistant text stays inside the work fold");
+  ok(final && !final.closest(".turn-collapse"), "only the last assistant answer stays outside the work fold");
+
+  const errorDoc = render([
+    { kind: "user", id: "u-error", text: "finish" },
+    { kind: "assistant", id: "a-error", text: "partial result", reasoning: "worked", streaming: false },
+    { kind: "notice", id: "n-error", level: "warn", text: "turn stopped" },
+  ]);
+  const errorAnswer = Array.from(errorDoc.querySelectorAll(".msg--assistant")).find((node) => node.textContent?.includes("partial result"));
+  const trailingWarning = errorDoc.querySelector(".notice-line--warn");
+  const followsAnswer = Boolean(
+    errorAnswer &&
+    trailingWarning &&
+    (errorAnswer.compareDocumentPosition(trailingWarning) & errorDoc.defaultView!.Node.DOCUMENT_POSITION_FOLLOWING),
+  );
+  ok(followsAnswer, "warnings outside the fold preserve their order relative to the final answer");
+
+  const originalNow = Date.now;
+  Date.now = () => 25_000;
+  try {
+    const runningDoc = render([
+      { kind: "user", id: "u3", text: "run" },
+      { kind: "assistant", id: "a6", text: "", reasoning: "working", streaming: false, workDurationMs: 5_000 },
+    ], { running: true, turnStartAt: 1_000 });
+    ok(runningDoc.querySelector(".turn-collapse__label")?.textContent === "Working 24s", "active turn stays Working between model and tool events");
+  } finally {
+    Date.now = originalNow;
+  }
+
+  const completedDoc = render([
+    { kind: "user", id: "u4", text: "finish" },
+    { kind: "assistant", id: "a7", text: "done", reasoning: "worked", streaming: false, workDurationMs: 24_000 },
+  ]);
+  ok(completedDoc.querySelector(".turn-collapse__label")?.textContent === "Worked 24s", "completed turn keeps the persisted wall-clock duration");
+} finally {
+  await server?.close();
+  delete (globalThis as { localStorage?: Storage }).localStorage;
+}
 
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed > 0) process.exit(1);

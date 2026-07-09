@@ -512,13 +512,13 @@ func TestBuildRequestDropsReasoningOnPlainAssistantTurn(t *testing.T) {
 	}
 }
 
-func TestBuildRequestDropsMemoryCitations(t *testing.T) {
+func TestBuildRequestDropsLocalMetadata(t *testing.T) {
 	c := &client{model: "deepseek-chat", deepseek: true}
 	req := c.buildRequest(provider.Request{
 		Messages: []provider.Message{
 			{Role: provider.RoleUser, Content: "continue"},
 			{Role: provider.RoleUser, Content: "edited prompt", Edited: true, Original: "original prompt"},
-			{Role: provider.RoleAssistant, Content: "done", MemoryCitations: []provider.MemoryCitation{{
+			{Role: provider.RoleAssistant, Content: "done", WorkDurationMs: 24_000, MemoryCitations: []provider.MemoryCitation{{
 				ID: "mem-1", Source: "MEMORY.md", LineStart: 116, LineEnd: 123, Note: "workflow",
 			}}},
 		},
@@ -529,6 +529,9 @@ func TestBuildRequestDropsMemoryCitations(t *testing.T) {
 	}
 	if strings.Contains(string(b), "memoryCitations") || strings.Contains(string(b), "MEMORY.md") {
 		t.Fatalf("local memory citations leaked into OpenAI-compatible request: %s", b)
+	}
+	if strings.Contains(string(b), "workDurationMs") || strings.Contains(string(b), "work_duration_ms") {
+		t.Fatalf("local work duration leaked into OpenAI-compatible request: %s", b)
 	}
 	if strings.Contains(string(b), "original prompt") || strings.Contains(string(b), `"edited"`) || strings.Contains(string(b), `"original"`) {
 		t.Fatalf("local edit metadata leaked into OpenAI-compatible request: %s", b)

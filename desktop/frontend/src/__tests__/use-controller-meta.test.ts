@@ -280,6 +280,15 @@ console.log("\nuse controller meta");
 }
 
 {
+  const hydrated = historyMessagesToItems([
+    { role: "user", content: "finish" },
+    { role: "assistant", content: "done", reasoning: "worked", workDurationMs: 24_000 },
+  ], "h");
+  const assistant = hydrated.items.find((item) => item.kind === "assistant");
+  eq(assistant?.kind === "assistant" && assistant.workDurationMs, 24_000, "history restores persisted turn work duration");
+}
+
+{
   eq(sameMeta(meta(), meta()), true, "identical meta is unchanged");
   eq(sameMeta(meta({ collaborationMode: "normal" }), meta({ collaborationMode: "plan" })), false, "collaboration mode changes invalidate meta equality");
   eq(sameMeta(meta({ workspacePath: "/repo" }), meta({ workspacePath: "/other" })), false, "workspace path changes invalidate meta equality");
@@ -321,6 +330,7 @@ console.log("\nuse controller meta");
     s = reducer(s, { type: "event", e: { kind: "turn_done" } });
     const assistant = s.items.find((item) => item.kind === "assistant");
     eq(assistant?.kind === "assistant" && assistant.reasoningDurationMs, 2_500, "turn_done persists the live reasoning duration");
+    eq(assistant?.kind === "assistant" && assistant.workDurationMs, 3_200, "turn_done persists the full turn wall-clock duration");
   } finally {
     Date.now = originalNow;
   }
@@ -338,6 +348,7 @@ console.log("\nuse controller meta");
     s = reducer(s, { type: "event", e: { kind: "message", text: "done", reasoning: "diagnose" } });
     const assistant = s.items.find((item) => item.kind === "assistant");
     eq(assistant?.kind === "assistant" && assistant.reasoningDurationMs, 1_300, "final message records reasoning duration when no text delta arrived");
+    eq(assistant?.kind === "assistant" && assistant.workDurationMs, 1_400, "final message records cumulative turn work duration before turn_done");
     eq(s.live, undefined, "final message still closes live reasoning state");
   } finally {
     Date.now = originalNow;
