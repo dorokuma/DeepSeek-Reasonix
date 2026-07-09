@@ -15,16 +15,25 @@ import (
 // refresh UI (e.g. a skills sidebar) without a reload. nil is fine.
 type InstalledHook func(name, path string, scope Scope)
 
+// NameExists reports whether an id is claimed by another namespace (auto-memory).
+type NameExists func(id string) bool
+
 // --- run_skill ---
 
 type runSkillTool struct {
-	store *Store
+	store    *Store
+	isMemory NameExists
 }
 
 // NewRunSkillTool builds the skill-invocation tool. All skills are inline
 // playbooks; background sub-agents use the separate `task` tool only.
-func NewRunSkillTool(store *Store) tool.Tool {
-	return &runSkillTool{store: store}
+// isMemory, if set, rejects ids that only exist as auto-memory.
+func NewRunSkillTool(store *Store, isMemory ...NameExists) tool.Tool {
+	t := &runSkillTool{store: store}
+	if len(isMemory) > 0 {
+		t.isMemory = isMemory[0]
+	}
+	return t
 }
 
 func (*runSkillTool) Name() string { return "run_skill" }
@@ -33,47 +42,57 @@ func (*runSkillTool) Name() string { return "run_skill" }
 func (*runSkillTool) ReadOnly() bool { return false }
 
 func (*runSkillTool) Description() string {
-	return "Invoke a playbook from the Skills index. Pass `name` as the BARE skill identifier — never a Memory slug or `[label](slug.md)` stem. The skill body is inlined into your context as a tool result you read and follow. For isolated background work use the `task` tool (not skills)."
+	return "Invoke a Skills-index playbook (skill/<id> only). Required parameter: skill (e.g. \"init\" or \"skill/init\"). " +
+		"Never pass a memory/* id — those use memory_get. Body is inlined into your context. Background work uses task."
 }
 
 func (*runSkillTool) Schema() json.RawMessage {
 	return json.RawMessage(`{
 "type":"object",
 "properties":{
-  "name":{"type":"string","description":"Skill identifier as it appears in the pinned Skills index. Case-sensitive bare name only."},
-  "arguments":{"type":"string","description":"Free-form arguments appended as an 'Arguments:' line; the skill's own instructions decide how to use them."}
+  "skill":{"type":"string","description":"Skill id from the Skills index (skill/<id> or bare <id>). Not a memory id."},
+  "arguments":{"type":"string","description":"Free-form arguments appended as an 'Arguments:' line."}
 },
-"required":["name"]
+"required":["skill"]
 }`)
 }
 
 func (t *runSkillTool) Execute(_ context.Context, args json.RawMessage) (string, error) {
-	var p struct {
-		Name      string `json:"name"`
-		Arguments string `json:"arguments"`
+	name, raw, err := parseSkillArg(args)
+	if err != nil {
+		return "", err
 	}
-	if err := json.Unmarshal(args, &p); err != nil {
-		return "", fmt.Errorf("invalid args: %w", err)
-	}
-	name := cleanSkillName(p.Name)
-	if name == "" {
-		return "", fmt.Errorf("run_skill requires a 'name' argument (got %q, which is just a marker/tag)", p.Name)
+	if err := t.rejectForeignNamespace(name, raw); err != nil {
+		return "", err
 	}
 	sk, ok := t.store.Read(name)
 	if !ok {
+		if t.isMemory != nil && t.isMemory(name) {
+			return "", fmt.Errorf("%q is a MEMORY entry (memory/%s) — use memory_get({memory:%q}), not run_skill", name, name, name)
+		}
 		return "", fmt.Errorf("unknown skill %q — available: %s", name, availableNames(t.store))
 	}
+	var p struct {
+		Arguments string `json:"arguments"`
+	}
+	_ = json.Unmarshal(args, &p)
 	return renderInline(sk, strings.TrimSpace(p.Arguments)), nil
 }
 
 // readSkillTool loads an inline skill body into context without running anything.
 type readSkillTool struct {
-	store *Store
+	store    *Store
+	isMemory NameExists
 }
 
-// NewReadSkillTool builds a read-only inline-skill loader. Unlike run_skill it
-// stays available in plan mode, so a plan can consult inline playbooks.
-func NewReadSkillTool(store *Store) tool.Tool { return &readSkillTool{store: store} }
+// NewReadSkillTool builds a read-only skill loader. isMemory rejects memory ids.
+func NewReadSkillTool(store *Store, isMemory ...NameExists) tool.Tool {
+	t := &readSkillTool{store: store}
+	if len(isMemory) > 0 {
+		t.isMemory = isMemory[0]
+	}
+	return t
+}
 
 func (*readSkillTool) Name() string { return "read_skill" }
 
@@ -82,37 +101,88 @@ func (*readSkillTool) Name() string { return "read_skill" }
 func (*readSkillTool) ReadOnly() bool { return true }
 
 func (*readSkillTool) Description() string {
-	return "Load a skill playbook from the Skills index into your context WITHOUT running anything — the body returns as a tool result you read and follow. Read-only, so it works in plan mode (unlike run_skill). Pass `name` as the BARE skill identifier — not a Memory slug. To read a saved memory fact, use `recall` instead. Background sub-agents use `task`, not skills."
+	return "Load a Skills-index playbook (skill/<id> only) WITHOUT executing a sub-agent — body returns as a tool result. " +
+		"Required parameter: skill. Read-only (works in plan mode). " +
+		"For auto-memory facts use memory_get({memory:\"…\"}) — never read_skill on memory/* ids."
 }
 
 func (*readSkillTool) Schema() json.RawMessage {
 	return json.RawMessage(`{
 "type":"object",
 "properties":{
-  "name":{"type":"string","description":"Skill identifier as it appears in the pinned Skills index."},
-  "arguments":{"type":"string","description":"Optional free-form arguments, appended as an 'Arguments:' line; the skill's own instructions decide how to use them."}
+  "skill":{"type":"string","description":"Skill id from the Skills index (skill/<id> or bare <id>). Not a memory id."},
+  "arguments":{"type":"string","description":"Optional free-form arguments, appended as an 'Arguments:' line."}
 },
-"required":["name"]
+"required":["skill"]
 }`)
 }
 
 func (t *readSkillTool) Execute(_ context.Context, args json.RawMessage) (string, error) {
-	var p struct {
-		Name      string `json:"name"`
-		Arguments string `json:"arguments"`
+	name, raw, err := parseSkillArg(args)
+	if err != nil {
+		return "", fmt.Errorf("read_skill: %w", err)
 	}
-	if err := json.Unmarshal(args, &p); err != nil {
-		return "", fmt.Errorf("invalid args: %w", err)
-	}
-	name := cleanSkillName(p.Name)
-	if name == "" {
-		return "", fmt.Errorf("read_skill requires a 'name' argument (got %q, which is just a marker/tag)", p.Name)
+	if err := t.rejectForeignNamespace(name, raw); err != nil {
+		return "", err
 	}
 	sk, ok := t.store.ReadInline(name)
 	if !ok {
+		if t.isMemory != nil && t.isMemory(name) {
+			return "", fmt.Errorf("%q is a MEMORY entry (memory/%s) — use memory_get({memory:%q}), not read_skill", name, name, name)
+		}
 		return "", fmt.Errorf("unknown skill %q — available: %s", name, availableInlineNames(t.store))
 	}
+	var p struct {
+		Arguments string `json:"arguments"`
+	}
+	_ = json.Unmarshal(args, &p)
 	return renderInline(sk, strings.TrimSpace(p.Arguments)), nil
+}
+
+func (t *runSkillTool) rejectForeignNamespace(name, raw string) error {
+	return rejectMemoryNamespace(name, raw, t.isMemory, "run_skill")
+}
+
+func (t *readSkillTool) rejectForeignNamespace(name, raw string) error {
+	return rejectMemoryNamespace(name, raw, t.isMemory, "read_skill")
+}
+
+func rejectMemoryNamespace(name, raw string, isMemory NameExists, toolName string) error {
+	if strings.HasPrefix(strings.TrimSpace(raw), "memory/") || strings.HasPrefix(strings.ToLower(strings.TrimSpace(raw)), "memory/") {
+		return fmt.Errorf("%s cannot load memory/* — %q is a memory id; call memory_get({memory:%q})", toolName, raw, name)
+	}
+	if isMemory != nil && isMemory(name) {
+		// Only hard-fail when it is NOT also a real skill (memory wins on collision for this guard
+		// only when skill is missing — Execute checks store.Read first for skill tools after this).
+	}
+	return nil
+}
+
+// parseSkillArg requires "skill" (accepts legacy "name" only to emit a clear error preference).
+func parseSkillArg(args json.RawMessage) (id, raw string, err error) {
+	var p struct {
+		Skill  string `json:"skill"`
+		Name   string `json:"name"`
+		Memory string `json:"memory"`
+	}
+	if err := json.Unmarshal(args, &p); err != nil {
+		return "", "", fmt.Errorf("invalid args: %w", err)
+	}
+	if strings.TrimSpace(p.Memory) != "" && strings.TrimSpace(p.Skill) == "" && strings.TrimSpace(p.Name) == "" {
+		return "", p.Memory, fmt.Errorf("parameter \"memory\" is invalid here — use memory_get for memory/*; skills require parameter \"skill\"")
+	}
+	raw = strings.TrimSpace(p.Skill)
+	if raw == "" {
+		raw = strings.TrimSpace(p.Name)
+	}
+	if raw == "" {
+		return "", "", fmt.Errorf("requires parameter \"skill\" (skill/<id> from the Skills index)")
+	}
+	id = cleanSkillName(raw)
+	if id == "" {
+		return "", raw, fmt.Errorf("invalid skill id %q", raw)
+	}
+	return id, raw, nil
 }
 
 // --- install_skill ---
@@ -201,7 +271,7 @@ func (t *installSkillTool) Execute(_ context.Context, args json.RawMessage) (str
 		"name":  name,
 		"scope": string(scope),
 		"path":  path,
-		"note":  "Callable now via run_skill({name}) or /" + name + ". Appears in the pinned Skills index on the next launch. For background sub-agents use the task tool.",
+		"note":  "Callable now via run_skill({skill:\"" + name + "\"}) or /" + name + ". Listed as skill/" + name + " in the Skills index. Background work uses the task tool.",
 	})
 	return string(res), nil
 }
@@ -240,13 +310,18 @@ func renderInline(sk Skill, args string) string {
 
 var bracketTagRe = regexp.MustCompile(`\[[^\]]*\]`)
 
-// cleanSkillName extracts the bare identifier from a possibly-decorated name:
-// models sometimes paste index lines with bracket notes into the `name` arg.
-// Drop any [..] tag, then take the first token starting alphanumeric.
+// cleanSkillName extracts the bare skill id from a possibly-decorated arg.
+// Accepts "skill/foo", "foo", or index paste with bracket notes; rejects nothing
+// here (namespace checks happen in callers).
 func cleanSkillName(raw string) string {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
 		return ""
+	}
+	raw = strings.TrimPrefix(raw, SkillNamespace)
+	// memory/ must not become a skill id silently — leave the prefix so callers can reject.
+	if strings.HasPrefix(raw, "memory/") {
+		return strings.TrimPrefix(raw, "memory/")
 	}
 	stripped := strings.TrimSpace(bracketTagRe.ReplaceAllString(raw, " "))
 	for _, tok := range strings.Fields(stripped) {
@@ -255,6 +330,15 @@ func cleanSkillName(raw string) string {
 		}
 	}
 	return ""
+}
+
+// Exists reports whether a skill id is registered.
+func (s *Store) Exists(name string) bool {
+	if s == nil {
+		return false
+	}
+	_, ok := s.Read(cleanSkillName(name))
+	return ok
 }
 
 // collapseSpaces turns any run of whitespace (incl. newlines) into a single

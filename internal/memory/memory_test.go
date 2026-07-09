@@ -7,20 +7,23 @@ import (
 	"testing"
 )
 
-func TestSavedMemoriesPointAtRecallNotSkills(t *testing.T) {
+func TestSavedMemoriesUseMemoryNamespaceNotSkills(t *testing.T) {
 	set := &Set{
 		Index: "- [Prefers tabs](tabs-rule.md) — use tabs\n",
 		Store: Store{Dir: "/tmp/mem-store"},
 	}
 	block := set.Block()
-	if !strings.Contains(block, "`recall`") {
-		t.Fatalf("saved memories must point at recall:\n%s", block)
+	if !strings.Contains(block, "memory_get") {
+		t.Fatalf("saved memories must point at memory_get:\n%s", block)
 	}
-	if !strings.Contains(block, "NOT Skills") && !strings.Contains(block, "never call run_skill") {
-		t.Fatalf("saved memories must warn against skill tools:\n%s", block)
+	if !strings.Contains(block, "memory/tabs-rule") {
+		t.Fatalf("index must use memory/ namespace:\n%s", block)
 	}
-	if strings.Contains(block, "Read the linked file with read_file when one looks relevant") {
-		t.Fatalf("stale read_file guidance for memory bodies must be gone:\n%s", block)
+	if strings.Contains(block, "](tabs-rule.md)") {
+		t.Fatalf("legacy markdown link form must not appear in prompt block:\n%s", block)
+	}
+	if !strings.Contains(block, "never read_skill") && !strings.Contains(block, "Never read_skill") {
+		t.Fatalf("must warn against skill tools:\n%s", block)
 	}
 }
 

@@ -514,9 +514,12 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	// The `remember` tool lets the model persist durable facts to the project's
 	// auto-memory store; `forget` prunes ones that turn out wrong. The saved index
 	// loads into the prefix on the next session.
-	reg.Add(memory.NewRememberTool(mem.Store))
-	reg.Add(memory.NewForgetTool(mem.Store))
-	reg.Add(memory.NewRecallTool(mem.Store))
+	// Cross-namespace guards: memory_* tools refuse skill ids; skill tools refuse memory ids.
+	isSkill := func(id string) bool { return skillStore.Exists(id) }
+	isMemory := func(id string) bool { return mem.Store.Exists(id) }
+	reg.Add(memory.NewRememberTool(mem.Store, isSkill))
+	reg.Add(memory.NewForgetTool(mem.Store, isSkill))
+	reg.Add(memory.NewRecallTool(mem.Store, isSkill))
 
 	// The `ask` tool puts structured multiple-choice questions to the user. It
 	// reaches them through the Asker on the call context, which interactive
@@ -527,8 +530,21 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	var mainAgentAllowed map[string]bool
 	if len(cfg.Permissions.MainAgentAllowed) > 0 {
 		mainAgentAllowed = make(map[string]bool)
+		// Map retired tool names to the memory_* namespace so older configs keep working.
+		alias := map[string]string{
+			"recall": "memory_get", "remember": "memory_save", "forget": "memory_forget",
+		}
 		for _, name := range cfg.Permissions.MainAgentAllowed {
 			mainAgentAllowed[name] = true
+			if modern, ok := alias[name]; ok {
+				mainAgentAllowed[modern] = true
+			}
+		}
+		// Always allow modern names when any legacy memory tool was listed.
+		for legacy, modern := range alias {
+			if mainAgentAllowed[legacy] {
+				mainAgentAllowed[modern] = true
+			}
 		}
 	}
 	var toolsDynamic map[string]bool
@@ -558,9 +574,9 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	}
 
 	// Skill tools: run_skill / read_skill / install_skill are always inline playbooks.
-	// Background sub-agents use the task tool only.
-	reg.Add(skill.NewRunSkillTool(skillStore))
-	reg.Add(skill.NewReadSkillTool(skillStore))
+	// Background sub-agents use the task tool only. isMemory blocks memory/* confusion.
+	reg.Add(skill.NewRunSkillTool(skillStore, isMemory))
+	reg.Add(skill.NewReadSkillTool(skillStore, isMemory))
 	reg.Add(skill.NewInstallSkillTool(skillStore, nil))
 	reg.Add(installsource.NewTool(installsource.Options{
 		ProjectRoot: root,

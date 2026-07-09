@@ -435,10 +435,10 @@ func TestApplyIndex(t *testing.T) {
 	if !strings.HasPrefix(out, "BASE\n\n# Skills") {
 		t.Error("index should append after the base")
 	}
-	if !strings.Contains(out, "- alpha — the alpha") {
+	if !strings.Contains(out, "skill/alpha — the alpha") {
 		t.Errorf("skill line missing: %s", out)
 	}
-	if !strings.Contains(out, "- beta — the beta") {
+	if !strings.Contains(out, "skill/beta — the beta") {
 		t.Errorf("skill line missing: %s", out)
 	}
 }

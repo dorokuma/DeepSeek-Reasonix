@@ -15,7 +15,7 @@ func TestRunSkillInline(t *testing.T) {
 	writeSkill(t, home, ".reasonix/skills/note.md", "---\ndescription: take a note\n---\nDo the thing.")
 	tl := NewRunSkillTool(New(Options{HomeDir: home, DisableBuiltins: true}))
 
-	out, err := tl.Execute(context.Background(), json.RawMessage(`{"name":"note","arguments":"with args"}`))
+	out, err := tl.Execute(context.Background(), json.RawMessage(`{"skill":"note","arguments":"with args"}`))
 	if err != nil {
 		t.Fatalf("execute: %v", err)
 	}
@@ -29,7 +29,7 @@ func TestRunSkillInline(t *testing.T) {
 
 func TestRunSkillUnknown(t *testing.T) {
 	tl := NewRunSkillTool(New(Options{HomeDir: t.TempDir(), DisableBuiltins: true}))
-	if _, err := tl.Execute(context.Background(), json.RawMessage(`{"name":"nope"}`)); err == nil {
+	if _, err := tl.Execute(context.Background(), json.RawMessage(`{"skill":"nope"}`)); err == nil {
 		t.Error("unknown skill should error")
 	}
 }
@@ -38,7 +38,7 @@ func TestRunSkillIgnoresUnknownFrontmatter(t *testing.T) {
 	home := t.TempDir()
 	writeSkill(t, home, ".reasonix/skills/dig.md", "---\ndescription: dig\nrunAs: ignored\n---\nbody")
 	tl := NewRunSkillTool(New(Options{HomeDir: home, DisableBuiltins: true}))
-	out, err := tl.Execute(context.Background(), json.RawMessage(`{"name":"dig","arguments":"go"}`))
+	out, err := tl.Execute(context.Background(), json.RawMessage(`{"skill":"dig","arguments":"go"}`))
 	if err != nil {
 		t.Fatalf("skill with unknown frontmatter should still load/inline: %v", err)
 	}
@@ -115,7 +115,7 @@ func TestReadSkillLoadsInlineAndIsReadOnly(t *testing.T) {
 	if !tl.ReadOnly() {
 		t.Fatal("read_skill must be ReadOnly so it works in plan mode")
 	}
-	out, err := tl.Execute(context.Background(), json.RawMessage(`{"name":"note","arguments":"with args"}`))
+	out, err := tl.Execute(context.Background(), json.RawMessage(`{"skill":"note","arguments":"with args"}`))
 	if err != nil {
 		t.Fatalf("execute: %v", err)
 	}

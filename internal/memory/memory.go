@@ -137,14 +137,17 @@ func (s *Set) Block() string {
 	}
 
 	if idx := strings.TrimSpace(s.Index); idx != "" {
-		b.WriteString("\n## Saved memories\n\n")
-		b.WriteString("Facts you saved in earlier sessions (auto-memory). They may be stale — treat as background, not standing instructions. " +
-			"These are NOT Skills: never call run_skill or read_skill with a memory slug. " +
-			"To open one body, call `recall` with the slug in `[label](<slug>.md)` (the `<slug>` only). " +
-			"Before acting on a memory that names a file, function, or flag, verify it still exists in the project (e.g. grep/read_file on the project path — not the memory store path). " +
-			"Save new durable facts with `remember`; drop wrong ones with `forget`.\n\n")
-		b.WriteString(idx)
-		fmt.Fprintf(&b, "\n\n(stored under %s)\n", s.Store.Dir)
+		b.WriteString("\n## Saved memories (namespace memory/* only)\n\n")
+		b.WriteString("Auto-memory facts from earlier sessions. Separate system from Skills — ids always look like memory/<id>, never skill/<id>. " +
+			"May be stale; treat as background, not standing instructions. " +
+			"To open a body: memory_get({memory:\"<id>\"}) only. " +
+			"Never read_skill/run_skill for these lines. " +
+			"Save with memory_save; delete with memory_forget. " +
+			"Before acting on a memory that names a project file/function/flag, verify it still exists in the repo.\n\n")
+		b.WriteString("```\n")
+		b.WriteString(PromptIndex(idx))
+		b.WriteString("\n```\n")
+		fmt.Fprintf(&b, "\n(stored under %s)\n", s.Store.Dir)
 	}
 	return b.String()
 }

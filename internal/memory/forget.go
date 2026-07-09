@@ -4,53 +4,76 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"reasonix/internal/tool"
 )
 
-// forgetTool deletes a saved memory the model judges wrong or stale. Like
-// rememberTool it is stateful (bound to one project's Store), so boot constructs
-// it and adds it to the registry.
-type forgetTool struct{ store Store }
+type forgetTool struct {
+	store   Store
+	isSkill NameExists
+}
 
-// NewForgetTool returns the `forget` tool bound to store.
-func NewForgetTool(store Store) tool.Tool { return forgetTool{store: store} }
+// NewForgetTool returns the memory_forget tool bound to store.
+func NewForgetTool(store Store, isSkill ...NameExists) tool.Tool {
+	t := forgetTool{store: store}
+	if len(isSkill) > 0 {
+		t.isSkill = isSkill[0]
+	}
+	return t
+}
 
-func (forgetTool) Name() string { return "forget" }
+func (forgetTool) Name() string { return "memory_forget" }
 
 func (forgetTool) Description() string {
-	return "Delete a saved memory by name when it is wrong, stale, or superseded, so it stops loading into future sessions. " +
-		"Use the slug from the memory index — the \"<name>\" in \"[label](<name>.md)\". " +
-		"Prefer updating a memory with `remember` (reuse its name) over forget-then-recreate; reach for forget only when the fact should no longer exist at all."
+	return "Delete a saved auto-memory fact by memory id so it stops loading into future sessions. " +
+		"Use the id from the Saved memories index (memory/<id>). Prefer memory_save with the same id to update. " +
+		"Not for skills — skills use install_skill / filesystem, not memory_forget."
 }
 
 func (forgetTool) Schema() json.RawMessage {
 	return json.RawMessage(`{
 		"type": "object",
 		"properties": {
-			"name": {"type": "string", "description": "Slug of the memory to delete, as shown in the index (the \"<name>\" in \"[label](<name>.md)\")."}
+			"memory": {"type": "string", "description": "Memory id to delete (memory/<id> or bare <id>). Not a skill name."}
 		},
-		"required": ["name"]
+		"required": ["memory"]
 	}`)
 }
 
 func (t forgetTool) Execute(ctx context.Context, args json.RawMessage) (string, error) {
 	var in struct {
-		Name string `json:"name"`
+		Memory string `json:"memory"`
+		Name   string `json:"name"`
+		Skill  string `json:"skill"`
 	}
 	if err := json.Unmarshal(args, &in); err != nil {
 		return "", fmt.Errorf("invalid arguments: %w", err)
 	}
-	if in.Name == "" {
-		return "", fmt.Errorf("name is required")
+	raw := firstNonEmpty(in.Memory, in.Name, in.Skill)
+	if raw == "" {
+		return "", fmt.Errorf("memory_forget requires parameter \"memory\"")
 	}
-	if err := t.store.Delete(in.Name); err != nil {
+	if strings.HasPrefix(strings.TrimSpace(raw), "skill/") {
+		return "", fmt.Errorf("%q is a skill id — memory_forget only deletes memory/* entries", raw)
+	}
+	id := NormalizeMemoryID(raw)
+	if id == "" {
+		return "", fmt.Errorf("invalid memory id %q", raw)
+	}
+	if !t.store.Exists(id) {
+		if t.isSkill != nil && t.isSkill(id) {
+			return "", fmt.Errorf("%q is a SKILL (skill/%s), not a memory — cannot memory_forget a skill", id, id)
+		}
+		return "", fmt.Errorf("memory %q not found", id)
+	}
+	if err := t.store.Delete(id); err != nil {
 		return "", err
 	}
 	if q, ok := QueueFromContext(ctx); ok {
-		q.QueueMemory("Deleted memory \"" + slug(in.Name) + "\" — disregard its line still shown in the saved-memories index until next session.")
+		q.QueueMemory("Deleted memory \"" + MemoryNamespace + id + "\" — disregard its index line until next session.")
 	}
-	return fmt.Sprintf("Forgot memory %q (it no longer applies and will not load in future sessions).", in.Name), nil
+	return fmt.Sprintf("Forgot %s%s (no longer loads in future sessions).", MemoryNamespace, id), nil
 }
 
 func (forgetTool) ReadOnly() bool { return false }

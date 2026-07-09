@@ -16,18 +16,18 @@ func TestForgetToolDeletes(t *testing.T) {
 	}
 
 	tl := NewForgetTool(store)
-	if tl.Name() != "forget" || tl.ReadOnly() {
+	if tl.Name() != "memory_forget" || tl.ReadOnly() {
 		t.Fatalf("unexpected tool identity: name=%q readonly=%v", tl.Name(), tl.ReadOnly())
 	}
 	if !json.Valid(tl.Schema()) {
-		t.Fatal("forget schema is not valid JSON")
+		t.Fatal("memory_forget schema is not valid JSON")
 	}
 
-	out, err := tl.Execute(context.Background(), []byte(`{"name":"stale-fact"}`))
+	out, err := tl.Execute(context.Background(), []byte(`{"memory":"stale-fact"}`))
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
-	if !strings.Contains(out, "Forgot memory") {
+	if !strings.Contains(out, "Forgot") {
 		t.Fatalf("unexpected tool output: %q", out)
 	}
 	if len(store.List()) != 0 {
@@ -40,7 +40,7 @@ func TestForgetToolDeletes(t *testing.T) {
 func TestForgetToolValidates(t *testing.T) {
 	tl := NewForgetTool(Store{Dir: t.TempDir()})
 	if _, err := tl.Execute(context.Background(), []byte(`{}`)); err == nil {
-		t.Fatal("expected error when name is missing")
+		t.Fatal("expected error when memory is missing")
 	}
 }
 
@@ -58,7 +58,7 @@ func TestForgetToolQueuesDisregardNote(t *testing.T) {
 	}
 	q := &fakeQueue{}
 	ctx := WithQueue(context.Background(), q)
-	if _, err := NewForgetTool(store).Execute(ctx, []byte(`{"name":"old-fact"}`)); err != nil {
+	if _, err := NewForgetTool(store).Execute(ctx, []byte(`{"memory":"old-fact"}`)); err != nil {
 		t.Fatal(err)
 	}
 	if len(q.notes) != 1 || !strings.Contains(q.notes[0], "old-fact") {

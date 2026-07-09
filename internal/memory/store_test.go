@@ -27,7 +27,7 @@ func TestStoreSaveAndIndex(t *testing.T) {
 	}
 
 	idx := s.Index()
-	if !strings.Contains(idx, "prefers-tabs.md") || !strings.Contains(idx, "User prefers tabs") {
+	if !strings.Contains(idx, "memory/prefers-tabs") || !strings.Contains(idx, "User prefers tabs") {
 		t.Fatalf("index missing entry:\n%s", idx)
 	}
 
@@ -54,7 +54,7 @@ func TestStoreOverwriteDoesNotDuplicateIndex(t *testing.T) {
 		}
 	}
 	idx := s.Index()
-	if n := strings.Count(idx, "note.md"); n != 1 {
+	if n := strings.Count(idx, "memory/note"); n != 1 {
 		t.Fatalf("want exactly 1 index line for note, got %d:\n%s", n, idx)
 	}
 	if !strings.Contains(idx, "second version") || strings.Contains(idx, "first version") {
@@ -73,7 +73,7 @@ func TestStoreIndexPreservesHandEdits(t *testing.T) {
 		t.Fatal(err)
 	}
 	idx := s.Index()
-	if !strings.Contains(idx, "alpha.md") || !strings.Contains(idx, "beta.md") {
+	if !strings.Contains(idx, "memory/alpha") || !strings.Contains(idx, "memory/beta") {
 		t.Fatalf("an entry was lost on the second save:\n%s", idx)
 	}
 }
@@ -91,7 +91,7 @@ func TestStoreSaveTitleInIndexAndFrontmatter(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if idx := s.Index(); !strings.Contains(idx, "[Prefers tabs](tabs-rule.md)") {
+	if idx := s.Index(); !strings.Contains(idx, "memory/tabs-rule") {
 		t.Fatalf("index link should use the title label:\n%s", idx)
 	}
 	if got := s.List()[0].Title; got != "Prefers tabs" {
@@ -106,7 +106,7 @@ func TestStoreIndexLabelFallsBackToDeKebabbedName(t *testing.T) {
 	if _, err := s.Save(Memory{Name: "likes-go", Description: "d", Type: TypeUser, Body: "b"}); err != nil {
 		t.Fatal(err)
 	}
-	if idx := s.Index(); !strings.Contains(idx, "[likes go](likes-go.md)") {
+	if idx := s.Index(); !strings.Contains(idx, "memory/likes-go") {
 		t.Fatalf("missing-title label should de-kebab the name:\n%s", idx)
 	}
 }
@@ -126,10 +126,10 @@ func TestStoreDelete(t *testing.T) {
 		t.Fatalf("alpha.md should be gone, stat err = %v", err)
 	}
 	idx := s.Index()
-	if strings.Contains(idx, "alpha.md") {
+	if strings.Contains(idx, "memory/alpha") {
 		t.Fatalf("deleted entry still in index:\n%s", idx)
 	}
-	if !strings.Contains(idx, "beta.md") {
+	if !strings.Contains(idx, "memory/beta") {
 		t.Fatalf("unrelated entry lost on delete:\n%s", idx)
 	}
 	if names := s.List(); len(names) != 1 || names[0].Name != "beta" {

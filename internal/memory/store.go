@@ -141,9 +141,9 @@ func (s Store) Read(name string) (string, error) {
 	if s.Dir == "" {
 		return "", fmt.Errorf("memory store unavailable (no user config dir)")
 	}
-	name = slug(name)
+	name = NormalizeMemoryID(name)
 	if name == "" {
-		return "", fmt.Errorf("memory needs a name")
+		return "", fmt.Errorf("memory needs an id (memory/<slug>)")
 	}
 	data, err := os.ReadFile(filepath.Join(s.Dir, name+".md"))
 	if err != nil {
@@ -171,20 +171,19 @@ func render(m Memory, name string) string {
 	return b.String()
 }
 
-// indexLineRe matches a managed index line so reindex/Delete can target the line
-// for one memory by its filename without disturbing the rest of a hand-edited
-// MEMORY.md.
-var indexLineRe = regexp.MustCompile(`\]\(([^)]+)\.md\)`)
-
 // indexLinesExcept returns the managed MEMORY.md lines keyed by filename stem,
-// dropping the entry for name (a missing index → empty map).
+// dropping the entry for name (a missing index → empty map). Accepts both the
+// legacy markdown-link form and the namespaced memory/<id> form.
 func (s Store) indexLinesExcept(name string) map[string]string {
 	existing, _ := os.ReadFile(filepath.Join(s.Dir, indexFile))
 	keep := map[string]string{}
 	for _, line := range strings.Split(string(existing), "\n") {
-		if mt := indexLineRe.FindStringSubmatch(line); mt != nil && mt[1] != name {
-			keep[mt[1]] = strings.TrimRight(line, "\r")
+		line = strings.TrimRight(line, "\r")
+		key, ok := IndexKeyFromLine(line)
+		if !ok || key == name {
+			continue
 		}
+		keep[key] = line
 	}
 	return keep
 }
@@ -207,12 +206,22 @@ func (s Store) flushIndex(lines map[string]string) error {
 }
 
 // reindex rewrites the MEMORY.md line for name, preserving every other managed
-// line. The line is "- [<title>](<name>.md) — <description>"; title falls back
-// to a de-kebabed name so the index reads as a label, never a bare slug.
+// line. Canonical form is "memory/<id> — <title> — <description>" so the prompt
+// index cannot be mistaken for a skill list.
 func (s Store) reindex(name string, m Memory) error {
 	lines := s.indexLinesExcept(name)
-	lines[name] = fmt.Sprintf("- [%s](%s.md) — %s", displayTitle(m.Title, name), name, oneLine(m.Description))
+	lines[name] = FormatMemoryIndexLine(name, m.Title, m.Description)
 	return s.flushIndex(lines)
+}
+
+// Exists reports whether a memory file with the given id is present.
+func (s Store) Exists(name string) bool {
+	name = NormalizeMemoryID(name)
+	if s.Dir == "" || name == "" {
+		return false
+	}
+	_, err := os.Stat(filepath.Join(s.Dir, name+".md"))
+	return err == nil
 }
 
 // List returns the saved memories parsed from their files, sorted by name. Used

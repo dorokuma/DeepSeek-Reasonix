@@ -11,15 +11,20 @@ const IndexMaxChars = 4000
 
 const missingDescPlaceholder = `(no description — frontmatter is missing a "description:" line; tell the user to add one)`
 
+// SkillNamespace prefixes skill ids in the prompt index so they cannot be
+// confused with auto-memory lines (memory/<id>).
+const SkillNamespace = "skill/"
+
 // indexHeader introduces the skills block in the system prompt.
-const indexHeader = "# Skills — playbooks you can invoke\n\n" +
-	"One-liner index of Skills only (not the Memory section). Memory slugs and `[label](slug.md)` lines under # Memory are auto-memory facts — use `recall`, never run_skill/read_skill with those names. " +
-	"Before non-trivial work, scan this Skills list: if a skill is even plausibly relevant, invoke it with `run_skill({ name: \"<skill-name>\", arguments: \"...\" })` — `name` is JUST the identifier. The skill body is inlined into your context. " +
-	"For isolated background work, use the **task** tool with a self-contained prompt. The user can also invoke a skill via `/<name>`."
+const indexHeader = "# Skills (namespace skill/* only)\n\n" +
+	"Playbook index — completely separate from Saved memories (memory/*). " +
+	"Every skill id looks like skill/<id>. Invoke with run_skill({skill:\"<id>\"}) or read_skill({skill:\"<id>\"}) — parameter is \"skill\", never \"memory\". " +
+	"Never use memory_get/memory_save/memory_forget on skill/* ids. " +
+	"Bodies are inlined into your context. For isolated background work use the task tool. Users may also type /<id>."
 
 // ApplyIndex appends the skills index to basePrompt, or returns it unchanged
-// when there are no skills. Only names + descriptions are listed; bodies load
-// on demand via run_skill.
+// when there are no skills. Only namespaced ids + descriptions are listed;
+// bodies load on demand via run_skill/read_skill.
 func ApplyIndex(basePrompt string, skills []Skill) string {
 	if len(skills) == 0 {
 		return basePrompt
@@ -35,18 +40,19 @@ func ApplyIndex(basePrompt string, skills []Skill) string {
 	return basePrompt + "\n\n" + indexHeader + "\n\n```\n" + joined + "\n```"
 }
 
-// indexLine renders one skill as "- name — description", clipped to a stable width.
+// indexLine renders one skill as "skill/<id> — description".
 func indexLine(sk Skill) string {
 	desc := strings.TrimSpace(strings.ReplaceAll(sk.Description, "\n", " "))
 	if desc == "" {
 		desc = missingDescPlaceholder
 	}
-	max := 130 - len([]rune(sk.Name))
+	id := SkillNamespace + sk.Name
+	max := 130 - len([]rune(id))
 	clipped := clipRunes(desc, max)
 	if clipped == "" {
-		return "- " + sk.Name
+		return id
 	}
-	return "- " + sk.Name + " — " + clipped
+	return id + " — " + clipped
 }
 
 // clipRunes truncates s to at most max runes (ellipsis included), never
