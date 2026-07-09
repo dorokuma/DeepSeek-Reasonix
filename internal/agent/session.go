@@ -82,46 +82,75 @@ func (s *Session) ToolNameForCallID(toolCallID string) string {
 	return ""
 }
 
-// ReplaceTaskStartedWithResult overwrites a started-task tool row with the terminal answer (same tool_call_id).
-// This keeps OpenAI/Anthropic tool-call pairing valid for the original assistant tool_calls turn.
-// Callers that deliver sub-agent answers MUST still append a conversation-tail envelope
-// (see Agent.commitJobResult); mid-history patch alone is invisible to auto-reentry attention.
-func (s *Session) ReplaceTaskStartedWithResult(toolCallID, jobID, output string) bool {
-	if toolCallID == "" || jobID == "" || strings.TrimSpace(output) == "" {
-		return false
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	for i := len(s.Messages) - 1; i >= 0; i-- {
-		m := &s.Messages[i]
-		if m.Role != provider.RoleTool || m.ToolCallID != toolCallID {
-			continue
-		}
-		if !TaskToolContentReferencesJob(m.Content, jobID) || !IsStartedTaskPlaceholder(m.Content) {
-			continue
-		}
-		m.Content = output
-		return true
-	}
-	return false
-}
-
-// HasBackgroundTaskResultEnvelope reports whether a tail delivery for jobID is already present.
-// Used to keep dual delivery (mid-history patch + tail envelope) idempotent under races.
-func (s *Session) HasBackgroundTaskResultEnvelope(jobID string) bool {
+// HasBackgroundTaskDelivery reports whether the synthetic completion turn for jobID
+// is already in the session (assistant tool_calls + tool result at the tail).
+func (s *Session) HasBackgroundTaskDelivery(jobID string) bool {
 	if s == nil || jobID == "" {
 		return false
 	}
-	needle := fmt.Sprintf("<background-task-result job=%q", jobID)
+	deliveryID := BackgroundDeliveryCallID(jobID)
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	for i := len(s.Messages) - 1; i >= 0; i-- {
 		m := s.Messages[i]
-		if m.Role == provider.RoleUser && strings.Contains(m.Content, needle) {
+		if m.Role == provider.RoleTool && m.ToolCallID == deliveryID {
 			return true
+		}
+		if m.Role == provider.RoleAssistant {
+			for _, tc := range m.ToolCalls {
+				if tc.ID == deliveryID {
+					return true
+				}
+			}
 		}
 	}
 	return false
+}
+
+// AppendBackgroundTaskDelivery appends a properly paired completion turn at the
+// conversation tail. The original Started stub is left untouched — it already
+// answered the spawn tool_call. Completion is a new tool round the model sees last.
+func (s *Session) AppendBackgroundTaskDelivery(jobID, toolName, output string) bool {
+	if s == nil || jobID == "" || strings.TrimSpace(output) == "" {
+		return false
+	}
+	if s.HasBackgroundTaskDelivery(jobID) {
+		return true
+	}
+	if toolName == "" {
+		toolName = "task"
+	}
+	const max = 12000
+	if len(output) > max {
+		output = output[:max] + "\n…[truncated]"
+	}
+	deliveryID := BackgroundDeliveryCallID(jobID)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	// Re-check under write lock.
+	for i := len(s.Messages) - 1; i >= 0; i-- {
+		m := s.Messages[i]
+		if m.Role == provider.RoleTool && m.ToolCallID == deliveryID {
+			return true
+		}
+	}
+	s.Messages = append(s.Messages,
+		provider.Message{
+			Role: provider.RoleAssistant,
+			ToolCalls: []provider.ToolCall{{
+				ID:        deliveryID,
+				Name:      toolName,
+				Arguments: FormatCompletedTaskCallArgs(jobID),
+			}},
+		},
+		provider.Message{
+			Role:       provider.RoleTool,
+			Name:       toolName,
+			ToolCallID: deliveryID,
+			Content:    output,
+		},
+	)
+	return true
 }
 
 // AddUserNudge appends content to the last message if it's a user message,

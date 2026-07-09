@@ -3,7 +3,6 @@ package agent
 import (
 	"context"
 	"io"
-	"strings"
 	"testing"
 	"time"
 
@@ -39,14 +38,15 @@ func TestCompleteBackgroundJobAfterKill(t *testing.T) {
 		case <-time.After(10 * time.Millisecond):
 		}
 	}
-	if sess.Messages[1].Role != provider.RoleTool || sess.Messages[1].Content == "" {
-		t.Fatalf("tool row should contain killed message, got %+v", sess.Messages[1])
-	}
-	if IsStartedTaskPlaceholder(sess.Messages[1].Content) {
-		t.Fatal("started placeholder should be replaced")
+	// Started stub stays; kill text lands in synthetic tail tool result.
+	if !IsStartedTaskPlaceholder(sess.Messages[1].Content) {
+		t.Fatal("Started placeholder must remain after kill delivery")
 	}
 	last := sess.Messages[len(sess.Messages)-1]
-	if last.Role != provider.RoleUser || !strings.Contains(last.Content, "background-task-result") {
-		t.Fatalf("killed delivery must also append tail envelope, got %+v", last)
+	if last.Role != provider.RoleTool || last.ToolCallID != BackgroundDeliveryCallID(job.ID) || last.Content == "" {
+		t.Fatalf("want synthetic kill delivery tool row, got %+v", last)
+	}
+	if IsStartedTaskPlaceholder(last.Content) {
+		t.Fatal("delivery content should not be a started stub")
 	}
 }

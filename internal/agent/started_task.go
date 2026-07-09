@@ -12,14 +12,39 @@ type startedTaskPayload struct {
 	Label  string `json:"label,omitempty"`
 }
 
+// completedTaskArgs is the synthetic tool_call.arguments for a tail delivery turn.
+// The Started stub is the FINAL answer to the original spawn call; completion is a
+// separate, properly paired assistant+tool turn (never a mid-history rewrite).
+type completedTaskArgs struct {
+	JobID  string `json:"job_id"`
+	Status string `json:"status"`
+	Event  string `json:"event"`
+}
+
 var legacyStartedTaskLine = regexp.MustCompile(`^Started task ([a-z]+-\d+)`)
 
+// BackgroundDeliveryCallID is the synthetic tool_call_id for a finished job.
+// Stable per job so completion/drain races stay idempotent.
+func BackgroundDeliveryCallID(jobID string) string {
+	if jobID == "" {
+		return ""
+	}
+	return "bg-delivery-" + jobID
+}
+
 // FormatStartedTaskResult is the synchronous tool return when a background delegate starts.
+// This payload is complete and permanent for that tool_call_id — do not overwrite it later.
 func FormatStartedTaskResult(jobID, label string) string {
 	if label == "" {
 		label = "task"
 	}
 	b, _ := json.Marshal(startedTaskPayload{JobID: jobID, Status: "started", Label: label})
+	return string(b)
+}
+
+// FormatCompletedTaskCallArgs is the arguments JSON for the synthetic completion tool_call.
+func FormatCompletedTaskCallArgs(jobID string) string {
+	b, _ := json.Marshal(completedTaskArgs{JobID: jobID, Status: "completed", Event: "background_task_result"})
 	return string(b)
 }
 

@@ -221,9 +221,8 @@ func TestAutoReenterWithoutPerJobOnComplete(t *testing.T) {
 	}
 }
 
-// TestAutoReentryDrainsToolResultIntoSession verifies the auto-reentry turn folds the
-// completed sub-agent output into the session as a tail envelope (and mid-history
-// tool row when a Started placeholder exists).
+// TestAutoReentryDrainsToolResultIntoSession verifies the auto-reentry turn appends a
+// synthetic paired completion turn; the original Started stub stays frozen.
 func TestAutoReentryDrainsToolResultIntoSession(t *testing.T) {
 	sink := event.Discard
 	jm := jobs.NewManager(sink)
@@ -241,7 +240,6 @@ func TestAutoReentryDrainsToolResultIntoSession(t *testing.T) {
 	job, err := jm.Start(context.Background(), "task", "drain", func(ctx context.Context, _ io.Writer) (string, error) {
 		return "sub-result", nil
 	}, nil, func(id string) {
-		// Patch started stub to reference real job id so Replace can match.
 		for i := range sess.Messages {
 			if sess.Messages[i].Role == provider.RoleTool && sess.Messages[i].ToolCallID == "tool-call-1" {
 				sess.Messages[i].Content = agent.FormatStartedTaskResult(id, "drain")
@@ -261,21 +259,21 @@ func TestAutoReentryDrainsToolResultIntoSession(t *testing.T) {
 		t.Fatal("expected nil-provider Run to error")
 	}
 
-	var toolMsgs int
-	var envelopes int
+	deliveryID := agent.BackgroundDeliveryCallID(job.ID)
+	var startedStill, deliveries int
 	for _, m := range sess.Messages {
-		if m.Role == provider.RoleTool && m.ToolCallID == "tool-call-1" && m.Content == "sub-result" {
-			toolMsgs++
+		if m.Role == provider.RoleTool && m.ToolCallID == "tool-call-1" && agent.IsStartedTaskPlaceholder(m.Content) {
+			startedStill++
 		}
-		if m.Role == provider.RoleUser && strings.Contains(m.Content, "background-task-result") && strings.Contains(m.Content, "sub-result") {
-			envelopes++
+		if m.Role == provider.RoleTool && m.ToolCallID == deliveryID && m.Content == "sub-result" {
+			deliveries++
 		}
 	}
-	if toolMsgs != 1 {
-		t.Fatalf("expected 1 mid-history tool result, got %d; messages=%d", toolMsgs, len(sess.Messages))
+	if startedStill != 1 {
+		t.Fatalf("Started stub must remain, got %d", startedStill)
 	}
-	if envelopes != 1 {
-		t.Fatalf("expected 1 tail envelope, got %d; messages=%d", envelopes, len(sess.Messages))
+	if deliveries != 1 {
+		t.Fatalf("expected 1 synthetic delivery, got %d; messages=%d", deliveries, len(sess.Messages))
 	}
 }
 
@@ -426,27 +424,27 @@ func TestAutoReenterDeferredWhileMainTurnBusy(t *testing.T) {
 		t.Fatalf("deferred auto-reentry should Send(\"\"), got %q", inputs[1])
 	}
 
-	var toolMsgs, envelopes int
+	deliveryID := agent.BackgroundDeliveryCallID(job.ID)
+	var startedStill, deliveries int
 	for _, m := range sess.Messages {
-		if m.Role == provider.RoleTool && m.ToolCallID == "tool-call-deferred" && m.Content == "sub-result" {
-			toolMsgs++
+		if m.Role == provider.RoleTool && m.ToolCallID == "tool-call-deferred" && agent.IsStartedTaskPlaceholder(m.Content) {
+			startedStill++
 		}
-		if m.Role == provider.RoleUser && strings.Contains(m.Content, "background-task-result") && strings.Contains(m.Content, "sub-result") {
-			envelopes++
+		if m.Role == provider.RoleTool && m.ToolCallID == deliveryID && m.Content == "sub-result" {
+			deliveries++
 		}
 	}
-	if toolMsgs != 1 {
-		t.Fatalf("auto-reentry should patch mid-history tool result, got %d; messages=%d", toolMsgs, len(sess.Messages))
+	if startedStill != 1 {
+		t.Fatalf("Started stub must remain, got %d", startedStill)
 	}
-	if envelopes != 1 {
-		t.Fatalf("auto-reentry should append tail envelope, got %d; messages=%d", envelopes, len(sess.Messages))
+	if deliveries != 1 {
+		t.Fatalf("auto-reentry should append synthetic delivery, got %d; messages=%d", deliveries, len(sess.Messages))
 	}
 }
 
-// TestAutoReentryDeliversStartedAndTailEnvelope verifies dual delivery:
-// mid-history Started placeholder is patched (API pairing) AND a user envelope
-// lands at the conversation tail (auto-reentry visibility).
-func TestAutoReentryDeliversStartedAndTailEnvelope(t *testing.T) {
+// TestAutoReentrySyntheticDeliveryAtTail verifies completion is a new paired
+// tool turn at the end; the original Started row is never rewritten.
+func TestAutoReentrySyntheticDeliveryAtTail(t *testing.T) {
 	sink := event.Discard
 	jm := jobs.NewManager(sink)
 	defer jm.Close()
@@ -473,26 +471,27 @@ func TestAutoReentryDeliversStartedAndTailEnvelope(t *testing.T) {
 	defer cancel()
 	_ = ag.Run(ctx, "")
 
-	var toolRows int
 	var midContent string
 	for _, m := range sess.Messages {
 		if m.Role == provider.RoleTool && m.ToolCallID == "tool-call-1" {
-			toolRows++
 			midContent = m.Content
 		}
 	}
-	if toolRows != 1 {
-		t.Fatalf("want one tool row (started replaced by result), got %d", toolRows)
+	if midContent != "Started task task-1 (explore)" && !agent.IsStartedTaskPlaceholder(midContent) {
+		// job id may be task-1 matching legacy line; either way must stay started-shaped
+		if midContent == "explore-result" {
+			t.Fatal("regression: mid-history Started row was rewritten")
+		}
 	}
-	if midContent != "explore-result" {
-		t.Fatalf("mid tool content = %q, want explore-result", midContent)
+	if midContent == "explore-result" {
+		t.Fatal("regression: mid-history Started row was rewritten")
 	}
 	last := sess.Messages[len(sess.Messages)-1]
-	if last.Role != provider.RoleUser || !strings.Contains(last.Content, "background-task-result") {
-		t.Fatalf("want tail user envelope, got role=%s content=%q", last.Role, last.Content)
+	if last.Role != provider.RoleTool || last.Content != "explore-result" {
+		t.Fatalf("want synthetic tail tool result, got role=%s content=%q", last.Role, last.Content)
 	}
-	if !strings.Contains(last.Content, "explore-result") {
-		t.Fatalf("tail envelope missing explore-result: %q", last.Content)
+	if last.ToolCallID != agent.BackgroundDeliveryCallID(job.ID) {
+		t.Fatalf("delivery id = %q, want %q", last.ToolCallID, agent.BackgroundDeliveryCallID(job.ID))
 	}
 }
 
@@ -534,19 +533,20 @@ func TestInstantCompletionDrainsToolResult(t *testing.T) {
 		t.Fatal("expected nil-provider Run to error")
 	}
 
-	var toolMsgs, envelopes int
+	deliveryID := agent.BackgroundDeliveryCallID(job.ID)
+	var startedStill, deliveries int
 	for _, m := range sess.Messages {
-		if m.Role == provider.RoleTool && m.ToolCallID == "tool-call-instant" && m.Content == "instant-result" {
-			toolMsgs++
+		if m.Role == provider.RoleTool && m.ToolCallID == "tool-call-instant" && agent.IsStartedTaskPlaceholder(m.Content) {
+			startedStill++
 		}
-		if m.Role == provider.RoleUser && strings.Contains(m.Content, "background-task-result") && strings.Contains(m.Content, "instant-result") {
-			envelopes++
+		if m.Role == provider.RoleTool && m.ToolCallID == deliveryID && m.Content == "instant-result" {
+			deliveries++
 		}
 	}
-	if toolMsgs != 1 {
-		t.Fatalf("expected 1 mid-history tool result, got %d; messages=%d", toolMsgs, len(sess.Messages))
+	if startedStill != 1 {
+		t.Fatalf("Started stub must remain, got %d", startedStill)
 	}
-	if envelopes != 1 {
-		t.Fatalf("expected 1 tail envelope, got %d; messages=%d", envelopes, len(sess.Messages))
+	if deliveries != 1 {
+		t.Fatalf("expected 1 synthetic delivery, got %d; messages=%d", deliveries, len(sess.Messages))
 	}
 }

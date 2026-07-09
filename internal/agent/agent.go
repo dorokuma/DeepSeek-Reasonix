@@ -416,33 +416,10 @@ func (a *Agent) FlushBackgroundJobResults() (jobID, output string, ok bool) {
 	return a.deliverPendingJobResultsWithRetry(12, 20*time.Millisecond)
 }
 
-// AppendBackgroundTaskResultDelivery records the sub-agent final answer in a
-// machine-readable envelope at the conversation TAIL.
-//
-// MUST stay a RoleUser message (not RoleTool): provider.SanitizeToolPairing drops
-// orphan tool rows that are not immediately after an assistant tool_calls turn.
-// Pure "append tool at tail" was tried and silently discarded at request build time;
-// pure mid-history patch is valid for APIs but invisible on auto-reentry.
-// Dual delivery (patch + this envelope) is the only combination that survives both.
+// AppendBackgroundTaskResultDelivery is kept as a thin alias for tests/callers
+// that still name the old envelope path; it now inserts the synthetic tool turn.
 func (a *Agent) AppendBackgroundTaskResultDelivery(jobID, output string) {
-	if a.session == nil {
-		return
-	}
-	output = strings.TrimSpace(output)
-	if output == "" {
-		return
-	}
-	if a.session.HasBackgroundTaskResultEnvelope(jobID) {
-		return
-	}
-	const max = 12000
-	if len(output) > max {
-		output = output[:max] + "\n…[truncated]"
-	}
-	a.session.Add(provider.Message{
-		Role:    provider.RoleUser,
-		Content: fmt.Sprintf("<background-task-result job=%q>\n%s\n</background-task-result>", jobID, output),
-	})
+	_ = a.commitJobResult(jobID, output)
 }
 
 // Session returns the agent's current conversation, useful for persistence
@@ -951,48 +928,44 @@ func (a *Agent) drainSteer() string {
 
 // deliverPendingJobResults writes finished background job answers into the session.
 
-// commitJobResult is shared by CompleteBackgroundJob and commitBackgroundJobResult.
+// commitJobResult delivers a finished background job into the parent session.
 //
-// Delivery contract (do not "simplify" — three prior regressions):
-//  1. Patch the Started placeholder in-place when toolCallID is known.
-//     Keeps assistant tool_calls ↔ tool result pairing valid for providers.
-//  2. ALWAYS append a RoleUser <background-task-result> envelope at the tail.
-//     Auto-reentry attention is at the end of the transcript; mid-history-only
-//     patches are effectively invisible. Orphan RoleTool tails are dropped by
-//     provider.SanitizeToolPairing, so a plain tool append is NOT sufficient.
+// Architecture (single path — do not reintroduce mid-history rewrite):
+//
+//	spawn tool_call  →  tool result {status:started, job_id}   // FINAL for that call
+//	… later …
+//	assistant tool_call bg-delivery-<job>  →  tool result <answer>  // NEW tail turn
+//	auto-reentry streams with the answer at conversation end
+//
+// Why not patch the Started row: the spawn call already completed correctly; mutating
+// mid-history is invisible on reentry and caused multi-week thrash. Why not orphan
+// RoleTool at tail: SanitizeToolPairing drops it. Synthetic paired turn is the only
+// shape that is both API-valid and attention-visible.
 func (a *Agent) commitJobResult(jobID, output string) bool {
 	output = strings.TrimSpace(output)
-	if output == "" {
+	if output == "" || a.session == nil {
 		return false
 	}
-	if a.session != nil && a.session.HasBackgroundTaskResultEnvelope(jobID) {
-		// Already delivered (completion hook raced drainNotify). Ensure mid-history
-		// placeholder is still patched when possible, then treat as success.
-		var toolCallID string
+	if a.session.HasBackgroundTaskDelivery(jobID) {
 		if a.ctrl != nil {
-			toolCallID, _ = a.ctrl.TakeJobMeta(jobID)
-		}
-		if toolCallID == "" {
-			toolCallID = a.session.ToolCallIDForStartedTaskLine(jobID)
-		}
-		if toolCallID != "" {
-			_ = a.session.ReplaceTaskStartedWithResult(toolCallID, jobID, output)
+			_, _ = a.ctrl.TakeJobMeta(jobID)
 		}
 		return true
 	}
-	var toolCallID string
+	toolName := "task"
+	var spawnCallID string
 	if a.ctrl != nil {
-		toolCallID, _ = a.ctrl.TakeJobMeta(jobID)
+		spawnCallID, _ = a.ctrl.TakeJobMeta(jobID)
 	}
-	if toolCallID == "" && a.session != nil {
-		toolCallID = a.session.ToolCallIDForStartedTaskLine(jobID)
+	if spawnCallID == "" {
+		spawnCallID = a.session.ToolCallIDForStartedTaskLine(jobID)
 	}
-	if toolCallID != "" && a.session != nil {
-		_ = a.session.ReplaceTaskStartedWithResult(toolCallID, jobID, output)
+	if spawnCallID != "" {
+		if n := a.session.ToolNameForCallID(spawnCallID); n != "" {
+			toolName = n
+		}
 	}
-	// Tail envelope is mandatory even when the mid-history patch succeeded.
-	a.AppendBackgroundTaskResultDelivery(jobID, output)
-	return a.session != nil && a.session.HasBackgroundTaskResultEnvelope(jobID)
+	return a.session.AppendBackgroundTaskDelivery(jobID, toolName, output)
 }
 
 

@@ -12,7 +12,7 @@ import (
 	"reasonix/internal/provider"
 )
 
-func TestCommitBackgroundJobResultWithoutRegisterJobMeta(t *testing.T) {
+func TestCommitBackgroundJobResultSyntheticTailTurn(t *testing.T) {
 	sink := event.Discard
 	jm := jobs.NewManager(sink)
 	defer jm.Close()
@@ -24,7 +24,7 @@ func TestCommitBackgroundJobResultWithoutRegisterJobMeta(t *testing.T) {
 		t.Fatal(err)
 	}
 	sess := agentNewSessionWithStartedTask("call-7", job.ID)
-	// Simulate main-agent chatter after the Started stub so the patch sits mid-history.
+	// Mid-conversation chatter after Started — Started row must stay frozen.
 	sess.Add(provider.Message{Role: provider.RoleAssistant, Content: "I'll wait for the background task."})
 	ag := New(nil, nil, sess, Options{Jobs: jm}, sink)
 	ag.SetControllerBridge(newSubControllerBridge())
@@ -42,32 +42,47 @@ func TestCommitBackgroundJobResultWithoutRegisterJobMeta(t *testing.T) {
 	}
 
 	if !ag.CompleteBackgroundJob(job.ID) {
-		t.Fatal("CompleteBackgroundJob should commit via Started line fallback")
+		t.Fatal("CompleteBackgroundJob should commit synthetic tail turn")
 	}
-	// Mid-history tool row must be patched (API tool-call pairing).
-	if sess.Messages[1].Content != "ANSWER-7" {
-		t.Fatalf("started row should become answer, got %q", sess.Messages[1].Content)
+	// Spawn Started stub is permanent — never rewritten.
+	if !IsStartedTaskPlaceholder(sess.Messages[1].Content) {
+		t.Fatalf("Started stub must remain unchanged, got %q", sess.Messages[1].Content)
 	}
-	// Tail envelope is mandatory — pure mid-patch is the historical regression.
-	last := sess.Messages[len(sess.Messages)-1]
-	if last.Role != provider.RoleUser || !strings.Contains(last.Content, "background-task-result") {
-		t.Fatalf("want tail user envelope, got role=%s content=%q", last.Role, last.Content)
+	if sess.Messages[1].Content == "ANSWER-7" {
+		t.Fatal("regression: mid-history patch must not return")
 	}
-	if !strings.Contains(last.Content, "ANSWER-7") {
-		t.Fatalf("tail envelope missing answer: %q", last.Content)
+	// Tail: assistant tool_calls + tool result, properly paired.
+	if len(sess.Messages) < 5 {
+		t.Fatalf("want spawn + wait + delivery pair, got %d messages", len(sess.Messages))
 	}
-	// Orphan RoleTool at tail would be dropped by SanitizeToolPairing — ensure we didn't add one.
-	for i, m := range sess.Messages {
-		if i <= 1 {
-			continue
+	asst := sess.Messages[len(sess.Messages)-2]
+	tool := sess.Messages[len(sess.Messages)-1]
+	deliveryID := BackgroundDeliveryCallID(job.ID)
+	if asst.Role != provider.RoleAssistant || len(asst.ToolCalls) != 1 || asst.ToolCalls[0].ID != deliveryID {
+		t.Fatalf("want synthetic assistant tool_call %q, got %+v", deliveryID, asst)
+	}
+	if asst.ToolCalls[0].Name != "task" {
+		t.Fatalf("tool name = %q, want task", asst.ToolCalls[0].Name)
+	}
+	if !strings.Contains(asst.ToolCalls[0].Arguments, job.ID) {
+		t.Fatalf("args missing job id: %q", asst.ToolCalls[0].Arguments)
+	}
+	if tool.Role != provider.RoleTool || tool.ToolCallID != deliveryID || tool.Content != "ANSWER-7" {
+		t.Fatalf("want paired tool result, got %+v", tool)
+	}
+	// Must survive SanitizeToolPairing (orphan tool tails do not).
+	sanitized := provider.SanitizeToolPairing(sess.Messages)
+	found := false
+	for _, m := range sanitized {
+		if m.Role == provider.RoleTool && m.ToolCallID == deliveryID && m.Content == "ANSWER-7" {
+			found = true
 		}
-		if m.Role == provider.RoleTool && m.Content == "ANSWER-7" {
-			t.Fatalf("orphan tail tool message at index %d would be dropped by SanitizeToolPairing", i)
-		}
+	}
+	if !found {
+		t.Fatal("synthetic delivery must survive SanitizeToolPairing")
 	}
 }
 
-// TestCommitBackgroundJobResultIdempotent rejects double envelopes under races.
 func TestCommitBackgroundJobResultIdempotent(t *testing.T) {
 	sink := event.Discard
 	jm := jobs.NewManager(sink)
@@ -99,38 +114,37 @@ func TestCommitBackgroundJobResultIdempotent(t *testing.T) {
 	if !ag.commitJobResult(job.ID, "ONCE") {
 		t.Fatal("second commit should still report success (idempotent)")
 	}
-	var envelopes int
+	var deliveries int
+	deliveryID := BackgroundDeliveryCallID(job.ID)
 	for _, m := range sess.Messages {
-		if m.Role == provider.RoleUser && strings.Contains(m.Content, "background-task-result") {
-			envelopes++
+		if m.Role == provider.RoleTool && m.ToolCallID == deliveryID {
+			deliveries++
 		}
 	}
-	if envelopes != 1 {
-		t.Fatalf("want 1 envelope, got %d", envelopes)
+	if deliveries != 1 {
+		t.Fatalf("want 1 delivery tool row, got %d", deliveries)
 	}
 }
 
-// TestTailEnvelopeSurvivesSanitizeToolPairing locks the delivery shape against
-// the regression where append-as-tool was silently dropped at request build.
-func TestTailEnvelopeSurvivesSanitizeToolPairing(t *testing.T) {
+func TestSyntheticDeliverySurvivesSanitizeToolPairing(t *testing.T) {
 	sess := agentNewSessionWithStartedTask("call-s", "task-9")
 	sess.Add(provider.Message{Role: provider.RoleAssistant, Content: "waiting"})
-	sess.Add(provider.Message{
-		Role:    provider.RoleUser,
-		Content: "<background-task-result job=\"task-9\">\nBODY\n</background-task-result>",
-	})
+	if !sess.AppendBackgroundTaskDelivery("task-9", "task", "BODY") {
+		t.Fatal("append failed")
+	}
 	out := provider.SanitizeToolPairing(sess.Messages)
 	found := false
 	for _, m := range out {
-		if m.Role == provider.RoleUser && strings.Contains(m.Content, "BODY") {
+		if m.Role == provider.RoleTool && m.ToolCallID == BackgroundDeliveryCallID("task-9") && m.Content == "BODY" {
 			found = true
-		}
-		if m.Role == provider.RoleTool && m.Content == "BODY" {
-			t.Fatal("unexpected tool-shaped delivery in sanitized history")
 		}
 	}
 	if !found {
-		t.Fatal("user tail envelope must survive SanitizeToolPairing")
+		t.Fatal("synthetic paired delivery must survive SanitizeToolPairing")
+	}
+	// Started stub still present and unchanged.
+	if !IsStartedTaskPlaceholder(sess.Messages[1].Content) {
+		t.Fatal("Started stub must not be rewritten")
 	}
 }
 
