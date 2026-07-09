@@ -435,8 +435,8 @@ func RenderTOMLForScope(c *Config, scope RenderScope) string {
 	b.WriteString("# Confine tool blast radius. File-writers (write_file/edit_file/multi_edit/move_file)\n")
 	b.WriteString("# may only write under workspace_root (empty = current dir) and allow_write extras.\n")
 	b.WriteString("# bash = \"enforce\" jails each command in an OS sandbox when available;\n")
-	b.WriteString("# without one, bash execution is refused. Empty defaults to enforce on macOS/Linux\n")
-	b.WriteString("# and off on Windows. Set bash = \"off\" to restore pre-1.16 unconfined shell execution.\n")
+	b.WriteString("# without one, bash execution is refused. Empty defaults to enforce on macOS/Linux.\n")
+	b.WriteString("# Windows currently forces bash = \"off\" to restore pre-1.16 unconfined shell execution.\n")
 	b.WriteString("# network allows sandboxed bash egress.\n")
 	if c.Sandbox.WorkspaceRoot != "" {
 		fmt.Fprintf(&b, "workspace_root = %q\n", c.Sandbox.WorkspaceRoot)
@@ -1047,22 +1047,27 @@ func RenderTOMLProjectDelta(c *Config) string {
 
 	// [sandbox]
 	if !reflect.DeepEqual(c.Sandbox, d.Sandbox) {
-		b.WriteString("[sandbox]\n")
+		var sandboxBuf strings.Builder
 		if c.Sandbox.WorkspaceRoot != "" {
-			fmt.Fprintf(&b, "workspace_root = %q\n", c.Sandbox.WorkspaceRoot)
+			fmt.Fprintf(&sandboxBuf, "workspace_root = %q\n", c.Sandbox.WorkspaceRoot)
 		}
 		if len(c.Sandbox.AllowWrite) > 0 {
-			fmt.Fprintf(&b, "allow_write = %s\n", renderStringArray(c.Sandbox.AllowWrite))
+			fmt.Fprintf(&sandboxBuf, "allow_write = %s\n", renderStringArray(c.Sandbox.AllowWrite))
 		}
-		// Only an explicitly set bash mode is a project delta; an empty value
-		// inherits the platform default.
-		if strings.TrimSpace(c.Sandbox.Bash) != "" {
-			fmt.Fprintf(&b, "bash = %q\n", c.BashMode())
+		// Only persist a bash mode when its effective value differs from the
+		// platform default. On Windows, even explicit "enforce" currently
+		// resolves to "off", so project configs should not imply otherwise.
+		if strings.TrimSpace(c.Sandbox.Bash) != "" && c.BashMode() != d.BashModeForGOOS(runtimeGOOS) {
+			fmt.Fprintf(&sandboxBuf, "bash = %q\n", c.BashMode())
 		}
 		if c.Sandbox.Network != d.Sandbox.Network {
-			fmt.Fprintf(&b, "network = %v\n", c.Sandbox.Network)
+			fmt.Fprintf(&sandboxBuf, "network = %v\n", c.Sandbox.Network)
 		}
-		b.WriteString("\n")
+		if sandboxBuf.Len() > 0 {
+			b.WriteString("[sandbox]\n")
+			b.WriteString(sandboxBuf.String())
+			b.WriteString("\n")
+		}
 	}
 
 	// [statusline]

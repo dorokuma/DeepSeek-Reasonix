@@ -1057,7 +1057,7 @@ func TestRenderTOMLDefaultStepsCommentedOut(t *testing.T) {
 	}
 }
 
-func TestRenderTOMLWindowsSandboxDefaultAndExplicitEnforce(t *testing.T) {
+func TestRenderTOMLWindowsSandboxDefaultAndExplicitEnforceDisabled(t *testing.T) {
 	isolateUserConfigHome(t)
 	setRuntimeGOOS(t, "windows")
 
@@ -1069,8 +1069,8 @@ func TestRenderTOMLWindowsSandboxDefaultAndExplicitEnforce(t *testing.T) {
 	cfg := Default()
 	cfg.Sandbox.Bash = "enforce"
 	delta := RenderTOMLProjectDelta(cfg)
-	if !strings.Contains(delta, `bash = "enforce"`) {
-		t.Fatalf("Windows explicit enforce should be rendered as a delta:\n%s", delta)
+	if strings.Contains(delta, `[sandbox]`) || strings.Contains(delta, `bash = `) {
+		t.Fatalf("Windows explicit enforce should not render as an effective project delta:\n%s", delta)
 	}
 }
 

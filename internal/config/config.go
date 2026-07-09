@@ -959,18 +959,20 @@ func (c *Config) BashMode() string {
 }
 
 // BashModeForGOOS normalises the bash-sandbox mode for tests and cross-platform
-// rendering. Explicit "enforce" and "off" always win; only the empty default is
-// platform-specific.
+// rendering. Windows currently forces bash sandboxing off, even when older
+// configs explicitly requested "enforce", because the native backend still
+// breaks common Git Bash/MSYS2, Docker, and git workflows. macOS/Linux keep the
+// existing explicit-mode behavior.
 func (c *Config) BashModeForGOOS(goos string) string {
+	if goos == "windows" {
+		return "off"
+	}
 	switch strings.TrimSpace(c.Sandbox.Bash) {
 	case "enforce":
 		return "enforce"
 	case "off":
 		return "off"
 	case "":
-		if goos == "windows" {
-			return "off"
-		}
 		return "enforce"
 	default:
 		return "enforce"
@@ -1547,10 +1549,9 @@ func Default() *Config {
 		// deny/allow rules to harden or quiet specific tools.
 		Permissions: PermissionsConfig{Mode: "ask"},
 		// Sandbox uses platform defaults: macOS/Linux jail bash by default;
-		// Windows defaults bash to off because AppContainer behavior varies by
-		// host, while an explicit bash = "enforce" still enables it. Network=true
-		// here so an absent [sandbox] in a user's file keeps egress (zero value
-		// would wrongly deny it).
+		// Windows forces bash off until the native sandbox backend is reliable.
+		// Network=true here so an absent [sandbox] in a user's file keeps egress
+		// (zero value would wrongly deny it).
 		Sandbox: SandboxConfig{Network: true},
 		// LSP tools on by default, but dormant until a language server is on PATH;
 		// a missing server yields an install hint rather than an error.
