@@ -163,16 +163,20 @@ func extractJobID(result string) string {
 }
 
 func taskPostCallGuidance(jobID string) string {
-	rule := `⚠ BACKGROUND JOB STARTED — RESULT AUTO-DELIVERS
+	rule := `⚠ BACKGROUND SUB-AGENT STARTED — RESULT AUTO-DELIVERS
 
-The Started stub above is only the receipt that the job began — leave it alone.
-When the job finishes, a NEW tool round appears at the END of the conversation
-(tool name=task, arguments include job_id + status=completed) with the full answer.
-Treat that final tool result as authoritative. Do not re-dispatch the same goal.
+The Started stub above is only a receipt that the job began — it will NEVER change. Do not wait for that mid-history card to update.
+
+When the job finishes, a NEW tool round appears at the END of the conversation:
+  tool name = task_result
+  arguments include job_id + status=completed
+  content = the full sub-agent answer
+
+That tail task_result is authoritative. Do not re-dispatch the same goal.
 
 While waiting, do NOT:
-• Call peek-job to check progress (results arrive without polling)
-• Call steer-job to ask "are you done" (steer is for new instructions only)
+• Call peek-job to poll a task sub-agent (results arrive without polling; peek is for shell/bash jobs)
+• Call steer-job to ask "are you done" (steer is for genuine new instructions only)
 • Dispatch another task for the same goal
 
 Polling wastes context and delays responses. Continue other work or reply to the user instead.`
@@ -253,12 +257,13 @@ func (t *TaskTool) Execute(ctx context.Context, args json.RawMessage) (string, e
 	}
 	parentID, _, _, _ := CallContext(ctx)
 	nested := event.Discard
-	onComplete := OnCompleteCallbackFrom(ctx)
+	// Completion is exclusively jobs.Manager.SetOnCompletion → Controller.handleJobCompletion.
+	// Do not pass a per-job onComplete (avoids double wake / dual paths).
 	var registerMeta jobs.BeforeRunFunc
 	if ctrl, ok := CtrlFromContext(ctx); ok {
 		registerMeta = func(jobID string) { ctrl.RegisterJobMeta(jobID, parentID) }
 	}
-	job, err := jm.Start(ctx, "task", label, func(jobCtx context.Context, _ io.Writer) (string, error) {
+	job, err := jm.Start(ctx, jobs.KindTask, label, func(jobCtx context.Context, _ io.Writer) (string, error) {
 		// Heartbeat: keep lastActive fresh so the stale monitor (per-kind idle
 		// kill, default 1h for task) won't kill a busy sub-agent whose output
 		// doesn't flow through the writer.
@@ -285,7 +290,7 @@ func (t *TaskTool) Execute(ctx context.Context, args json.RawMessage) (string, e
 			bgCtx = WithOptions(bgCtx, opts)
 		}
 		return t.runSub(bgCtx, p.Prompt, subReg, nested, maxSteps, sysPrompt, role, modelRef, effort)
-	}, onComplete, registerMeta)
+	}, nil, registerMeta)
 	if err != nil {
 		return "", err
 	}

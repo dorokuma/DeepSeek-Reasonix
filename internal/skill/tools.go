@@ -233,7 +233,7 @@ func (t *subagentSkillTool) Execute(ctx context.Context, args json.RawMessage) (
 		}
 		jobID, err := t.bgRunner(ctx, func(jobCtx context.Context, _ io.Writer) (string, error) {
 			return t.runner(jobCtx, sk, task)
-		}, t.toolName, agent.OnCompleteCallbackFrom(ctx))
+		}, t.toolName, nil) // completion: Manager.SetOnCompletion only
 		if err != nil {
 			return "", err
 		}

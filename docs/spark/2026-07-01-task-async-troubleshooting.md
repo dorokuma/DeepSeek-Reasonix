@@ -1,41 +1,46 @@
 # task 异步委派排障（主代理 / TUI）
 
-## 架构（单路径，禁止再拧巴）
+## 架构（单路径）
 
 ```
 主代理 task 工具调用
-  → 同步 tool 结果：{status:started, job_id}   // 该 tool_call 的终态，永不改写
-  → 子代理后台 Run
-  → jobs 完成
+  → 同步 tool 结果：{status:started, job_id}   // 收据，永不改写
+  → 子代理后台 Run（kind=task）
+  → jobs 完成 → 唯一回调 SetOnCompletion → handleJobCompletion
   → 会话尾部追加合成一轮：
-        assistant tool_calls: bg-delivery-<job_id>  name=task
+        assistant tool_calls: name=task_result  id=bg-delivery-<job_id>
         tool result: 子代理全文
-  → auto-reentry 让主代理基于尾部 tool 结果续写
+  → auto-reentry 主代理续写
 ```
 
-**禁止**：
-- 原地改写中间的 Started 行（看不见 + 历史被反复改坏）
-- 在尾部单独塞一条孤儿 `role=tool`（会被 `SanitizeToolPairing` 丢掉）
-- 用 `role=user` 信封冒充工具结果（双轨、难测）
+### 与 bash 后台的区别
 
-## TUI / 界面看什么
+| | task 子代理 | bash 后台 shell |
+|--|------------|-----------------|
+| kind | `task` | `bash` |
+| 终答进会话 | 是（`task_result`） | 否 |
+| 看输出 | 等尾部 `task_result` | `peek-job` |
+| 自动续聊 | 是 | 否 |
 
-终答由 **auto-reentry 后的主代理回复** 呈现。tool 区里原始 Started 卡可能一直显示“已启动”——正常。看：
+## TUI / 界面
 
 | 现象 | 含义 |
 |------|------|
-| Notice：`background task finished: task-N` | 子代理已结束 |
-| 会话尾部出现 `bg-delivery-task-N` 的 tool 结果 | **投递成功** |
+| Notice：`background task finished: task-N — result at conversation tail…` | 子代理已结束并会/已投递 |
+| Notice：`background bash finished: bash-N — use peek-job…` | shell 结束，用 peek |
+| 中间 Started 卡片一直「已启动」 | **正常**；别等它变长 |
+| 会话尾部 `task_result` / `bg-delivery-task-N` | **投递成功** |
 | 主代理续轮长回复 | 正常终答入口 |
-| `Reject: too many background jobs (max 3)` | 已有 3 个后台 job |
-| 长期无续轮 | peek-job / failed notice；勿连点 task |
 
-## 日志关键词
+## 禁止再引入
 
-- `resultCh full, dropping result` — 结果通道满
-- `auto-reentry depth cap reached` — 续轮限流，等用户再发一条
-- `background job finished but result not committed` — 投递失败
+- 原地改写中间 Started 行
+- 尾部孤儿 `role=tool`（无配对 assistant tool_calls）
+- 每 job 再挂一套 onComplete 与 SetOnCompletion 双轨
+- 中途 `PostMessage` / subagent-report 信封
 
-## 与系统提示
+## 日志
 
-`task` 的 PostCallGuidance：Started 只是收据；终答是尾部新一轮 tool 结果。
+- `background job finished but result not committed` — task 投递失败
+- `auto-reentry depth cap reached` — 续轮限流
+- `resultCh full, dropping result` — 通道满

@@ -118,7 +118,7 @@ func (s *Session) AppendBackgroundTaskDelivery(jobID, toolName, output string) b
 		return true
 	}
 	if toolName == "" {
-		toolName = "task"
+		toolName = BackgroundDeliveryToolName
 	}
 	const max = 12000
 	if len(output) > max {

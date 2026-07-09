@@ -5,8 +5,6 @@ import (
 	"log/slog"
 )
 
-const maxPendingReports = 32
-
 // JobFromContext returns the background job stamped on ctx (task sub-agent run).
 func JobFromContext(ctx context.Context) (*Job, bool) {
 	j, ok := ctx.Value(jobKey{}).(*Job)
@@ -68,43 +66,4 @@ func nonblockSendProgress(j *Job, n JobNotify) {
 	default:
 		slog.Debug("notifyCh full, dropping progress", "job", j.ID)
 	}
-}
-
-func appendPendingReport(j *Job, msg string) bool {
-	j.mu.Lock()
-	defer j.mu.Unlock()
-	if j.completed {
-		return false
-	}
-	j.pendingReports = append(j.pendingReports, msg)
-	if len(j.pendingReports) > maxPendingReports {
-		j.pendingReports = j.pendingReports[len(j.pendingReports)-maxPendingReports:]
-	}
-	return true
-}
-
-// PendingReports returns a copy of free-form reports not yet drained into the parent session.
-func (m *Manager) PendingReports(jobID string) []string {
-	j := m.get(jobID)
-	if j == nil {
-		return nil
-	}
-	j.mu.Lock()
-	defer j.mu.Unlock()
-	out := make([]string, len(j.pendingReports))
-	copy(out, j.pendingReports)
-	return out
-}
-
-// TakePendingReports removes and returns all pending free-form reports for parent drain.
-func (m *Manager) TakePendingReports(jobID string) []string {
-	j := m.get(jobID)
-	if j == nil {
-		return nil
-	}
-	j.mu.Lock()
-	defer j.mu.Unlock()
-	out := j.pendingReports
-	j.pendingReports = nil
-	return out
 }

@@ -23,6 +23,10 @@ type completedTaskArgs struct {
 
 var legacyStartedTaskLine = regexp.MustCompile(`^Started task ([a-z]+-\d+)`)
 
+// BackgroundDeliveryToolName is the synthetic tool name for a finished sub-agent.
+// Distinct from "task" (spawn) so the model does not confuse receipt vs answer.
+const BackgroundDeliveryToolName = "task_result"
+
 // BackgroundDeliveryCallID is the synthetic tool_call_id for a finished job.
 // Stable per job so completion/drain races stay idempotent.
 func BackgroundDeliveryCallID(jobID string) string {

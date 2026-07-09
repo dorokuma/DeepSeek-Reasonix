@@ -1,12 +1,14 @@
 // Package jobs is the session-scoped background-job registry behind the agent's
-// background tools (bash run_in_background, task run_in_background) and the
-// peek-job and cancel-job tools. A Manager owns a context whose lifetime
-// is the session, NOT a single turn — so a job started in one turn keeps running
-// across turns and is cancelled only when the controller closes (or cancel-job is
-// called). Tools reach the Manager through the call context (WithManager /
-// FromContext), the same injection pattern the `ask` tool uses for the asker.
+// background tools and peek-job / cancel-job / steer-job.
 //
-// The Manager emits a user-visible Notice when a job starts and finishes.
+// Two product kinds share the registry but differ on completion:
+//
+//   - kind "task"  — async sub-agent. Final answer auto-delivers into the parent
+//     session (synthetic tail tool turn + auto-reentry). peek-job is diagnostic only.
+//   - kind "bash"  — shell run_in_background. Output stays in the job buffer;
+//     the model/user reads it with peek-job. No auto session delivery.
+//
+// A Manager owns a context whose lifetime is the session, NOT a single turn.
 package jobs
 
 import (
@@ -85,28 +87,30 @@ type Job struct {
 	done       chan struct{}
 	lastActive atomic.Int64
 
-	// Notification channels for sub-agent ↔ parent communication (used by task jobs).
-	// Initialized by Start — defined here as fields only for now.
+	// Notification channels for sub-agent ↔ parent communication (task jobs).
 	steerCh  chan string    // parent → child steer messages
 	ackCh    chan JobNotify // child → parent ack, buf 4
 	resultCh chan JobNotify // child → parent result, buf 1
 	notifyCh chan JobNotify // child → parent progress, buf 16
-	inbox    chan string    // legacy; free-form reports use pendingReports
 
-	step           int
-	lastTool       string
-	lastAck        string
-	pendingReports []string // free-form sub-agent reports (send_message), drained by parent
+	step     int
+	lastTool string
+	lastAck  string
 
-	completed bool // true after onComplete fires; drainNotify removes the job from the map
-	onMessage func(jobID string)
+	completed bool // true after completion is recorded; task jobs are removed after parent delivery
 	sink      event.Sink
 }
 
-func (j *Job) SetOnMessage(fn func(jobID string)) {
-	j.mu.Lock()
-	defer j.mu.Unlock()
-	j.onMessage = fn
+// KindTask is the auto-delivering async sub-agent job kind.
+const KindTask = "task"
+
+// KindBash is the shell background job kind (peek-based, no auto session delivery).
+const KindBash = "bash"
+
+// AutoDelivers reports whether a finished job of this kind should be written into
+// the parent session and trigger auto-reentry.
+func AutoDelivers(kind string) bool {
+	return kind == KindTask
 }
 
 // SetDispatchDigest records a stable fingerprint for duplicate task detection.
@@ -308,7 +312,6 @@ func (m *Manager) Start(ctx context.Context, kind, label string, run func(ctx co
 		ackCh:     make(chan JobNotify, 4),
 		resultCh:  make(chan JobNotify, 1),
 		notifyCh:  make(chan JobNotify, 16),
-		inbox:     make(chan string, 16),
 		sink:      m.sink,
 	}
 	j.lastActive.Store(time.Now().Unix())
@@ -356,8 +359,9 @@ func (m *Manager) Start(ctx context.Context, kind, label string, run func(ctx co
 		if st == Killed && strings.TrimSpace(result) == "" {
 			result = fmt.Sprintf("background %s %q was cancelled or killed before producing a result", kind, id)
 		}
-		// Empty Done answers still need a non-empty payload so parent dual-delivery commits.
-		if st == Done && strings.TrimSpace(result) == "" {
+		// Task jobs need a non-empty payload so parent session delivery can commit.
+		// Bash jobs keep empty result — output lives in the stream buffer for peek-job.
+		if AutoDelivers(kind) && st == Done && strings.TrimSpace(result) == "" {
 			result = fmt.Sprintf("background %s %q finished with an empty answer", kind, id)
 		}
 
@@ -368,16 +372,8 @@ func (m *Manager) Start(ctx context.Context, kind, label string, run func(ctx co
 			}
 		}
 
-		// Do not close child-parent notification channels; async PostMessage may still be in flight.
-
-		// Emit the closing notice.
-		level, text := event.LevelInfo, fmt.Sprintf("background %s finished: %s", kind, id)
-		switch st {
-		case Failed:
-			level, text = event.LevelWarn, fmt.Sprintf("background %s failed: %s — %v", kind, id, err)
-		case Killed:
-			text = fmt.Sprintf("background %s killed: %s", kind, id)
-		}
+		// Emit the closing notice (wording differs by product kind).
+		level, text := finishedNotice(kind, id, st, err)
 		m.sink.Emit(event.Event{Kind: event.Notice, Level: level, Text: text})
 
 		j.mu.Lock()
@@ -385,7 +381,8 @@ func (m *Manager) Start(ctx context.Context, kind, label string, run func(ctx co
 		j.status = st
 		j.completed = true
 		j.mu.Unlock()
-		// Fire completion callbacks — onComplete (per-call) then onCompletion (global).
+		// Single completion path: optional per-call hook, then global onCompletion.
+		// Controllers should wire only SetOnCompletion; per-call onComplete is nil for task/bash.
 		if onComplete != nil {
 			onComplete(id)
 		}
@@ -411,6 +408,31 @@ func (m *Manager) Label(id string) (string, bool) {
 		return "", false
 	}
 	return j.Label, true
+}
+
+// Kind returns a job's kind ("task", "bash", …). ok is false when id is unknown.
+func (m *Manager) Kind(id string) (string, bool) {
+	j := m.get(id)
+	if j == nil {
+		return "", false
+	}
+	return j.Kind, true
+}
+
+// finishedNotice is the user-visible completion line. Task jobs promise auto-delivery;
+// bash jobs point operators at peek-job.
+func finishedNotice(kind, id string, st Status, err error) (event.Level, string) {
+	switch st {
+	case Failed:
+		return event.LevelWarn, fmt.Sprintf("background %s failed: %s — %v", kind, id, err)
+	case Killed:
+		return event.LevelInfo, fmt.Sprintf("background %s killed: %s", kind, id)
+	default:
+		if AutoDelivers(kind) {
+			return event.LevelInfo, fmt.Sprintf("background %s finished: %s — result at conversation tail (Started card stays; ignore mid-history)", kind, id)
+		}
+		return event.LevelInfo, fmt.Sprintf("background %s finished: %s — use peek-job for output (not auto-delivered to chat)", kind, id)
+	}
 }
 
 // Output returns the job's output produced since the last Output call plus its
@@ -583,12 +605,11 @@ type JobStatus struct {
 	LastAck     string
 }
 
-// JobChannels exposes the three notification channel read-ends for a job.
+// JobChannels exposes the notification channel read-ends for a job.
 type JobChannels struct {
 	Ack      <-chan JobNotify
 	Result   <-chan JobNotify
 	Progress <-chan JobNotify
-	Inbox    <-chan string
 }
 
 // Steer sends a message to a job's steer channel (non-blocking).
@@ -646,7 +667,6 @@ func (m *Manager) NotifyChannels(jobID string) *JobChannels {
 		Ack:      j.ackCh,
 		Result:   j.resultCh,
 		Progress: j.notifyCh,
-		Inbox:    j.inbox,
 	}
 }
 
@@ -699,11 +719,8 @@ func FromContext(ctx context.Context) (*Manager, bool) {
 	return m, ok && m != nil
 }
 
-// PostMessage sends a message to the job's inbox channel. It retrieves the current Job
-// from the context and performs a non-blocking write. If a callback is registered,
-// it triggers it. Returns true on success.
-// PostMessage is deprecated: mid-flight parent reports were removed. Delivery is
-// only via the task tool result at job completion.
+// PostMessage is a retired mid-flight report API. Always returns false; kept so
+// older tests compile. Task results deliver only at job completion.
 func PostMessage(ctx context.Context, msg string) bool {
 	_ = ctx
 	_ = msg

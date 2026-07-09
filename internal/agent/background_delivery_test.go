@@ -61,8 +61,11 @@ func TestCommitBackgroundJobResultSyntheticTailTurn(t *testing.T) {
 	if asst.Role != provider.RoleAssistant || len(asst.ToolCalls) != 1 || asst.ToolCalls[0].ID != deliveryID {
 		t.Fatalf("want synthetic assistant tool_call %q, got %+v", deliveryID, asst)
 	}
-	if asst.ToolCalls[0].Name != "task" {
-		t.Fatalf("tool name = %q, want task", asst.ToolCalls[0].Name)
+	if asst.ToolCalls[0].Name != BackgroundDeliveryToolName {
+		t.Fatalf("tool name = %q, want %s", asst.ToolCalls[0].Name, BackgroundDeliveryToolName)
+	}
+	if tool.Name != BackgroundDeliveryToolName {
+		t.Fatalf("tool result name = %q, want %s", tool.Name, BackgroundDeliveryToolName)
 	}
 	if !strings.Contains(asst.ToolCalls[0].Arguments, job.ID) {
 		t.Fatalf("args missing job id: %q", asst.ToolCalls[0].Arguments)
@@ -129,7 +132,7 @@ func TestCommitBackgroundJobResultIdempotent(t *testing.T) {
 func TestSyntheticDeliverySurvivesSanitizeToolPairing(t *testing.T) {
 	sess := agentNewSessionWithStartedTask("call-s", "task-9")
 	sess.Add(provider.Message{Role: provider.RoleAssistant, Content: "waiting"})
-	if !sess.AppendBackgroundTaskDelivery("task-9", "task", "BODY") {
+	if !sess.AppendBackgroundTaskDelivery("task-9", BackgroundDeliveryToolName, "BODY") {
 		t.Fatal("append failed")
 	}
 	out := provider.SanitizeToolPairing(sess.Messages)
@@ -159,5 +162,57 @@ func TestToolCallIDForStartedTaskLine(t *testing.T) {
 	s := agentNewSessionWithStartedTask("c9", "task-9")
 	if got := s.ToolCallIDForStartedTaskLine("task-9"); got != "c9" {
 		t.Fatalf("got %q", got)
+	}
+}
+
+// TestBashJobDoesNotAutoDeliver locks the product split: shell jobs stay peek-only.
+func TestBashJobDoesNotAutoDeliver(t *testing.T) {
+	sink := event.Discard
+	jm := jobs.NewManager(sink)
+	defer jm.Close()
+
+	// Wire controller-style completion that only handles AutoDelivers kinds.
+	var delivered bool
+	jm.SetOnCompletion(func(id string) {
+		kind, _ := jm.Kind(id)
+		if jobs.AutoDelivers(kind) {
+			delivered = true
+		}
+	})
+
+	job, err := jm.Start(context.Background(), jobs.KindBash, "echo", func(_ context.Context, w io.Writer) (string, error) {
+		_, _ = w.Write([]byte("shell-out\n"))
+		return "", nil
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.After(2 * time.Second)
+	for {
+		if n, ok := jm.CompletedResult(job.ID); ok {
+			_ = n
+			break
+		}
+		select {
+		case <-deadline:
+			t.Fatal("bash job did not complete")
+		case <-time.After(5 * time.Millisecond):
+		}
+	}
+	if delivered {
+		t.Fatal("bash completion must not mark auto-delivery")
+	}
+	sess := NewSession("")
+	ag := New(nil, nil, sess, Options{Jobs: jm}, sink)
+	if ag.CompleteBackgroundJob(job.ID) {
+		t.Fatal("CompleteBackgroundJob must refuse bash jobs")
+	}
+	// Job still peekable.
+	if _, err := jm.Peek(job.ID); err != nil {
+		t.Fatalf("bash job should remain for peek: %v", err)
+	}
+	text, st, ok := jm.Output(job.ID)
+	if !ok || st != jobs.Done || !strings.Contains(text, "shell-out") {
+		t.Fatalf("want shell output via peek path, got text=%q status=%s ok=%v", text, st, ok)
 	}
 }

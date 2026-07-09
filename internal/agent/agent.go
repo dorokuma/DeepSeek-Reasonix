@@ -167,7 +167,6 @@ type ControllerBridge interface {
 	// RegisterJobMeta stores the tool-call metadata for a background task job
 	// so TakeJobMeta can later correlate a completed job with its tool call.
 	RegisterJobMeta(jobID, toolCallID string)
-	MakeOnMessage() func(jobID string)
 }
 
 // subControllerBridge is a lightweight ControllerBridge implementation for
@@ -212,19 +211,15 @@ func (c *subControllerBridge) RegisterJobMeta(jobID string, toolCallID string) {
 	c.taskResultsMu.Unlock()
 }
 
-// MakeOnComplete implements OnCompleteProvider. It returns a callback that sets
-// the pendingToolResult flag when a grandchild background job completes, so the
-// sub-agent's Run loop picks it up on the next iteration.
+// MakeOnComplete implements OnCompleteProvider. Always nil: sub-agents cannot
+// spawn async grandchildren, and parent completion uses SetOnCompletion only.
 func (c *subControllerBridge) MakeOnComplete() func(jobID string) {
-	return func(jobID string) {
-		c.pendingToolResult.Store(true)
-	}
+	return nil
 }
 
+// MakeOnMessage is retired.
 func (c *subControllerBridge) MakeOnMessage() func(jobID string) {
-	return func(jobID string) {
-		c.pendingToolResult.Store(true)
-	}
+	return nil
 }
 
 // Ask implements Asker. Sub-agents are headless — they cannot prompt the user.
@@ -760,11 +755,10 @@ func (a *Agent) Run(ctx context.Context, input string) error {
 			a.session.Add(provider.Message{Role: provider.RoleUser, Content: "[Parent steer]: " + parentSteer})
 		}
 
-		// Background wake: drain finished sub-agent results before streaming. Do not
+		// Background wake: drain finished auto-deliver jobs before streaming. Do not
 		// clear pendingToolResult until delivery catches up (see clearBackgroundWakeIfCaughtUp).
 		if wakeForBackground && step == 0 {
 			_, _, _ = a.deliverPendingJobResultsWithRetry(16, 25*time.Millisecond)
-			a.drainSubagentReports()
 			a.clearBackgroundWakeIfCaughtUp()
 		} else {
 			if userInput := a.drainSteer(); userInput != "" {
@@ -928,23 +922,25 @@ func (a *Agent) drainSteer() string {
 
 // deliverPendingJobResults writes finished background job answers into the session.
 
-// commitJobResult delivers a finished background job into the parent session.
+// commitJobResult delivers a finished auto-deliver (task) job into the parent session.
 //
 // Architecture (single path — do not reintroduce mid-history rewrite):
 //
 //	spawn tool_call  →  tool result {status:started, job_id}   // FINAL for that call
 //	… later …
-//	assistant tool_call bg-delivery-<job>  →  tool result <answer>  // NEW tail turn
+//	assistant tool_call task_result / bg-delivery-<job>  →  tool result <answer>
 //	auto-reentry streams with the answer at conversation end
 //
-// Why not patch the Started row: the spawn call already completed correctly; mutating
-// mid-history is invisible on reentry and caused multi-week thrash. Why not orphan
-// RoleTool at tail: SanitizeToolPairing drops it. Synthetic paired turn is the only
-// shape that is both API-valid and attention-visible.
+// Bash jobs never enter here (jobs.AutoDelivers is false).
 func (a *Agent) commitJobResult(jobID, output string) bool {
 	output = strings.TrimSpace(output)
 	if output == "" || a.session == nil {
 		return false
+	}
+	if a.jobs != nil {
+		if kind, ok := a.jobs.Kind(jobID); ok && !jobs.AutoDelivers(kind) {
+			return false
+		}
 	}
 	if a.session.HasBackgroundTaskDelivery(jobID) {
 		if a.ctrl != nil {
@@ -952,20 +948,11 @@ func (a *Agent) commitJobResult(jobID, output string) bool {
 		}
 		return true
 	}
-	toolName := "task"
-	var spawnCallID string
+	// Always use task_result for the completion turn (not the spawn tool name).
 	if a.ctrl != nil {
-		spawnCallID, _ = a.ctrl.TakeJobMeta(jobID)
+		_, _ = a.ctrl.TakeJobMeta(jobID)
 	}
-	if spawnCallID == "" {
-		spawnCallID = a.session.ToolCallIDForStartedTaskLine(jobID)
-	}
-	if spawnCallID != "" {
-		if n := a.session.ToolNameForCallID(spawnCallID); n != "" {
-			toolName = n
-		}
-	}
-	return a.session.AppendBackgroundTaskDelivery(jobID, toolName, output)
+	return a.session.AppendBackgroundTaskDelivery(jobID, BackgroundDeliveryToolName, output)
 }
 
 
@@ -974,6 +961,9 @@ func (a *Agent) deliverPendingJobResults() (jobID, output string, ok bool) {
 		return "", "", false
 	}
 	for _, id := range a.jobs.ActiveJobs() {
+		if kind, kOK := a.jobs.Kind(id); kOK && !jobs.AutoDelivers(kind) {
+			continue
+		}
 		if id2, out, have := a.tryDeliverJobResult(id); have {
 			if a.commitBackgroundJobResult(id2, out) {
 				a.jobs.RemoveJob(id2)
@@ -999,33 +989,10 @@ func (a *Agent) deliverPendingJobResultsWithRetry(attempts int, delay time.Durat
 	return "", "", false
 }
 
-// drainSubagentReports moves free-form sub-agent reports into parent session envelopes.
-func (a *Agent) drainSubagentReports() bool {
-	jm := a.jobs
-	if jm == nil {
-		return false
-	}
-	consumed := false
-	for _, jobID := range jm.ActiveJobs() {
-		for _, msg := range jm.TakePendingReports(jobID) {
-			if msg == "" {
-				continue
-			}
-			a.session.Add(provider.Message{
-				Role:    provider.RoleUser,
-				Content: fmt.Sprintf("<subagent-report job=%q>\n%s\n</subagent-report>", jobID, msg),
-			})
-			consumed = true
-		}
-	}
-	return consumed
-}
-
-// drainNotify delivers finished job results and sub-agent report envelopes.
+// drainNotify delivers finished auto-deliver job results into the session.
 func (a *Agent) drainNotify() bool {
 	_, _, r := a.deliverPendingJobResults()
-	i := a.drainSubagentReports()
-	return r || i
+	return r
 }
 
 type finalReadinessCheck struct {
@@ -2006,11 +1973,13 @@ func parseDataURL(dataURL string) (mime, data string) {
 	return
 }
 
-// CompleteBackgroundJob delivers a single completed job's result to the
-// session by replacing the started-task placeholder with the job's output.
-// Returns true when the result was committed.
+// CompleteBackgroundJob delivers a single completed auto-deliver job into the
+// session as a synthetic task_result turn. Returns true when committed.
 func (a *Agent) CompleteBackgroundJob(jobID string) bool {
 	if a.jobs == nil {
+		return false
+	}
+	if kind, ok := a.jobs.Kind(jobID); ok && !jobs.AutoDelivers(kind) {
 		return false
 	}
 	text, _, ok := a.jobs.Output(jobID)
@@ -2028,10 +1997,12 @@ func (a *Agent) CompleteBackgroundJob(jobID string) bool {
 	return true
 }
 
-// tryDeliverJobResult reads a job's output and its tool-call metadata without
-// committing. Returns (jobID, output, true) when output is available.
+// tryDeliverJobResult reads a job's output for auto-delivery without committing.
 func (a *Agent) tryDeliverJobResult(id string) (string, string, bool) {
 	if a.jobs == nil {
+		return "", "", false
+	}
+	if kind, ok := a.jobs.Kind(id); ok && !jobs.AutoDelivers(kind) {
 		return "", "", false
 	}
 	text, _, ok := a.jobs.Output(id)
@@ -2054,16 +2025,18 @@ func (a *Agent) commitBackgroundJobResult(jobID, output string) bool {
 }
 
 // clearBackgroundWakeIfCaughtUp resets the pending-tool-result flag when no
-// more results remain to be delivered, preventing unnecessary wake re-entries.
+// auto-deliver jobs remain undelivered. Bash jobs may still sit in the map for peek.
 func (a *Agent) clearBackgroundWakeIfCaughtUp() {
 	if a.ctrl == nil {
 		return
 	}
-	// 只要有未消除的 job（包括已结束但结果未交付的），就不清唤醒标记。
-	if a.jobs != nil && len(a.jobs.ActiveJobs()) > 0 {
-		return
+	if a.jobs != nil {
+		for _, id := range a.jobs.ActiveJobs() {
+			if kind, ok := a.jobs.Kind(id); ok && jobs.AutoDelivers(kind) {
+				return
+			}
+		}
 	}
-	// 全部 job 已移除 → 清标记。
 	a.ctrl.PendingToolResultCAS(true, false)
 }
 

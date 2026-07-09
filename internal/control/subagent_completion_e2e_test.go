@@ -79,7 +79,7 @@ func TestSubagentCompletionNoticeAndAutoReentry(t *testing.T) {
 		jobs.PostMessage(ctx, "mid-flight report")
 		time.Sleep(2 * time.Millisecond)
 		return "sub-result", nil
-	}, ctrl.MakeOnComplete(), func(id string) { ctrl.RegisterJobMeta(id, "tool-call-1") })
+	}, nil, func(id string) { ctrl.RegisterJobMeta(id, "tool-call-1") })
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -371,7 +371,7 @@ func TestAutoReenterDeferredWhileMainTurnBusy(t *testing.T) {
 
 	job, err := jm.Start(context.Background(), "task", "deferred", func(ctx context.Context, _ io.Writer) (string, error) {
 		return "sub-result", nil
-	}, ctrl.MakeOnComplete(), func(id string) {
+	}, nil, func(id string) {
 		for i := range sess.Messages {
 			if sess.Messages[i].Role == provider.RoleTool && sess.Messages[i].ToolCallID == "tool-call-deferred" {
 				sess.Messages[i].Content = agent.FormatStartedTaskResult(id, "deferred")

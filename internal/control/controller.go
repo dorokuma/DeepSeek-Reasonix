@@ -283,17 +283,30 @@ func New(opts Options) *Controller {
 		c.executor.SetControllerBridge(c)
 	}
 	if c.jobs != nil {
-		c.jobs.SetOnCompletion(func(id string) {
-			c.pendingToolResult.Store(true)
-			if c.executor != nil {
-				if !c.executor.CompleteBackgroundJob(id) {
-					slog.Warn("background job finished but result not committed to session", "job", id)
-				}
-			}
-			c.autoReenter()
-		})
+		// Single completion path for the whole session: only auto-deliver kinds
+		// (task) write into the parent session and wake the model. Bash jobs only
+		// emit their Notice from jobs.Manager and stay peekable.
+		c.jobs.SetOnCompletion(c.handleJobCompletion)
 	}
 	return c
+}
+
+// handleJobCompletion is the sole jobs → parent bridge. Wired via SetOnCompletion.
+func (c *Controller) handleJobCompletion(id string) {
+	if c.jobs == nil {
+		return
+	}
+	kind, ok := c.jobs.Kind(id)
+	if !ok || !jobs.AutoDelivers(kind) {
+		return
+	}
+	c.pendingToolResult.Store(true)
+	if c.executor != nil {
+		if !c.executor.CompleteBackgroundJob(id) {
+			slog.Warn("background job finished but result not committed to session", "job", id)
+		}
+	}
+	c.autoReenter()
 }
 
 // ckptDir derives a session's checkpoint directory from its file path
@@ -384,21 +397,16 @@ func (c *Controller) drainReentryQueue() {
 	}
 }
 
-// MakeOnComplete returns an onComplete callback for jobs.Manager.Start() that
-// the task tool passes to jm.Start so sub-agent completion triggers auto-reentry.
-// The callback sets pendingToolResult and sends an empty string to re-enter the
-// turn loop.
+// MakeOnComplete is a no-op. Completion is handled exclusively by SetOnCompletion
+// → handleJobCompletion. Kept so OnCompleteProvider still type-checks; callers
+// should pass nil to jobs.Manager.Start.
 func (c *Controller) MakeOnComplete() func(jobID string) {
-	return func(jobID string) {
-		c.pendingToolResult.Store(true)
-	}
+	return nil
 }
 
+// MakeOnMessage is retired (mid-flight sub-agent reports removed).
 func (c *Controller) MakeOnMessage() func(jobID string) {
-	return func(jobID string) {
-		c.pendingToolResult.Store(true)
-		c.autoReenter()
-	}
+	return nil
 }
 
 // autoReenter starts a turn when a background task completes so the model can
@@ -419,19 +427,17 @@ func (c *Controller) autoReenter() {
 	c.Send("")
 }
 
-// RegisterJobMeta implements agent.ControllerBridge by storing the tool-call
-// metadata for a background task job.
+// RegisterJobMeta implements agent.ControllerBridge by storing the spawn tool-call
+// id for a background task (correlation / tool naming only). Delivery itself is
+// handleJobCompletion; beforeRun registers meta before the job goroutine starts,
+// so a late-completion race is rare. If it still happens, re-run the single path.
 func (c *Controller) RegisterJobMeta(jobID string, toolCallID string) {
 	c.taskResultsMu.Lock()
 	c.taskResults[jobID] = jobMeta{ToolCallID: toolCallID}
 	c.taskResultsMu.Unlock()
-	if c.jobs != nil && c.executor != nil {
+	if c.jobs != nil {
 		if _, ok := c.jobs.CompletedResult(jobID); ok {
-			c.pendingToolResult.Store(true)
-			if !c.executor.CompleteBackgroundJob(jobID) {
-				slog.Warn("late RegisterJobMeta: job completed but delivery failed", "job", jobID)
-			}
-			c.autoReenter()
+			c.handleJobCompletion(jobID)
 		}
 	}
 }
@@ -530,10 +536,10 @@ func (c *Controller) runTurnWithRaw(ctx context.Context, input, raw string) erro
 	// Block dynamic tools that the model should not call in this turn.
 	blocked := map[string]string{}
 	if !wantsPeek {
-		blocked["peek-job"] = "peek-job is a diagnostic tool for the owner, not for the model to poll. Task results arrive automatically when finished — wait for them. Do not call peek-job on your own."
+		blocked["peek-job"] = "peek-job is for shell/bash background jobs (or owner diagnostics). Task sub-agent answers auto-deliver as tool task_result at conversation tail — do not poll task jobs with peek-job."
 	}
 	if c.jobs == nil || len(c.jobs.Running()) == 0 {
-		blocked["steer-job"] = "steer-job sends new instructions to a running sub-agent. There are no running jobs right now, so steer-job is unavailable. If you were checking status — stop, results arrive automatically. If you have a genuine new instruction, wait for the current work to complete."
+		blocked["steer-job"] = "steer-job sends new instructions to a running job. No jobs are running. For task status — wait for task_result. For shell jobs that already finished — use peek-job when exposed."
 	}
 	if c.subAgentGate != nil && len(blocked) > 0 {
 		c.subAgentGate.SetBlockedTools(blocked)

@@ -4,8 +4,8 @@ import (
 	"context"
 )
 
-// OnCompleteProvider is the interface the Controller implements to provide
-// onComplete callbacks for background jobs spawned by the task tool.
+// OnCompleteProvider is retained for type compatibility. MakeOnComplete should
+// return nil; session completion uses jobs.Manager.SetOnCompletion only.
 type OnCompleteProvider interface {
 	MakeOnComplete() func(jobID string)
 	MakeOnMessage() func(jobID string)
@@ -14,8 +14,7 @@ type OnCompleteProvider interface {
 // onCompleteKey carries the OnCompleteProvider in the tool call context.
 type onCompleteKey struct{}
 
-// WithOnCompleteProvider stamps ctx with the provider so the task tool can
-// create per-job onComplete callbacks that trigger auto-reentry.
+// WithOnCompleteProvider stamps ctx with the provider (legacy; callbacks are nil).
 func WithOnCompleteProvider(ctx context.Context, p OnCompleteProvider) context.Context {
 	return context.WithValue(ctx, onCompleteKey{}, p)
 }
@@ -26,17 +25,9 @@ func OnCompleteProviderFrom(ctx context.Context) (OnCompleteProvider, bool) {
 	return p, ok
 }
 
-// OnCompleteCallbackFrom returns a per-job onComplete callback when the tool
-// context carries a Controller (task tool, run_skill, built-in subagent skills).
+// OnCompleteCallbackFrom always returns nil. Prefer Manager.SetOnCompletion.
 func OnCompleteCallbackFrom(ctx context.Context) func(jobID string) {
-	if p, ok := OnCompleteProviderFrom(ctx); ok {
-		return p.MakeOnComplete()
-	}
-	if ctrl, ok := CtrlFromContext(ctx); ok {
-		if p, ok := ctrl.(OnCompleteProvider); ok {
-			return p.MakeOnComplete()
-		}
-	}
+	_ = ctx
 	return nil
 }
 

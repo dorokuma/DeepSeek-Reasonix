@@ -179,7 +179,7 @@ func (b bash) Execute(ctx context.Context, args json.RawMessage) (string, error)
 				}
 			}
 		}
-		job, err := jm.Start(ctx, "bash", commandPreview(p.Command), func(jobCtx context.Context, out io.Writer) (string, error) {
+		job, err := jm.Start(ctx, jobs.KindBash, commandPreview(p.Command), func(jobCtx context.Context, out io.Writer) (string, error) {
 			heartbeatDone := make(chan struct{})
 			defer close(heartbeatDone)
 			go func() {
@@ -209,7 +209,7 @@ func (b bash) Execute(ctx context.Context, args json.RawMessage) (string, error)
 		if err != nil {
 			return "", err
 		}
-		return fmt.Sprintf("Started background job %q. It keeps running across turns; use peek-job(job_id=%q) for status/output and cancel-job(job_id=%q) to stop.", job.ID, job.ID, job.ID), nil
+		return fmt.Sprintf("Started background SHELL job %q. Output is NOT auto-delivered to chat — use peek-job(job_id=%q) for status/output and cancel-job(job_id=%q) to stop. (Sub-agent tasks use the task tool and auto-deliver via task_result instead.)", job.ID, job.ID, job.ID), nil
 	}
 
 	runCtx := ctx

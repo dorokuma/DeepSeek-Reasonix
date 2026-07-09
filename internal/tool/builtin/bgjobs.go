@@ -10,8 +10,11 @@ import (
 	"reasonix/internal/tool"
 )
 
-// steer-job, cancel-job, and peek-job operate session background jobs (task
-// sub-agents, bash run_in_background, etc.) via jobs.FromContext.
+// steer-job, cancel-job, and peek-job operate session background jobs via jobs.FromContext.
+//
+// Product split:
+//   - kind task  (async sub-agent): final answer auto-delivers as task_result; peek is diagnostic.
+//   - kind bash  (shell background): must use peek-job for output; no auto chat delivery.
 
 func init() {
 	tool.RegisterBuiltin(steerJob{})
@@ -25,9 +28,11 @@ type steerJob struct{}
 
 func (steerJob) Name() string { return "steer-job" }
 func (steerJob) Description() string {
-	return `Send a new instruction to a running background sub-agent or shell job (queued to its inbox).
+	return `Send a new instruction to a running background sub-agent (task) or shell job.
 
-CRITICAL — NOT FOR STATUS CHECKING: Never use steer-job to check whether a job finished. Never use steer-job to poll. Steer-job only queues a new instruction — it does not return the job's status or output. If you dispatched a task, wait for the automatic result delivery at the conversation tail. Only use steer-job when you have a genuine new instruction for the sub-agent.`
+CRITICAL — NOT FOR STATUS CHECKING: Never use steer-job to poll. It only queues a new instruction.
+For task sub-agents: wait for automatic task_result at conversation tail.
+For shell (bash) jobs: use peek-job for status/output.`
 }
 func (steerJob) ReadOnly() bool { return false }
 func (steerJob) Schema() json.RawMessage {
@@ -43,7 +48,7 @@ func (steerJob) Schema() json.RawMessage {
 
 func (steerJob) PostCallGuidanceAfter(_ json.RawMessage, result string) string {
 	if strings.Contains(result, `"status":"queued"`) || strings.Contains(result, "queued") {
-		return "steer-job only queued a new instruction; that is not the sub-agent’s final answer. Do not dispatch another task for the same goal — wait for the task tool result at the conversation tail."
+		return "steer-job only queued a new instruction; that is not a final answer. For task sub-agents wait for task_result at the conversation tail. For shell jobs use peek-job."
 	}
 	return ""
 }
@@ -118,9 +123,13 @@ type peekJob struct{}
 
 func (peekJob) Name() string { return "peek-job" }
 func (peekJob) Description() string {
-	return `Non-blocking snapshot of a background job (task or shell). Includes new stdout/stderr since the last peek for buffered jobs.
+	return `Non-blocking snapshot of a background job.
 
-CRITICAL — DO NOT POLL: Background task results are delivered to you automatically when they finish — you will see them as a new tool result without calling peek-job. Never call peek-job more than once per task. Never call peek-job just to check whether a task is done. Only use peek-job when the user explicitly asks about a job's status, or when you need to read shell background output mid-flight.`
+PRIMARY USE — shell (bash) jobs: read status and new stdout/stderr since last peek. Shell output is NOT auto-delivered to chat.
+
+TASK SUB-AGENTS: results auto-deliver as tool name task_result at conversation tail. Do not poll task jobs with peek-job. Only peek a task when the user explicitly asks for mid-flight status.
+
+Never call peek-job more than once per turn unless the user asks again.`
 }
 func (peekJob) ReadOnly() bool { return true }
 func (peekJob) Schema() json.RawMessage {
@@ -157,6 +166,16 @@ func (peekJob) Execute(ctx context.Context, params json.RawMessage) (string, err
 	out := map[string]any{
 		"job_id": status.JobID,
 		"status": status.Status,
+	}
+	if kind, kOK := jm.Kind(p.JobID); kOK {
+		out["kind"] = kind
+		if jobs.AutoDelivers(kind) {
+			out["delivery"] = "auto_task_result"
+			out["note"] = "task sub-agent: final answer auto-delivers as task_result; peek is diagnostic only"
+		} else {
+			out["delivery"] = "peek_only"
+			out["note"] = "shell job: use new_output below; not auto-delivered to chat"
+		}
 	}
 	if status.StartedAtMs > 0 {
 		out["started_at_ms"] = status.StartedAtMs
