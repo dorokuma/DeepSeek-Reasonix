@@ -936,10 +936,11 @@ func (a *Agent) drainSteer() string {
 //
 //	spawn tool_call  →  tool result {status:started, job_id}   // FINAL for that call
 //	… later …
-//	assistant tool_call task_result / bg-delivery-<job>  →  tool result <answer>
+//	user message <background-task-result job_id=…>…answer…</background-task-result>
 //	auto-reentry streams with the answer at conversation end
 //
-// Bash jobs never enter here (jobs.AutoDelivers is false).
+// Delivery is intentionally NOT a tool call: fake tool names in history train
+// models to invent calls (e.g. task_result). Bash jobs never enter here.
 func (a *Agent) commitJobResult(jobID, output string) bool {
 	output = strings.TrimSpace(output)
 	if output == "" || a.session == nil {
@@ -956,11 +957,10 @@ func (a *Agent) commitJobResult(jobID, output string) bool {
 		}
 		return true
 	}
-	// Always use task_result for the completion turn (not the spawn tool name).
 	if a.ctrl != nil {
 		_, _ = a.ctrl.TakeJobMeta(jobID)
 	}
-	return a.session.AppendBackgroundTaskDelivery(jobID, BackgroundDeliveryToolName, output)
+	return a.session.AppendBackgroundTaskDelivery(jobID, "", output)
 }
 
 
@@ -1986,7 +1986,7 @@ func parseDataURL(dataURL string) (mime, data string) {
 }
 
 // CompleteBackgroundJob delivers a single completed auto-deliver job into the
-// session as a synthetic task_result turn. Returns true when committed.
+// session as a runtime observation message. Returns true when committed.
 func (a *Agent) CompleteBackgroundJob(jobID string) bool {
 	if a.jobs == nil {
 		return false
@@ -2067,7 +2067,7 @@ func (a *Agent) hasUndeliveredAutoJobs() bool {
 	return false
 }
 
-// sessionHasUnreadTaskResult is true when the conversation tail is a synthetic
+// sessionHasUnreadTaskResult is true when the conversation tail is a runtime
 // background delivery that the main agent has not yet answered.
 func (a *Agent) sessionHasUnreadTaskResult() bool {
 	if a.session == nil {
@@ -2077,20 +2077,24 @@ func (a *Agent) sessionHasUnreadTaskResult() bool {
 	for i := len(msgs) - 1; i >= 0; i-- {
 		m := msgs[i]
 		switch m.Role {
-		case provider.RoleTool:
-			if strings.HasPrefix(m.ToolCallID, "bg-delivery-") || m.Name == BackgroundDeliveryToolName {
+		case provider.RoleUser:
+			// Current architecture: delivery is a user-role observation envelope.
+			if IsBackgroundTaskResultMessage(m.Content) {
 				return true
 			}
-			// other tool rows — keep scanning past them
+			return false
+		case provider.RoleTool:
+			// Legacy transcripts: synthetic tool delivery.
+			if strings.HasPrefix(m.ToolCallID, "bg-delivery-") {
+				return true
+			}
 		case provider.RoleAssistant:
 			if len(m.ToolCalls) > 0 {
 				for _, tc := range m.ToolCalls {
 					if tc.ID != "" && strings.HasPrefix(tc.ID, "bg-delivery-") {
-						// delivery assistant half; pair tool is usually next — keep scanning
 						continue
 					}
 				}
-				// non-delivery tool_calls: not an unread delivery tail
 				if strings.TrimSpace(m.Content) != "" {
 					return false
 				}
@@ -2099,8 +2103,6 @@ func (a *Agent) sessionHasUnreadTaskResult() bool {
 			if strings.TrimSpace(m.Content) != "" {
 				return false // model already answered after delivery
 			}
-		case provider.RoleUser:
-			return false
 		}
 	}
 	return false

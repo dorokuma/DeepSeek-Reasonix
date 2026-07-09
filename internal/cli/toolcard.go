@@ -86,7 +86,6 @@ var toolVerb = map[string]string{
 	"ls":            "List",
 	"web_search":    "Search",
 	"task":          "Task",
-	"task_result":   "Result",
 	"note":          "Note",
 	"audit_finish":  "Report",
 }
@@ -110,7 +109,6 @@ var toolArgKey = map[string]string{
 	"ls":            "path",
 	"web_search":    "query",
 	"task":          "description",
-	"task_result":   "job_id",
 	"note":          "kind",
 	"audit_finish":  "summary",
 }
@@ -137,7 +135,7 @@ func toolDot(name string) string {
 
 var toolCategory = map[string]string{
 	"read_file": "read", "ls": "read", "glob": "read", "grep": "read",
-	"web_search": "read", "peek-job": "read", "task_result": "read",
+	"web_search": "read", "peek-job": "read",
 	"write_file": "write", "edit_file": "write", "multi_edit": "write",
 	"move_file": "write", "delete_range": "write", "delete_symbol": "write", "notebook_edit": "write",
 	"note":         "write",

@@ -22,7 +22,7 @@ func findRunningDuplicateTask(jm *jobs.Manager, label, prompt string) string {
 	}
 	semKey := taskDispatchSemanticKey("", prompt)
 	pol := jm.SemanticDedupPolicy()
-	// Include finished-but-not-yet-removed jobs (awaiting task_result delivery).
+	// Include finished-but-not-yet-removed jobs (awaiting tail delivery).
 	// Only checking Running() let models re-dispatch the same goal after Done
 	// but before the tail delivery was flushed into the session.
 	ids := taskDispatchJobIDs(jm)
@@ -66,7 +66,7 @@ func taskDispatchJobIDs(jm *jobs.Manager) []string {
 // CheckBackgroundDuplicate reports an error when a matching or similar job is already open.
 func CheckBackgroundDuplicate(jm *jobs.Manager, label, prompt string) error {
 	if dupID := findRunningDuplicateTask(jm, label, prompt); dupID != "" {
-		return fmt.Errorf("background task %s is already open with the same or similar goal (running or awaiting tail delivery as task_result). Wait for that result; do not dispatch a duplicate task", dupID)
+		return fmt.Errorf("background task %s is already open with the same or similar goal (running or awaiting tail delivery). Wait for its <background-task-result>; do not dispatch a duplicate task", dupID)
 	}
 	return nil
 }

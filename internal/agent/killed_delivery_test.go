@@ -38,13 +38,16 @@ func TestCompleteBackgroundJobAfterKill(t *testing.T) {
 		case <-time.After(10 * time.Millisecond):
 		}
 	}
-	// Started stub stays; kill text lands in synthetic tail tool result.
+	// Started stub stays; kill text lands in user-role observation at tail.
 	if !IsStartedTaskPlaceholder(sess.Messages[1].Content) {
 		t.Fatal("Started placeholder must remain after kill delivery")
 	}
 	last := sess.Messages[len(sess.Messages)-1]
-	if last.Role != provider.RoleTool || last.ToolCallID != BackgroundDeliveryCallID(job.ID) || last.Content == "" {
-		t.Fatalf("want synthetic kill delivery tool row, got %+v", last)
+	if last.Role != provider.RoleUser || !IsBackgroundTaskResultMessage(last.Content) || last.Content == "" {
+		t.Fatalf("want observation kill delivery, got %+v", last)
+	}
+	if BackgroundTaskResultJobID(last.Content) != job.ID {
+		t.Fatalf("job id = %q, want %q", BackgroundTaskResultJobID(last.Content), job.ID)
 	}
 	if IsStartedTaskPlaceholder(last.Content) {
 		t.Fatal("delivery content should not be a started stub")

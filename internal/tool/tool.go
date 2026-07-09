@@ -49,8 +49,8 @@ type OnlyForSubAgent interface {
 
 // OmitFromModelSchema marks tools that stay in the registry (so history validators
 // and Execute can resolve the name) but must never be advertised in provider tool
-// schemas. Use for system-only delivery channels like task_result — listing them
-// as callable tools trains the model to invent calls that always fail.
+// schemas. Prefer not introducing phantom tools at all — history should not train
+// models to invent calls.
 type OmitFromModelSchema interface {
 	OmitFromModelSchema() bool
 }

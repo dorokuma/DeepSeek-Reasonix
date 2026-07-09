@@ -82,8 +82,8 @@ func (s *Session) ToolNameForCallID(toolCallID string) string {
 	return ""
 }
 
-// HasBackgroundTaskDelivery reports whether the synthetic completion turn for jobID
-// is already in the session (assistant tool_calls + tool result at the tail).
+// HasBackgroundTaskDelivery reports whether a completion envelope for jobID is
+// already in the session (user-role observation, or legacy synthetic tool pair).
 func (s *Session) HasBackgroundTaskDelivery(jobID string) bool {
 	if s == nil || jobID == "" {
 		return false
@@ -93,6 +93,12 @@ func (s *Session) HasBackgroundTaskDelivery(jobID string) bool {
 	defer s.mu.RUnlock()
 	for i := len(s.Messages) - 1; i >= 0; i-- {
 		m := s.Messages[i]
+		if m.Role == provider.RoleUser && IsBackgroundTaskResultMessage(m.Content) {
+			if BackgroundTaskResultJobID(m.Content) == jobID {
+				return true
+			}
+		}
+		// Legacy transcripts delivered via synthetic tool rounds.
 		if m.Role == provider.RoleTool && m.ToolCallID == deliveryID {
 			return true
 		}
@@ -107,49 +113,41 @@ func (s *Session) HasBackgroundTaskDelivery(jobID string) bool {
 	return false
 }
 
-// AppendBackgroundTaskDelivery appends a properly paired completion turn at the
-// conversation tail. The original Started stub is left untouched — it already
-// answered the spawn tool_call. Completion is a new tool round the model sees last.
+// AppendBackgroundTaskDelivery appends a runtime observation at the conversation
+// tail. The original Started stub is left untouched — it already answered the
+// spawn tool_call. Completion is a user-role envelope (not a tool call) so the
+// model never sees a phantom callable tool name in history.
+// toolName is ignored (kept for call-site compatibility).
 func (s *Session) AppendBackgroundTaskDelivery(jobID, toolName, output string) bool {
+	_ = toolName
 	if s == nil || jobID == "" || strings.TrimSpace(output) == "" {
 		return false
 	}
 	if s.HasBackgroundTaskDelivery(jobID) {
 		return true
 	}
-	if toolName == "" {
-		toolName = BackgroundDeliveryToolName
-	}
 	const max = 12000
 	if len(output) > max {
 		output = output[:max] + "\n…[truncated]"
 	}
-	deliveryID := BackgroundDeliveryCallID(jobID)
+	content := FormatBackgroundTaskResult(jobID, output)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	// Re-check under write lock.
 	for i := len(s.Messages) - 1; i >= 0; i-- {
 		m := s.Messages[i]
-		if m.Role == provider.RoleTool && m.ToolCallID == deliveryID {
+		if m.Role == provider.RoleUser && IsBackgroundTaskResultMessage(m.Content) &&
+			BackgroundTaskResultJobID(m.Content) == jobID {
+			return true
+		}
+		if m.Role == provider.RoleTool && m.ToolCallID == BackgroundDeliveryCallID(jobID) {
 			return true
 		}
 	}
-	s.Messages = append(s.Messages,
-		provider.Message{
-			Role: provider.RoleAssistant,
-			ToolCalls: []provider.ToolCall{{
-				ID:        deliveryID,
-				Name:      toolName,
-				Arguments: FormatCompletedTaskCallArgs(jobID),
-			}},
-		},
-		provider.Message{
-			Role:       provider.RoleTool,
-			Name:       toolName,
-			ToolCallID: deliveryID,
-			Content:    output,
-		},
-	)
+	s.Messages = append(s.Messages, provider.Message{
+		Role:    provider.RoleUser,
+		Content: content,
+	})
 	return true
 }
 

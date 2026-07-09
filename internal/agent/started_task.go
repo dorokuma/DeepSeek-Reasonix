@@ -2,6 +2,7 @@ package agent
 
 import (
 	"encoding/json"
+	"fmt"
 	"regexp"
 	"strings"
 )
@@ -12,28 +13,22 @@ type startedTaskPayload struct {
 	Label  string `json:"label,omitempty"`
 }
 
-// completedTaskArgs is the synthetic tool_call.arguments for a tail delivery turn.
-// The Started stub is the FINAL answer to the original spawn call; completion is a
-// separate, properly paired assistant+tool turn (never a mid-history rewrite).
-type completedTaskArgs struct {
-	JobID  string `json:"job_id"`
-	Status string `json:"status"`
-	Event  string `json:"event"`
-}
+var (
+	legacyStartedTaskLine = regexp.MustCompile(`^Started task ([a-z]+-\d+)`)
+	// bgResultJobIDRe extracts job_id from a runtime-injected delivery envelope.
+	bgResultJobIDRe = regexp.MustCompile(`job_id="([^"]+)"`)
+	// legacyDeliveryCallID still recognizes older synthetic tool deliveries in history.
+	legacyDeliveryCallIDPrefix = "bg-delivery-"
+)
 
-var legacyStartedTaskLine = regexp.MustCompile(`^Started task ([a-z]+-\d+)`)
-
-// BackgroundDeliveryToolName is the synthetic tool name for a finished sub-agent.
-// Distinct from "task" (spawn) so the model does not confuse receipt vs answer.
-const BackgroundDeliveryToolName = "task_result"
-
-// BackgroundDeliveryCallID is the synthetic tool_call_id for a finished job.
-// Stable per job so completion/drain races stay idempotent.
+// BackgroundDeliveryCallID is the legacy synthetic tool_call_id used by older
+// sessions that delivered completions as a fake tool round. Kept only for
+// idempotency/unread detection on historical transcripts.
 func BackgroundDeliveryCallID(jobID string) string {
 	if jobID == "" {
 		return ""
 	}
-	return "bg-delivery-" + jobID
+	return legacyDeliveryCallIDPrefix + jobID
 }
 
 // FormatStartedTaskResult is the synchronous tool return when a background delegate starts.
@@ -46,10 +41,30 @@ func FormatStartedTaskResult(jobID, label string) string {
 	return string(b)
 }
 
-// FormatCompletedTaskCallArgs is the arguments JSON for the synthetic completion tool_call.
-func FormatCompletedTaskCallArgs(jobID string) string {
-	b, _ := json.Marshal(completedTaskArgs{JobID: jobID, Status: "completed", Event: "background_task_result"})
-	return string(b)
+// FormatBackgroundTaskResult builds the runtime-injected observation the parent
+// model sees when a background task finishes. It is a plain user-role message —
+// NOT a tool call — so the model never learns a callable tool name from history.
+func FormatBackgroundTaskResult(jobID, output string) string {
+	output = strings.TrimSpace(output)
+	return fmt.Sprintf(
+		"<background-task-result job_id=%q status=%q>\n%s\n</background-task-result>",
+		jobID, "completed", output,
+	)
+}
+
+// IsBackgroundTaskResultMessage reports whether content is a runtime task delivery envelope.
+func IsBackgroundTaskResultMessage(content string) bool {
+	c := strings.TrimSpace(content)
+	return strings.HasPrefix(c, "<background-task-result") ||
+		strings.Contains(c, "<background-task-result ")
+}
+
+// BackgroundTaskResultJobID extracts job_id from a delivery envelope, or "".
+func BackgroundTaskResultJobID(content string) string {
+	if m := bgResultJobIDRe.FindStringSubmatch(content); len(m) >= 2 {
+		return m[1]
+	}
+	return ""
 }
 
 // ExtractJobIDFromStartedResult parses job_id from a started delegate tool result.

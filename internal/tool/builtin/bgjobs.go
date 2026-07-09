@@ -13,7 +13,7 @@ import (
 // steer-job, cancel-job, and peek-job operate session background jobs via jobs.FromContext.
 //
 // Product split:
-//   - kind task  (async sub-agent): final answer auto-delivers as task_result; peek is diagnostic.
+//   - kind task  (async sub-agent): final answer auto-delivers as a tail observation; peek is diagnostic.
 //   - kind bash  (shell background): must use peek-job for output; no auto chat delivery.
 
 func init() {
@@ -31,7 +31,7 @@ func (steerJob) Description() string {
 	return `Send a new instruction to a running background sub-agent (task) or shell job.
 
 CRITICAL — NOT FOR STATUS CHECKING: Never use steer-job to poll. It only queues a new instruction.
-For task sub-agents: wait for automatic task_result at conversation tail.
+For task sub-agents: wait for automatic <background-task-result> at conversation tail.
 For shell (bash) jobs: use peek-job for status/output.`
 }
 func (steerJob) ReadOnly() bool { return false }
@@ -48,7 +48,7 @@ func (steerJob) Schema() json.RawMessage {
 
 func (steerJob) PostCallGuidanceAfter(_ json.RawMessage, result string) string {
 	if strings.Contains(result, `"status":"queued"`) || strings.Contains(result, "queued") {
-		return "steer-job only queued a new instruction; that is not a final answer. For task sub-agents wait for task_result at the conversation tail. For shell jobs use peek-job."
+		return "steer-job only queued a new instruction; that is not a final answer. For task sub-agents wait for <background-task-result> at the conversation tail. For shell jobs use peek-job."
 	}
 	return ""
 }
@@ -127,7 +127,7 @@ func (peekJob) Description() string {
 
 PRIMARY USE — shell (bash) jobs: read status and new stdout/stderr since last peek. Shell output is NOT auto-delivered to chat.
 
-TASK SUB-AGENTS: results auto-deliver as tool name task_result at conversation tail. Do not poll task jobs with peek-job. Only peek a task when the user explicitly asks for mid-flight status.
+TASK SUB-AGENTS: results auto-deliver as a <background-task-result> observation at conversation tail (not a tool). Do not poll task jobs with peek-job. Only peek a task when the user explicitly asks for mid-flight status.
 
 Never call peek-job more than once per turn unless the user asks again.`
 }
@@ -170,8 +170,8 @@ func (peekJob) Execute(ctx context.Context, params json.RawMessage) (string, err
 	if kind, kOK := jm.Kind(p.JobID); kOK {
 		out["kind"] = kind
 		if jobs.AutoDelivers(kind) {
-			out["delivery"] = "auto_task_result"
-			out["note"] = "task sub-agent: final answer auto-delivers as task_result; peek is diagnostic only"
+			out["delivery"] = "auto_observation"
+			out["note"] = "task sub-agent: final answer auto-delivers as <background-task-result>; peek is diagnostic only"
 		} else {
 			out["delivery"] = "peek_only"
 			out["note"] = "shell job: use new_output below; not auto-delivered to chat"

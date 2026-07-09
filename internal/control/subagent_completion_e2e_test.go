@@ -259,13 +259,13 @@ func TestAutoReentryDrainsToolResultIntoSession(t *testing.T) {
 		t.Fatal("expected nil-provider Run to error")
 	}
 
-	deliveryID := agent.BackgroundDeliveryCallID(job.ID)
 	var startedStill, deliveries int
 	for _, m := range sess.Messages {
 		if m.Role == provider.RoleTool && m.ToolCallID == "tool-call-1" && agent.IsStartedTaskPlaceholder(m.Content) {
 			startedStill++
 		}
-		if m.Role == provider.RoleTool && m.ToolCallID == deliveryID && m.Content == "sub-result" {
+		if m.Role == provider.RoleUser && agent.IsBackgroundTaskResultMessage(m.Content) &&
+			agent.BackgroundTaskResultJobID(m.Content) == job.ID && strings.Contains(m.Content, "sub-result") {
 			deliveries++
 		}
 	}
@@ -273,7 +273,7 @@ func TestAutoReentryDrainsToolResultIntoSession(t *testing.T) {
 		t.Fatalf("Started stub must remain, got %d", startedStill)
 	}
 	if deliveries != 1 {
-		t.Fatalf("expected 1 synthetic delivery, got %d; messages=%d", deliveries, len(sess.Messages))
+		t.Fatalf("expected 1 observation delivery, got %d; messages=%d", deliveries, len(sess.Messages))
 	}
 }
 
@@ -401,10 +401,10 @@ func TestAutoReenterDeferredWhileMainTurnBusy(t *testing.T) {
 	if !ctrl.pendingToolResult.Load() {
 		t.Fatal("pendingToolResult should be set after job completion")
 	}
-	// Must not have written task_result into the session yet while main turn is busy.
+	// Must not have written delivery observation yet while main turn is busy.
 	for _, m := range sess.Messages {
-		if m.Role == provider.RoleTool && m.ToolCallID == agent.BackgroundDeliveryCallID(job.ID) {
-			t.Fatal("task_result must not appear mid-turn before flushDeferredDeliveries")
+		if m.Role == provider.RoleUser && agent.IsBackgroundTaskResultMessage(m.Content) {
+			t.Fatal("background-task-result must not appear mid-turn before flushDeferredDeliveries")
 		}
 	}
 
@@ -434,13 +434,13 @@ func TestAutoReenterDeferredWhileMainTurnBusy(t *testing.T) {
 		t.Fatalf("deferred auto-reentry should Send(\"\"), got %q", inputs[1])
 	}
 
-	deliveryID := agent.BackgroundDeliveryCallID(job.ID)
 	var startedStill, deliveries int
 	for _, m := range sess.Messages {
 		if m.Role == provider.RoleTool && m.ToolCallID == "tool-call-deferred" && agent.IsStartedTaskPlaceholder(m.Content) {
 			startedStill++
 		}
-		if m.Role == provider.RoleTool && m.ToolCallID == deliveryID && m.Content == "sub-result" {
+		if m.Role == provider.RoleUser && agent.IsBackgroundTaskResultMessage(m.Content) &&
+			agent.BackgroundTaskResultJobID(m.Content) == job.ID && strings.Contains(m.Content, "sub-result") {
 			deliveries++
 		}
 	}
@@ -448,12 +448,12 @@ func TestAutoReenterDeferredWhileMainTurnBusy(t *testing.T) {
 		t.Fatalf("Started stub must remain, got %d", startedStill)
 	}
 	if deliveries != 1 {
-		t.Fatalf("auto-reentry should append synthetic delivery, got %d; messages=%d", deliveries, len(sess.Messages))
+		t.Fatalf("auto-reentry should append observation delivery, got %d; messages=%d", deliveries, len(sess.Messages))
 	}
 }
 
 // TestAutoReentrySyntheticDeliveryAtTail verifies completion is a new paired
-// tool turn at the end; the original Started row is never rewritten.
+// observation at the end; the original Started row is never rewritten.
 func TestAutoReentrySyntheticDeliveryAtTail(t *testing.T) {
 	sink := event.Discard
 	jm := jobs.NewManager(sink)
@@ -497,11 +497,11 @@ func TestAutoReentrySyntheticDeliveryAtTail(t *testing.T) {
 		t.Fatal("regression: mid-history Started row was rewritten")
 	}
 	last := sess.Messages[len(sess.Messages)-1]
-	if last.Role != provider.RoleTool || last.Content != "explore-result" {
-		t.Fatalf("want synthetic tail tool result, got role=%s content=%q", last.Role, last.Content)
+	if last.Role != provider.RoleUser || !agent.IsBackgroundTaskResultMessage(last.Content) || !strings.Contains(last.Content, "explore-result") {
+		t.Fatalf("want observation tail delivery, got role=%s content=%q", last.Role, last.Content)
 	}
-	if last.ToolCallID != agent.BackgroundDeliveryCallID(job.ID) {
-		t.Fatalf("delivery id = %q, want %q", last.ToolCallID, agent.BackgroundDeliveryCallID(job.ID))
+	if agent.BackgroundTaskResultJobID(last.Content) != job.ID {
+		t.Fatalf("job id = %q, want %q", agent.BackgroundTaskResultJobID(last.Content), job.ID)
 	}
 }
 
@@ -543,13 +543,13 @@ func TestInstantCompletionDrainsToolResult(t *testing.T) {
 		t.Fatal("expected nil-provider Run to error")
 	}
 
-	deliveryID := agent.BackgroundDeliveryCallID(job.ID)
 	var startedStill, deliveries int
 	for _, m := range sess.Messages {
 		if m.Role == provider.RoleTool && m.ToolCallID == "tool-call-instant" && agent.IsStartedTaskPlaceholder(m.Content) {
 			startedStill++
 		}
-		if m.Role == provider.RoleTool && m.ToolCallID == deliveryID && m.Content == "instant-result" {
+		if m.Role == provider.RoleUser && agent.IsBackgroundTaskResultMessage(m.Content) &&
+			agent.BackgroundTaskResultJobID(m.Content) == job.ID && strings.Contains(m.Content, "instant-result") {
 			deliveries++
 		}
 	}
@@ -557,6 +557,6 @@ func TestInstantCompletionDrainsToolResult(t *testing.T) {
 		t.Fatalf("Started stub must remain, got %d", startedStill)
 	}
 	if deliveries != 1 {
-		t.Fatalf("expected 1 synthetic delivery, got %d; messages=%d", deliveries, len(sess.Messages))
+		t.Fatalf("expected 1 observation delivery, got %d; messages=%d", deliveries, len(sess.Messages))
 	}
 }

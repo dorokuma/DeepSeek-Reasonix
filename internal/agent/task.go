@@ -43,7 +43,7 @@ func SubagentMetaTools() []string {
 
 // TaskTool is the single entry for spawning a background sub-agent — freeform
 // prompt only. The sub-agent runs with a filtered tool whitelist; only its final
-// assistant message is returned to the parent (via automatic task_result delivery).
+// assistant message is returned to the parent (via a runtime observation message).
 type TaskTool struct {
 	prov              provider.Provider
 	pricing           *provider.Pricing
@@ -93,7 +93,7 @@ func NewTaskTool(prov provider.Provider, pricing *provider.Pricing, parentReg *t
 func (t *TaskTool) Name() string { return "task" }
 
 func (t *TaskTool) Description() string {
-	return "Single entry to spawn a background sub-agent (the only sub-agent tool). Pass a self-contained prompt — the child does not see this conversation. Returns immediately with a JSON started stub (job_id) — receipt only, never the answer. When the job finishes, the runtime auto-appends a NEW tool round at the conversation tail with name=task_result (you do not call task_result; it is not in your tool list). Wait for that tail delivery; do not start another task for the same goal, and do not poll with peek-job."
+	return "Single entry to spawn a background sub-agent (the only sub-agent tool). Pass a self-contained prompt — the child does not see this conversation. Returns immediately with a JSON started stub (job_id) — receipt only, never the answer. When the job finishes, the runtime injects a <background-task-result job_id=…> observation at the conversation tail (not a tool you call). Wait for that observation; do not start another task for the same goal, and do not poll with peek-job."
 }
 
 func (t *TaskTool) Schema() json.RawMessage {
@@ -135,15 +135,15 @@ func taskPostCallGuidance(jobID string) string {
 
 The Started stub above is only a receipt that the job began — it will NEVER change. Do not wait for that mid-history card to update.
 
-When the job finishes, the RUNTIME appends a NEW tool round at the END of the conversation:
-  tool name = task_result   (system delivery — NOT a tool you call; it is not in your tool list)
-  arguments include job_id + status=completed
-  content = the full sub-agent answer
+When the job finishes, the RUNTIME injects an observation at the END of the conversation:
+  <background-task-result job_id="…" status="completed">
+  … full sub-agent answer …
+  </background-task-result>
 
-That automatic tail delivery is authoritative. Do not re-dispatch the same goal while this job is still open or its result has not yet appeared at the tail.
+That block is authoritative. It is NOT a tool call and there is no tool to fetch it — wait for it.
 
 While waiting, do NOT:
-• Call task_result yourself (it always fails; wait for auto-delivery)
+• Invent a tool call to read the result (no task_result or similar tool exists)
 • Call peek-job to poll a task sub-agent (results arrive without polling; peek is for shell/bash jobs)
 • Call steer-job to ask "are you done" (steer is for genuine new instructions only)
 • Dispatch another task for the same goal (exact or paraphrased)
