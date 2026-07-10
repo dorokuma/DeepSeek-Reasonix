@@ -212,15 +212,18 @@ func configureCLIThemeFromConfigNoProbe() {
 // the agent's typed event stream — runAgent passes a TextSink that renders to
 // stdout, the TUI passes an event-channel sink so events become tea.Msgs.
 // profile selects economy|balanced|delivery (empty = balanced/full).
-func setupProfile(ctx context.Context, modelName string, maxStepsOverride int, requireKey bool, sink event.Sink, profile string) (*control.Controller, error) {
+// workspaceRoot pins the project root explicitly (from --dir); empty falls back
+// to git-root detection.
+func setupProfile(ctx context.Context, modelName string, maxStepsOverride int, requireKey bool, sink event.Sink, profile string, workspaceRoot string) (*control.Controller, error) {
 	migrateMCPConfigForCLIWorkspace()
 	return boot.Build(ctx, boot.Options{
-		Model:      modelName,
-		MaxSteps:   maxStepsOverride,
-		RequireKey: requireKey,
-		Sink:       sink,
-		TokenMode:  profile,
-		SessionDir: resolveCLISessionDir(),
+		Model:         modelName,
+		MaxSteps:      maxStepsOverride,
+		RequireKey:    requireKey,
+		Sink:          sink,
+		TokenMode:     profile,
+		SessionDir:    resolveCLISessionDir(),
+		WorkspaceRoot: workspaceRoot,
 	})
 }
 
@@ -241,14 +244,15 @@ func resolveCLISessionDir() string {
 // setupQuietProfile is like setupProfile but suppresses plugin subprocess
 // stderr. Used during model switch inside a bubbletea session to prevent plugin
 // logs from corrupting the TUI's terminal raw mode.
-func setupQuietProfile(ctx context.Context, modelName string, maxStepsOverride int, requireKey bool, sink event.Sink, profile string) (*control.Controller, error) {
+func setupQuietProfile(ctx context.Context, modelName string, maxStepsOverride int, requireKey bool, sink event.Sink, profile string, workspaceRoot string) (*control.Controller, error) {
 	return boot.Build(ctx, boot.Options{
-		Model:      modelName,
-		MaxSteps:   maxStepsOverride,
-		RequireKey: requireKey,
-		Sink:       sink,
-		Stderr:     io.Discard,
-		TokenMode:  profile,
+		Model:         modelName,
+		MaxSteps:      maxStepsOverride,
+		RequireKey:    requireKey,
+		Sink:          sink,
+		Stderr:        io.Discard,
+		TokenMode:     profile,
+		WorkspaceRoot: workspaceRoot,
 	})
 }
 
@@ -335,6 +339,12 @@ func runAgent(args []string) int {
 	}
 	if rc := chdirTo(*dir); rc != 0 {
 		return rc
+	}
+	var workspaceRoot string
+	if *dir != "" {
+		if wd, err := os.Getwd(); err == nil {
+			workspaceRoot = wd
+		}
 	}
 	cfg, _ := config.Load()
 	configureCLIThemeFromConfigForTTYOutput()
@@ -423,7 +433,7 @@ func runAgent(args []string) int {
 	if resumePath != "" {
 		*model = modelForResumePath(*model, resumePath, cfg)
 	}
-	ctrl, err := setupProfile(ctx, *model, *maxSteps, true, sink, profile)
+	ctrl, err := setupProfile(ctx, *model, *maxSteps, true, sink, profile, workspaceRoot)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
 		return 1
@@ -587,7 +597,7 @@ func runServe(args []string) int {
 			}
 		}
 	}
-	ctrl, err := setupProfile(ctx, *model, *maxSteps, true, bc, profile)
+	ctrl, err := setupProfile(ctx, *model, *maxSteps, true, bc, profile, "")
 	if err != nil {
 		fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
 		return 1
@@ -663,6 +673,12 @@ func chatREPL(args []string) int {
 	if rc := chdirTo(*dir); rc != 0 {
 		return rc
 	}
+	var workspaceRoot string
+	if *dir != "" {
+		if wd, err := os.Getwd(); err == nil {
+			workspaceRoot = wd
+		}
+	}
 	cfg, err := config.Load()
 	if err == nil {
 		configureCLIThemeWithStyle(cfg.UITheme(), cfg.UIThemeStyle())
@@ -729,7 +745,7 @@ func chatREPL(args []string) int {
 
 	var sink event.Sink = &eventSink{ch: eventCh}
 	sink = withNotifications(sink, cfg)
-	ctrl, err := setupProfile(ctx, *model, *maxSteps, false, sink, profile)
+	ctrl, err := setupProfile(ctx, *model, *maxSteps, false, sink, profile, workspaceRoot)
 	if err != nil && errors.Is(err, boot.ErrUnknownModel) && isInteractive() && config.SourcePath() == "" {
 		// True first run whose default model can't resolve: guide setup, then retry.
 		// With a config present, fall through to the descriptive error — re-running
@@ -738,7 +754,7 @@ func chatREPL(args []string) int {
 		if rc := interactiveSetup(defaultConfigTarget(), defaultEnvTarget()); rc != 0 {
 			return rc
 		}
-		ctrl, err = setupProfile(ctx, *model, *maxSteps, false, sink, profile)
+		ctrl, err = setupProfile(ctx, *model, *maxSteps, false, sink, profile, workspaceRoot)
 	}
 	if err != nil {
 		fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
@@ -808,7 +824,7 @@ func chatREPL(args []string) int {
 	// runModelSubcommand performs the swap on the live copy. The same stable sink
 	// feeds the new controller, so events keep flowing to this TUI.
 	m.buildController = func(spec controllerBuildSpec, carry []provider.Message, resumePath string) (*control.Controller, error) {
-		c, err := setupQuietProfile(ctx, spec.ModelRef, *maxSteps, false, sink, spec.RuntimeProfile)
+		c, err := setupQuietProfile(ctx, spec.ModelRef, *maxSteps, false, sink, spec.RuntimeProfile, workspaceRoot)
 		if err != nil {
 			return nil, err
 		}
