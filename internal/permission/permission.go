@@ -343,18 +343,18 @@ func Preview(tool string, args json.RawMessage) string {
 			}
 		}
 		return "bash 调用"
-	case "task":
-		if v, ok := m["description"]; ok {
+	case "spawn_agent":
+		if v, ok := m["task_name"]; ok {
 			if s, ok := v.(string); ok && s != "" {
-				return s // LLM gives 3-7 words, no truncation needed
+				return s
 			}
 		}
-		if v, ok := m["prompt"]; ok {
+		if v, ok := m["message"]; ok {
 			if s, ok := v.(string); ok {
 				return "任务: " + truncate(s, 150)
 			}
 		}
-		return "task 调用"
+		return "spawn_agent 调用"
 	case "write_file":
 		if v, ok := m["file_path"]; ok {
 			if s, ok := v.(string); ok && s != "" {

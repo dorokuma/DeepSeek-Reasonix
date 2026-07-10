@@ -5,17 +5,11 @@ package agent
 import (
 	"fmt"
 	"regexp"
-	"strings"
 	"sync"
 
 	"reasonix/internal/provider"
 )
 
-// Session holds the conversation history for one task. The run loop (one turn at
-// a time) is the only writer, but a frontend can read History/Save from another
-// goroutine while a turn appends, so mu guards Messages. Direct Messages reads on
-// the run-loop goroutine stay lock-free (serial with its own writes); cross-
-// goroutine access goes through Snapshot.
 type Session struct {
 	mu             sync.RWMutex
 	Messages       []provider.Message
@@ -36,22 +30,6 @@ func (s *Session) Add(m provider.Message) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.Messages = append(s.Messages, m)
-}
-
-// ToolCallIDForStartedTaskLine finds the tool call id for a started-task placeholder. Fallback when job meta was lost.
-func (s *Session) ToolCallIDForStartedTaskLine(jobID string) string {
-	if jobID == "" {
-		return ""
-	}
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	for i := len(s.Messages) - 1; i >= 0; i-- {
-		m := s.Messages[i]
-		if m.Role == provider.RoleTool && m.ToolCallID != "" && TaskToolContentReferencesJob(m.Content, jobID) {
-			return m.ToolCallID
-		}
-	}
-	return ""
 }
 
 // ToolNameForCallID returns the tool name associated with a tool_call_id
@@ -80,75 +58,6 @@ func (s *Session) ToolNameForCallID(toolCallID string) string {
 		}
 	}
 	return ""
-}
-
-// HasBackgroundTaskDelivery reports whether a completion envelope for jobID is
-// already in the session (user-role observation, or legacy synthetic tool pair).
-func (s *Session) HasBackgroundTaskDelivery(jobID string) bool {
-	if s == nil || jobID == "" {
-		return false
-	}
-	deliveryID := BackgroundDeliveryCallID(jobID)
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	for i := len(s.Messages) - 1; i >= 0; i-- {
-		m := s.Messages[i]
-		if m.Role == provider.RoleUser && IsBackgroundTaskResultMessage(m.Content) {
-			if BackgroundTaskResultJobID(m.Content) == jobID {
-				return true
-			}
-		}
-		// Legacy transcripts delivered via synthetic tool rounds.
-		if m.Role == provider.RoleTool && m.ToolCallID == deliveryID {
-			return true
-		}
-		if m.Role == provider.RoleAssistant {
-			for _, tc := range m.ToolCalls {
-				if tc.ID == deliveryID {
-					return true
-				}
-			}
-		}
-	}
-	return false
-}
-
-// AppendBackgroundTaskDelivery appends a runtime observation at the conversation
-// tail. The original Started stub is left untouched — it already answered the
-// spawn tool_call. Completion is a user-role envelope (not a tool call) so the
-// model never sees a phantom callable tool name in history.
-// toolName is ignored (kept for call-site compatibility).
-func (s *Session) AppendBackgroundTaskDelivery(jobID, toolName, output string) bool {
-	_ = toolName
-	if s == nil || jobID == "" || strings.TrimSpace(output) == "" {
-		return false
-	}
-	if s.HasBackgroundTaskDelivery(jobID) {
-		return true
-	}
-	const max = 12000
-	if len(output) > max {
-		output = output[:max] + "\n…[truncated]"
-	}
-	content := FormatBackgroundTaskResult(jobID, output)
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	// Re-check under write lock.
-	for i := len(s.Messages) - 1; i >= 0; i-- {
-		m := s.Messages[i]
-		if m.Role == provider.RoleUser && IsBackgroundTaskResultMessage(m.Content) &&
-			BackgroundTaskResultJobID(m.Content) == jobID {
-			return true
-		}
-		if m.Role == provider.RoleTool && m.ToolCallID == BackgroundDeliveryCallID(jobID) {
-			return true
-		}
-	}
-	s.Messages = append(s.Messages, provider.Message{
-		Role:    provider.RoleUser,
-		Content: content,
-	})
-	return true
 }
 
 // AddUserNudge appends content to the last message if it's a user message,

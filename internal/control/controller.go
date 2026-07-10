@@ -293,7 +293,7 @@ func New(opts Options) *Controller {
 	}
 	if c.jobs != nil {
 		// Single completion path for the whole session: only auto-deliver kinds
-		// (task) write into the parent session and wake the model. Bash jobs only
+		// (legacy task kind no longer auto-delivers). Bash jobs only
 		// emit their Notice from jobs.Manager and stay peekable.
 		c.jobs.SetOnCompletion(c.handleJobCompletion)
 	}
@@ -2225,7 +2225,7 @@ func (g gateApprover) Approve(ctx context.Context, tool, subject string, args js
 		return true, false, nil
 	}
 	scope := "gate"
-	if tool == "task" {
+	if tool == "spawn_agent" {
 		scope = "task"
 	}
 	preview := permission.Preview(tool, args)

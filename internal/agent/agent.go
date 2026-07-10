@@ -411,14 +411,16 @@ func (a *Agent) DiagnosticRequested() bool { return a.diagnosticRequested.Load()
 // FlushBackgroundJobResults delivers finished background job answers into the
 // session. The controller calls this from the jobs completion hook so results
 // survive auto-reentry depth limits and run-loop races.
+// FlushBackgroundJobResults is a no-op: sub-agent results use multiagent mailbox.
 func (a *Agent) FlushBackgroundJobResults() (jobID, output string, ok bool) {
-	return a.deliverPendingJobResultsWithRetry(12, 20*time.Millisecond)
+	return "", "", false
 }
 
 // AppendBackgroundTaskResultDelivery is kept as a thin alias for tests/callers
 // that still name the old envelope path; it now inserts the synthetic tool turn.
+// AppendBackgroundTaskResultDelivery is a no-op retained for call-site compatibility.
 func (a *Agent) AppendBackgroundTaskResultDelivery(jobID, output string) {
-	_ = a.commitJobResult(jobID, output)
+	_, _ = jobID, output
 }
 
 // Session returns the agent's current conversation, useful for persistence
@@ -976,59 +978,19 @@ func (a *Agent) flushMultiAgentMailbox() {
 //
 // Delivery is intentionally NOT a tool call: fake tool names in history train
 // models to invent calls (e.g. task_result). Bash jobs never enter here.
+// commitJobResult is a no-op (legacy task auto-deliver removed).
 func (a *Agent) commitJobResult(jobID, output string) bool {
-	output = strings.TrimSpace(output)
-	if output == "" || a.session == nil {
-		return false
-	}
-	if a.jobs != nil {
-		if kind, ok := a.jobs.Kind(jobID); ok && !jobs.AutoDelivers(kind) {
-			return false
-		}
-	}
-	if a.session.HasBackgroundTaskDelivery(jobID) {
-		if a.ctrl != nil {
-			_, _ = a.ctrl.TakeJobMeta(jobID)
-		}
-		return true
-	}
-	if a.ctrl != nil {
-		_, _ = a.ctrl.TakeJobMeta(jobID)
-	}
-	return a.session.AppendBackgroundTaskDelivery(jobID, "", output)
+	_, _ = jobID, output
+	return false
 }
 
 
 func (a *Agent) deliverPendingJobResults() (jobID, output string, ok bool) {
-	if a.jobs == nil {
-		return "", "", false
-	}
-	for _, id := range a.jobs.ActiveJobs() {
-		if kind, kOK := a.jobs.Kind(id); kOK && !jobs.AutoDelivers(kind) {
-			continue
-		}
-		if id2, out, have := a.tryDeliverJobResult(id); have {
-			if a.commitBackgroundJobResult(id2, out) {
-				a.jobs.RemoveJob(id2)
-				return id2, out, true
-			}
-		}
-	}
 	return "", "", false
 }
 
 func (a *Agent) deliverPendingJobResultsWithRetry(attempts int, delay time.Duration) (jobID, output string, ok bool) {
-	if attempts < 1 {
-		attempts = 1
-	}
-	for i := 0; i < attempts; i++ {
-		if id, out, delivered := a.deliverPendingJobResults(); delivered {
-			return id, out, true
-		}
-		if i+1 < attempts && delay > 0 {
-			time.Sleep(delay)
-		}
-	}
+	_, _ = attempts, delay
 	return "", "", false
 }
 
@@ -2027,53 +1989,23 @@ func parseDataURL(dataURL string) (mime, data string) {
 
 // CompleteBackgroundJob delivers a single completed auto-deliver job into the
 // session as a runtime observation message. Returns true when committed.
+// CompleteBackgroundJob is a no-op (legacy task auto-deliver removed).
 func (a *Agent) CompleteBackgroundJob(jobID string) bool {
-	if a.jobs == nil {
-		return false
-	}
-	if kind, ok := a.jobs.Kind(jobID); ok && !jobs.AutoDelivers(kind) {
-		return false
-	}
-	text, _, ok := a.jobs.Output(jobID)
-	if !ok || text == "" {
-		if n, ok2 := a.jobs.CompletedResult(jobID); ok2 && strings.TrimSpace(n.Output) != "" {
-			text = n.Output
-		} else {
-			return false
-		}
-	}
-	if !a.commitJobResult(jobID, text) {
-		return false
-	}
-	a.jobs.RemoveJob(jobID)
-	return true
+	_ = jobID
+	return false
 }
 
 // tryDeliverJobResult reads a job's output for auto-delivery without committing.
 func (a *Agent) tryDeliverJobResult(id string) (string, string, bool) {
-	if a.jobs == nil {
-		return "", "", false
-	}
-	if kind, ok := a.jobs.Kind(id); ok && !jobs.AutoDelivers(kind) {
-		return "", "", false
-	}
-	text, _, ok := a.jobs.Output(id)
-	if ok && text != "" {
-		return id, text, true
-	}
-	if n, ok := a.jobs.CompletedResult(id); ok && strings.TrimSpace(n.Output) != "" {
-		return id, n.Output, true
-	}
+	_ = id
 	return "", "", false
 }
 
 // commitBackgroundJobResult commits a previously-read job result to the session.
 // Returns true when the result was committed.
 func (a *Agent) commitBackgroundJobResult(jobID, output string) bool {
-	if output == "" {
-		return false
-	}
-	return a.commitJobResult(jobID, output)
+	_, _ = jobID, output
+	return false
 }
 
 // clearBackgroundWakeIfCaughtUp resets the pending-tool-result flag when no
@@ -2092,24 +2024,16 @@ func (a *Agent) clearBackgroundWakeIfCaughtUp() {
 // (terminal, not yet RemoveJob'd). Running tasks do NOT count — otherwise a
 // second in-flight task would pin pendingToolResult and trigger empty wakes.
 func (a *Agent) hasUndeliveredAutoJobs() bool {
-	if a.jobs == nil {
-		return false
-	}
-	for _, id := range a.jobs.ActiveJobs() {
-		kind, ok := a.jobs.Kind(id)
-		if !ok || !jobs.AutoDelivers(kind) {
-			continue
-		}
-		if _, done := a.jobs.CompletedResult(id); done {
-			return true
-		}
-	}
 	return false
 }
 
 // sessionHasUnreadTaskResult is true when the conversation tail is a runtime
 // background delivery that the main agent has not yet answered.
+// sessionHasUnreadTaskResult reports pending multiagent mailbox work for the parent model.
 func (a *Agent) sessionHasUnreadTaskResult() bool {
+	if a.multiAgent != nil && a.multiAgent.Mailbox().HasPending() {
+		return true
+	}
 	if a.session == nil {
 		return false
 	}
@@ -2118,30 +2042,10 @@ func (a *Agent) sessionHasUnreadTaskResult() bool {
 		m := msgs[i]
 		switch m.Role {
 		case provider.RoleUser:
-			// Current architecture: delivery is a user-role observation envelope.
-			if IsBackgroundTaskResultMessage(m.Content) {
-				return true
-			}
-			return false
-		case provider.RoleTool:
-			// Legacy transcripts: synthetic tool delivery.
-			if strings.HasPrefix(m.ToolCallID, "bg-delivery-") {
-				return true
-			}
+			return strings.Contains(m.Content, "[multi_agent_mailbox]")
 		case provider.RoleAssistant:
-			if len(m.ToolCalls) > 0 {
-				for _, tc := range m.ToolCalls {
-					if tc.ID != "" && strings.HasPrefix(tc.ID, "bg-delivery-") {
-						continue
-					}
-				}
-				if strings.TrimSpace(m.Content) != "" {
-					return false
-				}
-				continue
-			}
-			if strings.TrimSpace(m.Content) != "" {
-				return false // model already answered after delivery
+			if strings.TrimSpace(m.Content) != "" || len(m.ToolCalls) > 0 {
+				return false
 			}
 		}
 	}

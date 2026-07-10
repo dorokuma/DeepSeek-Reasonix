@@ -3,8 +3,7 @@
 //
 // Two product kinds share the registry but differ on completion:
 //
-//   - kind "task"  — async sub-agent. Final answer auto-delivers into the parent
-//     session (synthetic tail tool turn + auto-reentry). peek-job is diagnostic only.
+//   - kind "task"  — legacy kind string (no auto-delivery; sub-agents use multiagent).
 //   - kind "bash"  — shell run_in_background. Output stays in the job buffer;
 //     the model/user reads it with peek-job. No auto session delivery.
 //
@@ -102,7 +101,7 @@ type Job struct {
 	sink        event.Sink
 }
 
-// KindTask is the auto-delivering async sub-agent job kind.
+// KindTask is a legacy jobs kind string (no longer auto-delivers).
 const KindTask = "task"
 
 // KindBash is the shell background job kind (peek-based, no auto session delivery).
@@ -111,7 +110,8 @@ const KindBash = "bash"
 // AutoDelivers reports whether a finished job of this kind should be written into
 // the parent session and trigger auto-reentry.
 func AutoDelivers(kind string) bool {
-	return kind == KindTask
+	_ = kind
+	return false
 }
 
 // completedBashRetainSec is how long finished shell jobs stay peekable before GC.

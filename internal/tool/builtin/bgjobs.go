@@ -13,7 +13,7 @@ import (
 // steer-job, cancel-job, and peek-job operate session background jobs via jobs.FromContext.
 //
 // Product split:
-//   - kind task  (async sub-agent): final answer auto-delivers as a tail observation; peek is diagnostic.
+//   - kind task  (legacy): unused for sub-agents; multiagent owns that path.
 //   - kind bash  (shell background): must use peek-job for output; no auto chat delivery.
 
 func init() {
@@ -161,7 +161,7 @@ func (peekJob) Execute(ctx context.Context, params json.RawMessage) (string, err
 		out["kind"] = kind
 		if jobs.AutoDelivers(kind) {
 			out["delivery"] = "auto_observation"
-			out["note"] = "task job: answer auto-arrives as conversation-tail observation"
+			out["note"] = "legacy kind; sub-agents use multiagent mailbox"
 		} else {
 			out["delivery"] = "peek_only"
 			out["note"] = "shell job: use new_output below"

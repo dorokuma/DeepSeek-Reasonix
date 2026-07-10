@@ -90,7 +90,7 @@ type PostCallGuidance interface {
 // PostCallGuidanceWithResult is an optional extension to PostCallGuidance.
 // When implemented, the agent calls PostCallGuidanceAfter with the successful
 // Execute return value instead of PostCallGuidance alone, so guidance can cite
-// dynamic ids (e.g. job_id from "Started task task-N …").
+// dynamic ids (e.g. job_id from background shell receipts).
 type PostCallGuidanceWithResult interface {
 	PostCallGuidanceAfter(args json.RawMessage, result string) string
 }
@@ -338,7 +338,6 @@ func (r *Registry) Suggest(name string) (string, bool) {
 		"find": "grep", "search": "grep", "locate": "grep",
 		"run": "bash", "execute": "bash", "shell": "bash",
 		"list": "ls", "dir": "ls",
-		"explore": "explore", "research": "research",
 		"install": "install_skill", "delete": "delete_range", "remove": "delete_range",
 		"remember": "remember", "forget": "forget", "recall": "recall",
 		"memory_save": "remember", "memory_forget": "forget", "memory_get": "recall",

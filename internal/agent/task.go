@@ -22,8 +22,7 @@ If you need to ask for clarification, fail with a precise question instead of gu
 
 // Meta tools children must not inherit (Codex still allows spawn_agent on children).
 var subagentMetaTools = []string{
-	"task", // removed legacy name — never re-expose
-	"run_skill",
+		"run_skill",
 	"install_skill",
 	"install_source",
 }
@@ -91,8 +90,6 @@ func NewTaskTool(prov provider.Provider, pricing *provider.Pricing, parentReg *t
 // tool. Codex MultiAgent V2 uses spawn_agent / wait_agent / …. Do not register this
 // type on a tool.Registry — Name is deliberately not a public tool name.
 //
-// Deprecated model name "task" is hard-blocked in Agent.executeOne.
-
 // Name is intentionally empty so accidental registry.Add is skipped/ignored.
 func (t *TaskTool) Name() string { return "" }
 
@@ -124,7 +121,7 @@ func (t *TaskTool) buildSubReg(names []string, allowMeta bool) *tool.Registry {
 
 // FilterRegistry builds a sub-registry from parent: the named whitelist (empty =
 // every parent tool), minus any excluded names. Used to scope what a spawned
-// sub-agent (via `task`) may call, e.g. excluding `task` to bar recursive nesting.
+// sub-agent may call, e.g. excluding `task` to bar recursive nesting.
 func FilterRegistry(parent *tool.Registry, names []string, exclude ...string) *tool.Registry {
 	ex := make(map[string]bool, len(exclude))
 	for _, e := range exclude {

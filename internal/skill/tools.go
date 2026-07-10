@@ -22,7 +22,7 @@ type runSkillTool struct {
 }
 
 // NewRunSkillTool builds the skill-invocation tool. Skills are inline playbooks
-// only; background work uses the separate task tool. There is no read_skill —
+// only; background sub-agents use spawn_agent. There is no read_skill —
 // loading a skill means invoking it.
 func NewRunSkillTool(store *Store) tool.Tool {
 	return &runSkillTool{store: store}
