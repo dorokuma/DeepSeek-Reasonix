@@ -199,6 +199,24 @@ ok(
   "Welcome is suppressed only until transcript history has loaded",
 );
 
+ok(
+  /const \[workspaceControllerEpoch, setWorkspaceControllerEpoch\] = useState\(0\);/.test(appSource) &&
+    /const workspaceScopeKey = \[/.test(appSource) &&
+    /activeTab\?\.sessionPath/.test(appSource) &&
+    /state\.meta\?\.sessionPath/.test(appSource) &&
+    /state\.meta\?\.cwd/.test(appSource) &&
+    /state\.sessionGen/.test(appSource) &&
+    /workspaceControllerEpoch/.test(appSource) &&
+    Array.from(appSource.matchAll(/workspaceScopeKey=\{workspaceScopeKey\}/g)).length === 3,
+  "workspace file consumers receive a session and controller scoped identity",
+);
+
+ok(
+  /const unsubReady = onReady\(\(readyTabId\) => \{[\s\S]*?setWorkspaceControllerEpoch[\s\S]*?\n    \}\);/.test(appSource) &&
+    /const unsubRebuilt = onRuntimeRebuilt\(\(rebuiltTabId\) => \{[\s\S]*?setWorkspaceControllerEpoch[\s\S]*?\n    \}\);/.test(appSource),
+  "controller ready and rebuilt events invalidate active workspace file scopes",
+);
+
 const navigationBlock = appSource.match(/const runNavigationRequest = useCallback\([\s\S]*?\n  \}, \[[^\]]*singleSurfaceLayout[^\]]*\]\);/)?.[0] ?? "";
 ok(
   /const navigationRunningRef = useRef\(false\);/.test(appSource) &&

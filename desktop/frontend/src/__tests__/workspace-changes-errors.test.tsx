@@ -252,5 +252,91 @@ console.log("\nworkspace changes git errors");
   dom.window.close();
 }
 
+{
+  const pending: Array<(entries: DirEntry[]) => void> = [];
+  const listDirForTab = (_tabId: string, dir: string): Promise<DirEntry[]> => {
+    if (dir !== "") return Promise.resolve([]);
+    return new Promise((resolve) => pending.push(resolve));
+  };
+  const { dom, root, rerender } = await renderFilesWorkspace(
+    { ListDirForTab: listDirForTab },
+    { tabId: "shared-tab", cwd: "/repo", workspaceScopeKey: "session-a" },
+  );
+
+  await waitFor("initial session A workspace request", () => pending.length === 1);
+  await rerender({ workspaceScopeKey: "session-b" });
+  await waitFor("session B workspace request", () => pending.length === 2);
+  await rerender({ workspaceScopeKey: "session-a" });
+  await waitFor("revisited session A workspace request", () => pending.length === 3);
+
+  await act(async () => {
+    pending[2]([
+      { name: "current-a.txt", isDir: false },
+      { name: "current-b.txt", isDir: false },
+    ]);
+    await flushPromises();
+  });
+  await waitFor("revisited session A entries", () => (document.querySelector(".workspace-tree__sizer") as HTMLElement | null)?.style.height === "48px");
+
+  await act(async () => {
+    pending[0]([{ name: "stale-initial-a.txt", isDir: false }]);
+    pending[1]([{ name: "stale-b.txt", isDir: false }]);
+    await flushPromises();
+  });
+
+  ok(
+    (document.querySelector(".workspace-tree__sizer") as HTMLElement | null)?.style.height === "48px",
+    "same-tab A→B→A session switches reject stale workspace responses",
+  );
+
+  await act(async () => {
+    root.unmount();
+  });
+  dom.window.close();
+}
+
+{
+  const pending: Array<(changes: WorkspaceChangesView) => void> = [];
+  const workspaceChanges = (): Promise<WorkspaceChangesView> => new Promise((resolve) => pending.push(resolve));
+  const { dom, root, rerender } = await renderFilesWorkspace(
+    { WorkspaceChanges: workspaceChanges },
+    {
+      tabId: "shared-tab",
+      cwd: "/repo",
+      workspaceScopeKey: "session-a",
+      initialViewMode: "changed",
+    },
+  );
+
+  await waitFor("initial session changes request", () => pending.length === 1);
+  await rerender({ workspaceScopeKey: "session-b" });
+  await waitFor("next session changes request", () => pending.length === 2);
+
+  await act(async () => {
+    pending[1]({
+      files: [{ path: "session-b.ts", sources: ["session"] }],
+      gitAvailable: true,
+    });
+    await flushPromises();
+  });
+  await waitFor("session B changes", () => document.body.textContent?.includes("session-b.ts") === true);
+
+  await act(async () => {
+    pending[0]({
+      files: [{ path: "stale-session-a.ts", sources: ["session"] }],
+      gitAvailable: true,
+    });
+    await flushPromises();
+  });
+
+  ok(document.body.textContent?.includes("session-b.ts") === true, "current same-tab session changes stay visible");
+  ok(document.body.textContent?.includes("stale-session-a.ts") === false, "late same-tab session changes cannot overwrite the current session");
+
+  await act(async () => {
+    root.unmount();
+  });
+  dom.window.close();
+}
+
 console.log(`\n${passed} passed, ${failed} failed, ${passed + failed} total`);
 if (failed > 0) process.exit(1);

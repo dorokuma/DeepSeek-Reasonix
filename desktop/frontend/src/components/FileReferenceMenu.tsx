@@ -55,7 +55,7 @@ export function insertTextAtSelection(
   return { value: next, caret: before.length + text.length };
 }
 
-export function useFileReferenceMenu(text: string, cwd?: string, tabId?: string) {
+export function useFileReferenceMenu(text: string, cwd?: string, tabId?: string, workspaceScopeKey?: string) {
   const token = useMemo(() => activeFileReferenceToken(text), [text]);
   const atRaw = token?.raw ?? null;
   const atDir = token?.dir ?? "";
@@ -67,19 +67,19 @@ export function useFileReferenceMenu(text: string, cwd?: string, tabId?: string)
   const dirCache = useRef<Record<string, DirEntry[]>>({});
   const searchCache = useRef<Record<string, FileRefSearchCacheEntry>>({});
   const fileRefTabId = tabId ?? "";
-  const prevFileRefScopeRef = useRef({ tabId: fileRefTabId, cwd });
+  const fileRefScopeKey = workspaceScopeKey ?? `${fileRefTabId}\u0000${cwd ?? ""}`;
+  const prevFileRefScopeRef = useRef(fileRefScopeKey);
 
   useEffect(() => {
-    const previous = prevFileRefScopeRef.current;
-    if (previous.tabId === fileRefTabId && previous.cwd === cwd) return;
-    prevFileRefScopeRef.current = { tabId: fileRefTabId, cwd };
+    if (prevFileRefScopeRef.current === fileRefScopeKey) return;
+    prevFileRefScopeRef.current = fileRefScopeKey;
     dirCache.current = {};
     searchCache.current = {};
     setEntries([]);
     setSearchEntries([]);
     setActive(0);
     setDismissed(false);
-  }, [cwd, fileRefTabId]);
+  }, [fileRefScopeKey]);
 
   useEffect(() => {
     setActive(0);
@@ -107,7 +107,7 @@ export function useFileReferenceMenu(text: string, cwd?: string, tabId?: string)
     return () => {
       live = false;
     };
-  }, [atRaw === null, atDir, cwd, fileRefTabId]);
+  }, [atRaw === null, atDir, fileRefScopeKey, fileRefTabId]);
 
   useEffect(() => {
     if (atRaw === null || atDir !== "" || atFrag === "") {
@@ -134,7 +134,7 @@ export function useFileReferenceMenu(text: string, cwd?: string, tabId?: string)
     return () => {
       live = false;
     };
-  }, [atRaw === null, atDir, atFrag, cwd, fileRefTabId]);
+  }, [atRaw === null, atDir, atFrag, fileRefScopeKey, fileRefTabId]);
 
   const items = useMemo(() => {
     if (atRaw === null) return [];

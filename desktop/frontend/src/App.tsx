@@ -1091,6 +1091,9 @@ export default function App() {
   const workspacePreviewActive = useLayoutStore((s) => s.workspacePreviewActive);
   const setWorkspacePreviewActive = useLayoutStore((s) => s.setWorkspacePreviewActive);
   const attentionChimeEvents = useRef(new Set<string>());
+  const workspaceScopeActiveTabRef = useRef(activeTabId);
+  const [workspaceControllerEpoch, setWorkspaceControllerEpoch] = useState(0);
+  workspaceScopeActiveTabRef.current = activeTabId;
   // Bump dockRefreshKey after each turn so WorkspacePanel/ContextPanel re-fetch
   // workspace changes, git history, and session metadata after AI tool writes.
   useEffect(() => {
@@ -1111,12 +1114,18 @@ export default function App() {
     // completes; clear that tab's keys (or all, for tab-less ready events).
     const unsubReady = onReady((readyTabId) => {
       clearAttentionChimeKeys(attentionChimeEvents.current, readyTabId);
+      if (!readyTabId || readyTabId === workspaceScopeActiveTabRef.current) {
+        setWorkspaceControllerEpoch((value) => value + 1);
+      }
     });
     // Model/effort/token-mode switches and clear-while-running replace the
     // controller WITHOUT an agent:ready — they signal runtime:rebuilt instead
     // (a ready here would trigger a full session reload the UI already did).
     const unsubRebuilt = onRuntimeRebuilt((rebuiltTabId) => {
       clearAttentionChimeKeys(attentionChimeEvents.current, rebuiltTabId);
+      if (!rebuiltTabId || rebuiltTabId === workspaceScopeActiveTabRef.current) {
+        setWorkspaceControllerEpoch((value) => value + 1);
+      }
     });
     return () => {
       unsub();
@@ -1391,6 +1400,14 @@ export default function App() {
   const composerSessionKey = useMemo(() => {
     return composerDraftKeyForTab(activeTab, activeTabId);
   }, [activeTab, activeTabId]);
+  const workspaceScopeKey = [
+    activeTabId ?? "",
+    activeTab?.sessionPath ?? "",
+    state.meta?.sessionPath ?? "",
+    state.meta?.cwd ?? "",
+    state.sessionGen,
+    workspaceControllerEpoch,
+  ].join("\u0000");
   const sidebarImDetailConnection = useMemo(
     () => sidebarImConnections.find((connection) => connection.id === sidebarImDetailConnectionId) ?? null,
     [sidebarImConnections, sidebarImDetailConnectionId],
@@ -3592,6 +3609,7 @@ export default function App() {
                 approval={state.approval}
                 cwd={state.meta?.cwd}
                 tabId={activeTabId}
+                workspaceScopeKey={workspaceScopeKey}
                 insertRequest={planRevisionInsertRequest}
                 onRevisionActiveChange={(active) => setWorkspaceInsertTarget(active ? "planRevision" : "composer")}
                 onAnswer={async (allow, session, persist) => {
@@ -3668,6 +3686,7 @@ export default function App() {
               pendingAsk={state.ask != null}
               transientDismissSignal={transientOverlayDismissSignal}
               sessionKey={composerSessionKey}
+              workspaceScopeKey={workspaceScopeKey}
               fileRefRefreshKey={composerFileRefRefreshKey}
               guidanceConsumedKey={latestGuidanceConsumed?.key}
               guidanceConsumedText={latestGuidanceConsumed?.text}
@@ -3783,6 +3802,7 @@ export default function App() {
                   open={workspacePanelRenderable}
                   tabId={activeTabId}
                   cwd={state.meta?.cwd}
+                  workspaceScopeKey={workspaceScopeKey}
                   maximized={workspacePanelMaximized}
                   panelWidth={workspacePanelRenderWidth}
                   onClose={() => setWorkspacePanel(false)}

@@ -491,5 +491,44 @@ console.log("\napproval modal file references");
   dom.window.close();
 }
 
+{
+  const dom = installDom("en-US");
+  const pending: Array<(entries: Array<{ name: string; isDir: boolean }>) => void> = [];
+  mockApp({
+    ListDirForTab: async () => new Promise((resolve) => pending.push(resolve)),
+    SearchFileRefsForTab: async () => [],
+  });
+  const { root, rerender } = await renderApproval({ workspaceScopeKey: "session-a" });
+
+  const reviseButton = Array.from(document.querySelectorAll("button")).find((button) => button.textContent?.includes("Revise plan")) as HTMLButtonElement | undefined;
+  if (!reviseButton) throw new Error("revise button did not render");
+  await act(async () => {
+    reviseButton.click();
+    await flushTimers();
+  });
+  await rerender({ insertRequest: { id: 20, text: "inspect @" } });
+  await waitFor("initial approval session scope request", () => pending.length === 1);
+  await rerender({ workspaceScopeKey: "session-b" });
+  await waitFor("next approval session scope request", () => pending.length === 2);
+
+  await act(async () => {
+    pending[1]([{ name: "current-plan-file.ts", isDir: false }]);
+    await flushTimers();
+  });
+  await waitFor("current approval session file result", () => document.body.textContent?.includes("current-plan-file.ts") === true);
+
+  await act(async () => {
+    pending[0]([{ name: "stale-plan-file.ts", isDir: false }]);
+    await flushTimers();
+  });
+  ok(document.body.textContent?.includes("current-plan-file.ts") === true, "current approval session file refs stay visible");
+  ok(document.body.textContent?.includes("stale-plan-file.ts") === false, "late approval session file refs are ignored");
+
+  await act(async () => {
+    root.unmount();
+  });
+  dom.window.close();
+}
+
 console.log(`\n${passed} passed, ${failed} failed, ${passed + failed} total`);
 if (failed > 0) process.exit(1);

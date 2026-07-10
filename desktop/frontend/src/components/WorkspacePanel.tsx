@@ -215,6 +215,7 @@ export function WorkspacePanel({
   fileListRequest,
   changeListRequest,
   showViewTabs = true,
+  workspaceScopeKey: workspaceScopeKeyProp,
 }: {
   open: boolean;
   tabId?: string;
@@ -234,9 +235,11 @@ export function WorkspacePanel({
   fileListRequest?: WorkspaceFileListRequest | null;
   changeListRequest?: WorkspaceChangeListRequest | null;
   showViewTabs?: boolean;
+  workspaceScopeKey?: string;
 }) {
   const t = useT();
   const workspaceTabId = tabId ?? "";
+  const workspaceScopeKey = workspaceScopeKeyProp ?? `${workspaceTabId}\u0000${cwd ?? ""}`;
   const panelRef = useRef<HTMLElement>(null);
   const treeRef = useRef<HTMLDivElement>(null);
   const filterRef = useRef<HTMLInputElement>(null);
@@ -275,8 +278,8 @@ export function WorkspacePanel({
   const dismissedFileListRequestIdRef = useRef<number | null>(null);
   const lastChangeListRequestIdRef = useRef<number | null>(null);
   const dismissedChangeListRequestIdRef = useRef<number | null>(null);
-  const currentWorkspaceTabIdRef = useRef(workspaceTabId);
-  const lastWorkspaceTabIdRef = useRef(workspaceTabId);
+  const currentWorkspaceScopeKeyRef = useRef(workspaceScopeKey);
+  const lastWorkspaceScopeKeyRef = useRef(workspaceScopeKey);
   const workspaceChangesRequestIdRef = useRef(0);
   const gitHistoryRequestIdRef = useRef(0);
   const commitDetailRequestIdRef = useRef(0);
@@ -285,7 +288,7 @@ export function WorkspacePanel({
   const recentAnchorRef = useRef<HTMLButtonElement>(null);
   const openDirsRef = useRef(openDirs);
   const pendingTreeRevealPathRef = useRef<string | null>(null);
-  currentWorkspaceTabIdRef.current = workspaceTabId;
+  currentWorkspaceScopeKeyRef.current = workspaceScopeKey;
 
   useEffect(() => {
     openDirsRef.current = openDirs;
@@ -293,44 +296,47 @@ export function WorkspacePanel({
 
   const loadDir = useCallback(async (dir: string) => {
     const requestTabId = workspaceTabId;
+    const requestScopeKey = workspaceScopeKey;
     const generation = dirLoadGenerationRef.current;
     const requestId = (dirLoadRequestIdsRef.current[dir] ?? 0) + 1;
     dirLoadRequestIdsRef.current[dir] = requestId;
     const entries = await app.ListDirForTab(requestTabId, dir).catch((): DirEntry[] => []);
     if (
-      currentWorkspaceTabIdRef.current !== requestTabId ||
+      currentWorkspaceScopeKeyRef.current !== requestScopeKey ||
       dirLoadGenerationRef.current !== generation ||
       dirLoadRequestIdsRef.current[dir] !== requestId
     ) return;
     setEntriesByDir((prev) => ({ ...prev, [dir]: asArray(entries) }));
-  }, [workspaceTabId]);
+  }, [workspaceScopeKey, workspaceTabId]);
 
   const loadGitHistory = useCallback(async () => {
     const requestId = ++gitHistoryRequestIdRef.current;
     const requestTabId = workspaceTabId;
+    const requestScopeKey = workspaceScopeKey;
     setLoadingHistory(true);
     try {
       const result = await app.WorkspaceGitHistory(requestTabId, selectedPath || "");
-      if (gitHistoryRequestIdRef.current === requestId && lastWorkspaceTabIdRef.current === requestTabId) {
+      if (gitHistoryRequestIdRef.current === requestId && currentWorkspaceScopeKeyRef.current === requestScopeKey) {
         setGitHistory(result || []);
       }
     } catch (err) {
-      if (gitHistoryRequestIdRef.current === requestId && lastWorkspaceTabIdRef.current === requestTabId) {
+      if (gitHistoryRequestIdRef.current === requestId && currentWorkspaceScopeKeyRef.current === requestScopeKey) {
         setGitHistory([]);
       }
     } finally {
-      if (gitHistoryRequestIdRef.current === requestId && lastWorkspaceTabIdRef.current === requestTabId) {
+      if (gitHistoryRequestIdRef.current === requestId && currentWorkspaceScopeKeyRef.current === requestScopeKey) {
         setLoadingHistory(false);
       }
     }
-  }, [selectedPath, workspaceTabId]);
+  }, [selectedPath, workspaceScopeKey, workspaceTabId]);
 
   const loadWorkspaceChanges = useCallback(async () => {
     const requestId = ++workspaceChangesRequestIdRef.current;
     const requestTabId = workspaceTabId;
+    const requestScopeKey = workspaceScopeKey;
     try {
       const result = await app.WorkspaceChanges(requestTabId);
-      if (workspaceChangesRequestIdRef.current === requestId && lastWorkspaceTabIdRef.current === requestTabId) {
+      if (workspaceChangesRequestIdRef.current === requestId && currentWorkspaceScopeKeyRef.current === requestScopeKey) {
         setWorkspaceChanges({
           files: Array.isArray(result?.files) ? result.files : [],
           gitAvailable: result?.gitAvailable !== false,
@@ -339,11 +345,11 @@ export function WorkspacePanel({
         });
       }
     } catch {
-      if (workspaceChangesRequestIdRef.current === requestId && lastWorkspaceTabIdRef.current === requestTabId) {
+      if (workspaceChangesRequestIdRef.current === requestId && currentWorkspaceScopeKeyRef.current === requestScopeKey) {
         setWorkspaceChanges({ files: [], gitAvailable: false });
       }
     }
-  }, [workspaceTabId]);
+  }, [workspaceScopeKey, workspaceTabId]);
 
   const toggleCommit = useCallback((hash: string) => {
     setExpandedCommit((prev) => {
@@ -358,22 +364,23 @@ export function WorkspacePanel({
     if (expandedCommit) {
       const requestId = ++commitDetailRequestIdRef.current;
       const requestTabId = workspaceTabId;
+      const requestScopeKey = workspaceScopeKey;
       let live = true;
       setLoadingCommit(true);
       app
         .WorkspaceGitCommitDetail(requestTabId, expandedCommit, selectedPath || "")
         .then((detail) => {
-          if (live && commitDetailRequestIdRef.current === requestId && lastWorkspaceTabIdRef.current === requestTabId) {
+          if (live && commitDetailRequestIdRef.current === requestId && currentWorkspaceScopeKeyRef.current === requestScopeKey) {
             setCommitDetail(detail);
           }
         })
         .catch(() => {
-          if (live && commitDetailRequestIdRef.current === requestId && lastWorkspaceTabIdRef.current === requestTabId) {
+          if (live && commitDetailRequestIdRef.current === requestId && currentWorkspaceScopeKeyRef.current === requestScopeKey) {
             setCommitDetail(null);
           }
         })
         .finally(() => {
-          if (live && commitDetailRequestIdRef.current === requestId && lastWorkspaceTabIdRef.current === requestTabId) {
+          if (live && commitDetailRequestIdRef.current === requestId && currentWorkspaceScopeKeyRef.current === requestScopeKey) {
             setLoadingCommit(false);
           }
         });
@@ -384,7 +391,7 @@ export function WorkspacePanel({
       commitDetailRequestIdRef.current += 1;
       setCommitDetail(null);
     }
-  }, [expandedCommit, selectedPath, open, workspaceTabId]);
+  }, [expandedCommit, selectedPath, open, workspaceScopeKey, workspaceTabId]);
 
   const selectFile = useCallback(
     (path: string) => {
@@ -444,9 +451,8 @@ export function WorkspacePanel({
 
   useEffect(() => {
     if (!open) return;
-    const nextTabId = workspaceTabId;
-    if (lastWorkspaceTabIdRef.current === nextTabId) return;
-    lastWorkspaceTabIdRef.current = nextTabId;
+    if (lastWorkspaceScopeKeyRef.current === workspaceScopeKey) return;
+    lastWorkspaceScopeKeyRef.current = workspaceScopeKey;
     workspaceChangesRequestIdRef.current += 1;
     gitHistoryRequestIdRef.current += 1;
     commitDetailRequestIdRef.current += 1;
@@ -464,7 +470,7 @@ export function WorkspacePanel({
       setOpenTabs([]);
       setPreview(null);
     }
-  }, [open, workspaceTabId]);
+  }, [open, viewMode, workspaceScopeKey]);
 
   useEffect(() => {
     if (!open) return;
@@ -696,7 +702,7 @@ export function WorkspacePanel({
     return () => {
       live = false;
     };
-  }, [selectedPath, workspaceTabId]);
+  }, [selectedPath, workspaceScopeKey, workspaceTabId]);
 
 
 
@@ -755,7 +761,7 @@ export function WorkspacePanel({
       if (!cancelled) setSearchResults(null);
     });
     return () => { cancelled = true; };
-  }, [filter, viewMode, scopedFilePaths, open, workspaceTabId]);
+  }, [filter, viewMode, scopedFilePaths, open, workspaceScopeKey, workspaceTabId]);
 
   const flattened = useMemo(() => {
     const q = filter.trim().toLowerCase();
@@ -1068,10 +1074,11 @@ export function WorkspacePanel({
     if (!treeMenu || treeMenu.isDir) return;
     const target = treeMenu;
     const requestTabId = workspaceTabId;
+    const requestScopeKey = workspaceScopeKey;
     setTreeMenu(null);
     try {
       const file = await app.ReadFileForTab(requestTabId, target.path);
-      if (currentWorkspaceTabIdRef.current !== requestTabId) return;
+      if (currentWorkspaceScopeKeyRef.current !== requestScopeKey) return;
       if (file.err || file.binary || file.kind) {
         onAddToChat?.(formatWorkspaceReference(target.path, false));
         return;
@@ -1079,7 +1086,7 @@ export function WorkspacePanel({
       const suffix = file.truncated ? `\n\n${t("workspace.truncated")}` : "";
       onAddToChat?.(formatSelectionReference(target.path, file.body) + suffix);
     } catch {
-      if (currentWorkspaceTabIdRef.current !== requestTabId) return;
+      if (currentWorkspaceScopeKeyRef.current !== requestScopeKey) return;
       onAddToChat?.(formatWorkspaceReference(target.path, false));
     }
   };

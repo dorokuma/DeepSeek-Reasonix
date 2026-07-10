@@ -990,5 +990,44 @@ console.log("\ncomposer goal toggle");
   dom.window.close();
 }
 
+{
+  const dom = installDom();
+  const pending: Array<(entries: DirEntry[]) => void> = [];
+  mockApp({
+    ListDirForTab: async () => [],
+    SearchFileRefsForTab: async () => new Promise<DirEntry[]>((resolve) => pending.push(resolve)),
+  });
+  const { root, rerender } = await renderComposer({ workspaceScopeKey: "session-a" });
+  const textarea = document.querySelector("textarea") as HTMLTextAreaElement | null;
+  if (!textarea) throw new Error("composer textarea did not render");
+
+  await replaceComposerDraft(rerender, 501, "@current");
+  await waitFor("initial composer session scope request", () => pending.length === 1);
+  await rerender({ workspaceScopeKey: "session-b" });
+  await waitFor("next composer session scope request", () => pending.length === 2);
+  await rerender({ workspaceScopeKey: "session-a" });
+  await waitFor("revisited composer session scope request", () => pending.length === 3);
+
+  await act(async () => {
+    pending[2]([fileEntry("current-session-a.txt")]);
+    await flushTimers();
+  });
+
+  await act(async () => {
+    pending[0]([fileEntry("stale-initial-a.txt")]);
+    pending[1]([fileEntry("stale-session-b.txt")]);
+    await flushTimers();
+    textarea.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+    await flushTimers();
+  });
+
+  eq(textarea.value, "@current-session-a.txt ", "same-tab A→B→A keeps the current composer file-ref search cache");
+
+  await act(async () => {
+    root.unmount();
+  });
+  dom.window.close();
+}
+
 console.log(`\n${passed} passed, ${failed} failed, ${passed + failed} total`);
 if (failed > 0) process.exit(1);
