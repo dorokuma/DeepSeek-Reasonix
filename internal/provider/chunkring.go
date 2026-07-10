@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"sync"
+	"time"
 )
 
 // ChunkRing is a fixed-size ring buffer that absorbs chunks when the output
@@ -156,6 +157,10 @@ func (cr *ChunkRing) Close() {
 	// Drain any remaining items (drainAll may have been preempted by
 	// stopCh before the buffer was empty). We use blocking sends with
 	// ctx as backstop — in normal operation the consumer is still reading.
+	// A timeout backstop ensures we don't hang if the consumer has exited.
+	drainCtx, cancel := context.WithTimeout(cr.ctx, 100*time.Millisecond)
+	defer cancel()
+
 	for {
 		cr.mu.Lock()
 		if len(cr.buf) == 0 {
@@ -170,7 +175,7 @@ func (cr *ChunkRing) Close() {
 
 		select {
 		case cr.out <- chunk:
-		case <-cr.ctx.Done():
+		case <-drainCtx.Done():
 			return
 		}
 	}

@@ -110,6 +110,7 @@ type Controller struct {
 	mu                sync.Mutex
 	cancel            context.CancelFunc
 	running           bool
+	turnActive        bool
 	sessionPath       string
 	approvals         map[string]chan approvalReply
 	asks              map[string]chan []event.AskAnswer
@@ -397,6 +398,15 @@ func (c *Controller) runTurn(ctx context.Context, input string) error {
 }
 
 func (c *Controller) runTurnWithRaw(ctx context.Context, input, raw string) error {
+	c.mu.Lock()
+	c.turnActive = true
+	c.mu.Unlock()
+	defer func() {
+		c.mu.Lock()
+		c.turnActive = false
+		c.mu.Unlock()
+	}()
+
 	c.maybeSessionStart(ctx)
 	input = c.Compose(input)
 	startMessages := c.messageCount()
@@ -601,6 +611,12 @@ func (c *Controller) Compact(ctx context.Context, instructions string) error {
 	if c.executor == nil {
 		return nil
 	}
+	c.mu.Lock()
+	turnActive := c.turnActive
+	c.mu.Unlock()
+	if turnActive {
+		return fmt.Errorf("cannot compact while a turn is running")
+	}
 	return c.executor.CompactNow(ctx, instructions)
 }
 
@@ -626,9 +642,9 @@ func (c *Controller) NewSession() error {
 		return nil
 	}
 	c.mu.Lock()
-	running := c.running
+	turnActive := c.turnActive
 	c.mu.Unlock()
-	if running {
+	if turnActive {
 		return fmt.Errorf("cannot start new session while a turn is running")
 	}
 	if err := c.Snapshot(); err != nil {
