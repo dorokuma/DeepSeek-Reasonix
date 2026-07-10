@@ -64,11 +64,11 @@ func mergeInstalledPluginPackages(cfg *Config, root string) []string {
 // PluginPackageOwner reports the installed plugin package that contributed an
 // MCP server. Config-authored servers with the same name win during merge and
 // therefore have no package owner.
-func (cfg *Config) PluginPackageOwner(name string) (string, bool) {
-	if cfg == nil || len(cfg.pluginPackageOwners) == 0 {
+func (c *Config) PluginPackageOwner(name string) (string, bool) {
+	if c == nil || len(c.pluginPackageOwners) == 0 {
 		return "", false
 	}
-	owner, ok := cfg.pluginPackageOwners[strings.TrimSpace(name)]
+	owner, ok := c.pluginPackageOwners[strings.TrimSpace(name)]
 	return owner, ok
 }
 
