@@ -160,6 +160,32 @@ func TestListOmitsTerminalAgents(t *testing.T) {
 	}
 }
 
+func TestListOmitsInterrupted(t *testing.T) {
+	c := NewControl()
+	c.SetRunner(fakeRunner{fn: func(ctx context.Context, path, message string, depth int) (string, error) {
+		<-ctx.Done()
+		return "", ctx.Err()
+	}})
+	path, _, err := c.Spawn(context.Background(), RootPath, "stopme", "m", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.Interrupt(path); err != nil {
+		t.Fatal(err)
+	}
+	// Let runAgent observe cancel.
+	time.Sleep(40 * time.Millisecond)
+	list := c.List(RootPath, "")
+	for _, a := range list {
+		if a.AgentName == path {
+			t.Fatalf("interrupted agent must not appear in list: %+v", list)
+		}
+	}
+	if _, err := c.ResolveTarget("stopme"); err != nil {
+		t.Fatalf("interrupted agent should remain resolvable: %v", err)
+	}
+}
+
 func TestMailboxDrainForRecipient(t *testing.T) {
 	c := NewControl()
 	c.SetRunner(fakeRunner{fn: func(ctx context.Context, path, message string, depth int) (string, error) {

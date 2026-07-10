@@ -25,6 +25,13 @@ func IsFinal(s Status) bool {
 	}
 }
 
+// IsListLive is true for agents shown in list_agents: only queued or running.
+// Interrupted/terminal stay in the registry for followup/interrupt resolve, but
+// are omitted from the live list (results live in mailbox).
+func IsListLive(s Status) bool {
+	return s == StatusPendingInit || s == StatusRunning
+}
+
 // StatusJSON matches Codex list agent_status oneOf (string enum or completed/errored object).
 func StatusJSON(s Status, completedMsg, errMsg string) any {
 	switch s {

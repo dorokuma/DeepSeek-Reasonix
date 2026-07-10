@@ -54,8 +54,7 @@ func (spawnAgent) Schema() json.RawMessage {
   "type":"object",
   "properties":{
     "task_name":{"type":"string","description":"Task name for the new agent. Use lowercase letters, digits, and underscores."},
-    "message":{"type":"string","description":"Self-contained instruction for the sub-agent."},
-    "fork_turns":{"type":"string","description":"Context fork. Default none (clean sub-agent; parent must put all needed context in message). all/N reserved."}
+    "message":{"type":"string","description":"Self-contained instruction for the sub-agent. Sub-agent starts with a clean context; put all needed detail in this message."}
   },
   "required":["task_name","message"]
 }`)
@@ -67,16 +66,13 @@ func (spawnAgent) Execute(ctx context.Context, args json.RawMessage) (string, er
 		return "", err
 	}
 	var p struct {
-		TaskName  string `json:"task_name"`
-		Message   string `json:"message"`
-		ForkTurns string `json:"fork_turns"`
+		TaskName string `json:"task_name"`
+		Message  string `json:"message"`
 	}
 	if err := json.Unmarshal(args, &p); err != nil {
 		return "", fmt.Errorf("invalid args: %w", err)
 	}
-	// Default none: sub-agent always starts a clean session; message is the only payload.
-	// all/N are accepted for schema compatibility but not applied.
-	_ = p.ForkTurns
+	// Clean context only: message is the sole payload (no parent history fork).
 	parent := AgentPathFrom(ctx)
 	depth := 0
 	if parent != RootPath && parent != "" {
@@ -146,7 +142,7 @@ func (listAgents) ReadOnly() bool   { return true }
 func (listAgents) Concurrent() bool { return true }
 
 func (listAgents) Description() string {
-	return `List live agents only (pending_init / running / interrupted; includes /root). Completed, errored, and shutdown agents are omitted — their results arrive via mailbox. Optionally filter by task-path prefix. Returns agent_name (canonical path), agent_status, and last_task_message. Empty mailbox does not mean agents are gone while still listed as running.`
+	return `List live agents only (pending_init / running; includes /root). Interrupted, completed, errored, and shutdown agents are omitted — results arrive via mailbox. Optionally filter by task-path prefix. Returns agent_name (canonical path), agent_status, and last_task_message. Empty mailbox does not mean agents are gone while still listed as running.`
 }
 
 func (listAgents) Schema() json.RawMessage {

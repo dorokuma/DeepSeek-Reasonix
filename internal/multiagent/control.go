@@ -314,9 +314,9 @@ func (c *Control) List(currentPath, pathPrefix string) []ListedAgent {
 		st := r.rec.Status
 		last := r.rec.LastTaskMessage
 		r.rec.mu.Unlock()
-		// List is live-only: pending_init + running (+ interrupted mid-flight).
-		// Terminal results go to mailbox; records stay in registry for followup/interrupt.
-		if IsFinal(st) {
+		// List is live-only: pending_init + running. Interrupted/terminal omit.
+		// Registry still keeps records for followup/interrupt; results via mailbox.
+		if !IsListLive(st) {
 			continue
 		}
 		var lastMsg any
