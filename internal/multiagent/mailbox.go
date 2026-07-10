@@ -1,6 +1,7 @@
 package multiagent
 
 import (
+	"strings"
 	"sync"
 )
 
@@ -88,11 +89,19 @@ func (m *Mailbox) Subscribe() (ch <-chan Activity, pending *Activity, unsub func
 	return c, p, unsub
 }
 
-// HasPending reports whether mail is queued.
+// HasPending reports whether any mail is queued (session-wide).
 func (m *Mailbox) HasPending() bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return len(m.pending) > 0
+}
+
+// HasPendingFor reports whether mail is queued for a recipient path.
+// Empty recipient or RootPath matches RootPath and legacy empty To.
+func (m *Mailbox) HasPendingFor(recipient string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return len(filterPending(m.pending, recipient)) > 0
 }
 
 // HasTriggerTurn reports whether any mail wants an automatic turn.
@@ -107,12 +116,22 @@ func (m *Mailbox) HasTriggerTurn() bool {
 	return false
 }
 
-// Drain removes and returns all pending mail (Codex drain_mailbox_input_items).
+// Drain removes and returns all pending mail.
 func (m *Mailbox) Drain() []Mail {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	out := m.pending
 	m.pending = nil
+	return out
+}
+
+// DrainFor removes and returns mail addressed to recipient (Codex per-agent drain).
+// Other recipients stay queued so nested agents do not steal parent mail.
+func (m *Mailbox) DrainFor(recipient string) []Mail {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	keep, out := splitPending(m.pending, recipient)
+	m.pending = keep
 	return out
 }
 
@@ -123,4 +142,44 @@ func (m *Mailbox) Peek() []Mail {
 	out := make([]Mail, len(m.pending))
 	copy(out, m.pending)
 	return out
+}
+
+func normalizeRecipient(recipient string) string {
+	recipient = strings.TrimSpace(recipient)
+	if recipient == "" {
+		return RootPath
+	}
+	return strings.TrimSuffix(recipient, "/")
+}
+
+func mailMatchesRecipient(to, recipient string) bool {
+	recipient = normalizeRecipient(recipient)
+	to = strings.TrimSpace(to)
+	if to == "" {
+		// Legacy / root-bound completions without explicit To.
+		return recipient == RootPath
+	}
+	to = strings.TrimSuffix(to, "/")
+	return to == recipient
+}
+
+func filterPending(pending []Mail, recipient string) []Mail {
+	var out []Mail
+	for _, mail := range pending {
+		if mailMatchesRecipient(mail.To, recipient) {
+			out = append(out, mail)
+		}
+	}
+	return out
+}
+
+func splitPending(pending []Mail, recipient string) (keep, out []Mail) {
+	for _, mail := range pending {
+		if mailMatchesRecipient(mail.To, recipient) {
+			out = append(out, mail)
+		} else {
+			keep = append(keep, mail)
+		}
+	}
+	return keep, out
 }

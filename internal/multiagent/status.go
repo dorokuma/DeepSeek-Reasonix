@@ -2,7 +2,7 @@ package multiagent
 
 import "strings"
 
-// Status mirrors Codex AgentStatus for MultiAgent V2.
+// Status mirrors codex_protocol::protocol::AgentStatus.
 type Status string
 
 const (
@@ -11,12 +11,11 @@ const (
 	StatusInterrupted Status = "interrupted"
 	StatusShutdown    Status = "shutdown"
 	StatusNotFound    Status = "not_found"
-	// StatusCompleted and StatusErrored are final; payload is in Agent.LastAnswer / LastError.
-	StatusCompleted Status = "completed"
-	StatusErrored   Status = "errored"
+	StatusCompleted   Status = "completed"
+	StatusErrored     Status = "errored"
 )
 
-// IsFinal reports whether status is terminal (Codex is_final).
+// IsFinal matches Codex is_final.
 func IsFinal(s Status) bool {
 	switch s {
 	case StatusPendingInit, StatusRunning, StatusInterrupted:
@@ -26,19 +25,28 @@ func IsFinal(s Status) bool {
 	}
 }
 
-// StatusJSON is the list/interrupt previous_status shape (Codex oneOf simplified).
+// StatusJSON matches Codex list agent_status oneOf (string enum or completed/errored object).
 func StatusJSON(s Status, completedMsg, errMsg string) any {
 	switch s {
 	case StatusCompleted:
-		return map[string]any{"completed": completedMsg}
+		var msg any
+		if strings.TrimSpace(completedMsg) == "" {
+			msg = nil
+		} else {
+			msg = completedMsg
+		}
+		return map[string]any{"completed": msg}
 	case StatusErrored:
+		if errMsg == "" {
+			errMsg = "error"
+		}
 		return map[string]any{"errored": errMsg}
 	default:
 		return string(s)
 	}
 }
 
-// NormalizePathSegment keeps task_name segments Codex-like: lowercase, digits, underscore.
+// NormalizePathSegment keeps task_name segments Codex-like.
 func NormalizePathSegment(s string) string {
 	s = strings.TrimSpace(strings.ToLower(s))
 	var b strings.Builder
@@ -57,14 +65,15 @@ func NormalizePathSegment(s string) string {
 	return out
 }
 
-// JoinPath builds canonical path: parent + "/" + segment. Root is "/root".
+const RootPath = "/root"
+
+// JoinPath builds canonical path: parent + "/" + segment.
 func JoinPath(parent, segment string) string {
 	parent = strings.TrimSuffix(strings.TrimSpace(parent), "/")
 	if parent == "" {
-		parent = "/root"
+		parent = RootPath
 	}
-	segment = NormalizePathSegment(segment)
-	return parent + "/" + segment
+	return parent + "/" + NormalizePathSegment(segment)
 }
 
 // ParentPath returns parent of a canonical path, or "".
@@ -84,4 +93,20 @@ func LeafName(path string) string {
 		return path[i+1:]
 	}
 	return path
+}
+
+// ResolveRelative resolves a path_prefix relative to current agent path (Codex AgentPath::resolve).
+func ResolveRelative(current, prefix string) string {
+	prefix = strings.TrimSpace(prefix)
+	if prefix == "" {
+		return ""
+	}
+	if strings.HasPrefix(prefix, "/") {
+		return strings.TrimSuffix(prefix, "/")
+	}
+	cur := strings.TrimSpace(current)
+	if cur == "" {
+		cur = RootPath
+	}
+	return JoinPath(cur, prefix)
 }

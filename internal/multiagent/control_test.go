@@ -2,6 +2,7 @@ package multiagent
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
@@ -15,13 +16,56 @@ func (f fakeRunner) Run(ctx context.Context, path, message string, depth int) (s
 	if f.fn != nil {
 		return f.fn(ctx, path, message, depth)
 	}
-	return "ok:" + message, nil
+	return "ok", nil
+}
+
+func TestListShowsRunningAgents(t *testing.T) {
+	c := NewControl()
+	c.SetRunner(fakeRunner{fn: func(ctx context.Context, path, message string, depth int) (string, error) {
+		time.Sleep(200 * time.Millisecond)
+		return "done", nil
+	}})
+	for _, name := range []string{"a", "b", "c"} {
+		if _, _, err := c.Spawn(context.Background(), RootPath, name, "prompt-"+name+" "+strings.Repeat("x", 100), 0); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// While running, list must include root + 3 children with running status.
+	list := c.List(RootPath, "")
+	if len(list) < 4 {
+		t.Fatalf("want root+3 agents, got %d: %+v", len(list), list)
+	}
+	// Encode like the tool does; ensure status fields present and not wiped by long messages.
+	b, err := json.Marshal(map[string]any{"agents": list})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(b)
+	if !strings.Contains(s, `"agent_status":"running"`) {
+		t.Fatalf("expected running status in list JSON:\n%s", s)
+	}
+	if !strings.Contains(s, `"/root/a"`) && !strings.Contains(s, `/root/a`) {
+		t.Fatalf("expected canonical path agent_name:\n%s", s)
+	}
+	// last_task_message capped
+	for _, a := range list {
+		if a.AgentName == RootPath {
+			continue
+		}
+		if msg, ok := a.LastTaskMessage.(string); ok && len([]rune(msg)) > lastTaskListCap+5 {
+			t.Fatalf("last_task_message not capped: %d", len([]rune(msg)))
+		}
+	}
+	// Mailbox empty while running
+	if c.Mailbox().HasPending() {
+		t.Fatal("mailbox should be empty while agents still running")
+	}
 }
 
 func TestSpawnWaitMailbox(t *testing.T) {
 	c := NewControl()
 	c.SetRunner(fakeRunner{fn: func(ctx context.Context, path, message string, depth int) (string, error) {
-		time.Sleep(50 * time.Millisecond)
+		time.Sleep(40 * time.Millisecond)
 		return "done-answer", nil
 	}})
 	path, nick, err := c.Spawn(context.Background(), RootPath, "explore", "find X", 0)
@@ -47,8 +91,7 @@ func TestWaitSteer(t *testing.T) {
 		<-ctx.Done()
 		return "", ctx.Err()
 	}})
-	_, _, err := c.Spawn(context.Background(), RootPath, "slow", "long", 0)
-	if err != nil {
+	if _, _, err := c.Spawn(context.Background(), RootPath, "slow", "long", 0); err != nil {
 		t.Fatal(err)
 	}
 	go func() {
@@ -64,20 +107,81 @@ func TestWaitSteer(t *testing.T) {
 func TestListAndInterrupt(t *testing.T) {
 	c := NewControl()
 	c.SetRunner(fakeRunner{fn: func(ctx context.Context, path, message string, depth int) (string, error) {
-		time.Sleep(200 * time.Millisecond)
+		time.Sleep(300 * time.Millisecond)
 		return "x", nil
 	}})
 	path, _, err := c.Spawn(context.Background(), RootPath, "job", "m", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
-	list := c.List("")
-	if len(list) != 1 {
+	list := c.List(RootPath, "")
+	if len(list) < 2 {
 		t.Fatalf("list %d", len(list))
 	}
-	prev, err := c.Interrupt(path)
-	if err != nil {
+	if _, err := c.Interrupt(path); err != nil {
 		t.Fatal(err)
 	}
-	_ = prev
+}
+
+func TestMailboxDrainForRecipient(t *testing.T) {
+	c := NewControl()
+	c.SetRunner(fakeRunner{fn: func(ctx context.Context, path, message string, depth int) (string, error) {
+		time.Sleep(30 * time.Millisecond)
+		return "ans", nil
+	}})
+	if _, _, err := c.Spawn(context.Background(), RootPath, "child", "do it", 0); err != nil {
+		t.Fatal(err)
+	}
+	// Parent wait until completion mail lands.
+	if msg, timed := c.Wait(context.Background(), 3000); timed || msg != "Wait completed." {
+		t.Fatalf("wait %q timed=%v", msg, timed)
+	}
+	// Mail for /root only — DrainFor root gets it; other path empty.
+	if !c.Mailbox().HasPendingFor(RootPath) {
+		t.Fatal("expected pending for root")
+	}
+	if c.Mailbox().HasPendingFor("/root/other") {
+		t.Fatal("other path should not see root mail")
+	}
+	mails := c.Mailbox().DrainFor(RootPath)
+	if len(mails) != 1 {
+		t.Fatalf("want 1 mail, got %#v", mails)
+	}
+	if c.Mailbox().HasPending() {
+		t.Fatal("mailbox should be empty after DrainFor")
+	}
+}
+
+func TestNestedSpawnPath(t *testing.T) {
+	c := NewControl()
+	c.SetRunner(fakeRunner{fn: func(ctx context.Context, path, message string, depth int) (string, error) {
+		// Nested spawn from child path.
+		if depth == 1 {
+			_, _, err := c.Spawn(ctx, path, "nested", "inner", depth)
+			if err != nil {
+				return "", err
+			}
+			time.Sleep(50 * time.Millisecond)
+		} else {
+			time.Sleep(20 * time.Millisecond)
+		}
+		return "ok-" + path, nil
+	}})
+	if _, _, err := c.Spawn(context.Background(), RootPath, "outer", "work", 0); err != nil {
+		t.Fatal(err)
+	}
+	// Give nested spawn a moment to register.
+	time.Sleep(80 * time.Millisecond)
+	list := c.List(RootPath, "")
+	var names []string
+	for _, a := range list {
+		names = append(names, a.AgentName)
+	}
+	joined := strings.Join(names, ",")
+	if !strings.Contains(joined, "/root/outer") {
+		t.Fatalf("missing outer: %v", names)
+	}
+	if !strings.Contains(joined, "/root/outer/nested") {
+		t.Fatalf("missing nested path: %v", names)
+	}
 }

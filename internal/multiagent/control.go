@@ -3,86 +3,106 @@ package multiagent
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 )
 
-// Default wait timeouts (Codex MultiAgentV2Config defaults-ish).
+// Codex MultiAgentV2Config-ish defaults.
 const (
-	DefaultWaitTimeoutMs = 600_000 // 10m
+	DefaultWaitTimeoutMs = 600_000
 	MinWaitTimeoutMs     = 1_000
 	MaxWaitTimeoutMs     = 3_600_000
 	DefaultMaxConcurrent = 6
 	DefaultMaxDepth      = 3
-	RootPath             = "/root"
+	// lastTaskListCap matches practical list readability; full text stays on the record
+	// for debugging via LastTaskMessageRaw if needed — list returns capped copy like
+	// a UI summary. Codex stores last_task_message for the instruction text; long
+	// prompts are rare there. Cap prevents reasonix 32KiB tool truncation from
+	// wiping agent_status entries (host constraint, not a new list schema).
+	lastTaskListCap = 240
 )
 
-// Runner runs a spawned agent to completion (implemented outside this package).
+// Runner runs a spawned agent to completion (Codex child thread).
 type Runner interface {
-	// Run executes the child agent. path is canonical task path; message is the prompt.
-	// depth is NestingDepth for the child (1 = first spawn from root).
 	Run(ctx context.Context, path, message string, depth int) (answer string, err error)
 }
 
-// AgentRec is one live or retained agent thread record.
-type AgentRec struct {
-	Path         string
-	Nickname     string
-	Status       Status
-	LastAnswer   string
-	LastError    string
-	LastTaskMsg  string
-	Depth        int
-	cancel       context.CancelFunc
-	mu           sync.Mutex
+// Metadata is one live agent record (Codex AgentMetadata + live status).
+type Metadata struct {
+	Path            string
+	Nickname        string
+	Role            string
+	LastTaskMessage string
+	Status          Status
+	LastAnswer      string
+	LastError       string
+	Depth           int
+	StartedAt       time.Time
+	cancel          context.CancelFunc
+	mu              sync.Mutex
 }
 
-// Control is the MultiAgent V2 control plane for one root session.
+// Control is session-scoped AgentControl (one per root thread tree).
+// Shared by root and all ThreadSpawn children via context.
 type Control struct {
 	mu            sync.Mutex
-	agents        map[string]*AgentRec // key = full path
-	byLeaf        map[string]string    // leaf -> full path (last wins)
+	agents        map[string]*Metadata // path -> metadata (live tree)
+	byLeaf        map[string]string
 	mailbox       *Mailbox
 	runner        Runner
 	maxConcurrent int
 	maxDepth      int
-	// OnTriggerTurn is invoked when mail with TriggerTurn arrives and something
-	// should wake the parent (followup_task). Completion uses TriggerTurn=false.
+	rootStatus    Status
 	OnTriggerTurn func()
-	// OnCompletion is optional host hook after a child finishes (for auto-reentry
-	// of parent when idle). Codex completion is mailbox-only; reasonix may set this.
-	OnCompletion func()
-	runningCount atomic.Int32
+	OnCompletion  func()
+	runningCount  atomic.Int32
 }
 
-// NewControl builds a session multi-agent controller.
+// NewControl builds a root-session multi-agent controller (at most one per session).
 func NewControl() *Control {
 	return &Control{
-		agents:        make(map[string]*AgentRec),
+		agents:        make(map[string]*Metadata),
 		byLeaf:        make(map[string]string),
 		mailbox:       NewMailbox(),
 		maxConcurrent: DefaultMaxConcurrent,
 		maxDepth:      DefaultMaxDepth,
+		rootStatus:    StatusRunning,
 	}
 }
 
 func (c *Control) SetRunner(r Runner) { c.runner = r }
 
-func (c *Control) Mailbox() *Mailbox { return c.mailbox }
-
-// NotifySteer signals wait_agent that the user interrupted (Codex Steer).
-func (c *Control) NotifySteer() {
+func (c *Control) Mailbox() *Mailbox {
 	if c == nil {
+		return nil
+	}
+	return c.mailbox
+}
+
+// NotifySteer signals wait_agent (Codex InputQueueActivity::Steer).
+func (c *Control) NotifySteer() {
+	if c == nil || c.mailbox == nil {
 		return
 	}
 	c.mailbox.NotifySteer()
 }
 
-// Spawn starts a background agent (Codex spawn_agent). Returns task_name JSON fields.
+// SetRootStatus updates the synthetic root list entry status.
+func (c *Control) SetRootStatus(s Status) {
+	if c == nil {
+		return
+	}
+	c.mu.Lock()
+	c.rootStatus = s
+	c.mu.Unlock()
+}
+
+// Spawn starts a background agent (Codex spawn_agent).
 func (c *Control) Spawn(ctx context.Context, parentPath, taskName, message string, parentDepth int) (taskPath, nickname string, err error) {
-	if c.runner == nil {
+	if c == nil || c.runner == nil {
 		return "", "", fmt.Errorf("multi-agent runner not configured")
 	}
 	message = strings.TrimSpace(message)
@@ -101,70 +121,87 @@ func (c *Control) Spawn(ctx context.Context, parentPath, taskName, message strin
 		return "", "", fmt.Errorf("too many concurrent agents (max %d)", c.maxConcurrent)
 	}
 
-	path := JoinPath(parentPath, taskName)
-	// Unique path if collision
 	c.mu.Lock()
+	path := JoinPath(parentPath, taskName)
 	if _, exists := c.agents[path]; exists {
-		path = JoinPath(parentPath, fmt.Sprintf("%s_%d", taskName, time.Now().Unix()%10000))
+		path = JoinPath(parentPath, fmt.Sprintf("%s_%d", taskName, time.Now().UnixNano()%100000))
 	}
 	nick := LeafName(path)
-	rec := &AgentRec{
-		Path:        path,
-		Nickname:    nick,
-		Status:      StatusPendingInit,
-		LastTaskMsg: message,
-		Depth:       childDepth,
+	// nickname uniqueness (Codex used_agent_nicknames)
+	base := nick
+	for n := 2; c.leafTaken(nick); n++ {
+		nick = fmt.Sprintf("%s_%d", base, n)
+	}
+	rec := &Metadata{
+		Path:            path,
+		Nickname:        nick,
+		Role:            "task",
+		LastTaskMessage: message,
+		Status:          StatusPendingInit,
+		Depth:           childDepth,
+		StartedAt:       time.Now(),
 	}
 	c.agents[path] = rec
 	c.byLeaf[nick] = path
 	c.mu.Unlock()
 
-	runCtx, cancel := context.WithCancel(context.Background())
+	// Preserve spawn-call values (agent, options, store) without inheriting cancel;
+	// child lifetime is its own cancel (Codex independent child thread).
+	runBase := context.WithoutCancel(ctx)
+	runCtx, cancel := context.WithCancel(runBase)
 	rec.mu.Lock()
 	rec.cancel = cancel
-	rec.Status = StatusRunning
+	rec.Status = StatusRunning // Codex TurnStarted → Running
 	rec.mu.Unlock()
 	c.runningCount.Add(1)
 
-	go func() {
-		defer c.runningCount.Add(-1)
-		answer, runErr := c.runner.Run(runCtx, path, message, childDepth)
-		rec.mu.Lock()
-		if runCtx.Err() != nil {
-			rec.Status = StatusInterrupted
-			rec.LastError = "interrupted"
-		} else if runErr != nil {
-			rec.Status = StatusErrored
-			rec.LastError = runErr.Error()
-			rec.LastAnswer = strings.TrimSpace(answer)
-		} else {
-			rec.Status = StatusCompleted
-			rec.LastAnswer = strings.TrimSpace(answer)
-		}
-		status := rec.Status
-		lastAns := rec.LastAnswer
-		lastErr := rec.LastError
-		rec.mu.Unlock()
-
-		// Forward completion to parent mailbox (Codex forward_child_completion_to_parent).
-		// trigger_turn=false — wait_agent or next turn drains mail (1:1 V2).
-		msg := formatCompletionMessage(path, status, lastAns, lastErr)
-		parent := ParentPath(path)
-		if parent == "" {
-			parent = RootPath
-		}
-		c.mailbox.Enqueue(Mail{
-			From:        path,
-			To:          parent,
-			Message:     msg,
-			TriggerTurn: false,
-		})
-		if c.OnCompletion != nil {
-			c.OnCompletion()
-		}
-	}()
+	go c.runAgent(runCtx, rec, path, message, childDepth)
 
 	return path, nick, nil
+}
+
+// runAgent executes one agent turn and publishes terminal status + parent mail.
+func (c *Control) runAgent(runCtx context.Context, rec *Metadata, path, message string, depth int) {
+	defer c.runningCount.Add(-1)
+	answer, runErr := c.runner.Run(runCtx, path, message, depth)
+	rec.mu.Lock()
+	switch {
+	case runCtx.Err() != nil:
+		rec.Status = StatusInterrupted
+		rec.LastError = "interrupted"
+	case runErr != nil:
+		rec.Status = StatusErrored
+		rec.LastError = runErr.Error()
+		rec.LastAnswer = strings.TrimSpace(answer)
+	default:
+		rec.Status = StatusCompleted
+		rec.LastAnswer = strings.TrimSpace(answer)
+		rec.LastError = ""
+	}
+	status := rec.Status
+	lastAns := rec.LastAnswer
+	lastErr := rec.LastError
+	rec.mu.Unlock()
+
+	// Codex: forward completion to parent mailbox (trigger_turn=false).
+	parent := ParentPath(path)
+	if parent == "" {
+		parent = RootPath
+	}
+	c.mailbox.Enqueue(Mail{
+		From:        path,
+		To:          parent,
+		Message:     formatCompletionMessage(path, status, lastAns, lastErr),
+		TriggerTurn: false,
+	})
+	if c.OnCompletion != nil {
+		c.OnCompletion()
+	}
+}
+
+func (c *Control) leafTaken(nick string) bool {
+	_, ok := c.byLeaf[nick]
+	return ok
 }
 
 func formatCompletionMessage(path string, status Status, answer, errMsg string) string {
@@ -184,7 +221,7 @@ func formatCompletionMessage(path string, status Status, answer, errMsg string) 
 	}
 }
 
-// ResolveTarget maps target string to full path (relative leaf or canonical).
+// ResolveTarget maps target string to full path (leaf or canonical).
 func (c *Control) ResolveTarget(target string) (string, error) {
 	target = strings.TrimSpace(target)
 	if target == "" {
@@ -195,30 +232,33 @@ func (c *Control) ResolveTarget(target string) (string, error) {
 	if rec, ok := c.agents[target]; ok {
 		return rec.Path, nil
 	}
-	// try as /root/... path prefix
 	if strings.HasPrefix(target, "/") {
-		if rec, ok := c.agents[target]; ok {
+		if rec, ok := c.agents[strings.TrimSuffix(target, "/")]; ok {
 			return rec.Path, nil
 		}
 		return "", fmt.Errorf("agent %q not found", target)
 	}
-	if full, ok := c.byLeaf[NormalizePathSegment(target)]; ok {
+	seg := NormalizePathSegment(target)
+	if full, ok := c.byLeaf[seg]; ok {
 		return full, nil
 	}
-	// suffix match
 	for path := range c.agents {
-		if LeafName(path) == NormalizePathSegment(target) || strings.HasSuffix(path, "/"+target) {
+		if LeafName(path) == seg || strings.HasSuffix(path, "/"+seg) {
 			return path, nil
 		}
 	}
 	return "", fmt.Errorf("agent %q not found", target)
 }
 
-// GetStatus returns status for path.
+// GetStatus returns live status for path.
 func (c *Control) GetStatus(path string) (Status, string, string) {
 	c.mu.Lock()
 	rec := c.agents[path]
+	root := c.rootStatus
 	c.mu.Unlock()
+	if path == RootPath || path == "" {
+		return root, "", ""
+	}
 	if rec == nil {
 		return StatusNotFound, "", ""
 	}
@@ -227,40 +267,84 @@ func (c *Control) GetStatus(path string) (Status, string, string) {
 	return rec.Status, rec.LastAnswer, rec.LastError
 }
 
-// ListedAgent is list_agents item.
+// ListedAgent matches Codex list_agents item schema.
 type ListedAgent struct {
-	AgentName        string `json:"agent_name"`
-	AgentStatus      any    `json:"agent_status"`
-	LastTaskMessage  string `json:"last_task_message"`
+	AgentName       string `json:"agent_name"`
+	AgentStatus     any    `json:"agent_status"`
+	LastTaskMessage any    `json:"last_task_message"` // string or null
 }
 
-// List returns live agents, optional path_prefix filter.
-func (c *Control) List(pathPrefix string) []ListedAgent {
+// List returns live agents like Codex list_agents (root + tree, sorted by path).
+func (c *Control) List(currentPath, pathPrefix string) []ListedAgent {
+	if c == nil {
+		return nil
+	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	prefix := strings.TrimSpace(pathPrefix)
-	var out []ListedAgent
+
+	resolved := ""
+	if strings.TrimSpace(pathPrefix) != "" {
+		resolved = ResolveRelative(currentPath, pathPrefix)
+	}
+
+	type row struct {
+		path string
+		rec  *Metadata
+	}
+	var rows []row
 	for path, rec := range c.agents {
-		if prefix != "" && !strings.HasPrefix(path, prefix) && path != prefix {
+		if resolved != "" && path != resolved && !strings.HasPrefix(path, resolved+"/") {
 			continue
 		}
-		rec.mu.Lock()
-		st := rec.Status
-		ans := rec.LastAnswer
-		errMsg := rec.LastError
-		last := rec.LastTaskMsg
-		rec.mu.Unlock()
-		name := path
-		if rec.Nickname != "" {
-			name = rec.Nickname
+		rows = append(rows, row{path: path, rec: rec})
+	}
+	sort.Slice(rows, func(i, j int) bool { return rows[i].path < rows[j].path })
+
+	out := make([]ListedAgent, 0, len(rows)+1)
+	// Codex always can include root when prefix matches.
+	if resolved == "" || resolved == RootPath {
+		out = append(out, ListedAgent{
+			AgentName:       RootPath,
+			AgentStatus:     StatusJSON(c.rootStatus, "", ""),
+			LastTaskMessage: "Current user session", // ROOT_LAST_TASK_MESSAGE-ish
+		})
+	}
+	for _, r := range rows {
+		r.rec.mu.Lock()
+		st := r.rec.Status
+		ans := r.rec.LastAnswer
+		errMsg := r.rec.LastError
+		last := r.rec.LastTaskMessage
+		r.rec.mu.Unlock()
+		// Codex agent_name is canonical path when available.
+		var lastMsg any
+		if last == "" {
+			lastMsg = nil
+		} else {
+			lastMsg = capRunes(last, lastTaskListCap)
+		}
+		// For completed, keep status object short in list (answer lives in mailbox).
+		if st == StatusCompleted {
+			ans = capRunes(ans, lastTaskListCap)
 		}
 		out = append(out, ListedAgent{
-			AgentName:       name,
+			AgentName:       r.path,
 			AgentStatus:     StatusJSON(st, ans, errMsg),
-			LastTaskMessage: last,
+			LastTaskMessage: lastMsg,
 		})
 	}
 	return out
+}
+
+func capRunes(s string, max int) string {
+	if max <= 0 {
+		return s
+	}
+	r := []rune(s)
+	if len(r) <= max {
+		return s
+	}
+	return string(r[:max]) + "…"
 }
 
 // Interrupt cancels a running agent (Codex interrupt_agent).
@@ -290,8 +374,7 @@ func (c *Control) Interrupt(target string) (previous any, err error) {
 	return prev, nil
 }
 
-// SendMessage queues a message to a child (Codex send_message / followup_task).
-// triggerTurn=true starts follow-up work on idle children.
+// SendMessage queues instruction (Codex send_message / followup_task).
 func (c *Control) SendMessage(fromPath, target, message string, triggerTurn bool) error {
 	message = strings.TrimSpace(message)
 	if message == "" {
@@ -311,11 +394,11 @@ func (c *Control) SendMessage(fromPath, target, message string, triggerTurn bool
 		return fmt.Errorf("agent %q not found", target)
 	}
 	rec.mu.Lock()
-	rec.LastTaskMsg = message
+	rec.LastTaskMessage = message
 	st := rec.Status
+	depth := rec.Depth
 	rec.mu.Unlock()
 
-	// Always record as mail for observability.
 	c.mailbox.Enqueue(Mail{
 		From:        fromPath,
 		To:          path,
@@ -326,14 +409,13 @@ func (c *Control) SendMessage(fromPath, target, message string, triggerTurn bool
 		c.OnTriggerTurn()
 	}
 
-	// If completed/errored and followup, re-spawn follow-up run on same path.
-	if triggerTurn && (st == StatusCompleted || st == StatusErrored || st == StatusInterrupted) {
+	// followup on idle/terminal: start a new Run (Codex followup triggers turn).
+	if triggerTurn && (st == StatusCompleted || st == StatusErrored || st == StatusInterrupted || st == StatusShutdown) {
 		if c.runner == nil {
 			return nil
 		}
-		childDepth := rec.Depth
-		if childDepth < 1 {
-			childDepth = 1
+		if depth < 1 {
+			depth = 1
 		}
 		runCtx, cancel := context.WithCancel(context.Background())
 		rec.mu.Lock()
@@ -341,46 +423,16 @@ func (c *Control) SendMessage(fromPath, target, message string, triggerTurn bool
 		rec.Status = StatusRunning
 		rec.mu.Unlock()
 		c.runningCount.Add(1)
-		go func() {
-			defer c.runningCount.Add(-1)
-			answer, runErr := c.runner.Run(runCtx, path, message, childDepth)
-			rec.mu.Lock()
-			if runCtx.Err() != nil {
-				rec.Status = StatusInterrupted
-				rec.LastError = "interrupted"
-			} else if runErr != nil {
-				rec.Status = StatusErrored
-				rec.LastError = runErr.Error()
-				rec.LastAnswer = strings.TrimSpace(answer)
-			} else {
-				rec.Status = StatusCompleted
-				rec.LastAnswer = strings.TrimSpace(answer)
-			}
-			status := rec.Status
-			lastAns := rec.LastAnswer
-			lastErr := rec.LastError
-			rec.mu.Unlock()
-			parent := ParentPath(path)
-			if parent == "" {
-				parent = RootPath
-			}
-			c.mailbox.Enqueue(Mail{
-				From:        path,
-				To:          parent,
-				Message:     formatCompletionMessage(path, status, lastAns, lastErr),
-				TriggerTurn: false,
-			})
-			if c.OnCompletion != nil {
-				c.OnCompletion()
-			}
-		}()
+		go c.runAgent(runCtx, rec, path, message, depth)
 	}
-	_ = st
 	return nil
 }
 
 // Wait blocks until mailbox activity, steer, or timeout (Codex wait_agent v2).
 func (c *Control) Wait(ctx context.Context, timeoutMs int64) (message string, timedOut bool) {
+	if c == nil || c.mailbox == nil {
+		return "Wait timed out.", true
+	}
 	if timeoutMs <= 0 {
 		timeoutMs = DefaultWaitTimeoutMs
 	}
@@ -394,12 +446,10 @@ func (c *Control) Wait(ctx context.Context, timeoutMs int64) (message string, ti
 	ch, pending, unsub := c.mailbox.Subscribe()
 	defer unsub()
 	if pending != nil {
-		switch *pending {
-		case ActivitySteer:
+		if *pending == ActivitySteer {
 			return "Wait interrupted by new input.", false
-		default:
-			return "Wait completed.", false
 		}
+		return "Wait completed.", false
 	}
 
 	timer := time.NewTimer(time.Duration(timeoutMs) * time.Millisecond)
@@ -413,7 +463,6 @@ func (c *Control) Wait(ctx context.Context, timeoutMs int64) (message string, ti
 		}
 		return "Wait completed.", false
 	case <-timer.C:
-		// re-check pending mail that raced
 		if c.mailbox.HasPending() {
 			return "Wait completed.", false
 		}
@@ -421,7 +470,7 @@ func (c *Control) Wait(ctx context.Context, timeoutMs int64) (message string, ti
 	}
 }
 
-// FormatMailsForSession renders drained mails as a single user-visible block.
+// FormatMailsForSession renders drained mails for the parent model.
 func FormatMailsForSession(mails []Mail) string {
 	if len(mails) == 0 {
 		return ""
@@ -436,4 +485,14 @@ func FormatMailsForSession(mails []Mail) string {
 	}
 	b.WriteString("\n[/multi_agent_mailbox]")
 	return b.String()
+}
+
+// LiveCount returns non-root agents still tracked.
+func (c *Control) LiveCount() int {
+	if c == nil {
+		return 0
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return len(c.agents)
 }

@@ -553,7 +553,7 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	}
 
 	// Skill tools: run_skill (invoke only) + install_skill. No read_skill.
-	// Background sub-agents use the task tool only.
+	// Background sub-agents: Codex MultiAgent V2 (spawn_agent family).
 	reg.Add(skill.NewRunSkillTool(skillStore))
 	reg.Add(skill.NewInstallSkillTool(skillStore, nil))
 	reg.Add(installsource.NewTool(installsource.Options{

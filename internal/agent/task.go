@@ -9,6 +9,7 @@ import (
 	"reasonix/internal/ctxmode"
 	"reasonix/internal/event"
 	"reasonix/internal/hook"
+	"reasonix/internal/multiagent"
 	"reasonix/internal/provider"
 	"reasonix/internal/tool"
 )
@@ -209,7 +210,7 @@ func (t *TaskTool) runSub(ctx context.Context, prompt string, subReg *tool.Regis
 	if r, ok := t.hooks.(*hook.Runner); ok && r != nil {
 		subHooks = r.WithAgentLayer(hook.AgentLayerSubagent)
 	}
-	return RunSubAgent(ctx, prov, subReg, sysPrompt, prompt, Options{
+	opts := Options{
 		MaxSteps:          maxSteps,
 		Temperature:       t.temperature,
 		Pricing:           pricing,
@@ -221,7 +222,15 @@ func (t *TaskTool) runSub(ctx context.Context, prompt string, subReg *tool.Regis
 		CompactForceRatio: t.compactForceRatio,
 		ArchiveDir:        t.archiveDir,
 		CtxStore:          shared,
-	}, sink)
+	}
+	// Codex: children share the session MultiAgent control + own agent path.
+	if c, ok := multiagent.FromContext(ctx); ok {
+		opts.MultiAgent = c
+	}
+	if p := multiagent.AgentPathFrom(ctx); p != "" {
+		opts.AgentPath = p
+	}
+	return RunSubAgent(ctx, prov, subReg, sysPrompt, prompt, opts, sink)
 }
 
 // RunSubAgent runs prompt to completion in a fresh sub-agent session over reg,

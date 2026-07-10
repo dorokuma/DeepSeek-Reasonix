@@ -9,7 +9,7 @@ import (
 	"reasonix/internal/tool"
 )
 
-// RegisterTools adds Codex MultiAgent V2 tools to reg.
+// RegisterTools adds Codex MultiAgent V2 tools.
 func RegisterTools(reg *tool.Registry) {
 	if reg == nil {
 		return
@@ -34,19 +34,19 @@ func ctrl(ctx context.Context) (*Control, error) {
 
 type spawnAgent struct{}
 
-func (spawnAgent) Name() string { return "spawn_agent" }
-func (spawnAgent) ReadOnly() bool { return false }
+func (spawnAgent) Name() string     { return "spawn_agent" }
+func (spawnAgent) ReadOnly() bool   { return false }
 func (spawnAgent) Concurrent() bool { return true }
 
 func (spawnAgent) Description() string {
-	// Codex V2 spawn_agent_tool_description_v2 (trimmed to essentials, same contract).
 	return `Spawns an agent to work on the specified task. If your current task is ` + "`/root/task1`" + ` and you spawn_agent with task_name "task_3" the agent will have canonical task name ` + "`/root/task1/task_3`" + `.
 You are then able to refer to this agent as ` + "`task_3`" + ` or ` + "`/root/task1/task_3`" + ` interchangeably.
 The spawned agent will have the same tools as you and the ability to spawn its own subagents.
 Only call this tool for a concrete, bounded subtask that can run independently alongside useful local work; otherwise continue locally.
-It will be able to send you and other running agents messages, and its final answer will be provided to you when it finishes (via mailbox / wait_agent).
+It will be able to send you and other running agents messages, and its final answer will be provided to you when it finishes (via mailbox; use wait_agent / list_agents).
 The new agent's canonical task name will be provided to it along with the message.
-Returns JSON: task_name (canonical path) and nickname.`
+Returns JSON: task_name (canonical path) and nickname.
+Use list_agents to see live agents and agent_status while they run (mailbox stays empty until completion).`
 }
 
 func (spawnAgent) Schema() json.RawMessage {
@@ -55,7 +55,7 @@ func (spawnAgent) Schema() json.RawMessage {
   "properties":{
     "task_name":{"type":"string","description":"Task name for the new agent. Use lowercase letters, digits, and underscores."},
     "message":{"type":"string","description":"Self-contained instruction for the sub-agent."},
-    "fork_turns":{"type":"string","description":"Context fork: none | all | N. Default all means host may pass summary; none = no parent context."}
+    "fork_turns":{"type":"string","description":"Context fork: none | all | N. Default all; none = no parent context."}
   },
   "required":["task_name","message"]
 }`)
@@ -74,10 +74,8 @@ func (spawnAgent) Execute(ctx context.Context, args json.RawMessage) (string, er
 	if err := json.Unmarshal(args, &p); err != nil {
 		return "", fmt.Errorf("invalid args: %w", err)
 	}
-	// fork_turns reserved for parity; child always gets self-contained message (Codex none-like default for reliability).
 	_ = p.ForkTurns
 	parent := AgentPathFrom(ctx)
-	// Parent depth from path segments under /root (/root => 0, /root/a => 1).
 	depth := 0
 	if parent != RootPath && parent != "" {
 		depth = strings.Count(strings.TrimPrefix(parent, RootPath+"/"), "/") + 1
@@ -97,13 +95,12 @@ func (spawnAgent) Execute(ctx context.Context, args json.RawMessage) (string, er
 
 type waitAgent struct{}
 
-func (waitAgent) Name() string  { return "wait_agent" }
-func (waitAgent) ReadOnly() bool { return true }
+func (waitAgent) Name() string     { return "wait_agent" }
+func (waitAgent) ReadOnly() bool   { return true }
 func (waitAgent) Concurrent() bool { return false }
 
 func (waitAgent) Description() string {
-	// Codex create_wait_agent_tool_v2 description
-	return `Wait for a mailbox update from any live agent, including queued messages and final-status notifications. The wait also ends early when new user input is steered into the active turn. Does not return the content; returns either a summary of which agents have updates (if any), an interruption summary for steered input, or a timeout summary if no activity arrives before the deadline.`
+	return `Wait for a mailbox update from any live agent, including queued messages and final-status notifications. The wait also ends early when new user input is steered into the active turn. Does not return the content; returns either a summary of which agents have updates (if any), an interruption summary for steered input, or a timeout summary if no activity arrives before the deadline. While agents are still running, mailbox may be empty — use list_agents for live agent_status.`
 }
 
 func (waitAgent) Schema() json.RawMessage {
@@ -142,12 +139,12 @@ func (waitAgent) Execute(ctx context.Context, args json.RawMessage) (string, err
 
 type listAgents struct{}
 
-func (listAgents) Name() string  { return "list_agents" }
-func (listAgents) ReadOnly() bool { return true }
+func (listAgents) Name() string     { return "list_agents" }
+func (listAgents) ReadOnly() bool   { return true }
 func (listAgents) Concurrent() bool { return true }
 
 func (listAgents) Description() string {
-	return `List live agents in the current root thread tree. Optionally filter by task-path prefix.`
+	return `List live agents in the current root thread tree (includes /root and all spawned agents still tracked). Optionally filter by task-path prefix. Returns agent_name (canonical path), agent_status (pending_init|running|interrupted|shutdown|completed|errored), and last_task_message. Use this for live status while agents run — do not use an empty mailbox as proof that agents are gone.`
 }
 
 func (listAgents) Schema() json.RawMessage {
@@ -168,11 +165,15 @@ func (listAgents) Execute(ctx context.Context, args json.RawMessage) (string, er
 		PathPrefix string `json:"path_prefix"`
 	}
 	_ = json.Unmarshal(args, &p)
-	agents := c.List(p.PathPrefix)
+	agents := c.List(AgentPathFrom(ctx), p.PathPrefix)
 	if agents == nil {
 		agents = []ListedAgent{}
 	}
-	out, _ := json.Marshal(map[string]any{"agents": agents})
+	// Stable, schema-first JSON (status before long fields already in struct order).
+	out, err := json.Marshal(map[string]any{"agents": agents})
+	if err != nil {
+		return "", err
+	}
 	return string(out), nil
 }
 
@@ -180,8 +181,8 @@ func (listAgents) Execute(ctx context.Context, args json.RawMessage) (string, er
 
 type sendMessage struct{}
 
-func (sendMessage) Name() string  { return "send_message" }
-func (sendMessage) ReadOnly() bool { return false }
+func (sendMessage) Name() string     { return "send_message" }
+func (sendMessage) ReadOnly() bool   { return false }
 func (sendMessage) Concurrent() bool { return true }
 
 func (sendMessage) Description() string {
@@ -221,8 +222,8 @@ func (sendMessage) Execute(ctx context.Context, args json.RawMessage) (string, e
 
 type followupTask struct{}
 
-func (followupTask) Name() string  { return "followup_task" }
-func (followupTask) ReadOnly() bool { return false }
+func (followupTask) Name() string     { return "followup_task" }
+func (followupTask) ReadOnly() bool   { return false }
 func (followupTask) Concurrent() bool { return true }
 
 func (followupTask) Description() string {
@@ -262,8 +263,8 @@ func (followupTask) Execute(ctx context.Context, args json.RawMessage) (string, 
 
 type interruptAgent struct{}
 
-func (interruptAgent) Name() string  { return "interrupt_agent" }
-func (interruptAgent) ReadOnly() bool { return false }
+func (interruptAgent) Name() string     { return "interrupt_agent" }
+func (interruptAgent) ReadOnly() bool   { return false }
 func (interruptAgent) Concurrent() bool { return true }
 
 func (interruptAgent) Description() string {

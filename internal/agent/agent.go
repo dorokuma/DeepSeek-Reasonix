@@ -306,6 +306,10 @@ type Agent struct {
 	// multiAgent is Codex MultiAgent V2 control (spawn_agent / wait_agent / ...).
 	multiAgent *multiagent.Control
 
+	// agentPath is this agent's canonical multi-agent path (Codex AgentPath).
+	// Root session is multiagent.RootPath; spawned children get e.g. /root/explore.
+	agentPath string
+
 	// ctrl, when non-nil, is the Controller bridge for auto-reentry and job
 	// metadata lookup. Set via Options.
 	ctrl ControllerBridge
@@ -597,6 +601,9 @@ type Options struct {
 	// MultiAgent is Codex MultiAgent V2 control for the session (nil disables).
 	MultiAgent *multiagent.Control
 
+	// AgentPath is this agent's canonical multi-agent path. Empty = /root.
+	AgentPath string
+
 	// Ctrl is the optional Controller bridge for auto-reentry and job metadata.
 	Ctrl ControllerBridge
 
@@ -678,6 +685,10 @@ func New(prov provider.Provider, tools *tool.Registry, session *Session, opts Op
 	if strings.TrimSpace(maxStepsKey) == "" {
 		maxStepsKey = "agent.max_steps"
 	}
+	agentPath := strings.TrimSpace(opts.AgentPath)
+	if agentPath == "" {
+		agentPath = multiagent.RootPath
+	}
 	return &Agent{
 		prov:                      prov,
 		tools:                     tools,
@@ -691,6 +702,7 @@ func New(prov provider.Provider, tools *tool.Registry, session *Session, opts Op
 		hooks:                     hooks,
 		jobs:                      opts.Jobs,
 		multiAgent:                opts.MultiAgent,
+		agentPath:                 agentPath,
 		ctrl:                      opts.Ctrl,
 		ctxStore:                  ctxStore,
 		sentFragments:             make(map[string]string),
@@ -724,7 +736,7 @@ func (a *Agent) Run(ctx context.Context, input string) error {
 	// [REASONIX_IMAGE:data:image/jpeg;base64,...]) and convert them to
 	// ContentPart objects so the model can "see" images directly.
 	wakeForBackground := input == "" && a.ctrl != nil && a.ctrl.PendingToolResult()
-	if input == "" && a.multiAgent != nil && a.multiAgent.Mailbox().HasPending() {
+	if input == "" && a.multiAgent != nil && a.multiAgent.Mailbox().HasPendingFor(a.agentPath) {
 		wakeForBackground = true
 	}
 	if input != "" || !wakeForBackground {
@@ -930,12 +942,16 @@ func (a *Agent) drainSteer() string {
 	}
 }
 
-// flushMultiAgentMailbox drains Codex-style inter-agent mail into the session as a user message.
+// flushMultiAgentMailbox drains Codex-style inter-agent mail addressed to this agent.
 func (a *Agent) flushMultiAgentMailbox() {
 	if a == nil || a.multiAgent == nil || a.session == nil {
 		return
 	}
-	mails := a.multiAgent.Mailbox().Drain()
+	path := a.agentPath
+	if path == "" {
+		path = multiagent.RootPath
+	}
+	mails := a.multiAgent.Mailbox().DrainFor(path)
 	if len(mails) == 0 {
 		return
 	}
@@ -1574,7 +1590,11 @@ func (a *Agent) executeOne(ctx context.Context, call provider.ToolCall) toolOutc
 	}
 	if a.multiAgent != nil {
 		cctx = multiagent.WithControl(cctx, a.multiAgent)
-		cctx = multiagent.WithAgentPath(cctx, multiagent.RootPath)
+		path := a.agentPath
+		if path == "" {
+			path = multiagent.RootPath
+		}
+		cctx = multiagent.WithAgentPath(cctx, path)
 	}
 	if a.ctrl != nil {
 		cctx = withCtrl(cctx, a.ctrl)
@@ -1938,7 +1958,7 @@ func parseDataURL(dataURL string) (mime, data string) {
 // background delivery that the main agent has not yet answered.
 // sessionHasUnreadTaskResult reports pending multiagent mailbox work for the parent model.
 func (a *Agent) sessionHasUnreadTaskResult() bool {
-	if a.multiAgent != nil && a.multiAgent.Mailbox().HasPending() {
+	if a.multiAgent != nil && a.multiAgent.Mailbox().HasPendingFor(a.agentPath) {
 		return true
 	}
 	if a.session == nil {
