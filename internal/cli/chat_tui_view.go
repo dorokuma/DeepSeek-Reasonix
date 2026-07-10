@@ -441,7 +441,7 @@ func (m chatTUI) renderApprovalBanner() string {
 			banner += "\n工具: " + name
 		}
 		if preview != "" {
-			banner += "\n" + preview
+			banner += "\n目的：" + preview
 		}
 		if detail != "" {
 			banner += "\n" + detail
