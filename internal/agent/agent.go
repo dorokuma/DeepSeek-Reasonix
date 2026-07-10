@@ -408,21 +408,6 @@ func (a *Agent) SetDiagnosticRequested(v bool) { a.diagnosticRequested.Store(v) 
 // DiagnosticRequested reports whether dynamic tools should be visible.
 func (a *Agent) DiagnosticRequested() bool { return a.diagnosticRequested.Load() }
 
-// FlushBackgroundJobResults delivers finished background job answers into the
-// session. The controller calls this from the jobs completion hook so results
-// survive auto-reentry depth limits and run-loop races.
-// FlushBackgroundJobResults is a no-op: sub-agent results use multiagent mailbox.
-func (a *Agent) FlushBackgroundJobResults() (jobID, output string, ok bool) {
-	return "", "", false
-}
-
-// AppendBackgroundTaskResultDelivery is kept as a thin alias for tests/callers
-// that still name the old envelope path; it now inserts the synthetic tool turn.
-// AppendBackgroundTaskResultDelivery is a no-op retained for call-site compatibility.
-func (a *Agent) AppendBackgroundTaskResultDelivery(jobID, output string) {
-	_, _ = jobID, output
-}
-
 // Session returns the agent's current conversation, useful for persistence
 // hooks that need to read the message log between turns. sessMu serialises this
 // pointer read against SetSession, so a frontend (serve's concurrent /history and
@@ -772,14 +757,10 @@ func (a *Agent) Run(ctx context.Context, input string) error {
 			a.session.Add(provider.Message{Role: provider.RoleUser, Content: "[Parent steer]: " + parentSteer})
 		}
 
-		// Background wake: drain finished auto-deliver jobs before streaming. Do not
-		// clear pendingToolResult until delivery catches up (see clearBackgroundWakeIfCaughtUp).
+		// Background wake: multiagent mailbox / pending flag only.
 		if wakeForBackground && step == 0 {
-			_, _, _ = a.deliverPendingJobResultsWithRetry(16, 25*time.Millisecond)
-			a.clearBackgroundWakeIfCaughtUp()
-			// Abort empty wakes: nothing undelivered and no unread delivery at tail
-			// (avoids a no-op model call after a spurious second auto-reentry).
-			if !a.hasUndeliveredAutoJobs() && !a.sessionHasUnreadTaskResult() {
+			// multiagent mailbox only (jobs no longer auto-deliver into session)
+			if !a.sessionHasUnreadTaskResult() {
 				if a.ctrl != nil {
 					a.ctrl.PendingToolResultCAS(true, false)
 				}
@@ -965,41 +946,7 @@ func (a *Agent) flushMultiAgentMailbox() {
 	a.session.Add(provider.Message{Role: provider.RoleUser, Content: body})
 }
 
-// deliverPendingJobResults writes finished background job answers into the session.
-
-// commitJobResult delivers a finished auto-deliver (task) job into the parent session.
-//
-// Architecture (single path — do not reintroduce mid-history rewrite):
-//
-//	spawn tool_call  →  tool result {status:started, job_id}   // FINAL for that call
-//	… later …
-//	user message <background-task-result job_id=…>…answer…</background-task-result>
-//	auto-reentry streams with the answer at conversation end
-//
-// Delivery is intentionally NOT a tool call: fake tool names in history train
-// models to invent calls (e.g. task_result). Bash jobs never enter here.
-// commitJobResult is a no-op (legacy task auto-deliver removed).
-func (a *Agent) commitJobResult(jobID, output string) bool {
-	_, _ = jobID, output
-	return false
-}
-
-
-func (a *Agent) deliverPendingJobResults() (jobID, output string, ok bool) {
-	return "", "", false
-}
-
-func (a *Agent) deliverPendingJobResultsWithRetry(attempts int, delay time.Duration) (jobID, output string, ok bool) {
-	_, _ = attempts, delay
-	return "", "", false
-}
-
-// drainNotify used to pull finished jobs mid-turn; that spliced delivery into
-// the middle of an active model loop. Delivery is now owned by:
-//   - Controller.handleJobCompletion when idle
-//   - flushDeferredDeliveries after a busy turn ends
-//   - background wake (input=="") at the start of Run
-// So mid-turn drain is intentionally a no-op.
+// drainNotify is a no-op (legacy mid-turn job drain removed).
 func (a *Agent) drainNotify() bool {
 	return false
 }
@@ -1985,46 +1932,6 @@ func parseDataURL(dataURL string) (mime, data string) {
 	mime = rest[:idx]
 	data = rest[idx+len(";base64,"):]
 	return
-}
-
-// CompleteBackgroundJob delivers a single completed auto-deliver job into the
-// session as a runtime observation message. Returns true when committed.
-// CompleteBackgroundJob is a no-op (legacy task auto-deliver removed).
-func (a *Agent) CompleteBackgroundJob(jobID string) bool {
-	_ = jobID
-	return false
-}
-
-// tryDeliverJobResult reads a job's output for auto-delivery without committing.
-func (a *Agent) tryDeliverJobResult(id string) (string, string, bool) {
-	_ = id
-	return "", "", false
-}
-
-// commitBackgroundJobResult commits a previously-read job result to the session.
-// Returns true when the result was committed.
-func (a *Agent) commitBackgroundJobResult(jobID, output string) bool {
-	_, _ = jobID, output
-	return false
-}
-
-// clearBackgroundWakeIfCaughtUp resets the pending-tool-result flag when no
-// auto-deliver jobs remain undelivered. Bash jobs may still sit in the map for peek.
-func (a *Agent) clearBackgroundWakeIfCaughtUp() {
-	if a.ctrl == nil {
-		return
-	}
-	if a.hasUndeliveredAutoJobs() {
-		return
-	}
-	a.ctrl.PendingToolResultCAS(true, false)
-}
-
-// hasUndeliveredAutoJobs reports finished task jobs still in the manager
-// (terminal, not yet RemoveJob'd). Running tasks do NOT count — otherwise a
-// second in-flight task would pin pendingToolResult and trigger empty wakes.
-func (a *Agent) hasUndeliveredAutoJobs() bool {
-	return false
 }
 
 // sessionHasUnreadTaskResult is true when the conversation tail is a runtime

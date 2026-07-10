@@ -1,11 +1,7 @@
 // Package jobs is the session-scoped background-job registry behind the agent's
 // background tools and peek-job / cancel-job / steer-job.
 //
-// Two product kinds share the registry but differ on completion:
-//
-//   - kind "task"  — legacy kind string (no auto-delivery; sub-agents use multiagent).
-//   - kind "bash"  — shell run_in_background. Output stays in the job buffer;
-//     the model/user reads it with peek-job. No auto session delivery.
+// Background shell jobs (bash run_in_background). Sub-agents use multiagent, not this package.
 //
 // A Manager owns a context whose lifetime is the session, NOT a single turn.
 package jobs
@@ -68,7 +64,7 @@ func UpdateJobActivity(ctx context.Context) {
 // take the same lock.
 type Job struct {
 	ID    string
-	Kind  string // "bash" | "task"
+	Kind  string // typically KindBash
 	Label string
 	// dispatchDigest is set by the task tool for duplicate-dispatch detection (prompt/label fingerprint).
 	dispatchDigest string
@@ -101,21 +97,11 @@ type Job struct {
 	sink        event.Sink
 }
 
-// KindTask is a legacy jobs kind string (no longer auto-delivers).
-const KindTask = "task"
-
 // KindBash is the shell background job kind (peek-based, no auto session delivery).
 const KindBash = "bash"
 
-// AutoDelivers reports whether a finished job of this kind should be written into
-// the parent session and trigger auto-reentry.
-func AutoDelivers(kind string) bool {
-	_ = kind
-	return false
-}
 
 // completedBashRetainSec is how long finished shell jobs stay peekable before GC.
-// Task jobs are removed immediately after session delivery.
 const completedBashRetainSec int64 = 30 * 60
 
 // maxRetainedCompletedBash caps finished shell jobs kept for peek (oldest dropped).
@@ -250,7 +236,7 @@ func (m *Manager) checkAndClean() bool {
 					j.cancel()
 				}
 			}
-		} else if j.completed && !AutoDelivers(j.Kind) {
+		} else if j.completed {
 			// Finished shell jobs: time-based GC + count cap (task jobs are removed on deliver).
 			when := j.finishedAt
 			if when <= 0 {
@@ -295,7 +281,7 @@ func (m *Manager) checkAndClean() bool {
 	retainedBash := 0
 	for _, j := range m.jobs {
 		j.mu.Lock()
-		if j.completed && !AutoDelivers(j.Kind) {
+		if j.completed {
 			retainedBash++
 		}
 		j.mu.Unlock()
@@ -421,11 +407,6 @@ func (m *Manager) Start(ctx context.Context, kind, label string, run func(ctx co
 		if st == Killed && strings.TrimSpace(result) == "" {
 			result = fmt.Sprintf("background %s %q was cancelled or killed before producing a result", kind, id)
 		}
-		// Task jobs need a non-empty payload so parent session delivery can commit.
-		// Bash jobs keep empty result — output lives in the stream buffer for peek-job.
-		if AutoDelivers(kind) && st == Done && strings.TrimSpace(result) == "" {
-			result = fmt.Sprintf("background %s %q finished with an empty answer", kind, id)
-		}
 
 		// Terminal results (including killed) go to resultCh before callbacks.
 		if st == Done || st == Failed || st == Killed {
@@ -473,7 +454,7 @@ func (m *Manager) Label(id string) (string, bool) {
 	return j.Label, true
 }
 
-// Kind returns a job's kind ("task", "bash", …). ok is false when id is unknown.
+// Kind returns a job's kind (e.g. KindBash). ok is false when id is unknown.
 func (m *Manager) Kind(id string) (string, bool) {
 	j := m.get(id)
 	if j == nil {
@@ -491,10 +472,7 @@ func finishedNotice(kind, id string, st Status, err error) (event.Level, string)
 	case Killed:
 		return event.LevelInfo, fmt.Sprintf("background %s killed: %s", kind, id)
 	default:
-		if AutoDelivers(kind) {
-			return event.LevelInfo, fmt.Sprintf("background %s finished: %s — result at conversation tail (Started card stays; ignore mid-history)", kind, id)
-		}
-		return event.LevelInfo, fmt.Sprintf("background %s finished: %s — use peek-job for output (not auto-delivered to chat)", kind, id)
+			return event.LevelInfo, fmt.Sprintf("background %s finished: %s — use peek-job for output (not auto-delivered to chat)", kind, id)
 	}
 }
 

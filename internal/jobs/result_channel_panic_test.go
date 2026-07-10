@@ -21,7 +21,7 @@ func TestConcurrentCompletionAndDrain(t *testing.T) {
 		n := n
 		go func() {
 			defer wg.Done()
-			j, err := m.Start(context.Background(), KindTask, "x", func(ctx context.Context, _ io.Writer) (string, error) {
+			j, err := m.Start(context.Background(), KindBash, "x", func(ctx context.Context, _ io.Writer) (string, error) {
 				time.Sleep(time.Duration(1+n%5) * time.Millisecond)
 				return "ok", nil
 			}, nil)

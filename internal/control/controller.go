@@ -154,11 +154,7 @@ type Controller struct {
 
 	pendingReentryQueue []string
 
-	// deferredDeliverIDs are auto-deliver task jobs that finished while a main
-	// turn was still running. Session write is deferred until the turn ends so
-	// results land at a clean conversation boundary (not mid-stream).
-	deferredDeliverIDs []string
-
+	
 	// reentryCapPending is set when auto-reentry hit the depth cap; after the
 	// current turn ends we retry wake instead of waiting forever for user input.
 	reentryCapPending bool
@@ -291,84 +287,8 @@ func New(opts Options) *Controller {
 		c.executor.SetMemoryQueue(c)
 		c.executor.SetControllerBridge(c)
 	}
-	if c.jobs != nil {
-		// Single completion path for the whole session: only auto-deliver kinds
-		// (legacy task kind no longer auto-delivers). Bash jobs only
-		// emit their Notice from jobs.Manager and stay peekable.
-		c.jobs.SetOnCompletion(c.handleJobCompletion)
-	}
+	// Jobs: bash peek-only; sub-agents use multiagent mailbox (no jobs session inject).
 	return c
-}
-
-// handleJobCompletion is the sole jobs → parent bridge. Wired via SetOnCompletion.
-func (c *Controller) handleJobCompletion(id string) {
-	if c.jobs == nil {
-		return
-	}
-	kind, ok := c.jobs.Kind(id)
-	if !ok || !jobs.AutoDelivers(kind) {
-		return
-	}
-	c.mu.Lock()
-	busy := c.running
-	if busy {
-		// Defer session injection until the main turn ends (clean tail, no mid-stream splice).
-		already := false
-		for _, existing := range c.deferredDeliverIDs {
-			if existing == id {
-				already = true
-				break
-			}
-		}
-		if !already {
-			c.deferredDeliverIDs = append(c.deferredDeliverIDs, id)
-		}
-		hasEmpty := false
-		for _, q := range c.pendingReentryQueue {
-			if q == "" {
-				hasEmpty = true
-				break
-			}
-		}
-		if !hasEmpty {
-			c.pendingReentryQueue = append(c.pendingReentryQueue, "")
-		}
-		c.mu.Unlock()
-		c.pendingToolResult.Store(true)
-		return
-	}
-	c.mu.Unlock()
-
-	committed := false
-	if c.executor != nil {
-		committed = c.executor.CompleteBackgroundJob(id)
-	}
-	if !committed {
-		slog.Warn("background job finished but result not committed to session", "job", id)
-	}
-	c.pendingToolResult.Store(true)
-	c.autoReenter()
-}
-
-// flushDeferredDeliveries commits task results that finished during a busy turn.
-// Call only when idle (after running=false).
-func (c *Controller) flushDeferredDeliveries() {
-	c.mu.Lock()
-	ids := c.deferredDeliverIDs
-	c.deferredDeliverIDs = nil
-	c.mu.Unlock()
-	if len(ids) == 0 {
-		return
-	}
-	for _, id := range ids {
-		if c.executor == nil {
-			break
-		}
-		if !c.executor.CompleteBackgroundJob(id) {
-			slog.Warn("deferred background job delivery failed", "job", id)
-		}
-	}
-	c.pendingToolResult.Store(true)
 }
 
 // ckptDir derives a session's checkpoint directory from its file path
@@ -443,8 +363,7 @@ func (c *Controller) runGuarded(input string, body func(ctx context.Context) err
 		c.mu.Unlock()
 		c.sink.Emit(event.Event{Kind: event.TurnDone, Err: explainError(err)})
 		// 1) commit deliveries deferred while we were busy
-		c.flushDeferredDeliveries()
-		// 2) run any queued reentry (including the empty wake for those deliveries)
+			// 2) run any queued reentry (including the empty wake for those deliveries)
 		c.drainReentryQueue()
 		// 3) if depth cap blocked a wake earlier, try again now that depth decremented
 		if retryAfterCap && c.pendingToolResult.Load() {
@@ -475,8 +394,7 @@ func (c *Controller) drainReentryQueue() {
 }
 
 // MakeOnComplete is a no-op. Completion is handled exclusively by SetOnCompletion
-// → handleJobCompletion. Kept so OnCompleteProvider still type-checks; callers
-// should pass nil to jobs.Manager.Start.
+// Jobs session inject removed; bash is peek-only.
 func (c *Controller) MakeOnComplete() func(jobID string) {
 	return nil
 }
@@ -526,16 +444,13 @@ func (c *Controller) autoReenter() {
 
 // RegisterJobMeta implements agent.ControllerBridge by storing the spawn tool-call
 // id for a background task (correlation / tool naming only). Delivery itself is
-// handleJobCompletion; beforeRun registers meta before the job goroutine starts,
-// so a late-completion race is rare. If it still happens, re-run the single path.
 func (c *Controller) RegisterJobMeta(jobID string, toolCallID string) {
 	c.taskResultsMu.Lock()
 	c.taskResults[jobID] = jobMeta{ToolCallID: toolCallID}
 	c.taskResultsMu.Unlock()
 	if c.jobs != nil {
 		if _, ok := c.jobs.CompletedResult(jobID); ok {
-			c.handleJobCompletion(jobID)
-		}
+				}
 	}
 }
 

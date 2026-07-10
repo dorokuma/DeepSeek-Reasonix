@@ -159,13 +159,8 @@ func (peekJob) Execute(ctx context.Context, params json.RawMessage) (string, err
 	}
 	if kind, kOK := jm.Kind(p.JobID); kOK {
 		out["kind"] = kind
-		if jobs.AutoDelivers(kind) {
-			out["delivery"] = "auto_observation"
-			out["note"] = "legacy kind; sub-agents use multiagent mailbox"
-		} else {
-			out["delivery"] = "peek_only"
-			out["note"] = "shell job: use new_output below"
-		}
+		out["delivery"] = "peek_only"
+			out["note"] = "shell job: use new_output below" 
 	}
 	if status.StartedAtMs > 0 {
 		out["started_at_ms"] = status.StartedAtMs
