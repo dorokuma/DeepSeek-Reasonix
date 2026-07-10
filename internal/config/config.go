@@ -65,6 +65,7 @@ type Config struct {
 	providerSources          map[string]providerSourceScope
 	shadowedProjectProviders []ProviderEntry
 	expansionEnv             map[string]string
+	pluginPackageOwners      map[string]string
 }
 
 // SecretsConfig controls the credential protection layers. It is a user-global

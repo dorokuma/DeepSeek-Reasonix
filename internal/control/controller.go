@@ -3889,28 +3889,28 @@ func (c *Controller) ConnectConfiguredMCPServer(name string) (int, error) {
 	return 0, fmt.Errorf("no configured MCP server named %q", name)
 }
 
-// RemoveMCPServer disconnects a live MCP server — its tools vanish from the next
-// turn — and removes it from the config file. It reports whether a live server was
-// disconnected; an error only when the name is neither connected nor in config (or
-// the config save fails). A server declared in .mcp.json disconnects for this
-// session but returns on the next start, since that file isn't ours to edit.
+// RemoveMCPServer removes a writable MCP configuration before disconnecting the
+// live server, so a persistence failure never produces a false-successful
+// session-only removal. MCPs contributed by an installed plugin package are
+// managed with that package and cannot be removed independently.
 func (c *Controller) RemoveMCPServer(name string) (disconnected bool, err error) {
-	disconnected = c.mcp.disconnect(name)
-	cfg, lerr := config.Load()
+	cfg, lerr := config.LoadForRoot(c.workspaceRoot)
 	if lerr != nil {
-		return disconnected, lerr
+		return false, lerr
 	}
-	inConfig := cfg.RemovePlugin(name)
-	if inConfig {
-		if !disconnected {
-			c.mcp.removeToolPrefix(name)
-		}
-		if serr := cfg.Save(); serr != nil {
-			return disconnected, serr
-		}
+	if owner, ok := cfg.PluginPackageOwner(name); ok {
+		return false, fmt.Errorf("MCP server %q is managed by plugin %q; disable or remove the plugin instead", name, owner)
 	}
-	if !disconnected && !inConfig {
-		return false, fmt.Errorf("no MCP server named %q", name)
+	removed, rerr := config.RemovePluginFromSourcesForRoot(c.workspaceRoot, name)
+	if rerr != nil {
+		return false, rerr
+	}
+	if !removed {
+		return false, fmt.Errorf("no removable MCP server named %q", name)
+	}
+	disconnected = c.mcp.disconnect(name)
+	if !disconnected {
+		c.mcp.removeToolPrefix(name)
 	}
 	return disconnected, nil
 }

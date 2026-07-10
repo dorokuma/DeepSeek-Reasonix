@@ -6854,6 +6854,104 @@ func TestRemoveMCPServerDeletesProjectMCPJSONEntry(t *testing.T) {
 	}
 }
 
+func TestRemoveMCPServerRejectsPluginManagedServerWithoutDisconnecting(t *testing.T) {
+	home := isolateDesktopUserDirs(t)
+	dir := robustTempDir(t)
+	t.Chdir(dir)
+
+	srv := desktopMCPHTTPServer(t)
+	defer srv.Close()
+	reasonixHome := filepath.Join(home, ".reasonix")
+	root := filepath.Join(reasonixHome, "plugins", "superpowers")
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, pluginpkg.NativeManifest), []byte(fmt.Sprintf(`{
+  "name": "superpowers",
+  "version": "1.0.0",
+  "mcpServers": {
+    "helper": { "type": "http", "url": %q }
+  }
+}`, srv.URL)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := pluginpkg.Upsert(reasonixHome, pluginpkg.InstalledPlugin{
+		Name:         "superpowers",
+		Root:         "plugins/superpowers",
+		Version:      "1.0.0",
+		ManifestKind: "reasonix",
+		Enabled:      true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := config.LoadForRoot(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry, ok := findPluginEntry(cfg.Plugins, "helper")
+	if !ok {
+		t.Fatalf("plugin-managed MCP missing from config: %+v", cfg.Plugins)
+	}
+	ctrl := control.New(control.Options{Host: plugin.NewHost()})
+	defer ctrl.Close()
+	if _, err := ctrl.ConnectMCPServer(entry); err != nil {
+		t.Fatalf("connect plugin-managed MCP: %v", err)
+	}
+
+	app := NewApp()
+	app.setTestCtrl(ctrl, "")
+	app.activeTab().WorkspaceRoot = dir
+	err = app.RemoveMCPServer("helper")
+	if err == nil || !strings.Contains(err.Error(), "managed by plugin") || !strings.Contains(err.Error(), "superpowers") {
+		t.Fatalf("RemoveMCPServer(plugin-managed) error = %v", err)
+	}
+	if !mcpConnected(ctrl, "helper") {
+		t.Fatal("plugin-managed MCP was disconnected despite rejected removal")
+	}
+	for action, actionErr := range map[string]error{
+		"trust tool": app.TrustMCPServerTool("helper", "echo"),
+		"clear auth": app.ClearMCPServerAuthentication("helper"),
+		"update":     app.UpdateMCPServer("helper", MCPServerInput{Name: "helper", Transport: "http", URL: srv.URL}),
+	} {
+		if actionErr == nil || !strings.Contains(actionErr.Error(), "managed by plugin") {
+			t.Fatalf("%s plugin-managed MCP error = %v", action, actionErr)
+		}
+	}
+	if _, found := findPluginEntry(config.LoadForEdit(config.UserConfigPath()).Plugins, "helper"); found {
+		t.Fatal("plugin-managed MCP mutation created a user-config shadow")
+	}
+	servers := app.MCPServers()
+	if len(servers) != 1 || servers[0].Name != "helper" || servers[0].ManagedByPlugin != "superpowers" {
+		t.Fatalf("MCPServers() = %+v, want helper managed by superpowers", servers)
+	}
+}
+
+func TestRemoveMCPServerRejectsRuntimeOnlyServerWithoutDisconnecting(t *testing.T) {
+	isolateDesktopUserDirs(t)
+	dir := robustTempDir(t)
+	t.Chdir(dir)
+
+	srv := desktopMCPHTTPServer(t)
+	defer srv.Close()
+	ctrl := control.New(control.Options{Host: plugin.NewHost()})
+	defer ctrl.Close()
+	if _, err := ctrl.ConnectMCPServer(config.PluginEntry{Name: "runtime-only", Type: "http", URL: srv.URL}); err != nil {
+		t.Fatalf("connect runtime-only MCP: %v", err)
+	}
+
+	app := NewApp()
+	app.setTestCtrl(ctrl, "")
+	app.activeTab().WorkspaceRoot = dir
+	err := app.RemoveMCPServer("runtime-only")
+	if err == nil || !strings.Contains(err.Error(), "no removable MCP server") {
+		t.Fatalf("RemoveMCPServer(runtime-only) error = %v", err)
+	}
+	if !mcpConnected(ctrl, "runtime-only") {
+		t.Fatal("runtime-only MCP was disconnected despite failed persistence removal")
+	}
+}
+
 func TestUpdateMCPServerEditsProjectMCPJSONEntry(t *testing.T) {
 	isolateDesktopUserDirs(t)
 	dir := robustTempDir(t)

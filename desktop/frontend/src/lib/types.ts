@@ -679,6 +679,7 @@ export interface ServerView {
   authStatus?: "none" | "possible" | "required" | string;
   authUrl?: string;
   authConfigured?: boolean;
+  managedByPlugin?: string;
 }
 export interface MCPToolView {
   name: string;

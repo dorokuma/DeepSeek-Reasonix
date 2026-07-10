@@ -285,6 +285,7 @@ export const zh: Record<DictKey, string> = {
   "caps.reauthorize": "重新授权",
   "caps.checkCommand": "检查命令",
   "caps.builtIn": "内置",
+  "caps.managedByPlugin": "由插件 {plugin} 管理",
   "caps.auth": "授权",
   "caps.authRequired": "需要授权",
   "caps.authRequiredSummary": "该 MCP 服务器需要完成授权后才能连接。",

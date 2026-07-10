@@ -200,6 +200,7 @@ export const zhTW: Record<DictKey, string> = {
   "caps.reauthorize": "重新授權",
   "caps.checkCommand": "檢查命令",
   "caps.builtIn": "內建",
+  "caps.managedByPlugin": "由外掛 {plugin} 管理",
   "caps.auth": "授權",
   "caps.authRequired": "需要授權",
   "caps.authRequiredSummary": "該 MCP 伺服器需要完成授權後才能連線。",

@@ -284,6 +284,7 @@ export const en = {
   "caps.reauthorize": "Reauthorize",
   "caps.checkCommand": "Check command",
   "caps.builtIn": "Built-in",
+  "caps.managedByPlugin": "Managed by plugin {plugin}",
   "caps.auth": "Auth",
   "caps.authRequired": "authorization required",
   "caps.authRequiredSummary": "This MCP server requires authorization before it can connect.",

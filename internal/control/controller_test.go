@@ -24,6 +24,7 @@ import (
 	"reasonix/internal/jobs"
 	"reasonix/internal/permission"
 	"reasonix/internal/plugin"
+	"reasonix/internal/pluginpkg"
 	"reasonix/internal/provider"
 	"reasonix/internal/skill"
 	"reasonix/internal/tool"
@@ -2377,6 +2378,98 @@ tier = "lazy"
 	}
 	if names := c.ConfiguredMCPNames(); len(names) != 0 {
 		t.Fatalf("ConfiguredMCPNames() = %v, want empty after remove", names)
+	}
+}
+
+func TestRemoveMCPServerKeepsRuntimeOnlyToolsWhenPersistenceRemovalFails(t *testing.T) {
+	isolateControlConfigHome(t)
+	reg := tool.NewRegistry()
+	reg.Add(fakeControlTool{name: "mcp__runtime_only__echo"})
+	c := New(Options{Host: plugin.NewHost(), Registry: reg})
+
+	if disconnected, err := c.RemoveMCPServer("runtime_only"); err == nil || disconnected || !strings.Contains(err.Error(), "no removable MCP server") {
+		t.Fatalf("RemoveMCPServer(runtime_only) = (%v, %v)", disconnected, err)
+	}
+	if _, found := reg.Get("mcp__runtime_only__echo"); !found {
+		t.Fatalf("runtime-only tool was removed despite failed persistence; names=%v", reg.Names())
+	}
+}
+
+func TestRemoveMCPServerRejectsPluginManagedTools(t *testing.T) {
+	home := isolateControlConfigHome(t)
+	reasonixHome := filepath.Join(home, ".reasonix")
+	t.Setenv("REASONIX_HOME", reasonixHome)
+	root := filepath.Join(reasonixHome, "plugins", "superpowers")
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, pluginpkg.NativeManifest), []byte(`{
+  "name": "superpowers",
+  "version": "1.0.0",
+  "mcpServers": {
+    "helper": { "command": "bin/helper" }
+  }
+}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := pluginpkg.Upsert(reasonixHome, pluginpkg.InstalledPlugin{
+		Name:         "superpowers",
+		Root:         "plugins/superpowers",
+		Version:      "1.0.0",
+		ManifestKind: "reasonix",
+		Enabled:      true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	reg := tool.NewRegistry()
+	reg.Add(fakeControlTool{name: "mcp__helper__echo"})
+	c := New(Options{Host: plugin.NewHost(), Registry: reg})
+	disconnected, err := c.RemoveMCPServer("helper")
+	if err == nil || disconnected || !strings.Contains(err.Error(), "managed by plugin") || !strings.Contains(err.Error(), "superpowers") {
+		t.Fatalf("RemoveMCPServer(plugin-managed) = (%v, %v)", disconnected, err)
+	}
+	if _, found := reg.Get("mcp__helper__echo"); !found {
+		t.Fatalf("plugin-managed tool was removed despite rejected removal; names=%v", reg.Names())
+	}
+	if disconnected := c.DisconnectMCPServer("helper"); !disconnected {
+		t.Fatal("session-only disconnect should be allowed for a plugin-managed MCP")
+	}
+	if _, found := reg.Get("mcp__helper__echo"); found {
+		t.Fatalf("plugin-managed tool survived session-only disconnect; names=%v", reg.Names())
+	}
+}
+
+func TestRemoveMCPServerDeletesProjectMCPJSONSource(t *testing.T) {
+	isolateControlConfigHome(t)
+	if err := os.WriteFile(".mcp.json", []byte(`{
+  "mcpServers": {
+    "mock": { "command": "mock-mcp" },
+    "keep": { "command": "keep-mcp" }
+  }
+}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	reg := tool.NewRegistry()
+	reg.Add(fakeControlTool{name: "mcp__mock__connect"})
+	c := New(Options{Host: plugin.NewHost(), Registry: reg})
+	disconnected, err := c.RemoveMCPServer("mock")
+	if err != nil {
+		t.Fatalf("RemoveMCPServer(.mcp.json): %v", err)
+	}
+	if disconnected {
+		t.Fatal("RemoveMCPServer reported a live disconnect for an idle .mcp.json server")
+	}
+	if _, found := reg.Get("mcp__mock__connect"); found {
+		t.Fatalf(".mcp.json placeholder survived removal; names=%v", reg.Names())
+	}
+	raw, err := os.ReadFile(".mcp.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), `"mock"`) || !strings.Contains(string(raw), `"keep"`) {
+		t.Fatalf(".mcp.json removal did not preserve unrelated servers:\n%s", raw)
 	}
 }
 
