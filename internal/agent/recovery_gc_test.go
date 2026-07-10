@@ -1,12 +1,14 @@
 package agent
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
 
 	"reasonix/internal/provider"
+	"reasonix/internal/store"
 )
 
 // forkRecoveryBranch builds a real conflict-recovery branch: a diverged disk
@@ -170,5 +172,58 @@ func TestRecoveryBranchCoveredByParentReadsActualContent(t *testing.T) {
 	}
 	if RecoveryBranchCoveredByParent(missingBranch, dir) {
 		t.Fatal("missing parent reported as covering its recovery branch")
+	}
+}
+
+func TestRecoveryParentGuardBlocksRewindAfterValidation(t *testing.T) {
+	dir := t.TempDir()
+	parentPath, branchPath, branchMsgs := forkRecoveryBranch(t, dir, "rewind-race")
+	coverBranchInParent(t, parentPath, branchMsgs)
+
+	guard, err := TryAcquireRecoveryParentGuard(branchPath, dir)
+	if err != nil {
+		t.Fatalf("TryAcquireRecoveryParentGuard: %v", err)
+	}
+	// Force the dangerous ordering: coverage validation has completed, then a
+	// concurrent rewind tries to take the parent's save lock before purge. The
+	// guard must keep that lock unavailable until the caller finishes deleting
+	// the redundant branch.
+	if lock, err := tryTakeSessionLockFile(store.SessionLockFile(parentPath)); !errors.Is(err, errSessionFileLockHeld) {
+		if lock != nil {
+			lock.Unlock()
+		}
+		guard.Release()
+		t.Fatalf("parent save lock after coverage validation = %v, want errSessionFileLockHeld", err)
+	}
+	guard.Release()
+
+	parent, err := LoadSession(parentPath)
+	if err != nil {
+		t.Fatalf("LoadSession parent: %v", err)
+	}
+	parent.Messages = append([]provider.Message(nil), parent.Messages[:1]...)
+	if err := parent.SaveRewrite(parentPath); err != nil {
+		t.Fatalf("SaveRewrite after guard release: %v", err)
+	}
+	if RecoveryBranchCoveredByParent(branchPath, dir) {
+		t.Fatal("rewound parent still reported as covering the recovery branch")
+	}
+}
+
+func TestRecoveryParentGuardRefusesInFlightParentRewrite(t *testing.T) {
+	dir := t.TempDir()
+	parentPath, branchPath, branchMsgs := forkRecoveryBranch(t, dir, "rewrite-busy")
+	coverBranchInParent(t, parentPath, branchMsgs)
+
+	unlock, err := lockSessionFile(parentPath)
+	if err != nil {
+		t.Fatalf("lockSessionFile: %v", err)
+	}
+	defer unlock()
+	if guard, err := TryAcquireRecoveryParentGuard(branchPath, dir); !errors.Is(err, ErrSessionLeaseHeld) {
+		if guard != nil {
+			guard.Release()
+		}
+		t.Fatalf("guard during parent rewrite err = %v, want ErrSessionLeaseHeld", err)
 	}
 }

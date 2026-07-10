@@ -519,6 +519,56 @@ func TestUnmodifiedRecoveryCopyDoesNotMigrateIntoTopics(t *testing.T) {
 	}
 }
 
+func TestCoveredRecoveryCopyBecomesVisibleAfterMigratedParentDeletion(t *testing.T) {
+	isolateDesktopUserDirs(t)
+
+	dir := config.SessionDir()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir sessions: %v", err)
+	}
+	parent, recovery, branchMsgs := forkDesktopRecoveryBranch(t, dir, "parent-delete")
+	coverDesktopRecoveryParent(t, parent, branchMsgs)
+	app := NewApp()
+
+	app.ListProjectTree()
+	for _, marker := range []string{topicMigrationMarker, topicIndexRepairMarker} {
+		if _, err := os.Stat(filepath.Join(dir, marker)); err != nil {
+			t.Fatalf("expected %s after migration: %v", marker, err)
+		}
+	}
+	if meta, ok, err := agent.LoadBranchMeta(recovery); err != nil || !ok {
+		t.Fatalf("load skipped recovery meta: ok=%v err=%v", ok, err)
+	} else if strings.TrimSpace(meta.TopicID) != "" {
+		t.Fatalf("covered recovery copy was migrated before parent deletion: %+v", meta)
+	}
+
+	if err := app.DeleteSession(parent); err != nil {
+		t.Fatalf("DeleteSession parent: %v", err)
+	}
+	for _, marker := range []string{topicMigrationMarker, topicIndexRepairMarker} {
+		if _, err := os.Stat(filepath.Join(dir, marker)); !os.IsNotExist(err) {
+			t.Fatalf("%s survived live session deletion: %v", marker, err)
+		}
+	}
+
+	nodes := app.ListProjectTree()
+	meta, ok, err := agent.LoadBranchMeta(recovery)
+	if err != nil || !ok {
+		t.Fatalf("load recovery meta after parent deletion: ok=%v err=%v", ok, err)
+	}
+	if meta.TopicID != legacySessionTopicID(recovery) {
+		t.Fatalf("recovery topic after parent deletion = %q, want %q", meta.TopicID, legacySessionTopicID(recovery))
+	}
+	for _, root := range nodes {
+		for _, node := range root.Children {
+			if node.TopicID == meta.TopicID {
+				return
+			}
+		}
+	}
+	t.Fatalf("project tree after parent deletion = %#v, want recovery topic %q", nodes, meta.TopicID)
+}
+
 func TestHistoryMarksLegacyRecoverySessionsAsRecovered(t *testing.T) {
 	isolateDesktopUserDirs(t)
 

@@ -1839,6 +1839,9 @@ func removeDesktopSessionArtifacts(path string) error {
 		return err
 	}
 	defer guard.Release()
+	if err := invalidateTopicDirMarkers(filepath.Dir(path)); err != nil {
+		return err
+	}
 	defer invalidateTopicSessionIndexForPath(path)
 	for _, p := range sessionOwnedArtifactPaths(path) {
 		if strings.TrimSpace(p) == "" {
@@ -2987,8 +2990,20 @@ func (a *App) purgeTrashedSession(path string, requireRedundantRecovery bool) er
 	}
 	a.sessionRemovalMu.Lock()
 	defer a.sessionRemovalMu.Unlock()
-	if requireRedundantRecovery && !agent.RecoveryBranchCoveredByParent(path, dir) {
-		return errRecoveryCopyNotRedundant
+	var parentGuard *agent.SessionRemovalGuard
+	if requireRedundantRecovery {
+		parentGuard, err = agent.TryAcquireRecoveryParentGuard(path, dir)
+		if err != nil {
+			switch {
+			case errors.Is(err, agent.ErrRecoveryBranchNotCovered):
+				return errRecoveryCopyNotRedundant
+			case errors.Is(err, agent.ErrSessionLeaseHeld):
+				return errSessionBusyElsewhere
+			default:
+				return err
+			}
+		}
+		defer parentGuard.Release()
 	}
 	if err := purgeTrashedSessionFile(dir, path); err != nil {
 		return err

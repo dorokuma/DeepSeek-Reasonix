@@ -2,6 +2,7 @@ package agent
 
 import (
 	"bytes"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -19,6 +20,10 @@ import (
 // idle before GC may collect it. A fresh fork is part of an active conflict
 // flow — the user may be comparing it against the original right now.
 const RecoveryGCGracePeriod = 24 * time.Hour
+
+// ErrRecoveryBranchNotCovered means the branch cannot currently be proven
+// redundant with its parent. Destructive callers must preserve it.
+var ErrRecoveryBranchNotCovered = errors.New("recovery branch is not covered by its parent")
 
 // SessionLeaseHeld reports whether ANY live runtime — this process included —
 // holds the session's write lease. SessionLeaseHeldByOtherRuntime deliberately
@@ -46,6 +51,39 @@ func RecoveryBranchCoveredByParent(path, parentDir string) bool {
 		return false
 	}
 	return recoveryBranchCoveredByParent(path, parentDir, meta)
+}
+
+// TryAcquireRecoveryParentGuard verifies that a recovery branch is covered by
+// its parent while holding the parent's save and lease locks. The caller must
+// keep the returned guard until permanent deletion finishes, then Release it.
+// If the parent is open or being rewritten, acquisition fails without waiting
+// so bulk cleanup preserves the branch and can be retried later.
+func TryAcquireRecoveryParentGuard(path, parentDir string) (*SessionRemovalGuard, error) {
+	meta, ok, err := LoadBranchMeta(path)
+	if err != nil || !ok || !meta.Recovered || strings.TrimSpace(meta.RecoveryDigest) == "" {
+		return nil, ErrRecoveryBranchNotCovered
+	}
+	parentID := strings.TrimSpace(meta.ParentID)
+	if parentID == "" {
+		return nil, ErrRecoveryBranchNotCovered
+	}
+	parentDir = strings.TrimSpace(parentDir)
+	if parentDir == "" {
+		parentDir = filepath.Dir(path)
+	}
+	parentPath := filepath.Join(parentDir, parentID+".jsonl")
+	if parentPath == path || !IsVisibleSession(parentPath) {
+		return nil, ErrRecoveryBranchNotCovered
+	}
+	guard, err := TryAcquireSessionRemovalGuard(parentPath)
+	if err != nil {
+		return nil, err
+	}
+	if !recoveryBranchCoveredByParent(path, parentDir, meta) {
+		guard.Release()
+		return nil, ErrRecoveryBranchNotCovered
+	}
+	return guard, nil
 }
 
 func recoveryBranchCoveredByParent(path, parentDir string, meta BranchMeta) bool {

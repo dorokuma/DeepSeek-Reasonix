@@ -179,6 +179,19 @@ func TestRecoveryCopyCleanupRevalidatesInBackend(t *testing.T) {
 		t.Fatalf("rejected trashed recovery branch was not preserved: %v", err)
 	}
 	coverDesktopRecoveryParent(t, purgeParent, purgeMsgs)
+	parentLease, err := agent.TryAcquireSessionLease(purgeParent)
+	if err != nil {
+		t.Fatalf("TryAcquireSessionLease parent: %v", err)
+	}
+	if err := app.PurgeRecoveryCopy(purgeTrashPath); !errors.Is(err, errSessionBusyElsewhere) {
+		parentLease.Release()
+		t.Fatalf("PurgeRecoveryCopy while parent is live err = %v, want errSessionBusyElsewhere", err)
+	}
+	if _, err := os.Stat(purgeTrashPath); err != nil {
+		parentLease.Release()
+		t.Fatalf("busy-parent purge did not preserve recovery branch: %v", err)
+	}
+	parentLease.Release()
 	if err := app.PurgeRecoveryCopy(purgeTrashPath); err != nil {
 		t.Fatalf("PurgeRecoveryCopy covered branch: %v", err)
 	}

@@ -5374,6 +5374,20 @@ var legacyMigrationMu sync.Mutex
 const topicMigrationMarker = ".topics-migrated-v2"
 const topicIndexRepairMarker = ".topic-indexes-repaired-v2"
 
+func invalidateTopicDirMarkers(dir string) error {
+	dir = strings.TrimSpace(dir)
+	if dir == "" {
+		return nil
+	}
+	var errs []error
+	for _, marker := range []string{topicMigrationMarker, topicIndexRepairMarker} {
+		if err := os.Remove(filepath.Join(dir, marker)); err != nil && !os.IsNotExist(err) {
+			errs = append(errs, err)
+		}
+	}
+	return errors.Join(errs...)
+}
+
 func topicDirMarkerDone(dir, marker string) bool {
 	dir = strings.TrimSpace(dir)
 	marker = strings.TrimSpace(marker)
