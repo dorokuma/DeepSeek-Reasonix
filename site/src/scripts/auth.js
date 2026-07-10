@@ -39,7 +39,9 @@ const withBase = (p) => (import.meta.env.BASE_URL.replace(/\/$/, "") + p) || p;
 // after sign-in without opening a redirect to an arbitrary host.
 function safeNext(next) {
   if (!next) return null;
-  if (next.startsWith("/")) return next;
+  // "/" alone is same-origin; "//" or "/\" is a protocol-relative URL a browser
+  // will follow to a different host, so those must fall through to the origin check below.
+  if (next.startsWith("/") && next[1] !== "/" && next[1] !== "\\") return next;
   try {
     const u = new URL(next);
     if (u.protocol === "https:" && (u.host === "reasonix.io" || u.host.endsWith(".reasonix.io"))) return next;
