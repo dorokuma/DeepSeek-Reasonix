@@ -4,11 +4,11 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
 	"reasonix/internal/agent"
+	"reasonix/internal/config"
 	"reasonix/internal/provider"
 	"reasonix/internal/store"
 )
@@ -26,30 +26,61 @@ func saveSnapshotTurns(t *testing.T, path string, turns int) *agent.Session {
 	return s
 }
 
+func forkDesktopRecoveryBranch(t *testing.T, dir, name string) (parentPath, branchPath string, branchMsgs []provider.Message) {
+	t.Helper()
+	parentPath = filepath.Join(dir, name+".jsonl")
+	parent := agent.NewSession("sys")
+	parent.Add(provider.Message{Role: provider.RoleUser, Content: "first"})
+	parent.Add(provider.Message{Role: provider.RoleAssistant, Content: "one"})
+	parent.Add(provider.Message{Role: provider.RoleUser, Content: "disk " + name})
+	if err := parent.Save(parentPath); err != nil {
+		t.Fatalf("Save recovery parent: %v", err)
+	}
+	branch := agent.NewSession("sys")
+	branch.Add(provider.Message{Role: provider.RoleUser, Content: "first"})
+	branch.Add(provider.Message{Role: provider.RoleAssistant, Content: "one"})
+	branch.Add(provider.Message{Role: provider.RoleUser, Content: "local " + name})
+	info, err := branch.SaveRecoveryBranch(agent.RecoveryBranchOptions{OriginalPath: parentPath})
+	if err != nil {
+		t.Fatalf("SaveRecoveryBranch: %v", err)
+	}
+	return parentPath, info.Path, branch.Snapshot()
+}
+
+func coverDesktopRecoveryParent(t *testing.T, parentPath string, branchMsgs []provider.Message) {
+	t.Helper()
+	parent := agent.NewSession("")
+	parent.Messages = append([]provider.Message(nil), branchMsgs...)
+	parent.Add(provider.Message{Role: provider.RoleAssistant, Content: "parent kept the recovery content"})
+	if err := parent.Save(parentPath); err != nil {
+		t.Fatalf("Save covering recovery parent: %v", err)
+	}
+}
+
 func TestMergeSessionInfosCountsRecoveryActivity(t *testing.T) {
+	dir := t.TempDir()
+	parentPath, branchPath, branchMsgs := forkDesktopRecoveryBranch(t, dir, "covered")
+	coverDesktopRecoveryParent(t, parentPath, branchMsgs)
 	summaries := map[string]topicSummary{}
 	now := time.Now()
-	digest := strings.Repeat("a", 64)
 	infos := []agent.SessionInfo{
 		{
-			Path:           "/tmp/original.jsonl",
+			Path:           parentPath,
 			Turns:          3,
 			LastActivityAt: now.Add(-time.Hour),
 			Scope:          "global",
 			TopicID:        "topic-1",
 		},
 		{
-			Path:           "/tmp/original-recovery-abc.jsonl",
+			Path:           branchPath,
 			Turns:          5,
 			LastActivityAt: now,
 			Scope:          "global",
 			TopicID:        "topic-1",
 			Recovered:      true,
-			RecoveryDigest: digest,
-			ContentDigest:  digest,
 		},
 	}
-	mergeSessionInfos("/tmp", infos, map[string]string{}, map[string]agent.SessionInfo{}, map[string]string{}, summaries)
+	mergeSessionInfos(dir, infos, map[string]string{}, map[string]agent.SessionInfo{}, map[string]string{}, summaries)
 	summary := summaries[topicSummaryKey("global", "", "topic-1")]
 	if !summary.hasNormalSession || !summary.hasRecoveryOnly {
 		t.Fatalf("summary flags = %+v, want both normal and recovery seen", summary)
@@ -65,20 +96,20 @@ func TestMergeSessionInfosCountsRecoveryActivity(t *testing.T) {
 }
 
 func TestMergeSessionInfosKeepsContinuedRecoveryVisible(t *testing.T) {
+	dir := t.TempDir()
+	_, branchPath, _ := forkDesktopRecoveryBranch(t, dir, "diverged")
 	summaries := map[string]topicSummary{}
 	now := time.Now()
 	infos := []agent.SessionInfo{{
-		Path:           "/tmp/original-recovery-0123456789abcdef.jsonl",
+		Path:           branchPath,
 		Turns:          5,
 		LastActivityAt: now,
 		Scope:          "global",
 		TopicID:        "topic-continued",
 		Recovered:      true,
-		RecoveryDigest: "before-save",
-		ContentDigest:  "after-save",
 	}}
 
-	mergeSessionInfos("/tmp", infos, map[string]string{}, map[string]agent.SessionInfo{}, map[string]string{}, summaries)
+	mergeSessionInfos(dir, infos, map[string]string{}, map[string]agent.SessionInfo{}, map[string]string{}, summaries)
 	summary := summaries[topicSummaryKey("global", "", "topic-continued")]
 	if !summary.hasAdoptedRecovery || summary.hasRecoveryOnly {
 		t.Fatalf("summary flags = %+v, want adopted recovery only", summary)
@@ -91,45 +122,68 @@ func TestMergeSessionInfosKeepsContinuedRecoveryVisible(t *testing.T) {
 	}
 }
 
-func TestRecoveryCopyRequiresMatchingNonEmptyDigests(t *testing.T) {
-	validA := strings.Repeat("a", 64)
-	validB := strings.Repeat("b", 64)
-	cases := []struct {
-		name     string
-		recovery string
-		content  string
-		want     bool
-	}{
-		{name: "unchanged", recovery: validA, content: validA, want: true},
-		{name: "continued", recovery: validA, content: validB, want: false},
-		{name: "malformed", recovery: "same", content: "same", want: false},
-		{name: "missing content digest", recovery: validA, want: false},
-		{name: "missing recovery digest", content: validA, want: false},
+func TestSessionMetaSeparatesRecoveryProvenanceFromCleanupCopy(t *testing.T) {
+	dir := t.TempDir()
+	coveredParent, coveredBranch, coveredMsgs := forkDesktopRecoveryBranch(t, dir, "meta-covered")
+	coverDesktopRecoveryParent(t, coveredParent, coveredMsgs)
+	info := agent.SessionInfo{
+		Path:      coveredBranch,
+		Recovered: true,
 	}
-	for _, tc := range cases {
-		if got := recoveryDigestsIdentifyUnmodifiedCopy(tc.recovery, tc.content); got != tc.want {
-			t.Errorf("%s: unmodified = %v, want %v", tc.name, got, tc.want)
-		}
+	meta := sessionMetaFromInfo(info, "", false, false, 0, dir)
+	if !meta.Recovered || !meta.RecoveryCopy {
+		t.Fatalf("covered recovery meta = %+v, want provenance and cleanup-copy flags", meta)
+	}
+
+	_, divergedBranch, _ := forkDesktopRecoveryBranch(t, dir, "meta-diverged")
+	info.Path = divergedBranch
+	meta = sessionMetaFromInfo(info, "", false, false, 0, dir)
+	if !meta.Recovered || meta.RecoveryCopy {
+		t.Fatalf("diverged recovery meta = %+v, want provenance without cleanup-copy flag", meta)
 	}
 }
 
-func TestSessionMetaSeparatesRecoveryProvenanceFromCleanupCopy(t *testing.T) {
-	digest := strings.Repeat("a", 64)
-	info := agent.SessionInfo{
-		Path:           "/tmp/session-recovery-0123456789abcdef.jsonl",
-		Recovered:      true,
-		RecoveryDigest: digest,
-		ContentDigest:  digest,
+func TestRecoveryCopyCleanupRevalidatesInBackend(t *testing.T) {
+	isolateDesktopUserDirs(t)
+	dir := config.SessionDir()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
 	}
-	meta := sessionMetaFromInfo(info, "", false, false, 0)
-	if !meta.Recovered || !meta.RecoveryCopy {
-		t.Fatalf("unchanged recovery meta = %+v, want provenance and cleanup-copy flags", meta)
+	app := NewApp()
+
+	parentPath, branchPath, branchMsgs := forkDesktopRecoveryBranch(t, dir, "delete-guard")
+	if err := app.DeleteRecoveryCopy(branchPath); err == nil {
+		t.Fatal("DeleteRecoveryCopy accepted a branch with unique content")
+	}
+	if _, err := os.Stat(branchPath); err != nil {
+		t.Fatalf("rejected recovery branch was not preserved: %v", err)
+	}
+	coverDesktopRecoveryParent(t, parentPath, branchMsgs)
+	if err := app.DeleteRecoveryCopy(branchPath); err != nil {
+		t.Fatalf("DeleteRecoveryCopy covered branch: %v", err)
+	}
+	trashPath := filepath.Join(dir, sessionTrashDir, filepath.Base(branchPath), filepath.Base(branchPath))
+	if _, err := os.Stat(trashPath); err != nil {
+		t.Fatalf("covered recovery branch was not moved to trash: %v", err)
 	}
 
-	info.ContentDigest = strings.Repeat("b", 64)
-	meta = sessionMetaFromInfo(info, "", false, false, 0)
-	if !meta.Recovered || meta.RecoveryCopy {
-		t.Fatalf("continued recovery meta = %+v, want provenance without cleanup-copy flag", meta)
+	purgeParent, purgeBranch, purgeMsgs := forkDesktopRecoveryBranch(t, dir, "purge-guard")
+	if err := app.DeleteSession(purgeBranch); err != nil {
+		t.Fatalf("DeleteSession divergent branch: %v", err)
+	}
+	purgeTrashPath := filepath.Join(dir, sessionTrashDir, filepath.Base(purgeBranch), filepath.Base(purgeBranch))
+	if err := app.PurgeRecoveryCopy(purgeTrashPath); err == nil {
+		t.Fatal("PurgeRecoveryCopy accepted a trashed branch with unique content")
+	}
+	if _, err := os.Stat(purgeTrashPath); err != nil {
+		t.Fatalf("rejected trashed recovery branch was not preserved: %v", err)
+	}
+	coverDesktopRecoveryParent(t, purgeParent, purgeMsgs)
+	if err := app.PurgeRecoveryCopy(purgeTrashPath); err != nil {
+		t.Fatalf("PurgeRecoveryCopy covered branch: %v", err)
+	}
+	if _, err := os.Stat(purgeTrashPath); !os.IsNotExist(err) {
+		t.Fatalf("covered recovery branch survived permanent purge: %v", err)
 	}
 }
 

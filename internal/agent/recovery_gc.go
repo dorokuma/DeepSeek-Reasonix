@@ -34,6 +34,57 @@ func SessionLeaseHeld(path string) bool {
 	return SessionLeaseHeldByOtherRuntime(path)
 }
 
+// RecoveryBranchCoveredByParent reports whether a conflict-recovery branch
+// preserves no content that is absent from its parent. It deliberately reads
+// both transcripts instead of trusting listing sidecars: stale metadata must
+// never authorize hiding, migration skipping, bulk trash, or permanent purge.
+// Missing/corrupt metadata, a changed branch, or a missing/diverged parent are
+// all treated conservatively as not covered.
+func RecoveryBranchCoveredByParent(path, parentDir string) bool {
+	meta, ok, err := LoadBranchMeta(path)
+	if err != nil || !ok || !meta.Recovered || strings.TrimSpace(meta.RecoveryDigest) == "" {
+		return false
+	}
+	return recoveryBranchCoveredByParent(path, parentDir, meta)
+}
+
+func recoveryBranchCoveredByParent(path, parentDir string, meta BranchMeta) bool {
+	parentID := strings.TrimSpace(meta.ParentID)
+	if parentID == "" {
+		return false
+	}
+	branch, err := LoadSession(path)
+	if err != nil || branch == nil {
+		return false
+	}
+	branchMsgs := branch.Snapshot()
+	branchDigest, err := digestSessionMessages(branchMsgs)
+	if err != nil || digestString(branchDigest) != strings.TrimSpace(meta.RecoveryDigest) {
+		// Continued on (or undigestable): this is someone's conversation now.
+		return false
+	}
+	parentDir = strings.TrimSpace(parentDir)
+	if parentDir == "" {
+		parentDir = filepath.Dir(path)
+	}
+	parentPath := filepath.Join(parentDir, parentID+".jsonl")
+	if parentPath == path || !IsVisibleSession(parentPath) {
+		return false
+	}
+	parent, err := LoadSession(parentPath)
+	if err != nil || parent == nil {
+		return false
+	}
+	parentMsgs := parent.Snapshot()
+	parentDigest, err := digestSessionMessages(parentMsgs)
+	if err != nil {
+		return false
+	}
+	return bytes.Equal(parentDigest[:], branchDigest[:]) ||
+		messagesHavePrefix(parentMsgs, branchMsgs) ||
+		messagesHavePrefixWithCompatibleSystem(parentMsgs, branchMsgs)
+}
+
 // ReclaimableRecoveryBranches scans dir for conflict-recovery branches that
 // are safe to dispose of. Every condition must hold — when in doubt the branch
 // stays, because a recovery branch exists precisely to prevent data loss:
@@ -92,33 +143,7 @@ func ReclaimableRecoveryBranches(dir string, now time.Time, grace time.Duration)
 		if SessionLeaseHeld(path) {
 			continue
 		}
-		branch, err := LoadSession(path)
-		if err != nil || branch == nil {
-			continue
-		}
-		branchMsgs := branch.Snapshot()
-		branchDigest, err := digestSessionMessages(branchMsgs)
-		if err != nil || digestString(branchDigest) != meta.RecoveryDigest {
-			// Continued on (or undigestable): this is someone's conversation now.
-			continue
-		}
-		parentPath := filepath.Join(dir, meta.ParentID+".jsonl")
-		if parentPath == path || !IsVisibleSession(parentPath) {
-			continue
-		}
-		parent, err := LoadSession(parentPath)
-		if err != nil || parent == nil {
-			continue
-		}
-		parentMsgs := parent.Snapshot()
-		parentDigest, err := digestSessionMessages(parentMsgs)
-		if err != nil {
-			continue
-		}
-		covered := bytes.Equal(parentDigest[:], branchDigest[:]) ||
-			messagesHavePrefix(parentMsgs, branchMsgs) ||
-			messagesHavePrefixWithCompatibleSystem(parentMsgs, branchMsgs)
-		if !covered {
+		if !recoveryBranchCoveredByParent(path, dir, meta) {
 			continue
 		}
 		out = append(out, path)

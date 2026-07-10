@@ -185,8 +185,10 @@ export interface AppBindings {
   OpenChannelSessionPageForTab(tabID: string, path: string, limit: number): Promise<HistoryPage>;
   PreviewSession(path: string): Promise<HistoryMessage[]>;
   DeleteSession(path: string): Promise<void>;
+  DeleteRecoveryCopy(path: string): Promise<void>;
   RestoreSession(path: string): Promise<void>;
   PurgeTrashedSession(path: string): Promise<void>;
+  PurgeRecoveryCopy(path: string): Promise<void>;
   RenameSession(path: string, title: string): Promise<void>;
   ScanPromptHistory(nonce: string): Promise<PromptHistoryResult>;
   ListWorkspaces(): Promise<WorkspaceView[]>;
@@ -2323,6 +2325,9 @@ function makeMockApp(): AppBindings {
         });
       }
     },
+    async DeleteRecoveryCopy(path: string) {
+      return this.DeleteSession(path);
+    },
     async RestoreSession(path: string) {
       const i = trashedSessions.findIndex((s) => s.path === path);
       if (i >= 0) {
@@ -2337,6 +2342,9 @@ function makeMockApp(): AppBindings {
     async PurgeTrashedSession(path: string) {
       const i = trashedSessions.findIndex((s) => s.path === path);
       if (i >= 0) trashedSessions.splice(i, 1);
+    },
+    async PurgeRecoveryCopy(path: string) {
+      return this.PurgeTrashedSession(path);
     },
     async RenameSession(path: string, title: string) {
       const s = sessions.find((x) => x.path === path);

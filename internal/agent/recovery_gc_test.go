@@ -121,3 +121,54 @@ func TestReclaimableRecoveryBranchesRespectsGraceLeaseAndMissingParent(t *testin
 		t.Fatalf("parent missing = %v err=%v, want none", got, err)
 	}
 }
+
+func TestRecoveryBranchCoveredByParentReadsActualContent(t *testing.T) {
+	dir := t.TempDir()
+
+	_, divergedBranch, _ := forkRecoveryBranch(t, dir, "diverged-proof")
+	if RecoveryBranchCoveredByParent(divergedBranch, dir) {
+		t.Fatal("diverged parent reported as covering its recovery branch")
+	}
+
+	coveredParent, coveredBranch, coveredMsgs := forkRecoveryBranch(t, dir, "covered-proof")
+	coverBranchInParent(t, coveredParent, coveredMsgs)
+	if !RecoveryBranchCoveredByParent(coveredBranch, dir) {
+		t.Fatal("parent containing the recovery transcript did not cover the branch")
+	}
+
+	// Restore the fork metadata after continuing the transcript. This models a
+	// stale sidecar that still claims content_digest == recovery_digest even
+	// though the actual branch has changed.
+	staleMeta, ok, err := LoadBranchMeta(coveredBranch)
+	if err != nil || !ok {
+		t.Fatalf("LoadBranchMeta stale branch: ok=%v err=%v", ok, err)
+	}
+	continued, err := LoadSession(coveredBranch)
+	if err != nil {
+		t.Fatalf("LoadSession stale branch: %v", err)
+	}
+	continued.Add(provider.Message{Role: provider.RoleAssistant, Content: "continued after sidecar snapshot"})
+	if err := continued.Save(coveredBranch); err != nil {
+		t.Fatalf("Save continued branch: %v", err)
+	}
+	if err := SaveBranchMetaPreserveUpdated(coveredBranch, staleMeta); err != nil {
+		t.Fatalf("restore stale branch meta: %v", err)
+	}
+	if RecoveryBranchCoveredByParent(coveredBranch, dir) {
+		t.Fatal("stale sidecar authorized cleanup of changed branch content")
+	}
+
+	missingParent, missingBranch, missingMsgs := forkRecoveryBranch(t, dir, "missing-proof")
+	coverBranchInParent(t, missingParent, missingMsgs)
+	if !RecoveryBranchCoveredByParent(missingBranch, dir) {
+		t.Fatal("missing-parent fixture was not covered before parent removal")
+	}
+	for _, suffix := range []string{"", ".events.jsonl", ".meta"} {
+		if err := os.Remove(missingParent + suffix); err != nil && !os.IsNotExist(err) {
+			t.Fatalf("remove parent artifact %s: %v", suffix, err)
+		}
+	}
+	if RecoveryBranchCoveredByParent(missingBranch, dir) {
+		t.Fatal("missing parent reported as covering its recovery branch")
+	}
+}

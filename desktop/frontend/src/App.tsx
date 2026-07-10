@@ -2827,12 +2827,13 @@ export default function App() {
       const uniquePaths = Array.from(new Set(paths));
       for (const path of uniquePaths) {
         // Best effort per path: one locked/missing file must not abandon the
-        // rest of the sweep. The final refresh reconciles whatever happened.
-        await deleteSession(path).catch(() => undefined);
+        // rest of the sweep. The guarded backend method revalidates actual
+        // branch and parent content before moving anything.
+        await app.DeleteRecoveryCopy(path).catch(() => undefined);
       }
       await refreshHistoryView();
     },
-    [state.running, deleteSession, refreshHistoryView],
+    [state.running, refreshHistoryView],
   );
   const onRenameSession = useCallback(
     async (path: string, title: string) => {
@@ -2875,6 +2876,19 @@ export default function App() {
       setHistView((cur) => (cur === null ? null : { kind: "trash", sessions: trashed }));
     },
     [purgeTrashedSession, listTrashedSessions],
+  );
+  const onPurgeRecoveryCopies = useCallback(
+    async (paths: string[]) => {
+      const uniquePaths = Array.from(new Set(paths));
+      for (const path of uniquePaths) {
+        // Permanent copy cleanup must not trust the list result: the backend
+        // rechecks the trashed transcript and its live parent for every path.
+        await app.PurgeRecoveryCopy(path).catch(() => undefined);
+      }
+      const trashed = await listTrashedSessions();
+      setHistView((cur) => (cur === null ? null : { kind: "trash", sessions: trashed }));
+    },
+    [listTrashedSessions],
   );
 
   // Workspace: open the folder chooser and switch projects. The hook resets the
@@ -3816,6 +3830,7 @@ export default function App() {
             onRestore={onRestoreTrashedSession}
             onPurge={onPurgeTrashedSession}
             onPurgeAll={onPurgeAllTrashedSessions}
+            onPurgeRecoveryCopies={onPurgeRecoveryCopies}
             onDeleteMany={onDeleteManySessions}
             onClose={closeHistory}
           />

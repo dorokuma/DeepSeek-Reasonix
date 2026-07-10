@@ -2029,7 +2029,7 @@ func TestListSessionOrderIncludesEmptySessionsWithoutPreviewScan(t *testing.T) {
 	}
 }
 
-func TestSessionListingsExposeRecoveryAndContentDigests(t *testing.T) {
+func TestSessionListingsExposeRecoveryMetadata(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "recovered.jsonl")
 	s := NewSession("")
@@ -2044,6 +2044,7 @@ func TestSessionListingsExposeRecoveryAndContentDigests(t *testing.T) {
 	}
 	meta.Recovered = true
 	meta.RecoveryDigest = strings.Repeat("a", 64)
+	meta.ParentID = "parent"
 	if err := SaveBranchMetaPreserveUpdated(path, meta); err != nil {
 		t.Fatal(err)
 	}
@@ -2055,8 +2056,8 @@ func TestSessionListingsExposeRecoveryAndContentDigests(t *testing.T) {
 	if len(ordered) != 1 {
 		t.Fatalf("ListSessionOrder len = %d, want 1", len(ordered))
 	}
-	if ordered[0].RecoveryDigest != meta.RecoveryDigest || ordered[0].ContentDigest != meta.ContentDigest {
-		t.Fatalf("ordered digests = recovery:%q content:%q, want recovery:%q content:%q", ordered[0].RecoveryDigest, ordered[0].ContentDigest, meta.RecoveryDigest, meta.ContentDigest)
+	if ordered[0].RecoveryDigest != meta.RecoveryDigest || ordered[0].ParentID != meta.ParentID {
+		t.Fatalf("ordered recovery metadata = digest:%q parent:%q, want digest:%q parent:%q", ordered[0].RecoveryDigest, ordered[0].ParentID, meta.RecoveryDigest, meta.ParentID)
 	}
 
 	listed, err := ListSessions(dir)
@@ -2066,8 +2067,8 @@ func TestSessionListingsExposeRecoveryAndContentDigests(t *testing.T) {
 	if len(listed) != 1 {
 		t.Fatalf("ListSessions len = %d, want 1", len(listed))
 	}
-	if listed[0].RecoveryDigest != meta.RecoveryDigest || listed[0].ContentDigest != meta.ContentDigest {
-		t.Fatalf("listed digests = recovery:%q content:%q, want recovery:%q content:%q", listed[0].RecoveryDigest, listed[0].ContentDigest, meta.RecoveryDigest, meta.ContentDigest)
+	if listed[0].RecoveryDigest != meta.RecoveryDigest || listed[0].ParentID != meta.ParentID {
+		t.Fatalf("listed recovery metadata = digest:%q parent:%q, want digest:%q parent:%q", listed[0].RecoveryDigest, listed[0].ParentID, meta.RecoveryDigest, meta.ParentID)
 	}
 }
 

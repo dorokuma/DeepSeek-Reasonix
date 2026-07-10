@@ -505,25 +505,17 @@ func TestUnmodifiedRecoveryCopyDoesNotMigrateIntoTopics(t *testing.T) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatalf("mkdir sessions: %v", err)
 	}
-	recovery := writeLegacySession(t, dir, "normal-recovery-0123456789abcdef.jsonl", "unchanged recovery copy", time.Now())
-	digest := strings.Repeat("a", 64)
-	if err := agent.SaveBranchMetaPreserveUpdated(recovery, agent.BranchMeta{
-		ID:             agent.BranchID(recovery),
-		Recovered:      true,
-		RecoveryDigest: digest,
-		ContentDigest:  digest,
-	}); err != nil {
-		t.Fatalf("save recovery meta: %v", err)
-	}
+	parent, recovery, branchMsgs := forkDesktopRecoveryBranch(t, dir, "normal")
+	coverDesktopRecoveryParent(t, parent, branchMsgs)
 
 	nodes := NewApp().ListProjectTree()
-	if len(nodes) != 1 || len(nodes[0].Children) != 0 {
-		t.Fatalf("unmodified recovery copy migrated into project tree: %#v", nodes)
+	if len(nodes) != 1 || len(nodes[0].Children) != 1 {
+		t.Fatalf("project tree = %#v, want only the covering parent topic", nodes)
 	}
 	if meta, ok, err := agent.LoadBranchMeta(recovery); err != nil || !ok {
 		t.Fatalf("load recovery meta: ok=%v err=%v", ok, err)
 	} else if strings.TrimSpace(meta.TopicID) != "" {
-		t.Fatalf("unmodified recovery copy was migrated into topic %q", meta.TopicID)
+		t.Fatalf("parent-covered recovery copy was migrated into topic %q", meta.TopicID)
 	}
 }
 

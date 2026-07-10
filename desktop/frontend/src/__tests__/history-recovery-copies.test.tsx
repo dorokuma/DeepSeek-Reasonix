@@ -140,6 +140,7 @@ console.log("\nhistory panel recovery-copy bulk actions");
     ],
     onDeleteMany: (paths: string[]) => deleted.push(paths),
     onPurgeAll: (paths: string[]) => purged.push(paths),
+    onPurgeRecoveryCopies: (paths: string[]) => purged.push(paths),
   });
 
   const sweep = findButton("Trash recovery copies");
@@ -182,6 +183,7 @@ console.log("\nhistory panel recovery-copy bulk actions");
 {
   const dom = installDom();
   const purged: string[][] = [];
+  const emptied: string[][] = [];
   const root = await renderPanel({
     kind: "trash",
     sessions: [
@@ -192,7 +194,8 @@ console.log("\nhistory panel recovery-copy bulk actions");
     ],
     onRestore: () => {},
     onPurge: () => {},
-    onPurgeAll: (paths: string[]) => purged.push(paths),
+    onPurgeAll: (paths: string[]) => emptied.push(paths),
+    onPurgeRecoveryCopies: (paths: string[]) => purged.push(paths),
   });
 
   const clear = findButton("Clear copies");
@@ -208,6 +211,7 @@ console.log("\nhistory panel recovery-copy bulk actions");
     [["/t/a-recovery-0123456789abcdef.jsonl", "/t/b-recovery-0123456789abcdef.jsonl"]],
     "clear copies purges every trashed recovery copy and nothing else",
   );
+  eq(emptied, [], "clear copies does not invoke the unguarded empty-trash action");
 
   await act(async () => {
     root.unmount();

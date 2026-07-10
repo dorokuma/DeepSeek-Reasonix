@@ -28,6 +28,7 @@ export function HistoryPanel({
   onRestore,
   onPurge,
   onPurgeAll,
+  onPurgeRecoveryCopies,
   onDeleteMany,
   onClose,
 }: {
@@ -41,6 +42,7 @@ export function HistoryPanel({
   onRestore?: (path: string) => void;
   onPurge?: (path: string) => void;
   onPurgeAll?: (paths: string[]) => void;
+  onPurgeRecoveryCopies?: (paths: string[]) => void;
   onDeleteMany?: (paths: string[]) => void;
   onClose: () => void;
 }) {
@@ -146,11 +148,11 @@ export function HistoryPanel({
       return [s.title, s.preview, s.path, s.topicTitle, s.workspaceRoot].some((part) => (part ?? "").toLowerCase().includes(q));
     });
   }, [dateFilter, isTrash, query, scopeFilter, sessions, statusFilter]);
-  // Only branches proven unchanged since recovery are bulk-actionable. A
-  // continued recovery branch keeps `recovered` provenance for its badge, but
-  // is normal user history and must never enter copy cleanup. Counting from
-  // `sessions` (not the filtered list) keeps the sweep exhaustive even while a
-  // search or filter is active.
+  // Only branches whose actual content is still the fork snapshot and remains
+  // covered by the parent are bulk-actionable. A unique recovery branch keeps
+  // `recovered` provenance for its badge, but is normal user history and must
+  // never enter copy cleanup. Counting from `sessions` (not the filtered list)
+  // keeps the sweep exhaustive even while a search or filter is active.
   const recoveryCopyPaths = useMemo(
     () => sessions.filter((s) => s.recoveryCopy && (isTrash || (!s.current && !s.open))).map((s) => s.path),
     [isTrash, sessions],
@@ -256,7 +258,7 @@ export function HistoryPanel({
   const clearRecoveryCopies = () => {
     const paths = recoveryCopyPaths;
     closeHistoryMenus();
-    if (isTrash) onPurgeAll?.(paths);
+    if (isTrash) onPurgeRecoveryCopies?.(paths);
     else onDeleteMany?.(paths);
   };
   const sessionMenuItems: ContextMenuItem[] = menuSession

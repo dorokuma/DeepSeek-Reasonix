@@ -5472,7 +5472,7 @@ func migrateLegacySessionsIntoGlobalTopics(dir string) []string {
 	// unmarked so the next render retries instead of the gate hiding it forever.
 	deferred := false
 	for _, info := range infos {
-		if sessionOrderInfoIsUnmodifiedRecoveryCopy(info) {
+		if sessionOrderInfoIsUnmodifiedRecoveryCopy(info, dir) {
 			continue
 		}
 		if strings.TrimSpace(info.TopicID) != "" {
@@ -5652,7 +5652,7 @@ func repairIndexedSessionTopics(dir string) []string {
 	sourcesChanged := false
 	deferred := false
 	for _, info := range infos {
-		if sessionOrderInfoIsUnmodifiedRecoveryCopy(info) {
+		if sessionOrderInfoIsUnmodifiedRecoveryCopy(info, dir) {
 			continue
 		}
 		topicID := strings.TrimSpace(info.TopicID)
@@ -5763,33 +5763,14 @@ func sessionInfoIsAutomaticRecovery(info agent.SessionInfo) bool {
 		isAutomaticRecoverySessionPath(info.Path)
 }
 
-// recoveryDigestsIdentifyUnmodifiedCopy is deliberately conservative: recovery
-// provenance (a flag, digest, or filename) is not enough to authorize hiding or
-// bulk deletion. Both digests must be present and equal, proving that no save
-// has changed the recovered branch since it was forked.
-func recoveryDigestsIdentifyUnmodifiedCopy(recoveryDigest, contentDigest string) bool {
-	recoveryDigest = strings.TrimSpace(recoveryDigest)
-	contentDigest = strings.TrimSpace(contentDigest)
-	if len(recoveryDigest) != 64 || len(contentDigest) != 64 || recoveryDigest != contentDigest {
-		return false
-	}
-	for _, r := range recoveryDigest {
-		if (r >= '0' && r <= '9') || (r >= 'a' && r <= 'f') || (r >= 'A' && r <= 'F') {
-			continue
-		}
-		return false
-	}
-	return true
-}
-
-func sessionOrderInfoIsUnmodifiedRecoveryCopy(info agent.SessionOrderInfo) bool {
+func sessionOrderInfoIsUnmodifiedRecoveryCopy(info agent.SessionOrderInfo, parentDir string) bool {
 	return sessionOrderInfoIsAutomaticRecovery(info) &&
-		recoveryDigestsIdentifyUnmodifiedCopy(info.RecoveryDigest, info.ContentDigest)
+		agent.RecoveryBranchCoveredByParent(info.Path, parentDir)
 }
 
-func sessionInfoIsUnmodifiedRecoveryCopy(info agent.SessionInfo) bool {
+func sessionInfoIsUnmodifiedRecoveryCopy(info agent.SessionInfo, parentDir string) bool {
 	return sessionInfoIsAutomaticRecovery(info) &&
-		recoveryDigestsIdentifyUnmodifiedCopy(info.RecoveryDigest, info.ContentDigest)
+		agent.RecoveryBranchCoveredByParent(info.Path, parentDir)
 }
 
 func isAutomaticRecoverySessionPath(path string) bool {
@@ -7966,10 +7947,9 @@ func mergeSessionInfos(dir string, infos []agent.SessionInfo, titles map[string]
 		summary := topicSummaries[key]
 		lastActivityAt := info.LastActivityAt.UnixMilli()
 		if sessionInfoIsAutomaticRecovery(info) {
-			// An unchanged conflict copy duplicates its original, so its turns
-			// must not be added. Once its content digest diverges, however, the
-			// branch contains unique user work and must keep the topic visible.
-			if sessionInfoIsUnmodifiedRecoveryCopy(info) {
+			// A covered conflict copy duplicates its parent, so its turns must not
+			// be added. Any branch with unique content keeps the topic visible.
+			if sessionInfoIsUnmodifiedRecoveryCopy(info, dir) {
 				summary.hasRecoveryOnly = true
 			} else {
 				summary.hasAdoptedRecovery = true
