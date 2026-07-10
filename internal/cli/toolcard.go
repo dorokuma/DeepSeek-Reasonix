@@ -31,16 +31,17 @@ func connectorBlock(lines []string) string {
 }
 
 // assistantBlock wraps rendered markdown with an assistant prefix ("▸") on the
-// first line and indents continuation lines to align under it.  This
-// distinguishes assistant replies from tool cards (which use "●") in the
-// transcript.
+// first line and indents continuation lines to align under it.  The marker uses
+// the light cyan/blue toolRead color (not faint grey) so it reads as a live
+// reply indicator; body text stays uncolored (terminal default white).
+// Distinguishes assistant replies from tool cards (which use "●").
 func assistantBlock(rendered string) string {
 	lines := strings.Split(rendered, "\n")
 	if len(lines) < 2 {
 		// Single line (or none): just prepend the prefix.
-		return dim("  ▸ ") + rendered
+		return themeFg(activeCLITheme.toolRead, "  ▸ ") + rendered
 	}
-	prefix := dim("  ▸ ") // visible width: 4 cols
+	prefix := themeFg(activeCLITheme.toolRead, "  ▸ ") // light cyan/blue; visible width: 4 cols
 	indent := "    "      // 4 spaces — aligns content under the "▸"
 	out := prefix + lines[0]
 	for _, ln := range lines[1:] {

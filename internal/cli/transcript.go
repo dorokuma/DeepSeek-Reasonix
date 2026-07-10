@@ -42,34 +42,20 @@ func wrapTranscript(s string, width int) string {
 		} else {
 			wrapped := ansi.Wrap(line, width, "")
 			wrappedLines := strings.Split(wrapped, "\n")
-			// Extract line-level SGR sequences (those before the first visible
-			// character or reset) so we can reapply them on continuation lines
-			// after a wrap.  ansi.Wrap preserves ANSI sequences in place but
-			// does not replay them across wrap boundaries — a color/style code
-			// on the first sub-line is lost on subsequent ones.
-			prefix := leadingSGR(line)
+			// ansi.Wrap does not replay open SGR across wrap boundaries. Replay
+			// only the style still active at each break (activeSGRAtBreak). Do not
+			// re-apply a line-leading color: marker+reset+body would otherwise
+			// paint every continuation line with the marker colour.
 			var bytePos int
 			for i, wl := range wrappedLines {
-				wlLen := len(wl) // original length before any prefix prepend
+				wlLen := len(wl) // original length before any SGR prepend
 				hasANSI := ansi.Strip(wl) != wl
-				// Continuation lines that lack the leading style need it
-				// reapplied so color/style carries across the wrap point,
-				// unless the line already starts with a reset (the style
-				// was intentionally ended before the wrap).
 				if i > 0 && !strings.HasPrefix(wl, "\033[0m") && !strings.HasPrefix(wl, "\033[m") {
-					// Prefer exact SGR state active at the break point
-					// over the line-level prefix (which may be stale in
-					// the middle of a long coloured run).
-					active := activeSGRAtBreak(line, bytePos)
-					switch {
-					case strings.HasPrefix(wl, "\033["):
-						// Already has ANSI prefix, keep as-is
-					case active != "" && !strings.HasPrefix(wl, active):
-						wl = active + wl
-						hasANSI = true
-					case prefix != "" && !strings.HasPrefix(wl, prefix):
-						wl = prefix + wl
-						hasANSI = true
+					if !strings.HasPrefix(wl, "\033[") {
+						if active := activeSGRAtBreak(line, bytePos); active != "" {
+							wl = active + wl
+							hasANSI = true
+						}
 					}
 				}
 				bytePos += wlLen
@@ -91,38 +77,6 @@ func wrapTranscript(s string, width int) string {
 		out[i] = padRight(ln, width)
 	}
 	return strings.Join(out, "\n")
-}
-
-// leadingSGR extracts SGR sequences that appear before the first visible
-// character (or before the first reset) in a string. These are the "line-level"
-// styles that should be reapplied on continuation lines after wrapping.
-func leadingSGR(s string) string {
-	var out strings.Builder
-	for i := 0; i < len(s); {
-		if s[i] == '\033' && i+1 < len(s) && s[i+1] == '[' {
-			j := strings.IndexByte(s[i+2:], 'm')
-			if j < 0 {
-				break
-			}
-			end := i + 2 + j + 1
-			seq := s[i:end]
-			if seq == "\033[0m" || seq == "\033[m" {
-				// Reset: skip it, don't break — there may be subsequent SGR
-				// sequences (e.g. accent colour after the reset) that should
-				// still be collected as leading style.
-				i = end
-				continue
-			}
-			out.WriteString(seq)
-			i = end
-		} else if s[i] == ' ' || s[i] == '\t' || s[i] < 32 || s[i] == 127 {
-			// Skip whitespace and control characters in the prefix
-			i++
-		} else {
-			break
-		}
-	}
-	return out.String()
 }
 
 // sgrEntry tracks a single ANSI SGR sequence encountered while scanning.
