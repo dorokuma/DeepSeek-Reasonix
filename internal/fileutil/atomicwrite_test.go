@@ -6,6 +6,29 @@ import (
 	"testing"
 )
 
+func TestAtomicWriteFileCreatesAndOverwrites(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "sub", "a.txt")
+	if err := AtomicWriteFile(path, []byte("one"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if b, err := os.ReadFile(path); err != nil || string(b) != "one" {
+		t.Fatalf("got %q err=%v", b, err)
+	}
+	if err := AtomicWriteFile(path, []byte("two"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := os.ReadFile(path); string(b) != "two" {
+		t.Fatalf("overwrite got %q", b)
+	}
+	if !fileExists(path) {
+		t.Fatal("fileExists should be true")
+	}
+	if fileExists(filepath.Join(dir, "missing")) {
+		t.Fatal("fileExists missing should be false")
+	}
+}
+
 func TestReplaceFileRenamesInPlace(t *testing.T) {
 	dir := t.TempDir()
 	tmp := filepath.Join(dir, "x.tmp")

@@ -1,13 +1,15 @@
 package config
 
 import (
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
+
+	_ "modernc.org/sqlite"
 )
 
 const ccSwitchDir = ".cc-switch"
@@ -129,21 +131,28 @@ func loadCCSwitchMCPDB(path string) ([]PluginEntry, error) {
 	if _, err := os.Stat(path); err != nil {
 		return nil, err
 	}
-	sqlite, err := exec.LookPath("sqlite3")
+	// Read-only open via modernc.org/sqlite (no external sqlite3 binary).
+	db, err := sql.Open("sqlite", "file:"+path+"?mode=ro")
 	if err != nil {
-		return nil, fmt.Errorf("cc-switch import: sqlite3 not found to read %s", path)
+		return nil, fmt.Errorf("cc-switch import: open %s: %w", path, err)
 	}
+	defer db.Close()
 	query := `SELECT id, name, server_config FROM mcp_servers WHERE enabled_codex = 1 ORDER BY name, id`
-	out, err := exec.Command(sqlite, "-readonly", "-json", path, query).Output()
+	rs, err := db.Query(query)
 	if err != nil {
 		return nil, fmt.Errorf("cc-switch import: read %s: %w", path, err)
 	}
-	if strings.TrimSpace(string(out)) == "" {
-		return nil, nil
-	}
+	defer rs.Close()
 	var rows []ccSwitchMCPRow
-	if err := json.Unmarshal(out, &rows); err != nil {
-		return nil, fmt.Errorf("cc-switch import: parse sqlite output: %w", err)
+	for rs.Next() {
+		var row ccSwitchMCPRow
+		if err := rs.Scan(&row.ID, &row.Name, &row.ServerConfig); err != nil {
+			return nil, fmt.Errorf("cc-switch import: scan %s: %w", path, err)
+		}
+		rows = append(rows, row)
+	}
+	if err := rs.Err(); err != nil {
+		return nil, fmt.Errorf("cc-switch import: iterate %s: %w", path, err)
 	}
 	return ccSwitchRowsToPlugins(rows)
 }

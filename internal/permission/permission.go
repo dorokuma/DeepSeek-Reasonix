@@ -460,7 +460,7 @@ func (g *Gate) SetApprover(a Approver) {
 
 
 // SetBlockedTools replaces the BlockedTools map on the Gate. The controller
-// calls this before each turn to block dynamic tools (e.g. peek-job) when they
+// calls this before each turn to block dynamic tools when they
 // are not supposed to be visible.
 func (g *Gate) SetBlockedTools(blocked map[string]string) {
 	if g == nil {

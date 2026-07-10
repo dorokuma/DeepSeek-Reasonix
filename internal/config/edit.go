@@ -108,65 +108,23 @@ func (c *Config) SetLanguage(lang string) error {
 	return nil
 }
 
-// SetDesktopLanguage pins the desktop UI language. It intentionally does not
-// modify Config.Language, which is used by the CLI/model-facing runtime.
-func (c *Config) SetDesktopLanguage(lang string) error {
-	switch strings.ToLower(strings.TrimSpace(lang)) {
-	case "", "auto":
-		c.Desktop.Language = ""
-	case "en":
-		c.Desktop.Language = "en"
-	case "zh":
-		c.Desktop.Language = "zh"
-	default:
-		return fmt.Errorf("desktop language %q: must be auto|en|zh", lang)
-	}
-	return nil
-}
 
-// SetDesktopAppearance sets desktop-only theme preferences. It must not affect
-// CLI theme settings or provider-visible request data.
-func (c *Config) SetDesktopAppearance(theme, style string) error {
-	switch strings.ToLower(strings.TrimSpace(theme)) {
-	case "auto":
-		c.Desktop.Theme = "auto"
-	case "light":
-		c.Desktop.Theme = "light"
-	case "", "dark":
-		c.Desktop.Theme = "dark"
-	default:
-		return fmt.Errorf("desktop theme %q: must be auto|dark|light", theme)
-	}
-	if strings.TrimSpace(style) == "" {
-		c.Desktop.ThemeStyle = ""
-		return nil
-	}
-	normalized := normalizeThemeStyle(style)
-	if normalized == "" {
-		return fmt.Errorf("desktop theme style %q: must be graphite|ember|aurora|midnight|sandstone|porcelain|linen|glacier", style)
-	}
-	c.Desktop.ThemeStyle = normalized
-	return nil
-}
 
-// SetDesktopCloseBehavior sets the desktop close-window preference. It is
-// intentionally UI-only and must not affect model prompts or provider-visible
-// request data.
-func (c *Config) SetDesktopCloseBehavior(mode string) error {
+
+
+
+
+// SetUICloseBehavior sets the window close behavior preference.
+func (c *Config) SetUICloseBehavior(mode string) error {
 	switch strings.ToLower(strings.TrimSpace(mode)) {
 	case "quit", "exit":
-		c.Desktop.CloseBehavior = "quit"
+		c.UI.CloseBehavior = "quit"
 	case "", "background", "hide":
-		c.Desktop.CloseBehavior = "background"
+		c.UI.CloseBehavior = "background"
 	default:
 		return fmt.Errorf("close behavior %q: must be quit|background", mode)
 	}
 	return nil
-}
-
-// SetUICloseBehavior is kept for callers compiled against the old edit API.
-func (c *Config) SetUICloseBehavior(mode string) error {
-	return c.SetDesktopCloseBehavior(mode)
 }
 
 // SetProviderThinking updates a provider's provider-specific thinking mode knob.
@@ -181,7 +139,7 @@ func (c *Config) SetProviderThinking(name, thinking string) error {
 }
 
 // SetNetwork updates ordinary outbound network proxy settings. Invalid custom
-// proxy settings are rejected here so the desktop panel cannot save a config that
+// proxy settings are rejected here so the settings panel cannot save a config that
 // would break provider startup.
 func (c *Config) SetNetwork(n NetworkConfig) error {
 	n.ProxyMode = netclient.NormalizeMode(n.ProxyMode)

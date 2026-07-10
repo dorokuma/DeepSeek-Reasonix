@@ -1,11 +1,13 @@
 package config
 
 import (
+	"database/sql"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"reflect"
 	"testing"
+
+	_ "modernc.org/sqlite"
 )
 
 func TestCCSwitchRowsToPlugins(t *testing.T) {
@@ -95,19 +97,22 @@ func TestLoadCCSwitchLegacyConfig(t *testing.T) {
 }
 
 func TestLoadCCSwitchMCPEmptyDBDoesNotReadLegacyBackups(t *testing.T) {
-	if _, err := exec.LookPath("sqlite3"); err != nil {
-		t.Skip("sqlite3 not available")
-	}
 	root := t.TempDir()
 	dbPath := filepath.Join(root, "cc-switch.db")
-	if out, err := exec.Command("sqlite3", dbPath, `CREATE TABLE mcp_servers (
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`CREATE TABLE mcp_servers (
 		id TEXT PRIMARY KEY,
 		name TEXT NOT NULL,
 		server_config TEXT NOT NULL,
 		enabled_codex BOOLEAN NOT NULL DEFAULT 0
-	);`).CombinedOutput(); err != nil {
-		t.Fatalf("create sqlite db: %v\n%s", err, out)
+	);`); err != nil {
+		db.Close()
+		t.Fatalf("create sqlite db: %v", err)
 	}
+	db.Close()
 	stale := `{"mcp":{"servers":{"stale":{"name":"stale","server":{"command":"node","args":["stale.js"]},"apps":{"codex":true}}}}}`
 	if err := os.WriteFile(filepath.Join(root, "config.json.migrated"), []byte(stale), 0o644); err != nil {
 		t.Fatal(err)

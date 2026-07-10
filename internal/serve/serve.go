@@ -23,7 +23,6 @@ import (
 	"reasonix/internal/config"
 	"reasonix/internal/control"
 	"reasonix/internal/event"
-	"reasonix/internal/jobs"
 )
 
 // Server wires a controller to its HTTP surface. The Broadcaster must be the
@@ -213,9 +212,6 @@ func (s *Server) handler() http.Handler {
 	mux.HandleFunc("POST /submit", s.submit)
 	mux.HandleFunc("POST /cancel", s.cancel)
 	mux.HandleFunc("POST /steer", s.steer)
-	mux.HandleFunc("POST /jobs/steer", s.jobSteer)
-	mux.HandleFunc("POST /jobs/cancel", s.jobCancel)
-	mux.HandleFunc("POST /jobs/peek", s.jobPeek)
 	mux.HandleFunc("POST /approve", s.approve)
 	mux.HandleFunc("POST /answer", s.answer)
 	return logMiddleware(securityHeadersMiddleware(s.auth.middleware(csrfGuard(writeTimeoutMiddleware(mux, 60*time.Second)))))
@@ -484,81 +480,6 @@ func (s *Server) steer(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusAccepted)
 }
 
-func (s *Server) jobSteer(w http.ResponseWriter, r *http.Request) {
-	var body struct {
-		JobID   string `json:"job_id"`
-		Message string `json:"message"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		http.Error(w, "invalid body", http.StatusBadRequest)
-		return
-	}
-	if body.JobID == "" || body.Message == "" {
-		http.Error(w, "job_id and message are required", http.StatusBadRequest)
-		return
-	}
-	if err := s.ctl().SteerBackgroundJob(body.JobID, body.Message); err != nil {
-		if err == jobs.ErrJobNotFound {
-			http.Error(w, "job not found", http.StatusNotFound)
-			return
-		}
-		if err == jobs.ErrSteerBufferFull {
-			http.Error(w, "steer buffer full", http.StatusConflict)
-			return
-		}
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-	w.WriteHeader(http.StatusAccepted)
-}
-
-func (s *Server) jobCancel(w http.ResponseWriter, r *http.Request) {
-	var body struct {
-		JobID string `json:"job_id"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		http.Error(w, "invalid body", http.StatusBadRequest)
-		return
-	}
-	if body.JobID == "" {
-		http.Error(w, "job_id is required", http.StatusBadRequest)
-		return
-	}
-	if _, err := s.ctl().PeekBackgroundJob(body.JobID); err != nil {
-		if err == jobs.ErrJobNotFound {
-			http.Error(w, "job not found", http.StatusNotFound)
-			return
-		}
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-	ok := s.ctl().KillBackgroundJob(body.JobID)
-	writeJSON(w, map[string]any{"cancelled": ok})
-}
-
-func (s *Server) jobPeek(w http.ResponseWriter, r *http.Request) {
-	var body struct {
-		JobID string `json:"job_id"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		http.Error(w, "invalid body", http.StatusBadRequest)
-		return
-	}
-	if body.JobID == "" {
-		http.Error(w, "job_id is required", http.StatusBadRequest)
-		return
-	}
-	st, err := s.ctl().PeekBackgroundJob(body.JobID)
-	if err != nil {
-		if err == jobs.ErrJobNotFound {
-			http.Error(w, "job not found", http.StatusNotFound)
-			return
-		}
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-	writeJSON(w, st)
-}
 
 func (s *Server) approve(w http.ResponseWriter, r *http.Request) {
 	var body struct {
@@ -674,9 +595,6 @@ func (s *Server) status(w http.ResponseWriter, r *http.Request) {
 	}
 	if b, err := s.ctl().Balance(r.Context()); err == nil && b != nil {
 		sess["balance"] = b
-	}
-	if j := s.ctl().Jobs(); len(j) > 0 {
-		sess["jobs"] = j
 	}
 	writeJSON(w, sess)
 }

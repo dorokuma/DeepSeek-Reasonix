@@ -297,8 +297,7 @@ transports, tools (`mcp_server__tool`, `readOnlyHint`-aware), prompts (slash
 commands), resources (`@`-references), and `/mcp`, configured via `[[plugins]]`
 or a project `.mcp.json` — custom slash commands (`.reasonix/commands/*.md`),
 `@file` / `@resource` references, plus a runnable reference plugin
-(`cmd/reasonix-plugin-example`), the harness loop, and CLI. A Wails desktop
-client (`desktop/`) drives the same kernel. Next: an OS-level sandbox for `bash`
+(`cmd/reasonix-plugin-example`), the harness loop, and CLI. Next: an OS-level sandbox for `bash`
 (macOS Seatbelt / Linux bubblewrap), an Anthropic-native provider, MCP OAuth +
 legacy SSE. See `docs/SPEC.md` §9.
 

@@ -1,7 +1,9 @@
 package builtin
 
 import (
+	"fmt"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"reasonix/internal/tool"
@@ -87,6 +89,31 @@ func resolveIn(workDir, p string) string {
 		return p
 	}
 	return filepath.Join(workDir, p)
+}
+
+// checkInWorkDir rejects paths that escape workDir when a workspace is bound.
+// Empty workDir means process-cwd tools (unconfined). Absolute paths and
+// cleaned ".." joins are both checked so read_file cannot open /etc/passwd.
+func checkInWorkDir(workDir, path string) error {
+	if workDir == "" || path == "" {
+		return nil
+	}
+	absW, err := filepath.Abs(workDir)
+	if err != nil {
+		return fmt.Errorf("resolve workspace: %w", err)
+	}
+	absP, err := filepath.Abs(path)
+	if err != nil {
+		return fmt.Errorf("resolve path: %w", err)
+	}
+	rel, err := filepath.Rel(absW, absP)
+	if err != nil {
+		return fmt.Errorf("%s is outside the allowed workspace %s", path, workDir)
+	}
+	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return fmt.Errorf("%s is outside the allowed workspace %s", path, workDir)
+	}
+	return nil
 }
 
 // vendorDirs are directory names grep and glob skip during a recursive walk:

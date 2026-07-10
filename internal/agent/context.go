@@ -5,7 +5,7 @@ import (
 )
 
 // OnCompleteProvider is retained for type compatibility. MakeOnComplete should
-// return nil; session completion uses jobs.Manager.SetOnCompletion only.
+// return nil; multiagent completion uses mailbox + OnCompletion.
 type OnCompleteProvider interface {
 	MakeOnComplete() func(jobID string)
 	MakeOnMessage() func(jobID string)
@@ -25,7 +25,7 @@ func OnCompleteProviderFrom(ctx context.Context) (OnCompleteProvider, bool) {
 	return p, ok
 }
 
-// OnCompleteCallbackFrom always returns nil. Prefer Manager.SetOnCompletion.
+// OnCompleteCallbackFrom always returns nil.
 func OnCompleteCallbackFrom(ctx context.Context) func(jobID string) {
 	_ = ctx
 	return nil

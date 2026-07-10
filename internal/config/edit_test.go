@@ -94,51 +94,6 @@ func TestUICloseBehaviorNormalizes(t *testing.T) {
 	}
 }
 
-func TestDesktopPreferencesAreSeparateFromCLI(t *testing.T) {
-	c := Default()
-	c.Language = "zh"
-	c.UI.Theme = "light"
-	c.UI.ThemeStyle = "glacier"
-
-	if err := c.SetDesktopLanguage("en"); err != nil {
-		t.Fatalf("SetDesktopLanguage: %v", err)
-	}
-	if err := c.SetDesktopAppearance("dark", "graphite"); err != nil {
-		t.Fatalf("SetDesktopAppearance: %v", err)
-	}
-
-	if c.Language != "zh" {
-		t.Fatalf("CLI language changed to %q", c.Language)
-	}
-	if got := c.UITheme(); got != "light" {
-		t.Fatalf("CLI theme = %q, want light", got)
-	}
-	if got := c.UIThemeStyle(); got != "glacier" {
-		t.Fatalf("CLI theme style = %q, want glacier", got)
-	}
-	if got := c.DesktopLanguage(); got != "en" {
-		t.Fatalf("desktop language = %q, want en", got)
-	}
-	if got := c.DesktopTheme(); got != "dark" {
-		t.Fatalf("desktop theme = %q, want dark", got)
-	}
-	if got := c.DesktopThemeStyle(); got != "graphite" {
-		t.Fatalf("desktop theme style = %q, want graphite", got)
-	}
-}
-
-func TestDesktopCloseBehaviorFallsBackToLegacyUI(t *testing.T) {
-	c := Default()
-	c.UI.CloseBehavior = "quit"
-	if got := c.DesktopCloseBehavior(); got != "quit" {
-		t.Fatalf("legacy close behavior = %q, want quit", got)
-	}
-	c.Desktop.CloseBehavior = "background"
-	if got := c.DesktopCloseBehavior(); got != "background" {
-		t.Fatalf("desktop close behavior = %q, want background", got)
-	}
-}
-
 func TestSetUICloseBehavior(t *testing.T) {
 	c := Default()
 	if err := c.SetUICloseBehavior("background"); err != nil {
@@ -640,9 +595,7 @@ func TestSaveToRoundTrips(t *testing.T) {
 func TestSaveToScopesUserAndProjectFiles(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	c := Default()
-	c.Desktop.Theme = "dark"
-	c.Desktop.ThemeStyle = "graphite"
-	c.Desktop.CloseBehavior = "background"
+	c.Notifications.Enabled = true
 
 	userPath := UserConfigPath()
 	if err := c.SaveTo(userPath); err != nil {
@@ -652,8 +605,8 @@ func TestSaveToScopesUserAndProjectFiles(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read user config: %v", err)
 	}
-	if !strings.Contains(string(userBody), "[desktop]") {
-		t.Fatalf("user config should include desktop preferences:\n%s", userBody)
+	if !strings.Contains(string(userBody), "[notifications]") {
+		t.Fatalf("user config should include notifications:\n%s", userBody)
 	}
 
 	projectPath := filepath.Join(t.TempDir(), "reasonix.toml")
@@ -664,8 +617,8 @@ func TestSaveToScopesUserAndProjectFiles(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read project config: %v", err)
 	}
-	if strings.Contains(string(projectBody), "[desktop]") || strings.Contains(string(projectBody), "close_behavior") {
-		t.Fatalf("project config should not include desktop preferences:\n%s", projectBody)
+	if strings.Contains(string(projectBody), "[notifications]") {
+		t.Fatalf("project config should not include user-level preferences:\n%s", projectBody)
 	}
 }
 

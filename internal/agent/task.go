@@ -243,7 +243,6 @@ func RunSubAgent(ctx context.Context, prov provider.Provider, reg *tool.Registry
 	// Sub-agents do not get a session jobs manager: async work is parent→child
 	// only (main agent → one background child). No grandchildren.
 	subCtrl := newSubControllerBridge()
-	opts.Jobs = nil
 	opts.Ctrl = subCtrl
 
 	sub := New(prov, reg, sess, opts, sink)

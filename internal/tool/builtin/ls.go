@@ -44,6 +44,9 @@ func (l listDir) Execute(ctx context.Context, args json.RawMessage) (string, err
 		p.Path = "."
 	}
 	p.Path = resolveIn(l.workDir, p.Path)
+	if err := checkInWorkDir(l.workDir, p.Path); err != nil {
+		return "", err
+	}
 
 	// Recursive mode: try RTK tree when rewrite accepts, else native walk.
 	if p.Recursive {

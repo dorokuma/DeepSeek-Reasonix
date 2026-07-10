@@ -423,9 +423,17 @@ func TestSessionWrongSignature(t *testing.T) {
 
 	tok := ag.signSession()
 	dot := strings.LastIndexByte(tok, '.')
-	// Flip a hex character in the signature.
-	sig := tok[dot+1:]
-	flipped := tok[:dot+1] + "0" + sig[1:]
+	// Flip a hex character in the signature (must differ from original).
+	sig := []byte(tok[dot+1:])
+	if len(sig) == 0 {
+		t.Fatal("empty signature")
+	}
+	if sig[0] == '0' {
+		sig[0] = '1'
+	} else {
+		sig[0] = '0'
+	}
+	flipped := tok[:dot+1] + string(sig)
 	if ag.verifySession(flipped) {
 		t.Error("wrong-signature session should not verify")
 	}

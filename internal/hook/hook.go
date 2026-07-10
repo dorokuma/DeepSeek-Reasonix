@@ -438,6 +438,9 @@ func DefaultSpawner(ctx context.Context, in SpawnInput) SpawnResult {
 	defer cancel()
 
 	name, args := shellInvocation(in.Command)
+	if name == "" {
+		return SpawnResult{ExitCode: -1, SpawnErr: fmt.Errorf("hook: empty or invalid command")}
+	}
 	cmd := exec.CommandContext(cctx, name, args...)
 	proc.HideWindow(cmd)
 	cmd.Dir = in.Cwd
@@ -476,10 +479,42 @@ func DefaultSpawner(ctx context.Context, in SpawnInput) SpawnResult {
 }
 
 func shellInvocation(command string) (string, []string) {
+	// Hook commands come from trusted config. Still refuse NUL (argv injection)
+	// and prefer direct exec when no shell metacharacters are present so a
+	// simple binary path is not re-parsed by sh/cmd.
+	if strings.IndexByte(command, 0) >= 0 {
+		// Caller surfaces spawn failure; empty name makes exec fail cleanly.
+		return "", nil
+	}
+	if !needsShell(command) {
+		fields := strings.Fields(command)
+		if len(fields) > 0 {
+			return fields[0], fields[1:]
+		}
+	}
 	if runtime.GOOS == "windows" {
 		return "cmd", []string{"/c", command}
 	}
 	return "sh", []string{"-c", command}
+}
+
+// needsShell reports whether command requires a shell for operators/quoting
+// or for bare names (PATH lookup + shell builtins like exit/printf).
+// Direct exec is only used for explicit paths without shell metacharacters.
+func needsShell(command string) bool {
+	if strings.ContainsAny(command, "|&;<>()$`\\\"'*?[]{}!\n\t") {
+		return true
+	}
+	fields := strings.Fields(command)
+	if len(fields) == 0 {
+		return true
+	}
+	first := fields[0]
+	// Absolute or relative path → can exec without shell.
+	if strings.Contains(first, "/") || strings.HasPrefix(first, ".") {
+		return false
+	}
+	return true
 }
 
 // cappedBuffer is an io.Writer that stops storing after outputCapBytes and

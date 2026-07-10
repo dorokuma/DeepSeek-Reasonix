@@ -3,25 +3,21 @@ package hook
 import (
 	"context"
 	"encoding/json"
-	"strings"
 
-	"reasonix/internal/jobs"
 	"reasonix/internal/rtk"
 )
 
 const rtkPipeThreshold = 32 * 1024
 
 // NewRTKRewriter creates a PostToolRewriter for RTK pipe compaction.
-func NewRTKRewriter(jm *jobs.Manager) *rtkRewriter {
-	return &rtkRewriter{jm: jm}
+func NewRTKRewriter() *rtkRewriter {
+	return &rtkRewriter{}
 }
 
-type rtkRewriter struct {
-	jm *jobs.Manager
-}
+type rtkRewriter struct{}
 
 func (r *rtkRewriter) PostToolRewrite(_ context.Context, name string, args json.RawMessage, result string) string {
-	filter := rtkPipeFilter(name, args, r.jm)
+	filter := rtkPipeFilter(name, args)
 	if filter == "" {
 		rtk.LogMissPipe(name, "", len(result), "no_pipe_filter")
 		return result
@@ -43,10 +39,10 @@ func (r *rtkRewriter) PostToolRewrite(_ context.Context, name string, args json.
 }
 
 // rtkPipeFilter determines the rtk pipe filter for a tool call.
-func rtkPipeFilter(name string, args json.RawMessage, jm *jobs.Manager) string {
+func rtkPipeFilter(name string, args json.RawMessage) string {
 	switch name {
-	case "bash", "peek-job":
-		cmd := extractShellCommand(name, args, jm)
+	case "bash":
+		cmd := extractShellCommand(args)
 		if filter, ok := rtk.PipeFilterForShell(cmd); ok {
 			return filter
 		}
@@ -58,25 +54,13 @@ func rtkPipeFilter(name string, args json.RawMessage, jm *jobs.Manager) string {
 	}
 }
 
-// extractShellCommand pulls the shell command string from tool arguments.
-func extractShellCommand(name string, args json.RawMessage, jm *jobs.Manager) string {
-	switch name {
-	case "bash":
-		var p struct {
-			Command string `json:"command"`
-		}
-		if json.Unmarshal(args, &p) == nil {
-			return p.Command
-		}
-	case "peek-job":
-		var p struct {
-			JobID string `json:"job_id"`
-		}
-		if json.Unmarshal(args, &p) == nil && p.JobID != "" && jm != nil {
-			if label, ok := jm.Label(p.JobID); ok && strings.TrimSpace(label) != "" {
-				return label
-			}
-		}
+// extractShellCommand pulls the shell command string from bash tool arguments.
+func extractShellCommand(args json.RawMessage) string {
+	var p struct {
+		Command string `json:"command"`
+	}
+	if json.Unmarshal(args, &p) == nil {
+		return p.Command
 	}
 	return ""
 }

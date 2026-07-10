@@ -90,7 +90,7 @@ type PostCallGuidance interface {
 // PostCallGuidanceWithResult is an optional extension to PostCallGuidance.
 // When implemented, the agent calls PostCallGuidanceAfter with the successful
 // Execute return value instead of PostCallGuidance alone, so guidance can cite
-// dynamic ids (e.g. job_id from background shell receipts).
+// dynamic ids.
 type PostCallGuidanceWithResult interface {
 	PostCallGuidanceAfter(args json.RawMessage, result string) string
 }

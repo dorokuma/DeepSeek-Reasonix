@@ -78,6 +78,9 @@ func (n notebookEdit) Execute(ctx context.Context, raw json.RawMessage) (string,
 		return "", err
 	}
 	a.Path = resolveIn(n.workDir, a.Path)
+	if err := checkInWorkDir(n.workDir, a.Path); err != nil {
+		return "", err
+	}
 	data, err := os.ReadFile(a.Path)
 	if err != nil {
 		return "", fmt.Errorf("read %s: %w", a.Path, err)
@@ -112,6 +115,9 @@ func (n notebookEdit) Preview(raw json.RawMessage) (diff.Change, error) {
 		return diff.Change{}, err
 	}
 	a.Path = resolveIn(n.workDir, a.Path)
+	if err := checkInWorkDir(n.workDir, a.Path); err != nil {
+		return diff.Change{}, err
+	}
 	data, err := os.ReadFile(a.Path)
 	if err != nil {
 		return diff.Change{}, fmt.Errorf("read %s: %w", a.Path, err)

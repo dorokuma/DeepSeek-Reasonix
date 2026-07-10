@@ -19,17 +19,42 @@ func (f fakeRunner) Run(ctx context.Context, path, message string, depth int) (s
 	return "ok", nil
 }
 
+// waitUntil polls cond until true or deadline; fails the test on timeout.
+func waitUntil(t *testing.T, timeout time.Duration, cond func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if cond() {
+			return
+		}
+		// Short yield so we do not busy-spin; not a fixed test timing assumption.
+		select {
+		case <-time.After(5 * time.Millisecond):
+		}
+	}
+	t.Fatalf("condition not met within %s", timeout)
+}
+
 func TestListShowsRunningAgents(t *testing.T) {
 	c := NewControl()
+	// Hold all workers until the test releases them so list can observe "running".
+	hold := make(chan struct{})
 	c.SetRunner(fakeRunner{fn: func(ctx context.Context, path, message string, depth int) (string, error) {
-		time.Sleep(200 * time.Millisecond)
-		return "done", nil
+		select {
+		case <-hold:
+			return "done", nil
+		case <-ctx.Done():
+			return "", ctx.Err()
+		}
 	}})
 	for _, name := range []string{"a", "b", "c"} {
 		if _, _, err := c.Spawn(context.Background(), RootPath, name, "prompt-"+name+" "+strings.Repeat("x", 100), 0); err != nil {
 			t.Fatal(err)
 		}
 	}
+	waitUntil(t, 2*time.Second, func() bool {
+		return int(c.runningCount.Load()) >= 3
+	})
 	// While running, list must include root + 3 children with running status.
 	list := c.List(RootPath, "")
 	if len(list) < 4 {
@@ -60,12 +85,13 @@ func TestListShowsRunningAgents(t *testing.T) {
 	if c.Mailbox().HasPending() {
 		t.Fatal("mailbox should be empty while agents still running")
 	}
+	close(hold)
 }
 
 func TestSpawnWaitMailbox(t *testing.T) {
 	c := NewControl()
+	// Instant completion — Wait should observe mailbox without fixed sleep.
 	c.SetRunner(fakeRunner{fn: func(ctx context.Context, path, message string, depth int) (string, error) {
-		time.Sleep(40 * time.Millisecond)
 		return "done-answer", nil
 	}})
 	path, nick, err := c.Spawn(context.Background(), RootPath, "explore", "find X", 0)
@@ -94,11 +120,18 @@ func TestWaitSteer(t *testing.T) {
 	if _, _, err := c.Spawn(context.Background(), RootPath, "slow", "long", 0); err != nil {
 		t.Fatal(err)
 	}
+	// Steer after spawn is registered (no sleep race: NotifySteer is concurrent-safe).
+	done := make(chan struct{})
 	go func() {
-		time.Sleep(30 * time.Millisecond)
+		defer close(done)
+		// Yield once so Wait has a chance to arm; still event-driven via mailbox.
+		select {
+		case <-time.After(1 * time.Millisecond):
+		}
 		c.NotifySteer()
 	}()
 	msg, timedOut := c.Wait(context.Background(), 5000)
+	<-done
 	if timedOut || !strings.Contains(msg, "interrupted") {
 		t.Fatalf("want steered, got %q timed=%v", msg, timedOut)
 	}
@@ -106,14 +139,22 @@ func TestWaitSteer(t *testing.T) {
 
 func TestListAndInterrupt(t *testing.T) {
 	c := NewControl()
+	hold := make(chan struct{})
 	c.SetRunner(fakeRunner{fn: func(ctx context.Context, path, message string, depth int) (string, error) {
-		time.Sleep(300 * time.Millisecond)
-		return "x", nil
+		select {
+		case <-hold:
+			return "x", nil
+		case <-ctx.Done():
+			return "", ctx.Err()
+		}
 	}})
 	path, _, err := c.Spawn(context.Background(), RootPath, "job", "m", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
+	waitUntil(t, 2*time.Second, func() bool {
+		return int(c.runningCount.Load()) >= 1
+	})
 	list := c.List(RootPath, "")
 	if len(list) < 2 {
 		t.Fatalf("list %d", len(list))
@@ -121,16 +162,19 @@ func TestListAndInterrupt(t *testing.T) {
 	if _, err := c.Interrupt(path); err != nil {
 		t.Fatal(err)
 	}
+	close(hold)
 }
 
 func TestListOmitsTerminalAgents(t *testing.T) {
 	c := NewControl()
 	block := make(chan struct{})
+	fastDone := make(chan struct{})
 	c.SetRunner(fakeRunner{fn: func(ctx context.Context, path, message string, depth int) (string, error) {
 		if strings.HasSuffix(path, "/slow") {
 			<-block
 			return "slow-ok", nil
 		}
+		close(fastDone)
 		return "fast-ok", nil
 	}})
 	if _, _, err := c.Spawn(context.Background(), RootPath, "fast", "f", 0); err != nil {
@@ -139,8 +183,27 @@ func TestListOmitsTerminalAgents(t *testing.T) {
 	if _, _, err := c.Spawn(context.Background(), RootPath, "slow", "s", 0); err != nil {
 		t.Fatal(err)
 	}
-	// Wait for fast to finish.
-	time.Sleep(50 * time.Millisecond)
+	// Wait for fast to finish (event), not a fixed sleep.
+	select {
+	case <-fastDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("fast agent did not finish")
+	}
+	waitUntil(t, 2*time.Second, func() bool {
+		list := c.List(RootPath, "")
+		for _, a := range list {
+			if a.AgentName == "/root/fast" || strings.HasSuffix(a.AgentName, "/fast") {
+				return false
+			}
+		}
+		// Ensure slow still listed as running.
+		for _, a := range list {
+			if strings.HasSuffix(a.AgentName, "/slow") {
+				return true
+			}
+		}
+		return false
+	})
 	list := c.List(RootPath, "")
 	var names []string
 	for _, a := range list {
@@ -162,7 +225,9 @@ func TestListOmitsTerminalAgents(t *testing.T) {
 
 func TestListOmitsInterrupted(t *testing.T) {
 	c := NewControl()
+	started := make(chan struct{})
 	c.SetRunner(fakeRunner{fn: func(ctx context.Context, path, message string, depth int) (string, error) {
+		close(started)
 		<-ctx.Done()
 		return "", ctx.Err()
 	}})
@@ -170,11 +235,24 @@ func TestListOmitsInterrupted(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	select {
+	case <-started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("agent did not start")
+	}
 	if _, err := c.Interrupt(path); err != nil {
 		t.Fatal(err)
 	}
-	// Let runAgent observe cancel.
-	time.Sleep(40 * time.Millisecond)
+	// Wait until runAgent has observed cancel and set terminal status.
+	waitUntil(t, 2*time.Second, func() bool {
+		list := c.List(RootPath, "")
+		for _, a := range list {
+			if a.AgentName == path {
+				return false
+			}
+		}
+		return true
+	})
 	list := c.List(RootPath, "")
 	for _, a := range list {
 		if a.AgentName == path {
@@ -189,7 +267,6 @@ func TestListOmitsInterrupted(t *testing.T) {
 func TestMailboxDrainForRecipient(t *testing.T) {
 	c := NewControl()
 	c.SetRunner(fakeRunner{fn: func(ctx context.Context, path, message string, depth int) (string, error) {
-		time.Sleep(30 * time.Millisecond)
 		return "ans", nil
 	}})
 	if _, _, err := c.Spawn(context.Background(), RootPath, "child", "do it", 0); err != nil {
@@ -225,27 +302,27 @@ func TestNestedSpawnPath(t *testing.T) {
 				return "", err
 			}
 		}
-		<-hold
-		return "ok-" + path, nil
+		select {
+		case <-hold:
+			return "ok-" + path, nil
+		case <-ctx.Done():
+			return "", ctx.Err()
+		}
 	}})
 	if _, _, err := c.Spawn(context.Background(), RootPath, "outer", "work", 0); err != nil {
 		t.Fatal(err)
 	}
-	// Give nested spawn a moment to register while both still running.
-	deadline := time.Now().Add(2 * time.Second)
+	// Poll until nested path registers (eventual), not fixed sleep.
 	var joined string
-	for time.Now().Before(deadline) {
+	waitUntil(t, 2*time.Second, func() bool {
 		list := c.List(RootPath, "")
 		var names []string
 		for _, a := range list {
 			names = append(names, a.AgentName)
 		}
 		joined = strings.Join(names, ",")
-		if strings.Contains(joined, "/root/outer") && strings.Contains(joined, "/root/outer/nested") {
-			break
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
+		return strings.Contains(joined, "/root/outer") && strings.Contains(joined, "/root/outer/nested")
+	})
 	close(hold)
 	if !strings.Contains(joined, "/root/outer") {
 		t.Fatalf("missing outer: %s", joined)

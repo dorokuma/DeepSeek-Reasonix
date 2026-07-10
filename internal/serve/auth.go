@@ -176,6 +176,7 @@ func newAuthGate(cfg config.ServeConfig) *authGate {
 		ag.sessKey = sessionKeyForPasswordHash(ag.passwordHash)
 	default:
 		ag.mode = authNone
+		slog.Warn("serve/auth: auth_mode is none — HTTP frontend accepts unauthenticated requests; set serve.auth_mode to token or password for non-local use")
 	}
 	return ag
 }
@@ -422,7 +423,10 @@ func (ag *authGate) loginSubmit(w http.ResponseWriter, r *http.Request) {
 func (ag *authGate) signSession() string {
 	expiry := time.Now().Add(sessionDuration).Unix()
 	nonce := make([]byte, 16)
-	_, _ = rand.Read(nonce)
+	if _, err := rand.Read(nonce); err != nil {
+		// crypto/rand.Read failure is fatal for session tokens (same as other auth paths).
+		panic("serve/auth: crypto/rand.Read failed: " + err.Error())
+	}
 
 	payload := strconv.FormatInt(expiry, 10) + "|" + base64.RawURLEncoding.EncodeToString(nonce)
 	mac := hmac.New(sha256.New, ag.sessKey)

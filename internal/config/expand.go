@@ -14,6 +14,11 @@ var varRef = regexp.MustCompile(`\$\{([A-Za-z_][A-Za-z0-9_]*)(:-([^}]*))?\}`)
 // environment. An unset variable with no default expands to "" (matching the
 // MCP / Claude Code convention), so a missing secret yields an empty header
 // rather than a literal "${TOKEN}" leaking onto the wire.
+//
+// Nested expansions (e.g. ${OUTER containing ${INNER}}) are not supported —
+// only one pass of ${NAME} / ${NAME:-default} is applied. Provider secrets
+// may also use a sibling {API_KEY_ENV}_FILE env var (see ProviderEntry.APIKey)
+// to load the key from a file path rather than the environment value itself.
 func ExpandVars(s string) string {
 	if !strings.Contains(s, "${") {
 		return s

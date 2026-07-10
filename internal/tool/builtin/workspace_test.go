@@ -33,6 +33,21 @@ func TestResolveIn(t *testing.T) {
 	}
 }
 
+func TestCheckInWorkDir(t *testing.T) {
+	workDir := t.TempDir()
+	inside := filepath.Join(workDir, "a.txt")
+	outside := filepath.Join(t.TempDir(), "secret")
+	if err := checkInWorkDir(workDir, inside); err != nil {
+		t.Fatalf("inside path rejected: %v", err)
+	}
+	if err := checkInWorkDir(workDir, outside); err == nil {
+		t.Fatal("outside absolute path should be rejected")
+	}
+	if err := checkInWorkDir("", outside); err != nil {
+		t.Fatalf("empty workDir should not confine: %v", err)
+	}
+}
+
 // TestWorkspaceBindsReadAndWrite checks that relative paths land inside the
 // workspace directory rather than the process cwd, for both a reader and a
 // writer, and that write confinement defaults to the workspace.
@@ -69,9 +84,9 @@ func TestWorkspaceWriteConfinement(t *testing.T) {
 	if _, err := wf.Execute(context.Background(), argsJSON(t, map[string]any{"path": "ok.txt", "content": "x"})); err != nil {
 		t.Fatalf("in-workspace write should succeed: %v", err)
 	}
-	// Absolute path outside the workspace: refused by the confiner.
-	if _, err := wf.Execute(context.Background(), argsJSON(t, map[string]any{"path": outside, "content": "x"})); err != nil {
-		t.Fatalf("confine disabled, write should succeed: %v", err)
+	// Absolute path outside the workspace: refused by workDir confinement.
+	if _, err := wf.Execute(context.Background(), argsJSON(t, map[string]any{"path": outside, "content": "x"})); err == nil {
+		t.Fatal("out-of-workspace absolute write should be refused")
 	}
 }
 

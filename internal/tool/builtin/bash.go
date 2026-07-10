@@ -15,7 +15,6 @@ import (
 	"time"
 
 	"reasonix/internal/envutil"
-	"reasonix/internal/jobs"
 	"reasonix/internal/shell"
 	// "reasonix/internal/rtk" // RTK migrated to PreToolUse hook (hooks/rtk-bash.sh)
 	"reasonix/internal/tool"
@@ -57,33 +56,12 @@ func cachedBashShellPATH(ctx context.Context) string {
 	return v
 }
 
-// bash runs a shell command. sb, when it enforces, wraps the command in an OS
-// sandbox; the zero value registered at init runs unconfined and is overridden
-// per run by ConfineBash. shell is the resolved interpreter (real bash, or
+// bash runs a shell command. shell is the resolved interpreter (real bash, or
 // PowerShell on a Windows host without bash); the zero value resolves lazily.
 // workDir, when non-empty, is the directory the command runs in (cmd.Dir);
 // empty uses the process cwd. timeout optionally caps foreground commands;
 // zero or negative means no tool-local cap, while parent context cancellation
 // still kills the process tree.
-// limitedWriter discards writes beyond a byte limit, preventing OOM from
-// runaway command output.
-type limitedWriter struct {
-	written int64
-	limit   int64
-}
-
-func (lw *limitedWriter) Write(p []byte) (int, error) {
-	remaining := lw.limit - lw.written
-	if remaining <= 0 {
-		return len(p), nil // discard silently
-	}
-	if int64(len(p)) > remaining {
-		p = p[:remaining]
-	}
-	lw.written += int64(len(p))
-	return len(p), nil
-}
-
 type bash struct {
 	shell   shell.Shell
 	workDir string
@@ -121,7 +99,7 @@ func (b bash) resolved() shell.Shell {
 }
 
 func (bash) Schema() json.RawMessage {
-	return json.RawMessage(`{"type":"object","properties":{"command":{"type":"string","description":"Shell command to execute"},"run_in_background":{"type":"boolean","description":"Run detached: returns a job id immediately and keeps running across turns (no foreground timeout). Poll with peek-job, stop with cancel-job. Use for long-running commands like servers, watchers, or builds you don't need to block on."}},"required":["command"]}`)
+	return json.RawMessage(`{"type":"object","properties":{"command":{"type":"string","description":"Shell command to execute"}},"required":["command"]}`)
 }
 
 // ReadOnly is false: bash's effect cannot be inferred from args (rm, curl,
@@ -131,8 +109,7 @@ func (bash) ReadOnly() bool { return false }
 
 func (b bash) Execute(ctx context.Context, args json.RawMessage) (string, error) {
 	var p struct {
-		Command         string `json:"command"`
-		RunInBackground bool   `json:"run_in_background"`
+		Command string `json:"command"`
 	}
 	if err := json.Unmarshal(args, &p); err != nil {
 		return "", fmt.Errorf("invalid args: %w", err)
@@ -157,60 +134,6 @@ func (b bash) Execute(ctx context.Context, args json.RawMessage) (string, error)
 	// Wrap in the OS when configured; otherwise argv is just the shell.
 	argv := sh.Argv(p.Command)
 	cmdEnv := bashCommandEnv(ctx)
-
-	if p.RunInBackground {
-		jm, ok := jobs.FromContext(ctx)
-		if !ok {
-			return "", fmt.Errorf("background execution is not available in this context")
-		}
-		workDir := b.workDir
-		// The job runs under the manager's session context (no foreground timeout), so it
-		// survives this turn; its combined output streams to the job buffer.
-		var beforeRuns []jobs.BeforeRunFunc
-		if ctrlVal, ok := tool.CtrlFromContext(ctx); ok {
-			if toolCallID, ok := tool.CallIDFromContext(ctx); ok {
-				type jobMetaRegisterer interface {
-					RegisterJobMeta(jobID, toolCallID string)
-				}
-				if reg, ok := ctrlVal.(jobMetaRegisterer); ok {
-					beforeRuns = append(beforeRuns, func(jobID string) {
-						reg.RegisterJobMeta(jobID, toolCallID)
-					})
-				}
-			}
-		}
-		job, err := jm.Start(ctx, jobs.KindBash, commandPreview(p.Command), func(jobCtx context.Context, out io.Writer) (string, error) {
-			heartbeatDone := make(chan struct{})
-			defer close(heartbeatDone)
-			go func() {
-				ticker := time.NewTicker(10 * time.Second)
-				defer ticker.Stop()
-				for {
-					select {
-					case <-heartbeatDone:
-						return
-					case <-ticker.C:
-						jobs.UpdateJobActivity(jobCtx)
-					}
-				}
-			}()
-			// Cap background output at 16 MB to prevent OOM from runaway commands.
-			const bgMaxOutput = 16 << 20
-			limitedOut := io.MultiWriter(out, &limitedWriter{limit: bgMaxOutput})
-			cmd := exec.CommandContext(jobCtx, argv[0], argv[1:]...)
-			cmd.Dir = workDir
-			cmd.Env = cmdEnv
-			setKillTree(cmd)
-			cmd.WaitDelay = bashWaitDelay
-			cmd.Stdout = limitedOut
-			cmd.Stderr = limitedOut
-			return "", cmd.Run()
-		}, nil, beforeRuns...)
-		if err != nil {
-			return "", err
-		}
-		return fmt.Sprintf("Started background shell job %q. Use peek-job(%q) for output; cancel-job(%q) to stop. (task sub-agents are separate: their answers auto-arrive at conversation tail.)", job.ID, job.ID, job.ID), nil
-	}
 
 	runCtx := ctx
 	timeout := b.foregroundTimeout()
@@ -285,18 +208,6 @@ func hasUnquotedSeq(s, seq string) bool {
 		}
 	}
 	return false
-}
-
-// commandPreview is a short single-line label for a background bash job, surfaced
-// in the status bar and completion notices.
-func commandPreview(cmd string) string {
-	cmd = strings.TrimSpace(strings.ReplaceAll(cmd, "\n", " "))
-	const max = 48
-	r := []rune(cmd)
-	if len(r) > max {
-		return string(r[:max]) + "…"
-	}
-	return cmd
 }
 
 func bashCommandEnv(ctx context.Context) []string {

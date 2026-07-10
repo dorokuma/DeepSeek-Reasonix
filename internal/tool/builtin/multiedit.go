@@ -75,6 +75,9 @@ func (m multiEdit) Execute(ctx context.Context, args json.RawMessage) (string, e
 		return "", fmt.Errorf("edits must not be empty")
 	}
 	p.Path = resolveIn(m.workDir, p.Path)
+	if err := checkInWorkDir(m.workDir, p.Path); err != nil {
+		return "", err
+	}
 
 	content, enc, err := readFileEncoded(p.Path)
 	if err != nil {

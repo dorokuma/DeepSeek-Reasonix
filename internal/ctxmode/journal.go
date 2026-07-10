@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/url"
 	"path/filepath"
 	"regexp"
@@ -87,7 +88,10 @@ func (j *Journal) Close() {
 	if j == nil || j.db == nil {
 		return
 	}
-	_ = j.db.Close()
+	if err := j.db.Close(); err != nil {
+		// Best-effort cleanup path: surface for diagnostics, still nil out.
+		log.Printf("ctxmode/journal: close: %v", err)
+	}
 	j.db = nil
 }
 

@@ -50,6 +50,12 @@ func (m moveFile) Execute(ctx context.Context, args json.RawMessage) (string, er
 	}
 	src := resolveIn(m.workDir, p.SourcePath)
 	dst := resolveIn(m.workDir, p.DestinationPath)
+	if err := checkInWorkDir(m.workDir, src); err != nil {
+		return "", err
+	}
+	if err := checkInWorkDir(m.workDir, dst); err != nil {
+		return "", err
+	}
 	info, err := os.Stat(src)
 	if err != nil {
 		return "", fmt.Errorf("stat %s: %w", src, err)

@@ -371,7 +371,7 @@ command = "legacy-bin"
 	if err != nil {
 		t.Fatalf("read migrated user config: %v", err)
 	}
-	for _, want := range []string{`config_version = 2`, `[desktop]`, `name    = "legacy-cli"`} {
+	for _, want := range []string{`config_version = 2`, `name    = "legacy-cli"`} {
 		if !strings.Contains(string(body), want) {
 			t.Fatalf("migrated config missing %q:\n%s", want, body)
 		}
@@ -1161,9 +1161,17 @@ func TestWriteDefaultConfigOmitsLegacyInternalMCPSections(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := string(raw)
-	for _, forbidden := range []string{"[codegraph]", "[builtin_mcp]", "[builtin_mcp_updates]"} {
+	// Legacy internal MCP sections must stay omitted; [codegraph]/[lsp]/[serve]
+	// are first-class config and are rendered so setup save does not drop them.
+	for _, forbidden := range []string{"[builtin_mcp]", "[builtin_mcp_updates]"} {
 		if strings.Contains(text, forbidden) {
 			t.Fatalf("default config should omit %s:\n%s", forbidden, text)
+		}
+	}
+	// Project-scoped files omit [serve] (user-level); still keep codegraph/lsp.
+	for _, want := range []string{"[codegraph]", "[lsp]"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("default config should include %s for round-trip safety", want)
 		}
 	}
 }

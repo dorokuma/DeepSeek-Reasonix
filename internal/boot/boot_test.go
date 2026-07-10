@@ -792,14 +792,9 @@ api_key_env = "REASONIX_TEST_KEY_UNSET"
 		t.Fatalf("Host.Failures() = %+v, want empty for cold built-in codegraph background startup", got)
 	}
 	codegraphDir := filepath.Join(dir, ".codegraph")
-	deadline := time.Now().Add(5 * time.Second)
-	for {
-		if _, err := os.Stat(codegraphDir); err == nil {
-			break
-		} else if time.Now().After(deadline) {
-			t.Fatalf("cold codegraph init did not create .codegraph/: %v", err)
-		}
-		time.Sleep(10 * time.Millisecond)
+	// Init is synchronous with a short timeout in Build; directory should exist.
+	if _, err := os.Stat(codegraphDir); err != nil {
+		t.Fatalf("cold codegraph init did not create .codegraph/: %v", err)
 	}
 	foundNotice := false
 	for _, n := range notices {
@@ -811,6 +806,8 @@ api_key_env = "REASONIX_TEST_KEY_UNSET"
 	if !foundNotice {
 		t.Fatalf("missing background warmup notice; got %+v", notices)
 	}
+	// Ensure teardown cannot hang the package: cancel before Close.
+	cancel()
 }
 
 func TestBuildMigratesLegacyEagerBeforeStatsDemotion(t *testing.T) {

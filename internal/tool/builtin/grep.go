@@ -66,6 +66,9 @@ func (g grepTool) Execute(ctx context.Context, args json.RawMessage) (string, er
 		p.Path = "."
 	}
 	p.Path = resolveIn(g.workDir, p.Path)
+	if err := checkInWorkDir(g.workDir, p.Path); err != nil {
+		return "", err
+	}
 	if g.search.PreferRewrite() {
 		shellCmd := rtk.RipgrepShell(p.Pattern, p.Path)
 		if out, err := rtk.RunShellIfRewritten(ctx, g.workDir, shellCmd, "grep"); err == nil {

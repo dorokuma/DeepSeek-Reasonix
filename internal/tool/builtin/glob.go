@@ -48,6 +48,16 @@ func (g globTool) Execute(ctx context.Context, args json.RawMessage) (string, er
 	rawPattern := p.Pattern
 	p.Pattern = resolveIn(g.workDir, p.Pattern)
 	p.Pattern = filepath.FromSlash(p.Pattern) // models emit "/" (see Description); WalkDir/Match compare OS-native paths
+	// Bound absolute patterns to the workspace root when set.
+	if g.workDir != "" {
+		root := g.workDir
+		if err := checkInWorkDir(root, p.Pattern); err != nil {
+			// Pattern may include globs; check the pattern's directory prefix.
+			if err2 := checkInWorkDir(root, filepath.Dir(p.Pattern)); err2 != nil {
+				return "", err2
+			}
+		}
+	}
 
 	// If the pattern contains **, use recursive matching via filepath.WalkDir.
 	if strings.Contains(p.Pattern, "**") {

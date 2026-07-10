@@ -11,8 +11,7 @@ import (
 )
 
 // legacyConfig is the subset of the v0.x (~/.reasonix/config.json) schema this
-// import carries forward. Fields absent here are dropped on purpose: desktop tab
-// state is frontend-owned, and skills already live in the shared ~/.reasonix/skills
+// import carries forward. Fields absent here are dropped on purpose: skills already live in the shared ~/.reasonix/skills
 // root that v1+ also scans, so they need no migration.
 type legacyConfig struct {
 	APIKey      string                       `json:"apiKey"`
@@ -94,7 +93,6 @@ func MigrateLegacyIfNeeded() (*MigrationResult, error) {
 	res := &MigrationResult{From: src, To: dest}
 	if legacy.Lang != "" {
 		cfg.Language = legacy.Lang
-		_ = cfg.SetDesktopLanguage(legacy.Lang)
 	}
 	migrateLegacyBaseURL(cfg, legacy.BaseURL)
 	cfg.Plugins = legacyPlugins(legacy)
@@ -137,9 +135,6 @@ func migrateLegacyTOMLIfNeeded(dest, home string) (*MigrationResult, error) {
 			return nil, fmt.Errorf("parse legacy config %s: %w", src, err)
 		}
 		cfg.ConfigVersion = Default().ConfigVersion
-		if strings.TrimSpace(cfg.Desktop.CloseBehavior) == "" && strings.TrimSpace(cfg.UI.CloseBehavior) != "" {
-			cfg.Desktop.CloseBehavior = cfg.DesktopCloseBehavior()
-		}
 		if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
 			return nil, fmt.Errorf("create config dir: %w", err)
 		}

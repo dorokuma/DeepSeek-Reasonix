@@ -16,7 +16,7 @@ var dotenvKeyRe = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 // takes precedence), then the reasonix-owned global credentials file in the user
 // config dir (where `reasonix setup` writes keys, so they resolve from any
 // directory without ever touching a project's own .env), then ~/.env as a legacy
-// fallback (the desktop app writes there). Existing environment variables always
+// fallback (the settings UI writes there). Existing environment variables always
 // win over all three.
 func loadDotEnv() {
 	loadDotEnvForRoot(".")
@@ -40,6 +40,10 @@ func loadDotEnvForRoot(root string) {
 
 // loadDotEnvFile reads one .env file (if present) and sets any keys not already
 // present in the environment. Lenient, zero-dependency parsing.
+//
+// Supported: unquoted values, single/double quotes, export PREFIX, # comments,
+// and basic escapes inside double quotes (\n \t \r \\ \" \'). Nested shell
+// expansions, multi-line values, and command substitution are not supported.
 func loadDotEnvFile(path string) {
 	f, err := os.Open(path)
 	if err != nil {
@@ -59,7 +63,7 @@ func loadDotEnvFile(path string) {
 			continue
 		}
 		key = strings.TrimSpace(key)
-		val = strings.Trim(strings.TrimSpace(val), `"'`)
+		val = parseDotEnvValue(strings.TrimSpace(val))
 		if key == "" || !dotenvKeyRe.MatchString(key) {
 			continue
 		}
@@ -67,4 +71,52 @@ func loadDotEnvFile(path string) {
 			os.Setenv(key, val)
 		}
 	}
+}
+
+// parseDotEnvValue unwraps quotes and applies a small escape set for double-quoted values.
+func parseDotEnvValue(val string) string {
+	if len(val) >= 2 {
+		switch val[0] {
+		case '"':
+			if val[len(val)-1] == '"' {
+				return unescapeDotEnv(val[1 : len(val)-1])
+			}
+		case '\'':
+			if val[len(val)-1] == '\'' {
+				// Single-quoted: no escape expansion (shell-like).
+				return val[1 : len(val)-1]
+			}
+		}
+	}
+	// Unquoted: strip optional inline comment.
+	if i := strings.Index(val, " #"); i >= 0 {
+		val = strings.TrimSpace(val[:i])
+	}
+	return val
+}
+
+func unescapeDotEnv(s string) string {
+	var b strings.Builder
+	b.Grow(len(s))
+	for i := 0; i < len(s); i++ {
+		if s[i] != '\\' || i+1 >= len(s) {
+			b.WriteByte(s[i])
+			continue
+		}
+		i++
+		switch s[i] {
+		case 'n':
+			b.WriteByte('\n')
+		case 't':
+			b.WriteByte('\t')
+		case 'r':
+			b.WriteByte('\r')
+		case '\\', '"', '\'':
+			b.WriteByte(s[i])
+		default:
+			b.WriteByte('\\')
+			b.WriteByte(s[i])
+		}
+	}
+	return b.String()
 }

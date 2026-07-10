@@ -15,10 +15,6 @@ func TestRenderTOMLRoundTrips(t *testing.T) {
 	orig.Language = "zh"
 	orig.UI.Theme = "light"
 	orig.UI.ThemeStyle = "glacier"
-	orig.Desktop.Language = "en"
-	orig.Desktop.Theme = "dark"
-	orig.Desktop.ThemeStyle = "graphite"
-	orig.Desktop.CloseBehavior = "background"
 	orig.Notifications.Enabled = true
 	orig.Notifications.TurnDone = true
 	orig.Notifications.ApprovalRequest = true
@@ -46,6 +42,14 @@ func TestRenderTOMLRoundTrips(t *testing.T) {
 	orig.Skills.ExcludedPaths = []string{"~/.agents/skills"}
 	orig.Skills.DisabledSkills = []string{"review", "explore"}
 	orig.Skills.MaxDepth = 2
+	orig.UsdCnyRate = 7.2
+	orig.NativeScrollback = true
+	orig.LSP.Enabled = true
+	orig.Codegraph.Enabled = false
+	orig.Codegraph.Path = "/usr/local/bin/codegraph"
+	orig.Serve.AuthMode = "token"
+	orig.Serve.Token = "super-secret-token"
+	orig.Serve.BehindProxy = true
 	orig.Plugins = []PluginEntry{
 		{Name: "example", Command: "reasonix-plugin-example"},
 		{Name: "stripe", Type: "http", URL: "https://mcp.stripe.com", Headers: map[string]string{"Authorization": "Bearer x"}, AutoStart: boolPtr(false), Tier: "background"},
@@ -76,18 +80,6 @@ func TestRenderTOMLRoundTrips(t *testing.T) {
 	}
 	if got.UI.ThemeStyle != "glacier" {
 		t.Errorf("ui.theme_style = %q, want glacier", got.UI.ThemeStyle)
-	}
-	if got.Desktop.Language != "en" {
-		t.Errorf("desktop.language = %q, want en", got.Desktop.Language)
-	}
-	if got.Desktop.Theme != "dark" {
-		t.Errorf("desktop.theme = %q, want dark", got.Desktop.Theme)
-	}
-	if got.Desktop.ThemeStyle != "graphite" {
-		t.Errorf("desktop.theme_style = %q, want graphite", got.Desktop.ThemeStyle)
-	}
-	if got.Desktop.CloseBehavior != "background" {
-		t.Errorf("desktop.close_behavior = %q, want background", got.Desktop.CloseBehavior)
 	}
 	if !got.Notifications.Enabled || !got.Notifications.TurnDone || !got.Notifications.ApprovalRequest || !got.Notifications.AskRequest {
 		t.Errorf("notifications not preserved: %+v", got.Notifications)
@@ -174,6 +166,27 @@ func TestRenderTOMLRoundTrips(t *testing.T) {
 	if strings.Contains(rendered, "\ntier") {
 		t.Errorf("rendered config should not contain MCP tier fields:\n%s", rendered)
 	}
+	if got.UsdCnyRate != 7.2 {
+		t.Errorf("usd_cny_rate = %v, want 7.2", got.UsdCnyRate)
+	}
+	if !got.NativeScrollback {
+		t.Error("native_scrollback not preserved")
+	}
+	if got.Codegraph.Enabled || got.Codegraph.Path != "/usr/local/bin/codegraph" {
+		t.Errorf("codegraph not preserved: %+v", got.Codegraph)
+	}
+	if got.Serve.AuthMode != "token" || !got.Serve.BehindProxy {
+		t.Errorf("serve not preserved: %+v", got.Serve)
+	}
+	if strings.Contains(rendered, "super-secret-token") {
+		t.Error("raw serve token must not appear in rendered TOML")
+	}
+	if !strings.Contains(rendered, "REASONIX_SERVE_TOKEN") {
+		t.Error("serve token should render as env placeholder")
+	}
+	if !got.LSP.Enabled {
+		t.Error("lsp.enabled not preserved")
+	}
 }
 
 func TestNotificationsDefaultsKeepEventSwitchesEnabled(t *testing.T) {
@@ -196,20 +209,17 @@ func TestNotificationsDefaultsKeepEventSwitchesEnabled(t *testing.T) {
 func TestScopedRenderSeparatesUserAndProjectConfig(t *testing.T) {
 	c := Default()
 	c.Language = "zh"
-	c.Desktop.Language = "zh"
-	c.Desktop.Theme = "dark"
-	c.Desktop.ThemeStyle = "graphite"
-	c.Desktop.CloseBehavior = "background"
+	c.UI.CloseBehavior = "background"
 
 	user := RenderTOMLForScope(c, RenderScopeUser)
-	for _, want := range []string{"config_version = 2", "[desktop]", `theme = "dark"`, `close_behavior = "background"`, "[notifications]"} {
+	for _, want := range []string{"config_version = 2", `language      = "zh"`, "[notifications]", `close_behavior = "background"`} {
 		if !strings.Contains(user, want) {
 			t.Fatalf("user render missing %q:\n%s", want, user)
 		}
 	}
 
 	project := RenderTOMLForScope(c, RenderScopeProject)
-	for _, forbidden := range []string{"[desktop]", "[notifications]", "close_behavior ="} {
+	for _, forbidden := range []string{"[notifications]"} {
 		if strings.Contains(project, forbidden) {
 			t.Fatalf("project render should not contain %q:\n%s", forbidden, project)
 		}

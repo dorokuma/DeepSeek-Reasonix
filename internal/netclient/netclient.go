@@ -147,6 +147,10 @@ func NewTransport(spec ProxySpec, opts TransportOptions) (*http.Transport, error
 		}
 		tr.TLSClientConfig.RootCAs = opts.RootCAs
 		tr.TLSClientConfig.InsecureSkipVerify = opts.InsecureSkipVerify
+		if opts.InsecureSkipVerify {
+			// Loud warning: skipping TLS verification is for local/self-signed tests only.
+			slog.Warn("netclient: InsecureSkipVerify=true — TLS certificate verification is disabled")
+		}
 	} else if globalCACerts != nil {
 		// Use the globally configured CA pool (from network.ca_cert_path).
 		if tr.TLSClientConfig == nil {

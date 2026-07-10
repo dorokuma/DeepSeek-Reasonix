@@ -90,7 +90,15 @@ func StripCredentialEnv(env []string) []string {
 			upper == "PGPASSWORD" || upper == "PGPASS" ||
 			upper == "NPM_TOKEN" || upper == "GITHUB_TOKEN" ||
 			upper == "GITLAB_TOKEN" || upper == "SLACK_TOKEN" ||
-			upper == "DISCORD_TOKEN" || upper == "TELEGRAM_BOT_TOKEN" {
+			upper == "DISCORD_TOKEN" || upper == "TELEGRAM_BOT_TOKEN" ||
+			upper == "OPENAI_API_KEY" || upper == "ANTHROPIC_API_KEY" ||
+			upper == "DEEPSEEK_API_KEY" || upper == "CF_TOKEN" ||
+			upper == "CLOUDFLARE_API_TOKEN" || upper == "HF_TOKEN" ||
+			upper == "HUGGINGFACE_TOKEN" || upper == "BOT_TOKEN" ||
+			upper == "WEBHOOK_SECRET" || upper == "COOKIE" ||
+			strings.HasSuffix(upper, "_COOKIE") ||
+			strings.HasSuffix(upper, "_WEBHOOK") ||
+			strings.HasSuffix(upper, "_BOT_TOKEN") {
 			continue
 		}
 		out = append(out, kv)

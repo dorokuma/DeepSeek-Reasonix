@@ -64,6 +64,9 @@ func (r readFile) Execute(ctx context.Context, args json.RawMessage) (string, er
 		return "", fmt.Errorf("path is required")
 	}
 	p.Path = resolveIn(r.workDir, p.Path)
+	if err := checkInWorkDir(r.workDir, p.Path); err != nil {
+		return "", err
+	}
 	if p.Offset < 0 {
 		p.Offset = 0
 	}

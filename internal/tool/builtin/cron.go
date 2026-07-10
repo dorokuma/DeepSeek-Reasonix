@@ -13,7 +13,6 @@ import (
 	"syscall"
 
 	"github.com/robfig/cron/v3"
-	"reasonix/internal/config"
 	"reasonix/internal/tool"
 )
 
@@ -31,11 +30,24 @@ type CronTask struct {
 	RunOnce bool   `json:"run_once,omitempty"`
 }
 
+// userConfigRoot returns ~/.config/reasonix (or $XDG_CONFIG_HOME/reasonix).
+// Kept local so builtin does not import config (avoids reverse dependency).
+func userConfigRoot() string {
+	if xdg := os.Getenv("XDG_CONFIG_HOME"); xdg != "" {
+		return filepath.Join(xdg, "reasonix")
+	}
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return ""
+	}
+	return filepath.Join(home, ".config", "reasonix")
+}
+
 func getCronTasksPath() (string, error) {
 	path := os.Getenv("REASONIX_CRON_TASKS_PATH")
 
 	// Default: store inside the user config directory
-	base := config.MemoryUserDir()
+	base := userConfigRoot()
 	if base == "" {
 		return "", fmt.Errorf("cannot determine user config directory")
 	}

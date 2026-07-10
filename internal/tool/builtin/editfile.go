@@ -46,6 +46,9 @@ func (e editFile) Execute(ctx context.Context, args json.RawMessage) (string, er
 		return "", fmt.Errorf("old_string is required")
 	}
 	p.Path = resolveIn(e.workDir, p.Path)
+	if err := checkInWorkDir(e.workDir, p.Path); err != nil {
+		return "", err
+	}
 
 	content, enc, err := readFileEncoded(p.Path)
 	if err != nil {

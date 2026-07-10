@@ -6,7 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"math/rand"
+	"math/rand/v2"
 	"net"
 	"net/http"
 	"regexp"
@@ -158,7 +158,8 @@ func backoffDelay(attempt int, retryAfter time.Duration) time.Duration {
 	if d > maxBackoff {
 		d = maxBackoff
 	}
-	return d + time.Duration(rand.Intn(250))*time.Millisecond
+	// Non-crypto jitter for backoff only (math/rand/v2 is intentional).
+	return d + time.Duration(rand.IntN(250))*time.Millisecond
 }
 
 func parseRetryAfter(resp *http.Response) time.Duration {

@@ -15,12 +15,17 @@ var (
 )
 
 func Init() {
-	var err error
+	mu.Lock()
+	defer mu.Unlock()
+	if enabled && f != nil {
+		return
+	}
 	fname := fmt.Sprintf("/tmp/reasonix-diag-%d.log", os.Getpid())
-	f, err = os.Create(fname)
+	file, err := os.Create(fname)
 	if err != nil {
 		return
 	}
+	f = file
 	enabled = true
 	fmt.Fprintf(os.Stderr, "[diag] logging to %s\n", fname)
 }

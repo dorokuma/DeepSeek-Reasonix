@@ -84,6 +84,9 @@ func (d deleteRange) preview(args json.RawMessage) (diff.Change, error) {
 	}
 
 	p.Path = resolveIn(d.workDir, p.Path)
+	if err := checkInWorkDir(d.workDir, p.Path); err != nil {
+		return diff.Change{}, err
+	}
 
 	original, _, err := readFileEncoded(p.Path)
 	if err != nil {

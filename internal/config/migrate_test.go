@@ -67,7 +67,7 @@ func TestMigrateImportsKeyPluginsAndLang(t *testing.T) {
 		t.Fatalf("read dest config: %v", err)
 	}
 	toml := string(got)
-	for _, want := range []string{`language      = "zh"`, `[desktop]`, `language = "zh"`, `name    = "fs"`, `name    = "stripe"`, `type    = "http"`, `auto_start = false`} {
+	for _, want := range []string{`language      = "zh"`, `name    = "fs"`, `name    = "stripe"`, `type    = "http"`, `auto_start = false`} {
 		if !strings.Contains(toml, want) {
 			t.Errorf("dest config missing %q:\n%s", want, toml)
 		}
@@ -152,7 +152,7 @@ command = "legacy-bin"
 		t.Fatalf("read migrated config: %v", err)
 	}
 	text := string(got)
-	for _, want := range []string{`config_version = 2`, `[desktop]`, `close_behavior = "quit"`, `name    = "legacy-v1"`} {
+	for _, want := range []string{`config_version = 2`, `close_behavior = "quit"`, `name    = "legacy-v1"`} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("migrated TOML missing %q:\n%s", want, text)
 		}

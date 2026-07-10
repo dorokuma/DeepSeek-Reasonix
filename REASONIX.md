@@ -9,7 +9,7 @@ agent. It is the Reasonix analog of Claude Code's CLAUDE.md.
 - Go kernel under `internal/`; each package owns one concern and documents it in a
   package comment. Match the surrounding comment density and idiom when editing.
 - One transport-agnostic `control.Controller` sits behind every frontend (chat
-  TUI, HTTP/SSE serve, Wails desktop). Add behavior to the controller, not a
+  TUI, HTTP/SSE serve). Add behavior to the controller, not a
   frontend, so all three inherit it.
 - Cache-first: the system-prompt prefix (base prompt + tools + memory) must stay
   byte-stable across turns so DeepSeek's automatic prefix cache stays warm. Never

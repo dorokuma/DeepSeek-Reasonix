@@ -25,7 +25,7 @@ TypeScript line; a new codebase that becomes the default (`main-v2`).
   `[[plugins]]` and a Claude-Code `.mcp.json`.
 - **Memory**: `REASONIX.md` hierarchy + auto-memory, folded into the cache-stable
   prefix.
-- **ACP** (`reasonix acp`) and an HTTP/SSE server frontend; desktop app (Wails).
+- **ACP** (`reasonix acp`) and an HTTP/SSE server frontend.
 
 ### Fixed
 

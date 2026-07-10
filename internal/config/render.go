@@ -24,9 +24,8 @@ func RenderTOML(c *Config) string {
 }
 
 // RenderTOMLForScope renders an annotated TOML file for a specific persistence
-// target. User configs can carry desktop and account-level preferences; project
-// reasonix.toml stays focused on project behavior and intentionally excludes
-// desktop-only preferences.
+// target. User configs can carry account-level preferences; project
+// reasonix.toml stays focused on project behavior.
 func RenderTOMLForScope(c *Config, scope RenderScope) string {
 	if c == nil {
 		c = Default()
@@ -40,6 +39,9 @@ func RenderTOMLForScope(c *Config, scope RenderScope) string {
 	var b strings.Builder
 
 	b.WriteString("# Reasonix configuration.\n")
+	// Resolution order (highest wins): CLI flag > project ./reasonix.toml >
+	// user ~/.config/reasonix/config.toml > built-in defaults. Later layers only
+	// fill gaps where documented; secrets never come from TOML (api_key_env).
 	b.WriteString("# Resolution order: flag > ./reasonix.toml > ~/.config/reasonix/config.toml > built-in defaults.\n")
 	b.WriteString("# Secrets come from the environment via api_key_env; never put keys here.\n\n")
 
@@ -49,6 +51,16 @@ func RenderTOMLForScope(c *Config, scope RenderScope) string {
 		fmt.Fprintf(&b, "language      = %q   # ui/model language; empty = auto-detect from $LANG / $REASONIX_LANG\n", c.Language)
 	} else {
 		b.WriteString("# language      = \"zh\"   # ui/model language; empty = auto-detect from $LANG / $REASONIX_LANG\n")
+	}
+	if c.UsdCnyRate != 0 {
+		fmt.Fprintf(&b, "usd_cny_rate = %s   # USD→CNY for display/cost; 0 = built-in default\n", formatFloat(c.UsdCnyRate))
+	} else {
+		b.WriteString("# usd_cny_rate = 7.0   # USD→CNY for display/cost; 0 = built-in default\n")
+	}
+	if c.NativeScrollback {
+		fmt.Fprintf(&b, "native_scrollback = %v   # keep soft keyboard scrollback over SSH; env/flag override\n", c.NativeScrollback)
+	} else {
+		b.WriteString("# native_scrollback = false   # keep soft keyboard scrollback over SSH; env/flag override\n")
 	}
 	b.WriteString("\n")
 
@@ -60,28 +72,13 @@ func RenderTOMLForScope(c *Config, scope RenderScope) string {
 		} else {
 			b.WriteString("# theme_style = \"graphite\"   # graphite|ember|aurora|midnight|sandstone|porcelain|linen|glacier\n")
 		}
-		if strings.TrimSpace(c.UI.CloseBehavior) != "" && scope == RenderScopeProject {
-			fmt.Fprintf(&b, "close_behavior = %q   # legacy desktop close behavior; prefer [desktop].close_behavior in user config\n", c.DesktopCloseBehavior())
+		if strings.TrimSpace(c.UI.CloseBehavior) != "" {
+			fmt.Fprintf(&b, "close_behavior = %q   # window close behavior; quit|background\n", c.UICloseBehavior())
 		}
 		b.WriteString("\n")
 	}
 
 	if scope != RenderScopeProject {
-		b.WriteString("[desktop]\n")
-		if lang := c.DesktopLanguage(); lang != "" {
-			fmt.Fprintf(&b, "language = %q   # desktop UI language; empty/auto = browser/OS auto-detect\n", lang)
-		} else {
-			b.WriteString("# language = \"zh\"   # desktop UI language; empty/auto = browser/OS auto-detect\n")
-		}
-		fmt.Fprintf(&b, "theme = %q   # desktop only: auto|dark|light\n", c.DesktopTheme())
-		if style := c.DesktopThemeStyle(); style != "" {
-			fmt.Fprintf(&b, "theme_style = %q   # desktop accent palette\n", style)
-		} else {
-			b.WriteString("# theme_style = \"graphite\"   # graphite|ember|aurora|midnight|sandstone|porcelain|linen|glacier\n")
-		}
-		fmt.Fprintf(&b, "close_behavior = %q   # desktop: quit|background when the window close button is clicked\n", c.DesktopCloseBehavior())
-		b.WriteString("\n")
-
 		b.WriteString("[notifications]\n")
 		fmt.Fprintf(&b, "enabled = %v   # system notifications for CLI chat/run; default off\n", c.Notifications.Enabled)
 		fmt.Fprintf(&b, "turn_done = %v   # notify when a turn finishes\n", c.Notifications.TurnDone)
@@ -296,7 +293,7 @@ func RenderTOMLForScope(c *Config, scope RenderScope) string {
 	if len(c.Permissions.MainAgentAllowed) > 0 {
 		fmt.Fprintf(&b, "main_agent_allowed = %s\n", renderStringArray(c.Permissions.MainAgentAllowed))
 	} else {
-		b.WriteString("# main_agent_allowed = [\"spawn_agent\", \"wait_agent\", \"list_agents\", \"send_message\", \"followup_task\", \"interrupt_agent\", \"ask\", \"note\", \"audit_finish\", \"run_skill\", \"slash_command\", \"recall\", \"remember\", \"forget\", \"peek-job\", \"cancel-job\", \"steer-job\"]\n")
+		b.WriteString("# main_agent_allowed = [\"spawn_agent\", \"wait_agent\", \"list_agents\", \"send_message\", \"followup_task\", \"interrupt_agent\", \"ask\", \"note\", \"audit_finish\", \"run_skill\", \"slash_command\", \"recall\", \"remember\", \"forget\"]\n")
 	}
 	b.WriteString("\n")
 
@@ -309,6 +306,82 @@ func RenderTOMLForScope(c *Config, scope RenderScope) string {
 		b.WriteString("# command = \"my-statusline.sh\"\n")
 	}
 	b.WriteString("\n")
+
+	// LSP / codegraph / serve are part of the on-disk schema; omitting them on
+	// setup save silently drops user auth and language-server settings (P0-2).
+	b.WriteString("[lsp]\n")
+	fmt.Fprintf(&b, "enabled = %v   # LSP tools (definition/references/hover/diagnostics)\n", c.LSP.Enabled)
+	if len(c.LSP.Servers) > 0 {
+		keys := make([]string, 0, len(c.LSP.Servers))
+		for k := range c.LSP.Servers {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		for _, lang := range keys {
+			s := c.LSP.Servers[lang]
+			fmt.Fprintf(&b, "\n[lsp.servers.%s]\n", lang)
+			if s.Command != "" {
+				fmt.Fprintf(&b, "command = %q\n", s.Command)
+			}
+			if len(s.Args) > 0 {
+				fmt.Fprintf(&b, "args = %s\n", renderStringArray(s.Args))
+			}
+			if len(s.Env) > 0 {
+				fmt.Fprintf(&b, "env = %s\n", renderStringMap(s.Env))
+			}
+			if s.LanguageID != "" {
+				fmt.Fprintf(&b, "language_id = %q\n", s.LanguageID)
+			}
+			if len(s.Extensions) > 0 {
+				fmt.Fprintf(&b, "extensions = %s\n", renderStringArray(s.Extensions))
+			}
+			if s.InstallHint != "" {
+				fmt.Fprintf(&b, "install_hint = %q\n", s.InstallHint)
+			}
+		}
+	} else {
+		b.WriteString("# [lsp.servers.go]\n")
+		b.WriteString("# command = \"gopls\"\n")
+	}
+	b.WriteString("\n")
+
+	b.WriteString("[codegraph]\n")
+	fmt.Fprintf(&b, "enabled = %v\n", c.Codegraph.Enabled)
+	if c.Codegraph.Path != "" {
+		fmt.Fprintf(&b, "path = %q\n", c.Codegraph.Path)
+	} else {
+		b.WriteString("# path = \"\"   # optional binary path override\n")
+	}
+	if c.Codegraph.Tier != "" {
+		fmt.Fprintf(&b, "tier = %q\n", c.Codegraph.Tier)
+	} else {
+		b.WriteString("# tier = \"\"\n")
+	}
+	b.WriteString("\n")
+
+	if scope != RenderScopeProject {
+		b.WriteString("[serve]\n")
+		b.WriteString("# auth_mode: none|token|password. token/password recommended on non-loopback binds.\n")
+		mode := c.Serve.AuthMode
+		if mode == "" {
+			mode = "none"
+		}
+		fmt.Fprintf(&b, "auth_mode = %q\n", mode)
+		// Never write the live token/password hash as recoverable secrets.
+		// Presence is preserved via placeholder so round-trip keeps auth_mode.
+		if strings.TrimSpace(c.Serve.Token) != "" {
+			b.WriteString("token = \"${REASONIX_SERVE_TOKEN}\"   # set via env; never store the raw token here\n")
+		} else {
+			b.WriteString("# token = \"${REASONIX_SERVE_TOKEN}\"   # for auth_mode = \"token\"\n")
+		}
+		if strings.TrimSpace(c.Serve.PasswordHash) != "" {
+			fmt.Fprintf(&b, "password_hash = %q   # bcrypt hash from: reasonix serve --hash-password\n", c.Serve.PasswordHash)
+		} else {
+			b.WriteString("# password_hash = \"\"   # bcrypt hash from: reasonix serve --hash-password\n")
+		}
+		fmt.Fprintf(&b, "behind_proxy = %v   # trust X-Forwarded-* only behind a known reverse proxy\n", c.Serve.BehindProxy)
+		b.WriteString("\n")
+	}
 
 	b.WriteString("# External MCP servers. type: \"stdio\" (default, a subprocess) | \"http\" | \"sse\".\n")
 	b.WriteString("# ${VAR} / ${VAR:-default} are expanded from the environment in command/args/env/url/headers.\n")

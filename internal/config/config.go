@@ -16,7 +16,6 @@ import (
 
 	"github.com/BurntSushi/toml"
 
-	"reasonix/internal/jobs"
 	"reasonix/internal/netclient"
 	"reasonix/internal/provider"
 )
@@ -44,7 +43,6 @@ type Config struct {
 	DefaultModel  string              `toml:"default_model"`
 	Language      string              `toml:"language"` // ui/model language tag (e.g. "zh"); empty = auto-detect from $LANG / $REASONIX_LANG
 	UI            UIConfig            `toml:"ui"`
-	Desktop       DesktopConfig       `toml:"desktop"`
 	Notifications NotificationsConfig `toml:"notifications"`
 	Agent         AgentConfig         `toml:"agent"`
 	Providers     []ProviderEntry     `toml:"providers"`
@@ -69,22 +67,11 @@ type Config struct {
 	NativeScrollback bool `toml:"native_scrollback"`
 }
 
-// UIConfig controls CLI presentation-only settings. Desktop appearance is kept in
-// DesktopConfig so desktop preferences cannot alter terminal output or prompts.
+// UIConfig controls CLI presentation-only settings.
 type UIConfig struct {
 	Theme         string `toml:"theme"`          // auto|dark|light; empty resolves to auto
 	ThemeStyle    string `toml:"theme_style"`    // graphite|ember|aurora|midnight|sandstone|porcelain|linen|glacier
-	CloseBehavior string `toml:"close_behavior"` // legacy desktop close behavior; prefer desktop.close_behavior
-}
-
-// DesktopConfig controls desktop-only UI preferences. It is intentionally
-// separate from top-level language and [ui] so desktop choices do not affect CLI
-// language, terminal colours, or provider-visible prompt/request data.
-type DesktopConfig struct {
-	Language      string `toml:"language"`       // auto|en|zh; empty/auto = browser/OS auto-detect
-	Theme         string `toml:"theme"`          // auto|dark|light; empty resolves to dark
-	ThemeStyle    string `toml:"theme_style"`    // graphite|ember|aurora|midnight|sandstone|porcelain|linen|glacier
-	CloseBehavior string `toml:"close_behavior"` // quit|background; desktop window close behavior
+	CloseBehavior string `toml:"close_behavior"` // quit|background; window close behavior
 }
 
 // NotificationsConfig controls optional system notifications for CLI chat/run.
@@ -131,20 +118,6 @@ func normalizeCloseBehavior(mode string) string {
 	}
 }
 
-// DesktopLanguage normalizes the desktop UI language. Empty means auto-detect
-// from the browser/OS locale; it deliberately does not read top-level language,
-// which is used by the CLI/model-facing runtime.
-func (c *Config) DesktopLanguage() string {
-	switch strings.ToLower(strings.TrimSpace(c.Desktop.Language)) {
-	case "en":
-		return "en"
-	case "zh":
-		return "zh"
-	default:
-		return ""
-	}
-}
-
 // ReasoningLanguage returns the model-facing reasoning language from [agent].
 // Empty means no preference (model default).
 func (c *Config) ReasoningLanguage() string {
@@ -158,42 +131,6 @@ func (c *Config) ReasoningLanguage() string {
 	}
 }
 
-// DesktopTheme normalizes desktop.theme. New desktop users default to the dark
-// graphite product look; an explicit auto/light/dark is preserved.
-func (c *Config) DesktopTheme() string {
-	switch strings.ToLower(strings.TrimSpace(c.Desktop.Theme)) {
-	case "auto":
-		return "auto"
-	case "light":
-		return "light"
-	case "dark":
-		return "dark"
-	default:
-		return "dark"
-	}
-}
-
-// DesktopThemeStyle normalizes desktop.theme_style. Empty means the frontend
-// chooses the default style for the resolved desktop theme.
-func (c *Config) DesktopThemeStyle() string {
-	return normalizeThemeStyle(c.Desktop.ThemeStyle)
-}
-
-// DesktopCloseBehavior normalizes the desktop close-window preference. It falls
-// back to the legacy ui.close_behavior value for configs written before [desktop]
-// existed.
-func (c *Config) DesktopCloseBehavior() string {
-	if strings.TrimSpace(c.Desktop.CloseBehavior) != "" {
-		return normalizeCloseBehavior(c.Desktop.CloseBehavior)
-	}
-	return normalizeCloseBehavior(c.UI.CloseBehavior)
-}
-
-// UICloseBehavior is the legacy name for DesktopCloseBehavior.
-func (c *Config) UICloseBehavior() string {
-	return c.DesktopCloseBehavior()
-}
-
 // LSPConfig governs the optional Language Server Protocol tools (lsp_definition,
 // lsp_references, lsp_hover, lsp_diagnostics). Enabled defaults to true; the
 // servers themselves are never bundled — each resolves on PATH and the tool
@@ -203,6 +140,11 @@ func (c *Config) UICloseBehavior() string {
 type LSPConfig struct {
 	Enabled bool                 `toml:"enabled"`
 	Servers map[string]LSPServer `toml:"servers"`
+}
+
+// UICloseBehavior normalizes the window close behavior. It maps to ui.close_behavior.
+func (c *Config) UICloseBehavior() string {
+	return normalizeCloseBehavior(c.UI.CloseBehavior)
 }
 
 // CodegraphConfig controls the built-in code intelligence MCP server.
@@ -498,83 +440,8 @@ type AgentConfig struct {
 	// LogLevel controls the agent's diagnostic log verbosity: debug|info|warn|error.
 	// Default "info" — debug logs are only visible when explicitly set.
 	LogLevel string `toml:"log_level"`
-	// BackgroundJobs tunes stale killing and duplicate background-task detection.
-	BackgroundJobs BackgroundJobsConfig `toml:"background_jobs"`
 }
 
-// BackgroundJobsConfig controls session background jobs (bash/task/skill).
-type BackgroundJobsConfig struct {
-	IdleKillSecDefault int `toml:"idle_kill_sec_default"`
-	IdleKillSecBash    int `toml:"idle_kill_sec_bash"`
-	IdleKillSecTask    int `toml:"idle_kill_sec_task"`
-	IdleKillSecSkill   int `toml:"idle_kill_sec_skill"`
-	SemanticDedupEnabled          bool    `toml:"semantic_dedup_enabled"`
-	SemanticDedupThreshold        float64 `toml:"semantic_dedup_threshold"`
-	SemanticDedupRequireSameLabel bool    `toml:"semantic_dedup_require_same_label"`
-}
-
-// Normalize fills zero values with defaults.
-func (b *BackgroundJobsConfig) Normalize() {
-	if b == nil {
-		return
-	}
-	def := defaultBackgroundJobs()
-	if b.IdleKillSecDefault <= 0 {
-		b.IdleKillSecDefault = def.IdleKillSecDefault
-	}
-	if b.IdleKillSecBash <= 0 {
-		b.IdleKillSecBash = def.IdleKillSecBash
-	}
-	if b.IdleKillSecTask <= 0 {
-		b.IdleKillSecTask = def.IdleKillSecTask
-	}
-	if b.IdleKillSecSkill <= 0 {
-		b.IdleKillSecSkill = def.IdleKillSecSkill
-	}
-	if b.SemanticDedupThreshold <= 0 || b.SemanticDedupThreshold > 1 {
-		b.SemanticDedupThreshold = def.SemanticDedupThreshold
-	}
-}
-
-func defaultBackgroundJobs() BackgroundJobsConfig {
-	return BackgroundJobsConfig{
-		IdleKillSecDefault:            120,
-		IdleKillSecBash:               7200, // 2h: long builds/servers; heartbeat marks activity
-		IdleKillSecTask:               3600, // 1h sub-agent task
-		IdleKillSecSkill:              3600, // 1h sub-agent skill
-		SemanticDedupEnabled:          true,
-		SemanticDedupThreshold:        0.85,
-		SemanticDedupRequireSameLabel: true, // semantic gate only when label matches (fewer false blocks)
-	}
-}
-
-// JobsPolicies converts config to jobs.ManagerPolicies.
-func (b *BackgroundJobsConfig) JobsPolicies() jobs.ManagerPolicies {
-	b.Normalize()
-	return jobs.ManagerPolicies{
-		IdleKillSecDefault: b.IdleKillSecDefault,
-		IdleKillByKind: map[string]int{
-			"bash":  b.IdleKillSecBash,
-			"task":  b.IdleKillSecTask,
-			"skill": b.IdleKillSecSkill,
-		},
-		SemanticDedup: jobs.SemanticDedupPolicy{
-			Enabled:          b.SemanticDedupEnabled,
-			Threshold:        b.SemanticDedupThreshold,
-			RequireSameLabel: b.SemanticDedupRequireSameLabel,
-		},
-	}
-}
-
-// ResolvedBackgroundJobs returns [agent.background_jobs] with defaults applied.
-func (c *Config) ResolvedBackgroundJobs() BackgroundJobsConfig {
-	b := c.Agent.BackgroundJobs
-	if b == (BackgroundJobsConfig{}) {
-		return defaultBackgroundJobs()
-	}
-	b.Normalize()
-	return b
-}
 
 // ProviderEntry declares a model provider instance. ContextWindow is the model's
 // token budget; the harness compacts older history as a turn's prompt approaches
@@ -810,6 +677,18 @@ const ToolUseEnforcementPolicy = `CRITICAL: You MUST use your tools to take acti
 	`you would do without actually doing it. Every response should either (a) contain tool ` +
 	`calls that make progress, or (b) deliver a final result to the user.`
 
+// AppendSystemPolicies folds the static, cache-stable policy blocks onto the
+// system prompt. Tool-use and visibility always apply. LanguagePolicy is only
+// added when no concrete UI language is configured (empty language = auto).
+func AppendSystemPolicies(prompt string, c *Config) string {
+	base := strings.TrimSpace(prompt)
+	parts := []string{base, ToolUseEnforcementPolicy, VisibilityPolicy}
+	if c == nil || strings.TrimSpace(c.Language) == "" {
+		parts = append(parts, LanguagePolicy)
+	}
+	return strings.Join(parts, "\n\n")
+}
+
 // Default returns the built-in default configuration (DeepSeek + MiMo presets).
 func Default() *Config {
 	return &Config{
@@ -830,11 +709,11 @@ func Default() *Config {
 			// if you want a hard guard against runaway.
 			MaxSteps:          0,
 			PlannerMaxSteps:   12,
+			LogLevel:          "info", // debug|info|warn|error; empty also means info at CLI
 			SoftCompactRatio:  0.5,
 			CompactRatio:      0.8,
 			CompactForceRatio: 0.9,
 			EncryptSessions:   true,
-			BackgroundJobs:    defaultBackgroundJobs(),
 		},
 		// Mode "ask" with no rules keeps `reasonix run` autonomous (no TTY → ask
 		// resolves to allow) while `reasonix chat` prompts before writers. Users add
@@ -868,7 +747,7 @@ func Load() (*Config, error) {
 
 // LoadForRoot builds the configuration with project files resolved from root
 // instead of the current working directory. When root is "" or ".", it behaves
-// like Load(). This is the workspace-aware entry point: desktop tabs use it so
+// like Load(). This is the workspace-aware entry point: workspace panels use it so
 // each project's reasonix.toml + .env + .mcp.json are resolved independently
 // without changing the process cwd.
 func LoadForRoot(root string) (*Config, error) {
@@ -1040,8 +919,11 @@ func mergeFile(cfg *Config, path string) error {
 	if err != nil {
 		return nil
 	}
-	if mode := info.Mode().Perm(); mode&0o077 != 0 {
-		slog.Warn("config file has loose permissions; consider chmod 600", "path", path, "perm", fmt.Sprintf("%o", mode))
+	if mode := info.Mode().Perm(); mode&0o022 != 0 {
+		// Group/other writable config can be tampered with; refuse to load.
+		return fmt.Errorf("config %s: permissions %o are group/other-writable; chmod 600 required", path, mode)
+	} else if mode&0o044 != 0 {
+		slog.Warn("config file is group/other-readable; prefer chmod 600", "path", path, "perm", fmt.Sprintf("%o", mode))
 	}
 	if _, err := toml.DecodeFile(path, cfg); err != nil {
 		return fmt.Errorf("config %s: %w", path, err)

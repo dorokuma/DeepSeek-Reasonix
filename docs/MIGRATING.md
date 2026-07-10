@@ -36,11 +36,11 @@ reasonix chat
 `latest` will stay on `0.x` for the foreseeable future, so installing or
 updating v2 always means `@next` (or a pinned `1.x`).
 
-Prebuilt archives (`reasonix-<os>-<arch>.tar.gz` / `.zip`) and the desktop
-installer are attached to each GitHub release. These are a **separate channel**
-from npm: the installer drops a standalone desktop/binary build and does not
+Prebuilt archives (`reasonix-<os>-<arch>.tar.gz` / `.zip`) are attached to each
+GitHub release. These are a **separate channel**
+from npm: the installer drops a standalone binary build and does not
 touch a CLI you installed with `npm i -g`, so the two coexist — an npm `0.53` in
-your shell alongside a `1.x` desktop app is expected, not a conflict. Or build
+your shell alongside a `1.x` binary is expected, not a conflict. Or build
 from source:
 
 ```sh
@@ -76,7 +76,7 @@ and DeepSeek prefix-cache–oriented design.
 
 - **Code intelligence**: tree-sitter symbol/call graph tools replace embedding
   semantic search — no embedding service or API cost.
-- **No web dashboard** — the v2 line is terminal + desktop (Wails), by design.
+- **No web dashboard** — the v2 line is terminal + HTTP/SSE serve, by design.
 - Some granular v1 tools are intentionally consolidated (e.g. file-management ops
   go through `bash`); a few v1 tools are not yet ported (tracked on Discussions).
 
