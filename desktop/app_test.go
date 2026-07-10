@@ -5136,6 +5136,56 @@ func TestFileRefsUseActiveTabWorkspaceRoot(t *testing.T) {
 	}
 }
 
+func TestFileRefsForTabIgnoreActiveParentWorkspace(t *testing.T) {
+	parentRoot := robustTempDir(t)
+	childRoot := filepath.Join(parentRoot, "child")
+	if err := os.MkdirAll(childRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(parentRoot, "parent-only.txt"), []byte("parent"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(parentRoot, "shared.txt"), []byte("parent shared"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(childRoot, "child-only.txt"), []byte("child"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(childRoot, "shared.txt"), []byte("child shared"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	app := &App{
+		tabs: map[string]*WorkspaceTab{
+			"parent": {ID: "parent", Scope: "project", WorkspaceRoot: parentRoot},
+			"child":  {ID: "child", Scope: "project", WorkspaceRoot: childRoot},
+		},
+		activeTabID: "parent",
+	}
+
+	listed := app.ListDirForTab("child", "")
+	if !hasDirEntry(listed, "child-only.txt") || hasDirEntry(listed, "parent-only.txt") {
+		t.Fatalf("ListDirForTab(child) = %+v, want only child workspace entries", listed)
+	}
+	found := app.SearchFileRefsForTab("child", "child-only")
+	if !hasDirEntry(found, "child-only.txt") {
+		t.Fatalf("SearchFileRefsForTab(child) = %+v, want child-only.txt", found)
+	}
+	preview := app.ReadFileForTab("child", "shared.txt")
+	if preview.Err != "" || preview.Body != "child shared" {
+		t.Fatalf("ReadFileForTab(child) = %+v, want child workspace file", preview)
+	}
+	path, ok, err := app.workspaceOrExternalPathForTab("child", "shared.txt")
+	if err != nil || !ok || path != filepath.Join(childRoot, "shared.txt") {
+		t.Fatalf("workspaceOrExternalPathForTab(child) = (%q, %v, %v)", path, ok, err)
+	}
+
+	legacy := app.ReadFile("shared.txt")
+	if legacy.Err != "" || legacy.Body != "parent shared" {
+		t.Fatalf("ReadFile legacy active-tab behavior = %+v, want parent workspace file", legacy)
+	}
+}
+
 func TestFileRefsIncludeRegisteredExternalFolderChildren(t *testing.T) {
 	workspace := robustTempDir(t)
 	external := filepath.Join(robustTempDir(t), "Folder With Spaces")
@@ -5159,11 +5209,12 @@ func TestFileRefsIncludeRegisteredExternalFolderChildren(t *testing.T) {
 	app := &App{
 		tabs: map[string]*WorkspaceTab{
 			"project": {ID: "project", WorkspaceRoot: workspace, Ctrl: ctrl},
+			"other":   {ID: "other", WorkspaceRoot: robustTempDir(t)},
 		},
-		activeTabID: "project",
+		activeTabID: "other",
 	}
 
-	listed := app.ListDir(token + "/src/")
+	listed := app.ListDirForTab("project", token+"/src/")
 	if len(listed) != 1 ||
 		listed[0].Name != "outside.txt" ||
 		listed[0].Path != token+"/src/outside.txt" ||
@@ -5171,7 +5222,7 @@ func TestFileRefsIncludeRegisteredExternalFolderChildren(t *testing.T) {
 		t.Fatalf("ListDir external src = %+v, want outside token/display path", listed)
 	}
 
-	found := app.SearchFileRefs("outside")
+	found := app.SearchFileRefsForTab("project", "outside")
 	var externalHit *DirEntry
 	for i := range found {
 		if found[i].Path == token+"/src/outside.txt" {
@@ -5183,7 +5234,7 @@ func TestFileRefsIncludeRegisteredExternalFolderChildren(t *testing.T) {
 		t.Fatalf("SearchFileRefs external hit = %+v, all results %+v", externalHit, found)
 	}
 
-	preview := app.ReadFile(token + "/src/outside.txt")
+	preview := app.ReadFileForTab("project", token+"/src/outside.txt")
 	if preview.Err != "" || preview.Body != "outside" {
 		t.Fatalf("ReadFile external token preview = %+v, want outside file body", preview)
 	}

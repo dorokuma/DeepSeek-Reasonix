@@ -34,6 +34,19 @@ type fakeAdapter struct {
 	startErr error
 }
 
+type resultAdapter struct {
+	*fakeAdapter
+	result SendResult
+	err    error
+}
+
+func (a *resultAdapter) Send(_ context.Context, msg OutboundMessage) (SendResult, error) {
+	a.mu.Lock()
+	a.sent = append(a.sent, msg)
+	a.mu.Unlock()
+	return a.result, a.err
+}
+
 func newFakeAdapter(platform Platform, name string) *fakeAdapter {
 	return &fakeAdapter{
 		platform: platform,
@@ -1636,6 +1649,46 @@ func TestGatewayControlServerStatusAndSend(t *testing.T) {
 	_ = resp.Body.Close()
 	if resp.StatusCode != http.StatusOK || !strings.Contains(string(metricsBody), "reasonix_bot_adapter_sends_total") {
 		t.Fatalf("GET /metrics status=%d body=%q, want adapter metrics", resp.StatusCode, string(metricsBody))
+	}
+}
+
+func TestControlSendReportsAndTracksPartialDelivery(t *testing.T) {
+	adapter := &resultAdapter{
+		fakeAdapter: newFakeAdapter(PlatformFeishu, "partial-feishu"),
+		result: SendResult{
+			MessageID:  "media-2",
+			MessageIDs: []string{"text-1", "media-1", "media-2"},
+		},
+		err: errors.New("media-3 failed"),
+	}
+	gw := NewGatewayWithAdapterBindings(GatewayConfig{
+		IgnoreSelfMessages: true,
+	}, []AdapterBinding{{ID: "feishu-lark", Platform: PlatformFeishu, Domain: "lark", Adapter: adapter}}, discardLogger())
+	req := httptest.NewRequest(http.MethodPost, "/send", strings.NewReader(`{"connection_id":"feishu-lark","domain":"lark","chat_id":"chat","text":"hello"}`))
+	recorder := httptest.NewRecorder()
+
+	gw.handleControlSend(recorder, req)
+
+	if recorder.Code != http.StatusMultiStatus {
+		t.Fatalf("POST /send status = %d, want %d", recorder.Code, http.StatusMultiStatus)
+	}
+	var response controlSendResponse
+	if err := json.NewDecoder(recorder.Body).Decode(&response); err != nil {
+		t.Fatalf("decode partial response: %v", err)
+	}
+	if !response.Partial || response.Error != "media-3 failed" || len(response.MessageIDs) != 3 {
+		t.Fatalf("partial response = %+v", response)
+	}
+	for _, messageID := range response.MessageIDs {
+		if !gw.isSelfMessage(InboundMessage{
+			Platform:     PlatformFeishu,
+			ConnectionID: "feishu-lark",
+			Domain:       "lark",
+			ChatID:       "chat",
+			MessageID:    messageID,
+		}) {
+			t.Fatalf("delivered message %q was not registered for echo suppression", messageID)
+		}
 	}
 }
 

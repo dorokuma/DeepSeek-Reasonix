@@ -7861,6 +7861,20 @@ func (a *App) activeWorkspaceBase() (string, error) {
 	return workspaceBaseFromRoot(a.activeWorkspaceRoot())
 }
 
+func (a *App) workspaceTargetForTab(tabID string) (string, control.SessionAPI, bool) {
+	tabID = strings.TrimSpace(tabID)
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	tab := a.tabByIDLocked(tabID)
+	if tab == nil {
+		if tabID == "" {
+			return ".", nil, true
+		}
+		return "", nil, false
+	}
+	return tab.WorkspaceRoot, tab.Ctrl, true
+}
+
 func workspaceBaseFromRoot(root string) (string, error) {
 	if strings.TrimSpace(root) == "" || root == "." {
 		return os.Getwd()
@@ -7869,14 +7883,6 @@ func workspaceBaseFromRoot(root string) (string, error) {
 		root = abs
 	}
 	return filepath.Clean(root), nil
-}
-
-func (a *App) workspacePath(rel string) (string, bool, error) {
-	base, err := a.activeWorkspaceBase()
-	if err != nil {
-		return "", false, err
-	}
-	return workspacePathForBase(base, rel)
 }
 
 func workspacePathForBase(base, rel string) (string, bool, error) {
@@ -7904,12 +7910,21 @@ func workspacePathForBase(base, rel string) (string, bool, error) {
 // tab workspace. The menu navigates one level at a time, never recursively —
 // bounded for huge trees.
 func (a *App) ListDir(rel string) []DirEntry {
-	if browser := a.externalFolderRefBrowser(); browser != nil {
+	return a.ListDirForTab("", rel)
+}
+
+// ListDirForTab is the tab-scoped variant used by multi-tab frontend surfaces.
+func (a *App) ListDirForTab(tabID, rel string) []DirEntry {
+	root, ctrl, ok := a.workspaceTargetForTab(tabID)
+	if !ok {
+		return []DirEntry{}
+	}
+	if browser := externalFolderRefBrowserFromController(ctrl); browser != nil {
 		if entries, handled := browser.ListExternalFolderRefDir(rel); handled {
 			return externalFolderDirEntries(entries)
 		}
 	}
-	base, err := a.activeWorkspaceBase()
+	base, err := workspaceBaseFromRoot(root)
 	if err != nil {
 		return []DirEntry{}
 	}
@@ -7948,16 +7963,25 @@ func (a *App) ListDir(rel string) []DirEntry {
 
 // SearchFileRefs finds workspace files by basename for bare "@token" completion.
 func (a *App) SearchFileRefs(query string) []DirEntry {
-	base, err := a.activeWorkspaceBase()
+	return a.SearchFileRefsForTab("", query)
+}
+
+// SearchFileRefsForTab is the tab-scoped variant used by multi-tab frontend surfaces.
+func (a *App) SearchFileRefsForTab(tabID, query string) []DirEntry {
+	root, ctrl, ok := a.workspaceTargetForTab(tabID)
+	if !ok {
+		return []DirEntry{}
+	}
+	base, err := workspaceBaseFromRoot(root)
 	if err != nil {
-		return nil
+		return []DirEntry{}
 	}
 	results := fileref.Search(base, query, fileRefSearchLimit)
 	out := make([]DirEntry, 0, len(results))
 	for _, r := range results {
 		out = append(out, DirEntry{Name: r.Path, IsDir: r.IsDir})
 	}
-	if browser := a.externalFolderRefBrowser(); browser != nil {
+	if browser := externalFolderRefBrowserFromController(ctrl); browser != nil {
 		out = append(out, externalFolderDirEntries(browser.SearchExternalFolderRefs(query, fileRefSearchLimit))...)
 	}
 	return out
@@ -7969,11 +7993,9 @@ type externalFolderRefBrowser interface {
 	ExternalFolderRefLocalPath(tokenPath string) (path, displayPath string, ok bool)
 }
 
-func (a *App) externalFolderRefBrowser() externalFolderRefBrowser {
-	if ctrl := a.activeCtrl(); ctrl != nil {
-		if browser, ok := ctrl.(externalFolderRefBrowser); ok {
-			return browser
-		}
+func externalFolderRefBrowserFromController(ctrl control.SessionAPI) externalFolderRefBrowser {
+	if browser, ok := ctrl.(externalFolderRefBrowser); ok {
+		return browser
 	}
 	return nil
 }
@@ -7992,20 +8014,33 @@ func externalFolderDirEntries(entries []control.ExternalFolderRefEntry) []DirEnt
 	return out
 }
 
-func (a *App) workspaceOrExternalPath(rel string) (string, bool, error) {
-	if browser := a.externalFolderRefBrowser(); browser != nil {
+func (a *App) workspaceOrExternalPathForTab(tabID, rel string) (string, bool, error) {
+	root, ctrl, ok := a.workspaceTargetForTab(tabID)
+	if !ok {
+		return "", false, os.ErrNotExist
+	}
+	if browser := externalFolderRefBrowserFromController(ctrl); browser != nil {
 		if path, _, ok := browser.ExternalFolderRefLocalPath(rel); ok {
 			return path, true, nil
 		}
 	}
-	return a.workspacePath(rel)
+	base, err := workspaceBaseFromRoot(root)
+	if err != nil {
+		return "", false, err
+	}
+	return workspacePathForBase(base, rel)
 }
 
 // ReadFile returns a small text preview for a file under the current workspace
 // or a session-authorized external folder ref.
 func (a *App) ReadFile(rel string) FilePreview {
+	return a.ReadFileForTab("", rel)
+}
+
+// ReadFileForTab returns a preview resolved against the requested tab.
+func (a *App) ReadFileForTab(tabID, rel string) FilePreview {
 	out := FilePreview{Path: rel}
-	path, ok, err := a.workspaceOrExternalPath(rel)
+	path, ok, err := a.workspaceOrExternalPathForTab(tabID, rel)
 	if err != nil || !ok {
 		out.Err = "invalid path"
 		return out
@@ -8090,7 +8125,12 @@ func (a *App) ReadFile(rel string) FilePreview {
 // OpenWorkspacePath opens a workspace or authorized external-ref file/folder in
 // the OS default app.
 func (a *App) OpenWorkspacePath(rel string) error {
-	path, ok, err := a.workspaceOrExternalPath(rel)
+	return a.OpenWorkspacePathForTab("", rel)
+}
+
+// OpenWorkspacePathForTab opens a path resolved against the requested tab.
+func (a *App) OpenWorkspacePathForTab(tabID, rel string) error {
+	path, ok, err := a.workspaceOrExternalPathForTab(tabID, rel)
 	if err != nil || !ok {
 		return os.ErrInvalid
 	}
@@ -8100,7 +8140,12 @@ func (a *App) OpenWorkspacePath(rel string) error {
 // RevealWorkspacePath shows a workspace or authorized external-ref file in the
 // native file manager.
 func (a *App) RevealWorkspacePath(rel string) error {
-	path, ok, err := a.workspaceOrExternalPath(rel)
+	return a.RevealWorkspacePathForTab("", rel)
+}
+
+// RevealWorkspacePathForTab reveals a path resolved against the requested tab.
+func (a *App) RevealWorkspacePathForTab(tabID, rel string) error {
+	path, ok, err := a.workspaceOrExternalPathForTab(tabID, rel)
 	if err != nil || !ok {
 		return os.ErrInvalid
 	}

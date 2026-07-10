@@ -245,15 +245,20 @@ export interface AppBindings {
   SetMCPServerTier(name: string, tier: string): Promise<void>;
   SlashArgs(input: string): Promise<SlashArgsResult>;
   ListDir(rel: string): Promise<DirEntry[]>;
+  ListDirForTab(tabID: string, rel: string): Promise<DirEntry[]>;
   SearchFileRefs(query: string): Promise<DirEntry[]>;
+  SearchFileRefsForTab(tabID: string, query: string): Promise<DirEntry[]>;
   ReadFile(rel: string): Promise<FilePreview>;
+  ReadFileForTab(tabID: string, rel: string): Promise<FilePreview>;
   WorkspaceChanges(tabID: string): Promise<WorkspaceChangesView>;
   GitBranches(): Promise<string[]>;
   GitCheckout(branch: string): Promise<void>;
   WorkspaceGitHistory(tabID: string, path: string): Promise<GitCommitView[]>;
   WorkspaceGitCommitDetail(tabID: string, hash: string, path: string): Promise<GitCommitDetailView>;
   OpenWorkspacePath(rel: string): Promise<void>;
+  OpenWorkspacePathForTab(tabID: string, rel: string): Promise<void>;
   RevealWorkspacePath(rel: string): Promise<void>;
+  RevealWorkspacePathForTab(tabID: string, rel: string): Promise<void>;
   RevealPath(path: string): Promise<void>;
   SavePastedImage(dataUrl: string): Promise<string>;
   SaveClipboardImage(): Promise<string>;
@@ -2834,11 +2839,17 @@ function makeMockApp(): AppBindings {
       }
       return [{ name: "file.go", isDir: false }];
     },
+    async ListDirForTab(_tabID: string, rel: string) {
+      return this.ListDir(rel);
+    },
     async SearchFileRefs(query: string) {
       const q = query.toLowerCase();
       return ["desktop/frontend/src/lib/bridge.ts", "frontend/wailsjs/runtime/runtime.js", "internal/control/refs.go"]
         .filter((path) => path.split("/").pop()?.toLowerCase().includes(q))
         .map((name) => ({ name, isDir: false }));
+    },
+    async SearchFileRefsForTab(_tabID: string, query: string) {
+      return this.SearchFileRefs(query);
     },
     async ReadFile(rel: string) {
       const samples: Record<string, string> = {
@@ -2854,6 +2865,9 @@ function makeMockApp(): AppBindings {
         truncated: false,
         binary: false,
       };
+    },
+    async ReadFileForTab(_tabID: string, rel: string) {
+      return this.ReadFile(rel);
     },
     async WorkspaceChanges(_tabID: string) {
       return {
@@ -2893,8 +2907,14 @@ function makeMockApp(): AppBindings {
     async OpenWorkspacePath(rel: string) {
       console.info("mock OpenWorkspacePath", rel);
     },
+    async OpenWorkspacePathForTab(_tabID: string, rel: string) {
+      await this.OpenWorkspacePath(rel);
+    },
     async RevealWorkspacePath(rel: string) {
       console.info("mock RevealWorkspacePath", rel);
+    },
+    async RevealWorkspacePathForTab(_tabID: string, rel: string) {
+      await this.RevealWorkspacePath(rel);
     },
     async RevealPath(path: string) {
       console.info("mock RevealPath", path);

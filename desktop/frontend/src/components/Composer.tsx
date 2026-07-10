@@ -514,6 +514,7 @@ export function Composer({
   pendingAsk = false,
   transientDismissSignal,
   sessionKey,
+  workspaceScopeKey,
   fileRefRefreshKey,
   guidanceConsumedKey,
   guidanceConsumedText,
@@ -569,6 +570,7 @@ export function Composer({
   pendingAsk?: boolean;
   transientDismissSignal?: number;
   sessionKey?: string;
+  workspaceScopeKey?: string;
   fileRefRefreshKey?: number | string;
   guidanceConsumedKey?: string;
   guidanceConsumedText?: string;
@@ -957,6 +959,8 @@ export function Composer({
   const [searchEntries, setSearchEntries] = useState<DirEntry[]>([]);
   const dirCache = useRef<Record<string, DirEntry[]>>({});
   const searchCache = useRef<Record<string, FileRefSearchCacheEntry>>({});
+  const fileRefTabId = tabId ?? "";
+  const fileRefScopeKey = workspaceScopeKey ?? `${fileRefTabId}\u0000${cwd ?? ""}`;
 
   const clearFileRefState = useCallback(() => {
     dirCache.current = {};
@@ -971,16 +975,14 @@ export function Composer({
     setDismissed(false);
   }, []);
 
-  // When the workspace/project changes (cwd prop), invalidate all @ mention
-  // state so the picker reloads candidates for the new project. Without this,
-  // dirCache/searchCache retain entries from the old project and the picker
-  // shows stale results (issue #3601).
-  const prevCwdRef = useRef(cwd);
+  // Controller/session changes invalidate @ mention state even when tab and
+  // workspace identities stay the same (saved-session rebinds and rebuilds).
+  const prevFileRefScopeRef = useRef(fileRefScopeKey);
   useEffect(() => {
-    if (prevCwdRef.current === cwd) return; // skip mount — state already initial
-    prevCwdRef.current = cwd;
+    if (prevFileRefScopeRef.current === fileRefScopeKey) return;
+    prevFileRefScopeRef.current = fileRefScopeKey;
     clearFileRefState();
-  }, [clearFileRefState, cwd]);
+  }, [clearFileRefState, fileRefScopeKey]);
 
   const prevFileRefRefreshKeyRef = useRef(fileRefRefreshKey);
   useEffect(() => {
@@ -999,7 +1001,7 @@ export function Composer({
     }
     let live = true;
     app
-      .ListDir(atDir)
+      .ListDirForTab(fileRefTabId, atDir)
       .then((es) => {
         const list = asArray(es);
         if (!live) return;
@@ -1012,7 +1014,7 @@ export function Composer({
     };
     // Re-fetch when the menu opens, the directory level changes, or the
     // workspace tree refreshes; cached data is only a fast first paint.
-  }, [atRaw === null, atDir, cwd, fileRefRefreshKey]);
+  }, [atRaw === null, atDir, fileRefRefreshKey, fileRefScopeKey, fileRefTabId]);
   useEffect(() => {
     if (atRaw === null || atDir !== "" || atFrag === "") {
       setSearchEntries([]);
@@ -1027,7 +1029,7 @@ export function Composer({
     }
     let live = true;
     app
-      .SearchFileRefs(atFrag)
+      .SearchFileRefsForTab(fileRefTabId, atFrag)
       .then((es) => {
         const list = asArray(es);
         if (!live) return;
@@ -1038,7 +1040,7 @@ export function Composer({
     return () => {
       live = false;
     };
-  }, [atRaw === null, atDir, atFrag, cwd, fileRefRefreshKey]);
+  }, [atRaw === null, atDir, atFrag, fileRefRefreshKey, fileRefScopeKey, fileRefTabId]);
   const atMatches = useMemo(
     () => {
       if (atRaw === null) return [];

@@ -624,18 +624,31 @@ func SendText(ctx context.Context, cfg config.FeishuBotConfig, chatID, text stri
 // sendMessage 使用飞书/Lark SDK 以 Interactive Card (JSON 2.0) 发送消息。
 // Card 内嵌 markdown 元素，支持 CommonMark 标准语法。
 // 当卡片体积超过 30KB 限制（如大段代码），自动降级为纯文本消息。
-// MediaURLs are intentionally ignored until outbound reads are confined by an
-// explicit operator policy; see #6279 for that follow-up.
+// MediaURLs are bare filenames staged in an operator-configured outbound media
+// root. URL fetching and arbitrary-path reads are intentionally unsupported.
 func (a *adapter) sendMessage(ctx context.Context, msg bot.OutboundMessage) (bot.SendResult, error) {
 	if msg.Card != nil {
 		return a.sendCard(ctx, msg)
 	}
-	// Outbound MediaURLs are intentionally not resolved here: doing so would let
-	// the loopback /send control caller drive arbitrary local-file reads and
-	// URL fetches (SSRF) from inside the gateway process. Outbound file/image
-	// sending is deferred until it can be built against a confined media root
-	// plus a host allowlist. QQ/WeChat ignore MediaURLs for the same reason.
-	return a.sendRenderedText(ctx, msg)
+	if len(msg.MediaURLs) == 0 {
+		return a.sendRenderedText(ctx, msg)
+	}
+	media, err := a.loadOutboundMedia(msg.MediaURLs)
+	if err != nil {
+		return bot.SendResult{}, err
+	}
+
+	var result bot.SendResult
+	if strings.TrimSpace(msg.Text) != "" {
+		textResult, err := a.sendRenderedText(ctx, msg)
+		result.Merge(textResult)
+		if err != nil {
+			return result, err
+		}
+	}
+	mediaResult, err := a.sendMedia(ctx, msg, media)
+	result.Merge(mediaResult)
+	return result, err
 }
 
 func (a *adapter) sendRenderedText(ctx context.Context, msg bot.OutboundMessage) (bot.SendResult, error) {

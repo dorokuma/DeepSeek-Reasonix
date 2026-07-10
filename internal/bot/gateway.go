@@ -2248,8 +2248,8 @@ func (gw *BotGateway) sendViaAdapter(ctx context.Context, binding AdapterBinding
 	}
 	result, err := binding.Adapter.Send(ctx, msg)
 	gw.markAdapterSend(binding, err)
-	if err == nil {
-		gw.rememberOutboundMessage(binding.Platform, binding.ID, binding.Domain, msg.ChatID, result.MessageID)
+	for _, messageID := range result.DeliveredMessageIDs() {
+		gw.rememberOutboundMessage(binding.Platform, binding.ID, binding.Domain, msg.ChatID, messageID)
 	}
 	return result, err
 }
