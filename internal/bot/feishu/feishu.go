@@ -13,6 +13,7 @@ import (
 	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -369,7 +370,7 @@ func (a *adapter) handleSDKMessage(ctx context.Context, event *larkim.P2MessageR
 		}
 	}
 	msgType := stringPtrValue(msg.MessageType)
-	text, media, ok := a.parseInboundContent(ctx, msgType, stringPtrValue(msg.Content), messageID)
+	text, media, ok := a.parseInboundContent(msgType, stringPtrValue(msg.Content), messageID)
 	if !ok {
 		a.logger.Info("feishu message ignored", "reason", "unsupported_type", "msg_type", msgType, "chat_type", stringPtrValue(msg.ChatType), "message", logHash(messageID))
 		return
@@ -390,20 +391,24 @@ func (a *adapter) handleSDKMessage(ctx context.Context, event *larkim.P2MessageR
 		)
 	}
 	userName := userID
+	var resolveUserName func(context.Context) string
 	if senderOpenID != "" {
-		userName = a.resolveUserName(ctx, senderOpenID)
+		resolveUserName = func(ctx context.Context) string {
+			return a.resolveUserName(ctx, senderOpenID)
+		}
 	}
 	ib := bot.InboundMessage{
-		Platform:  bot.PlatformFeishu,
-		ChatType:  chatType,
-		ChatID:    stringPtrValue(msg.ChatId),
-		UserID:    userID,
-		UserName:  userName,
-		Text:      text,
-		MessageID: messageID,
-		ThreadID:  stringPtrValue(msg.ThreadId),
-		Media:     media,
-		Raw:       event,
+		Platform:        bot.PlatformFeishu,
+		ChatType:        chatType,
+		ChatID:          stringPtrValue(msg.ChatId),
+		UserID:          userID,
+		UserName:        userName,
+		Text:            text,
+		MessageID:       messageID,
+		ThreadID:        stringPtrValue(msg.ThreadId),
+		Media:           media,
+		ResolveUserName: resolveUserName,
+		Raw:             event,
 	}
 	select {
 	case a.msgCh <- ib:
@@ -569,7 +574,7 @@ func (a *adapter) handleMessage(ctx context.Context, msg feishuMsgEvent) {
 		}
 	}
 
-	text, media, ok := a.parseInboundContent(ctx, msg.MsgType, msg.Content, msg.MessageID)
+	text, media, ok := a.parseInboundContent(msg.MsgType, msg.Content, msg.MessageID)
 	if !ok {
 		a.logger.Info("feishu message ignored", "reason", "unsupported_type", "msg_type", msg.MsgType, "chat_type", msg.ChatType, "message", logHash(msg.MessageID))
 		return
@@ -581,19 +586,24 @@ func (a *adapter) handleMessage(ctx context.Context, msg feishuMsgEvent) {
 	}
 
 	userName := msg.Sender.SenderID.OpenID
+	var resolveUserName func(context.Context) string
 	if userName != "" {
-		userName = a.resolveUserName(ctx, msg.Sender.SenderID.OpenID)
+		openID := msg.Sender.SenderID.OpenID
+		resolveUserName = func(ctx context.Context) string {
+			return a.resolveUserName(ctx, openID)
+		}
 	}
 	ib := bot.InboundMessage{
-		Platform:  bot.PlatformFeishu,
-		ChatType:  chatType,
-		ChatID:    msg.ChatID,
-		UserID:    msg.Sender.SenderID.OpenID,
-		UserName:  userName,
-		Text:      text,
-		MessageID: msg.MessageID,
-		ThreadID:  msg.ThreadID,
-		Media:     media,
+		Platform:        bot.PlatformFeishu,
+		ChatType:        chatType,
+		ChatID:          msg.ChatID,
+		UserID:          msg.Sender.SenderID.OpenID,
+		UserName:        userName,
+		Text:            text,
+		MessageID:       msg.MessageID,
+		ThreadID:        msg.ThreadID,
+		Media:           media,
+		ResolveUserName: resolveUserName,
 	}
 
 	select {
@@ -614,7 +624,8 @@ func SendText(ctx context.Context, cfg config.FeishuBotConfig, chatID, text stri
 // sendMessage 使用飞书/Lark SDK 以 Interactive Card (JSON 2.0) 发送消息。
 // Card 内嵌 markdown 元素，支持 CommonMark 标准语法。
 // 当卡片体积超过 30KB 限制（如大段代码），自动降级为纯文本消息。
-// MediaURLs 非空时逐个上传并作为图片/文件消息跟在文本后面发送。
+// MediaURLs are intentionally ignored until outbound reads are confined by an
+// explicit operator policy; see #6279 for that follow-up.
 func (a *adapter) sendMessage(ctx context.Context, msg bot.OutboundMessage) (bot.SendResult, error) {
 	if msg.Card != nil {
 		return a.sendCard(ctx, msg)
@@ -680,6 +691,23 @@ func isCardLimitError(err error) bool {
 	return strings.Contains(s, "11310") || strings.Contains(s, "11325")
 }
 
+const feishuReplyRecalledCode = 230011
+
+type feishuAPIError struct {
+	op   string
+	code int
+	msg  string
+}
+
+func (e *feishuAPIError) Error() string {
+	return fmt.Sprintf("feishu %s error: %s", e.op, feishuCodeError(e.code, e.msg))
+}
+
+func isReplyFallbackError(err error) bool {
+	var apiErr *feishuAPIError
+	return errors.As(err, &apiErr) && apiErr.op == "reply" && apiErr.code == feishuReplyRecalledCode
+}
+
 // sdkClient lazily builds the shared lark client. It is called concurrently —
 // the fetchBotOpenID goroutine, per-message resolveUserName, and per-resource
 // downloads all race on first use at startup — so the check-and-build is guarded
@@ -716,11 +744,15 @@ func (a *adapter) sendSDKContent(ctx context.Context, msg bot.OutboundMessage, m
 		return bot.SendResult{}, fmt.Errorf("feishu chat_id is empty")
 	}
 	// 带触发消息 ID 时用 Reply 引用回复：话题群里回复会落到对应话题，
-	// 普通群里带引用上下文。失败（如原消息已撤回）时回退普通发送。
+	// 普通群里带引用上下文。只有飞书明确返回“消息已撤回”时才回退普通
+	// 发送；传输错误的提交结果不确定，回退 Create 可能产生重复消息。
 	if replyTo := strings.TrimSpace(msg.ReplyToMsgID); replyTo != "" {
 		result, err := a.replySDKContent(ctx, replyTo, msgType, content)
 		if err == nil {
 			return result, nil
+		}
+		if !isReplyFallbackError(err) {
+			return bot.SendResult{}, err
 		}
 		a.logger.Warn("feishu reply failed; falling back to create", "message", logHash(replyTo), "err", err)
 	}
@@ -782,7 +814,7 @@ func (a *adapter) replySDKContent(ctx context.Context, replyTo, msgType, content
 			return fmt.Errorf("feishu reply error: empty response")
 		}
 		if !resp.Success() {
-			return fmt.Errorf("feishu reply error: %s", feishuCodeError(resp.Code, resp.Msg))
+			return &feishuAPIError{op: "reply", code: resp.Code, msg: resp.Msg}
 		}
 		if resp.Data != nil {
 			result = bot.SendResult{MessageID: stringPtrValue(resp.Data.MessageId)}

@@ -35,12 +35,15 @@ type SessionSource struct {
 	ThreadID     string   `json:"thread_id,omitempty"`
 }
 
-// InboundMedia 是适配器预先下载好的入站媒体内容。飞书这类平台的消息资源
-// 必须经 SDK 鉴权接口下载，无法表示为 MediaURLs 里的裸 URL。
+// InboundMedia is an authenticated inbound attachment. Adapters may provide
+// Data directly, or a lazy Load callback for platform resources that must not
+// be fetched until the gateway has admitted the sender through its allowlist.
 type InboundMedia struct {
-	Name string `json:"name,omitempty"`
-	MIME string `json:"mime,omitempty"`
-	Data []byte `json:"-"`
+	Name        string                                        `json:"name,omitempty"`
+	MIME        string                                        `json:"mime,omitempty"`
+	Data        []byte                                        `json:"-"`
+	Load        func(context.Context) ([]byte, string, error) `json:"-"`
+	FailureText string                                        `json:"-"`
 }
 
 // InboundMessage 是从任一平台收到的入站消息。
@@ -59,7 +62,10 @@ type InboundMessage struct {
 	ThreadID   string         `json:"thread_id,omitempty"`
 	MediaURLs  []string       `json:"media_urls,omitempty"`
 	Media      []InboundMedia `json:"-"`
-	Raw        any            `json:"-"`
+	// ResolveUserName performs optional platform enrichment after admission.
+	// UserName remains the safe fallback when the callback is nil or fails.
+	ResolveUserName func(context.Context) string `json:"-"`
+	Raw             any                          `json:"-"`
 }
 
 // Session derives the SessionSource from this message.

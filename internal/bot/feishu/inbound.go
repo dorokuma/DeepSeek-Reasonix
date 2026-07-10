@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"net/http"
 	"strings"
 	"time"
 
@@ -82,10 +81,9 @@ func (a *adapter) replaceMentionPlaceholders(text string, mentions []mentionRef)
 	return strings.TrimSpace(text)
 }
 
-// parseInboundContent 把一条飞书消息的 content 解析为文本与预下载媒体。
-// ok=false 表示该消息类型不支持，调用方应忽略。下载失败不阻断消息：退化为
-// 占位文本，让会话至少知道用户发过附件。
-func (a *adapter) parseInboundContent(ctx context.Context, msgType, content, messageID string) (text string, media []bot.InboundMedia, ok bool) {
+// parseInboundContent parses Feishu content without fetching remote resources.
+// Media loaders run later, after the gateway allowlist admits the sender.
+func (a *adapter) parseInboundContent(msgType, content, messageID string) (text string, media []bot.InboundMedia, ok bool) {
 	switch msgType {
 	case "text":
 		var tc textContent
@@ -99,42 +97,28 @@ func (a *adapter) parseInboundContent(ctx context.Context, msgType, content, mes
 		if err := json.Unmarshal([]byte(content), &ic); err != nil || strings.TrimSpace(ic.ImageKey) == "" {
 			return "", nil, false
 		}
-		item, err := a.downloadMedia(ctx, messageID, ic.ImageKey, "image", "")
-		if err != nil {
-			a.logger.Warn("feishu image download failed", "message", logHash(messageID), "err", err)
-			return "[图片下载失败]", nil, true
-		}
-		return "", []bot.InboundMedia{item}, true
+		return "", []bot.InboundMedia{a.deferredMedia(messageID, ic.ImageKey, "image", "", "[图片下载失败]")}, true
 	case "sticker":
 		var fc fileContent
 		if err := json.Unmarshal([]byte(content), &fc); err != nil || strings.TrimSpace(fc.FileKey) == "" {
 			return "", nil, false
 		}
-		item, err := a.downloadMedia(ctx, messageID, fc.FileKey, "image", "")
-		if err != nil {
-			return "[sticker]", nil, true
-		}
-		return "", []bot.InboundMedia{item}, true
+		return "", []bot.InboundMedia{a.deferredMedia(messageID, fc.FileKey, "image", "", "[sticker]")}, true
 	case "file":
 		var fc fileContent
 		if err := json.Unmarshal([]byte(content), &fc); err != nil || strings.TrimSpace(fc.FileKey) == "" {
 			return "", nil, false
 		}
-		item, err := a.downloadMedia(ctx, messageID, fc.FileKey, "file", fc.FileName)
-		if err != nil {
-			a.logger.Warn("feishu file download failed", "message", logHash(messageID), "err", err)
-			return fmt.Sprintf("[文件下载失败: %s]", fc.FileName), nil, true
-		}
-		return "", []bot.InboundMedia{item}, true
+		return "", []bot.InboundMedia{a.deferredMedia(messageID, fc.FileKey, "file", fc.FileName, fmt.Sprintf("[文件下载失败: %s]", fc.FileName))}, true
 	case "post":
-		return a.parsePostContent(ctx, content, messageID)
+		return a.parsePostContent(content, messageID)
 	default:
 		return "", nil, false
 	}
 }
 
 // parsePostContent 解析富文本（post）消息：抽取文本、链接、@，并下载内嵌图片。
-func (a *adapter) parsePostContent(ctx context.Context, content, messageID string) (string, []bot.InboundMedia, bool) {
+func (a *adapter) parsePostContent(content, messageID string) (string, []bot.InboundMedia, bool) {
 	var post struct {
 		Title   string `json:"title"`
 		Content [][]struct {
@@ -177,13 +161,7 @@ func (a *adapter) parsePostContent(ctx context.Context, content, messageID strin
 				if strings.TrimSpace(run.ImageKey) == "" {
 					continue
 				}
-				item, err := a.downloadMedia(ctx, messageID, run.ImageKey, "image", "")
-				if err != nil {
-					a.logger.Warn("feishu post image download failed", "message", logHash(messageID), "err", err)
-					b.WriteString("[图片下载失败]")
-					continue
-				}
-				media = append(media, item)
+				media = append(media, a.deferredMedia(messageID, run.ImageKey, "image", "", "[图片下载失败]"))
 			case "media":
 				b.WriteString("[视频]")
 			}
@@ -193,23 +171,26 @@ func (a *adapter) parsePostContent(ctx context.Context, content, messageID strin
 	return strings.TrimRight(b.String(), "\n"), media, true
 }
 
-func (a *adapter) downloadMedia(ctx context.Context, messageID, key, typ, name string) (bot.InboundMedia, error) {
-	fetch := a.fetchResource
-	if fetch == nil {
-		fetch = a.sdkFetchResource
-	}
-	data, fetchedName, err := fetch(ctx, messageID, key, typ)
-	if err != nil {
-		return bot.InboundMedia{}, err
-	}
-	if strings.TrimSpace(name) == "" {
-		name = fetchedName
-	}
+func (a *adapter) deferredMedia(messageID, key, typ, name, failureText string) bot.InboundMedia {
 	return bot.InboundMedia{
-		Name: name,
-		MIME: http.DetectContentType(data[:min(len(data), 512)]),
-		Data: data,
-	}, nil
+		Name:        name,
+		FailureText: failureText,
+		Load: func(ctx context.Context) ([]byte, string, error) {
+			fetch := a.fetchResource
+			if fetch == nil {
+				fetch = a.sdkFetchResource
+			}
+			data, fetchedName, err := fetch(ctx, messageID, key, typ)
+			if err != nil {
+				a.logger.Warn("feishu media download failed", "message", logHash(messageID), "type", typ, "err", err)
+				return nil, "", err
+			}
+			if strings.TrimSpace(name) != "" {
+				fetchedName = name
+			}
+			return data, fetchedName, nil
+		},
+	}
 }
 
 // sdkFetchResource 经 SDK 鉴权接口下载消息资源（图片/文件）。

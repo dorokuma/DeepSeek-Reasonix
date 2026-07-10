@@ -75,19 +75,32 @@ func saveOneInboundMedia(ctx context.Context, workspaceRoot, rawURL string) (str
 	return control.SaveAttachmentBytesInRoot(workspaceRoot, name, raw)
 }
 
-func saveInboundMediaItems(workspaceRoot string, items []InboundMedia) (refs []string, errs []error) {
+func saveInboundMediaItems(ctx context.Context, workspaceRoot string, items []InboundMedia) (refs, fallbacks []string, errs []error) {
 	for _, item := range items {
-		ref, err := saveOneInboundMediaItem(workspaceRoot, item)
+		ref, err := saveOneInboundMediaItem(ctx, workspaceRoot, item)
 		if err != nil {
 			errs = append(errs, err)
+			if fallback := strings.TrimSpace(item.FailureText); fallback != "" {
+				fallbacks = append(fallbacks, fallback)
+			}
 			continue
 		}
 		refs = append(refs, ref)
 	}
-	return refs, errs
+	return refs, fallbacks, errs
 }
 
-func saveOneInboundMediaItem(workspaceRoot string, item InboundMedia) (string, error) {
+func saveOneInboundMediaItem(ctx context.Context, workspaceRoot string, item InboundMedia) (string, error) {
+	if item.Load != nil {
+		data, name, err := item.Load(ctx)
+		if err != nil {
+			return "", err
+		}
+		item.Data = data
+		if strings.TrimSpace(item.Name) == "" {
+			item.Name = name
+		}
+	}
 	if len(item.Data) == 0 || len(item.Data) > maxBotMediaBytes {
 		return "", fmt.Errorf("media must be between 1 byte and 25 MB")
 	}
@@ -110,6 +123,20 @@ func saveOneInboundMediaItem(workspaceRoot string, item InboundMedia) (string, e
 		}
 	}
 	return control.SaveAttachmentBytesInRoot(workspaceRoot, name, item.Data)
+}
+
+func appendMediaFallbacks(text string, fallbacks []string) string {
+	for _, fallback := range fallbacks {
+		fallback = strings.TrimSpace(fallback)
+		if fallback == "" {
+			continue
+		}
+		if strings.TrimSpace(text) != "" {
+			text += "\n"
+		}
+		text += fallback
+	}
+	return text
 }
 
 func mediaFilename(u *url.URL, contentType string) string {

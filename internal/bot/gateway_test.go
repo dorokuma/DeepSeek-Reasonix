@@ -386,6 +386,35 @@ func TestGatewayAllowlistCheck(t *testing.T) {
 	}
 }
 
+func TestGatewayRejectsBeforeInboundEnrichment(t *testing.T) {
+	adapter := newFakeAdapter(PlatformFeishu, "feishu")
+	gw := NewGateway(GatewayConfig{Allowlist: AllowlistConfig{
+		Enabled: true,
+		Users:   map[Platform][]string{PlatformFeishu: {"allowed-user"}},
+	}}, map[Platform]Adapter{PlatformFeishu: adapter}, discardLogger())
+
+	mediaLoads := 0
+	nameLoads := 0
+	gw.handleMessage(context.Background(), AdapterBinding{ID: "feishu", Platform: PlatformFeishu, Adapter: adapter}, InboundMessage{
+		Platform: PlatformFeishu,
+		ChatType: ChatDM,
+		ChatID:   "chat",
+		UserID:   "blocked-user",
+		Media: []InboundMedia{{Load: func(context.Context) ([]byte, string, error) {
+			mediaLoads++
+			return []byte("payload"), "payload.txt", nil
+		}}},
+		ResolveUserName: func(context.Context) string {
+			nameLoads++
+			return "Blocked User"
+		},
+	})
+
+	if mediaLoads != 0 || nameLoads != 0 {
+		t.Fatalf("pre-admission enrichment calls = media:%d name:%d, want zero", mediaLoads, nameLoads)
+	}
+}
+
 func TestGatewayRoleListsGrantAllowlistAdmission(t *testing.T) {
 	cfg := GatewayConfig{
 		Allowlist: AllowlistConfig{

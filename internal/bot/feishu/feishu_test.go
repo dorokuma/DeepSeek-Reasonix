@@ -367,8 +367,10 @@ func testSender(openID string) feishuSender {
 	}{OpenID: openID}}
 }
 
-func TestHandleMessageDownloadsImage(t *testing.T) {
+func TestHandleMessageDefersImageDownload(t *testing.T) {
+	fetchCalls := 0
 	a := newTestAdapter(func(ctx context.Context, messageID, key, typ string) ([]byte, string, error) {
+		fetchCalls++
 		if messageID != "msg-img" || key != "img-key-1" || typ != "image" {
 			t.Fatalf("fetch args = %s/%s/%s, want msg-img/img-key-1/image", messageID, key, typ)
 		}
@@ -387,13 +389,22 @@ func TestHandleMessageDownloadsImage(t *testing.T) {
 	if len(msg.Media) != 1 {
 		t.Fatalf("media items = %d, want 1", len(msg.Media))
 	}
-	if !strings.HasPrefix(msg.Media[0].MIME, "image/png") {
-		t.Fatalf("media mime = %q, want image/png", msg.Media[0].MIME)
+	if fetchCalls != 0 {
+		t.Fatalf("resource fetched %d times before gateway admission, want 0", fetchCalls)
+	}
+	data, _, err := msg.Media[0].Load(context.Background())
+	if err != nil || !strings.HasPrefix(string(data), string(pngHeader)) {
+		t.Fatalf("deferred load = %x, %v; want png bytes", data, err)
+	}
+	if fetchCalls != 1 {
+		t.Fatalf("resource fetched %d times after load, want 1", fetchCalls)
 	}
 }
 
-func TestHandleMessageFileDownloadFailureKeepsPlaceholder(t *testing.T) {
+func TestHandleMessageFileDownloadFailureKeepsDeferredPlaceholder(t *testing.T) {
+	fetchCalls := 0
 	a := newTestAdapter(func(ctx context.Context, messageID, key, typ string) ([]byte, string, error) {
+		fetchCalls++
 		return nil, "", fmt.Errorf("boom")
 	})
 	a.handleMessage(context.Background(), feishuMsgEvent{
@@ -406,16 +417,21 @@ func TestHandleMessageFileDownloadFailureKeepsPlaceholder(t *testing.T) {
 	})
 
 	msg := <-a.msgCh
-	if len(msg.Media) != 0 {
-		t.Fatalf("media items = %d, want none on download failure", len(msg.Media))
+	if len(msg.Media) != 1 || fetchCalls != 0 {
+		t.Fatalf("media items/fetches = %d/%d, want one deferred item and no pre-admission fetch", len(msg.Media), fetchCalls)
 	}
-	if !strings.Contains(msg.Text, "report.pdf") {
-		t.Fatalf("text = %q, want download-failure placeholder naming the file", msg.Text)
+	if _, _, err := msg.Media[0].Load(context.Background()); err == nil {
+		t.Fatal("deferred load should report the injected failure")
+	}
+	if !strings.Contains(msg.Media[0].FailureText, "report.pdf") {
+		t.Fatalf("fallback = %q, want download-failure placeholder naming the file", msg.Media[0].FailureText)
 	}
 }
 
 func TestHandleMessageParsesPostContent(t *testing.T) {
+	fetchCalls := 0
 	a := newTestAdapter(func(ctx context.Context, messageID, key, typ string) ([]byte, string, error) {
+		fetchCalls++
 		if key != "post-img-1" || typ != "image" {
 			t.Fatalf("fetch args = %s/%s, want post-img-1/image", key, typ)
 		}
@@ -437,7 +453,10 @@ func TestHandleMessageParsesPostContent(t *testing.T) {
 		}
 	}
 	if len(msg.Media) != 1 {
-		t.Fatalf("media items = %d, want embedded image downloaded", len(msg.Media))
+		t.Fatalf("media items = %d, want one deferred embedded image", len(msg.Media))
+	}
+	if fetchCalls != 0 {
+		t.Fatalf("post image fetched %d times before gateway admission, want 0", fetchCalls)
 	}
 }
 
@@ -526,5 +545,17 @@ func TestBuildMarkdownCard(t *testing.T) {
 	}
 	if payload.Body.Elements[0].Content != "hello [docs](https://example.com)" {
 		t.Fatalf("content = %q, want original markdown", payload.Body.Elements[0].Content)
+	}
+}
+
+func TestReplyFallbackOnlyForRecalledMessage(t *testing.T) {
+	if isReplyFallbackError(fmt.Errorf("i/o timeout")) {
+		t.Fatal("ambiguous transport errors must not fall back to Create")
+	}
+	if isReplyFallbackError(&feishuAPIError{op: "reply", code: 230013, msg: "no availability"}) {
+		t.Fatal("permission errors must not fall back to Create")
+	}
+	if !isReplyFallbackError(&feishuAPIError{op: "reply", code: feishuReplyRecalledCode, msg: "recalled"}) {
+		t.Fatal("a recalled target should fall back to Create")
 	}
 }
