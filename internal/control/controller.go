@@ -286,6 +286,14 @@ func New(opts Options) *Controller {
 		})
 		c.executor.SetMemoryQueue(c)
 		c.executor.SetControllerBridge(c)
+		// MultiAgent completion: arm pending + idle wake (busy → queue empty reentry).
+		// Same-turn flushes already drain mailbox; empty wake no-ops if nothing left.
+		if ma := c.executor.MultiAgentControl(); ma != nil {
+			ma.OnCompletion = func() {
+				c.SetPendingToolResult(true)
+				c.autoReenter()
+			}
+		}
 	}
 	// Jobs: bash peek-only; sub-agents use multiagent mailbox (no jobs session inject).
 	return c

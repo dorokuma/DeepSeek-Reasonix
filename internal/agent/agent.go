@@ -402,6 +402,14 @@ func (a *Agent) SetMemoryQueue(q memory.Queue) { a.memQueue = q }
 // controller wires it to its per-session checkpoint store; nil disables capture.
 func (a *Agent) SetPreEditHook(fn func(diff.Change)) { a.onPreEdit = fn }
 
+// MultiAgentControl returns the session multi-agent control, if any.
+func (a *Agent) MultiAgentControl() *multiagent.Control {
+	if a == nil {
+		return nil
+	}
+	return a.multiAgent
+}
+
 // SetControllerBridge wires a ControllerBridge for auto-reentry and job metadata
 // lookup. Must be called before Run if auto-reentry is desired.
 func (a *Agent) SetControllerBridge(c ControllerBridge) { a.ctrl = c }
@@ -748,6 +756,13 @@ func (a *Agent) Run(ctx context.Context, input string) error {
 	}
 	// Codex mailbox: inject any pending inter-agent mail into the session before the model runs.
 	a.flushMultiAgentMailbox()
+	// Empty auto-reentry: disarm after drain attempt so we don't loop empty wakes.
+	// New completions re-arm via Control.OnCompletion → SetPendingToolResult.
+	if input == "" && a.ctrl != nil {
+		if a.multiAgent == nil || !a.multiAgent.Mailbox().HasPendingFor(a.agentPath) {
+			a.ctrl.SetPendingToolResult(false)
+		}
+	}
 
 	finalReadinessBlocks := 0
 	emptyFinalBlocks := 0

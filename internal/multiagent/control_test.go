@@ -123,6 +123,43 @@ func TestListAndInterrupt(t *testing.T) {
 	}
 }
 
+func TestListOmitsTerminalAgents(t *testing.T) {
+	c := NewControl()
+	block := make(chan struct{})
+	c.SetRunner(fakeRunner{fn: func(ctx context.Context, path, message string, depth int) (string, error) {
+		if strings.HasSuffix(path, "/slow") {
+			<-block
+			return "slow-ok", nil
+		}
+		return "fast-ok", nil
+	}})
+	if _, _, err := c.Spawn(context.Background(), RootPath, "fast", "f", 0); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := c.Spawn(context.Background(), RootPath, "slow", "s", 0); err != nil {
+		t.Fatal(err)
+	}
+	// Wait for fast to finish.
+	time.Sleep(50 * time.Millisecond)
+	list := c.List(RootPath, "")
+	var names []string
+	for _, a := range list {
+		names = append(names, a.AgentName)
+	}
+	joined := strings.Join(names, ",")
+	if strings.Contains(joined, "/root/fast") {
+		t.Fatalf("completed agent must not appear in list: %v", names)
+	}
+	if !strings.Contains(joined, "/root/slow") {
+		t.Fatalf("running agent missing: %v", names)
+	}
+	close(block)
+	// Registry still resolves completed for followup.
+	if _, err := c.ResolveTarget("fast"); err != nil {
+		t.Fatalf("completed agent should remain resolvable: %v", err)
+	}
+}
+
 func TestMailboxDrainForRecipient(t *testing.T) {
 	c := NewControl()
 	c.SetRunner(fakeRunner{fn: func(ctx context.Context, path, message string, depth int) (string, error) {
@@ -154,34 +191,40 @@ func TestMailboxDrainForRecipient(t *testing.T) {
 
 func TestNestedSpawnPath(t *testing.T) {
 	c := NewControl()
+	hold := make(chan struct{})
 	c.SetRunner(fakeRunner{fn: func(ctx context.Context, path, message string, depth int) (string, error) {
-		// Nested spawn from child path.
+		// Nested spawn from child path, then stay running so list can see both.
 		if depth == 1 {
-			_, _, err := c.Spawn(ctx, path, "nested", "inner", depth)
-			if err != nil {
+			if _, _, err := c.Spawn(ctx, path, "nested", "inner", depth); err != nil {
 				return "", err
 			}
-			time.Sleep(50 * time.Millisecond)
-		} else {
-			time.Sleep(20 * time.Millisecond)
 		}
+		<-hold
 		return "ok-" + path, nil
 	}})
 	if _, _, err := c.Spawn(context.Background(), RootPath, "outer", "work", 0); err != nil {
 		t.Fatal(err)
 	}
-	// Give nested spawn a moment to register.
-	time.Sleep(80 * time.Millisecond)
-	list := c.List(RootPath, "")
-	var names []string
-	for _, a := range list {
-		names = append(names, a.AgentName)
+	// Give nested spawn a moment to register while both still running.
+	deadline := time.Now().Add(2 * time.Second)
+	var joined string
+	for time.Now().Before(deadline) {
+		list := c.List(RootPath, "")
+		var names []string
+		for _, a := range list {
+			names = append(names, a.AgentName)
+		}
+		joined = strings.Join(names, ",")
+		if strings.Contains(joined, "/root/outer") && strings.Contains(joined, "/root/outer/nested") {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
-	joined := strings.Join(names, ",")
+	close(hold)
 	if !strings.Contains(joined, "/root/outer") {
-		t.Fatalf("missing outer: %v", names)
+		t.Fatalf("missing outer: %s", joined)
 	}
 	if !strings.Contains(joined, "/root/outer/nested") {
-		t.Fatalf("missing nested path: %v", names)
+		t.Fatalf("missing nested path: %s", joined)
 	}
 }

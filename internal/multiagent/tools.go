@@ -55,7 +55,7 @@ func (spawnAgent) Schema() json.RawMessage {
   "properties":{
     "task_name":{"type":"string","description":"Task name for the new agent. Use lowercase letters, digits, and underscores."},
     "message":{"type":"string","description":"Self-contained instruction for the sub-agent."},
-    "fork_turns":{"type":"string","description":"Context fork: none | all | N. Default all; none = no parent context."}
+    "fork_turns":{"type":"string","description":"Context fork. Default none (clean sub-agent; parent must put all needed context in message). all/N reserved."}
   },
   "required":["task_name","message"]
 }`)
@@ -74,6 +74,8 @@ func (spawnAgent) Execute(ctx context.Context, args json.RawMessage) (string, er
 	if err := json.Unmarshal(args, &p); err != nil {
 		return "", fmt.Errorf("invalid args: %w", err)
 	}
+	// Default none: sub-agent always starts a clean session; message is the only payload.
+	// all/N are accepted for schema compatibility but not applied.
 	_ = p.ForkTurns
 	parent := AgentPathFrom(ctx)
 	depth := 0
@@ -144,7 +146,7 @@ func (listAgents) ReadOnly() bool   { return true }
 func (listAgents) Concurrent() bool { return true }
 
 func (listAgents) Description() string {
-	return `List live agents in the current root thread tree (includes /root and all spawned agents still tracked). Optionally filter by task-path prefix. Returns agent_name (canonical path), agent_status (pending_init|running|interrupted|shutdown|completed|errored), and last_task_message. Use this for live status while agents run — do not use an empty mailbox as proof that agents are gone.`
+	return `List live agents only (pending_init / running / interrupted; includes /root). Completed, errored, and shutdown agents are omitted — their results arrive via mailbox. Optionally filter by task-path prefix. Returns agent_name (canonical path), agent_status, and last_task_message. Empty mailbox does not mean agents are gone while still listed as running.`
 }
 
 func (listAgents) Schema() json.RawMessage {

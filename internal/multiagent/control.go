@@ -301,35 +301,33 @@ func (c *Control) List(currentPath, pathPrefix string) []ListedAgent {
 	sort.Slice(rows, func(i, j int) bool { return rows[i].path < rows[j].path })
 
 	out := make([]ListedAgent, 0, len(rows)+1)
-	// Codex always can include root when prefix matches.
+	// Root when it matches prefix (session itself is always "live").
 	if resolved == "" || resolved == RootPath {
 		out = append(out, ListedAgent{
 			AgentName:       RootPath,
 			AgentStatus:     StatusJSON(c.rootStatus, "", ""),
-			LastTaskMessage: "Current user session", // ROOT_LAST_TASK_MESSAGE-ish
+			LastTaskMessage: "Current user session",
 		})
 	}
 	for _, r := range rows {
 		r.rec.mu.Lock()
 		st := r.rec.Status
-		ans := r.rec.LastAnswer
-		errMsg := r.rec.LastError
 		last := r.rec.LastTaskMessage
 		r.rec.mu.Unlock()
-		// Codex agent_name is canonical path when available.
+		// List is live-only: pending_init + running (+ interrupted mid-flight).
+		// Terminal results go to mailbox; records stay in registry for followup/interrupt.
+		if IsFinal(st) {
+			continue
+		}
 		var lastMsg any
 		if last == "" {
 			lastMsg = nil
 		} else {
 			lastMsg = capRunes(last, lastTaskListCap)
 		}
-		// For completed, keep status object short in list (answer lives in mailbox).
-		if st == StatusCompleted {
-			ans = capRunes(ans, lastTaskListCap)
-		}
 		out = append(out, ListedAgent{
 			AgentName:       r.path,
-			AgentStatus:     StatusJSON(st, ans, errMsg),
+			AgentStatus:     StatusJSON(st, "", ""),
 			LastTaskMessage: lastMsg,
 		})
 	}
