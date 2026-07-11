@@ -156,6 +156,11 @@ ok(
   "slash menu honors backend-provided command groups",
 );
 ok(
+  slashCommandGroup({ name: "plugins", description: "Manage plugins.", kind: "builtin" }) === "management"
+    && slashCommandGroup({ name: "new", description: "New session.", kind: "builtin" }) === "actions",
+  "slash menu keeps a safe grouping fallback for older backends",
+);
+ok(
   sortSlashCommandsForMenu([
     { name: "plugins", description: "Manage plugins.", kind: "builtin", group: "management" },
     { name: "explore", description: "Explore in isolation.", kind: "subagent", group: "subagents" },

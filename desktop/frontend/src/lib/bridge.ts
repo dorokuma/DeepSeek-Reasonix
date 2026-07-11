@@ -2579,8 +2579,9 @@ function makeMockApp(): AppBindings {
         { name: "compact", description: "Summarize older history to free up context", kind: "builtin" as const, group: "actions" },
         { name: "model", description: "Switch model", kind: "builtin" as const, group: "actions" },
         { name: "effort", description: "Set reasoning effort", kind: "builtin" as const, group: "actions" },
-        { name: "skill", description: "List skills", kind: "builtin" as const, group: "management" },
-        { name: "plugins", description: "Manage plugin packages", kind: "builtin" as const, group: "management" },
+        { name: "skill", description: "List skills", kind: "builtin" as const, group: "skills" },
+        { name: "mcp", description: "Manage MCP servers", kind: "builtin" as const, group: "integrations" },
+        { name: "plugins", description: "Manage plugin packages", kind: "builtin" as const, group: "integrations" },
         { name: "review", description: "Review the staged diff", hint: "[focus]", kind: "custom" as const, group: "skills" },
       ];
       const seen = new Set(commands.map((command) => command.name));

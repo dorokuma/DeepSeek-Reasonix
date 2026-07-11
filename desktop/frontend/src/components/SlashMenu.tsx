@@ -21,13 +21,14 @@ type SlashMenuRow =
 
 const slashCommandGroups: SlashCommandGroup[] = ["actions", "subagents", "skills", "integrations", "management"];
 const slashCommandGroupOrder = new Map(slashCommandGroups.map((group, index) => [group, index]));
+const fallbackQuickActions = new Set(["new", "clear", "compact", "model", "effort", "goal"]);
 
 export function slashCommandGroup(command: CommandInfo): SlashCommandGroup {
-  if (command.group) return command.group;
+  if (command.group && slashCommandGroupOrder.has(command.group)) return command.group;
   if (command.kind === "subagent") return "subagents";
   if (command.kind === "mcp") return "integrations";
   if (command.kind === "skill" || command.kind === "custom") return "skills";
-  return "actions";
+  return fallbackQuickActions.has(command.name) ? "actions" : "management";
 }
 
 export function sortSlashCommandsForMenu(commands: CommandInfo[]): CommandInfo[] {

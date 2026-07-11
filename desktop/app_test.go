@@ -248,8 +248,11 @@ func TestCommandsClassifiesSubagentSkills(t *testing.T) {
 	if groups["new"] != "actions" {
 		t.Fatalf("new command group = %q, want actions", groups["new"])
 	}
-	if groups["plugins"] != "management" {
-		t.Fatalf("plugins command group = %q, want management", groups["plugins"])
+	if groups["mcp"] != "integrations" || groups["plugins"] != "integrations" {
+		t.Fatalf("integration command groups = mcp:%q plugins:%q", groups["mcp"], groups["plugins"])
+	}
+	if groups["skill"] != "skills" {
+		t.Fatalf("skill command group = %q, want skills", groups["skill"])
 	}
 }
 
