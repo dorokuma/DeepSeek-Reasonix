@@ -1655,3 +1655,52 @@ func ExampleNewTool() {
 		resp.Status, resp.Kind, resp.Kinds.Skill, resp.Kinds.MCP)
 	// Output: status=planned kind=mcp skill=0 mcp=1
 }
+
+// TestGitHubPluginPlanMatchesApply pins the approval contract: the plan the
+// user approves must describe exactly the capability set apply installs. Both
+// phases resolve the source through pluginSource, so convention-discovered
+// capabilities (skills/, commands/ — including nested namespaces) appear in
+// the plan, not only after installation.
+func TestGitHubPluginPlanMatchesApply(t *testing.T) {
+	src := t.TempDir()
+	writeFile(t, filepath.Join(src, ".claude-plugin", "plugin.json"), `{"name": "pwf", "version": "1.0.0"}`)
+	writeFile(t, filepath.Join(src, "skills", "planner", "SKILL.md"), "---\ndescription: planner\n---\nbody")
+	writeFile(t, filepath.Join(src, "commands", "plan.md"), "---\ndescription: plan\n---\nPlan: $ARGUMENTS")
+	writeFile(t, filepath.Join(src, "commands", "git", "commit.md"), "---\ndescription: commit\n---\nCommit")
+
+	project := t.TempDir()
+	home := t.TempDir()
+	tl := NewTool(Options{ProjectRoot: project, HomeDir: home})
+	tool := tl.(*installSourceTool)
+	tool.preparePlugin = func(ctx context.Context, source, mode string) (string, func(), error) {
+		return src, func() {}, nil
+	}
+
+	plan := execInstall(t, tl, map[string]any{
+		"source": "https://github.com/acme/pwf",
+		"kind":   "plugin",
+	})
+	if !plan.OK || plan.Status != "planned" || len(plan.Actions) != 1 {
+		t.Fatalf("plan response = %+v", plan)
+	}
+	planned := plan.Actions[0]
+	if planned.SkillCount != 1 || planned.CommandCount != 2 {
+		t.Fatalf("planned counts = %d skills / %d commands, want 1/2 (plan must see convention dirs)", planned.SkillCount, planned.CommandCount)
+	}
+
+	applied := execInstall(t, tl, map[string]any{
+		"source": "https://github.com/acme/pwf",
+		"kind":   "plugin",
+		"apply":  true,
+	})
+	if !applied.OK || applied.Status != "done" || len(applied.Actions) != 1 {
+		t.Fatalf("apply response = %+v", applied)
+	}
+	got := applied.Actions[0]
+	if got.SkillCount != planned.SkillCount || got.CommandCount != planned.CommandCount ||
+		got.HookCount != planned.HookCount || got.ToolCount != planned.ToolCount {
+		t.Fatalf("apply counts (%d/%d/%d/%d) diverge from approved plan (%d/%d/%d/%d)",
+			got.SkillCount, got.CommandCount, got.HookCount, got.ToolCount,
+			planned.SkillCount, planned.CommandCount, planned.HookCount, planned.ToolCount)
+	}
+}

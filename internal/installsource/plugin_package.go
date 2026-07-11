@@ -26,46 +26,33 @@ func (t *installSourceTool) planGitHubPluginPackage(ctx context.Context, req req
 	if !ok {
 		return nil, nil, newErr(ErrUnsupportedKind, "plugin URL %q is not a GitHub repository", req.Source)
 	}
-	var warnings []string
-	for _, branch := range src.branches() {
-		for _, manifestPath := range pluginpkg.ManifestPaths() {
-			rawURL := fmt.Sprintf("https://raw.githubusercontent.com/%s/%s/%s/%s", src.Owner, src.Repo, branch, joinURLPath(src.Path, manifestPath))
-			body, err := t.fetchText(ctx, rawURL)
-			if err != nil {
-				warnings = append(warnings, fmt.Sprintf("%s: %s", rawURL, err.Error()))
-				continue
-			}
-			tmp, err := os.MkdirTemp("", "reasonix-plugin-plan-*")
-			if err != nil {
-				return nil, warnings, err
-			}
-			defer os.RemoveAll(tmp)
-			if err := os.MkdirAll(filepath.Dir(filepath.Join(tmp, manifestPath)), 0o755); err != nil {
-				return nil, warnings, err
-			}
-			if err := os.WriteFile(filepath.Join(tmp, manifestPath), []byte(body), 0o644); err != nil {
-				return nil, warnings, err
-			}
-			if strings.EqualFold(manifestPath, pluginpkg.CodexManifest) {
-				if hookBody, err := t.fetchText(ctx, fmt.Sprintf("https://raw.githubusercontent.com/%s/%s/%s/%s", src.Owner, src.Repo, branch, joinURLPath(src.Path, "hooks/session-start-codex"))); err == nil {
-					hookPath := filepath.Join(tmp, "hooks", "session-start-codex")
-					if mkErr := os.MkdirAll(filepath.Dir(hookPath), 0o755); mkErr == nil {
-						_ = os.WriteFile(hookPath, []byte(hookBody), 0o755)
-					}
-				}
-			}
-			pkg, pkgWarnings, err := pluginpkg.ParseDir(tmp)
-			warnings = append(warnings, pkgWarnings...)
-			if err != nil {
-				warnings = append(warnings, fmt.Sprintf("%s: %s", rawURL, err.Error()))
-				continue
-			}
-			act := t.pluginPackageAction(req, pkg, req.Source)
-			act.Source = req.Source
-			return []action{act}, warnings, nil
-		}
+	// Plan against the same source tree apply will install (a shallow clone
+	// via pluginSource). A manifest-only fetch cannot see conventional
+	// capability directories (skills/, commands/) or their warnings, so it
+	// under-reports the capability set — and the plan the user approves must
+	// describe exactly what apply installs.
+	root, cleanup, err := t.pluginSource(ctx, req.Source, modeForPlugin(req.Mode))
+	if err != nil {
+		return nil, nil, err
 	}
-	return nil, warnings, newErr(ErrManifestMissing, "no plugin manifest found in GitHub repository %s/%s", src.Owner, src.Repo)
+	defer cleanup()
+	pkg, warnings, err := pluginpkg.ParseDir(root)
+	if err != nil {
+		return nil, warnings, newErr(ErrManifestMissing, "no plugin manifest found in GitHub repository %s/%s: %v", src.Owner, src.Repo, err)
+	}
+	act := t.pluginPackageAction(req, pkg, req.Source)
+	act.Source = req.Source
+	return []action{act}, warnings, nil
+}
+
+// pluginSource resolves a plugin source to an on-disk tree. Both the plan and
+// apply phases go through this single function so their views can never
+// diverge (the P1 approval-contract guarantee).
+func (t *installSourceTool) pluginSource(ctx context.Context, source, mode string) (string, func(), error) {
+	if t.preparePlugin != nil {
+		return t.preparePlugin(ctx, source, mode)
+	}
+	return t.preparePluginSource(ctx, source, mode)
 }
 
 func (t *installSourceTool) pluginPackageAction(req request, pkg pluginpkg.Package, source string) action {
@@ -126,7 +113,7 @@ func (t *installSourceTool) applyInstallPluginPackage(ctx context.Context, req r
 		return newErr(ErrInvalidManifest, "invalid plugin name %q", act.Name)
 	}
 	target := pluginpkg.InstallRoot(t.reasonixHome, act.Name)
-	sourceRoot, cleanup, err := t.preparePluginSource(ctx, act.Source, act.Mode)
+	sourceRoot, cleanup, err := t.pluginSource(ctx, act.Source, act.Mode)
 	if err != nil {
 		return err
 	}

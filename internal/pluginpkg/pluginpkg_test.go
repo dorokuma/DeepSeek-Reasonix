@@ -477,3 +477,42 @@ func TestParseCodexManifestNotAffectedByClaudeFallback(t *testing.T) {
 		t.Fatalf("SkillRoots = %#v, codex parsing must not adopt convention dirs", got)
 	}
 }
+
+// TestParseClaudePluginAdoptsNestedCommands pins that namespace layouts like
+// commands/git/commit.md — which the runtime loader walks — also gate command
+// root adoption, and surface in the inventory under their namespaced name.
+func TestParseClaudePluginAdoptsNestedCommands(t *testing.T) {
+	root := t.TempDir()
+	writeTestFile(t, filepath.Join(root, ClaudeManifest), `{"name": "nested-pack"}`)
+	writeTestFile(t, filepath.Join(root, "skills", "s", "SKILL.md"), "---\ndescription: s\n---\nbody")
+	writeTestFile(t, filepath.Join(root, "commands", "git", "commit.md"), "---\ndescription: commit helper\n---\nCommit: $ARGUMENTS")
+
+	pkg, warnings, err := ParseDir(root)
+	if err != nil {
+		t.Fatalf("ParseDir: %v", err)
+	}
+	if len(warnings) != 0 {
+		t.Fatalf("warnings = %v, want none", warnings)
+	}
+	if got := pkg.CommandRoots(); len(got) != 1 || got[0] != filepath.Join(root, "commands") {
+		t.Fatalf("CommandRoots = %#v, want commands adopted for nested-only layout", got)
+	}
+	inv := pkg.Inventory()
+	if len(inv.Commands) != 1 || inv.Commands[0].Name != "git:commit" || inv.Commands[0].Invocation != "/git:commit" {
+		t.Fatalf("inventory commands = %#v, want namespaced git:commit", inv.Commands)
+	}
+}
+
+// TestInventoryTextCommandsOnly pins that a commands-only inventory does not
+// also claim "no detailed inventory available".
+func TestInventoryTextCommandsOnly(t *testing.T) {
+	var b strings.Builder
+	appendInventoryText(&b, Inventory{Commands: []CommandRef{{Name: "plan", Invocation: "/plan", Description: "plan things"}}})
+	out := b.String()
+	if !strings.Contains(out, "commands:") || !strings.Contains(out, "/plan") {
+		t.Fatalf("output = %q, want the commands listing", out)
+	}
+	if strings.Contains(out, "no detailed inventory available") {
+		t.Fatalf("output = %q, must not claim an empty inventory after listing commands", out)
+	}
+}

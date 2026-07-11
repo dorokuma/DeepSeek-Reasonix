@@ -67,6 +67,11 @@ type installSourceTool struct {
 	connectMCP   MCPConnector
 	onDisconnect OnDisconnectFunc
 	approval     ApprovalFunc
+	// preparePlugin overrides plugin source preparation in tests. nil uses
+	// preparePluginSource. Plan and apply both resolve the source through the
+	// same function, so the capability set the approval covers is by
+	// construction the one that gets installed.
+	preparePlugin func(ctx context.Context, source, mode string) (string, func(), error)
 }
 
 // NewTool returns a tool.Tool that callers register with the agent's

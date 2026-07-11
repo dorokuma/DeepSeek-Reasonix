@@ -200,7 +200,7 @@ func appendInventoryText(b *strings.Builder, inv Inventory) {
 			fmt.Fprintf(b, "  %s [%s] - %s\n", server.Name, server.Transport, target)
 		}
 	}
-	if len(inv.Skills) == 0 && len(inv.Hooks) == 0 && len(inv.MCPServers) == 0 {
+	if len(inv.Skills) == 0 && len(inv.Commands) == 0 && len(inv.Hooks) == 0 && len(inv.MCPServers) == 0 {
 		b.WriteString("capabilities: no detailed inventory available\n")
 	}
 }
