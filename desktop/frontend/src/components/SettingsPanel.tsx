@@ -4190,6 +4190,7 @@ export function ModelPicker({
   value,
   disabled,
   includeSameDefault = false,
+  ariaLabel,
   emptyOptionLabel,
   emptyOptionHint,
   onPick,
@@ -4199,6 +4200,7 @@ export function ModelPicker({
   value: string;
   disabled: boolean;
   includeSameDefault?: boolean;
+  ariaLabel?: string;
   emptyOptionLabel?: string;
   emptyOptionHint?: string;
   onPick: (ref: string) => void;
@@ -4280,6 +4282,7 @@ export function ModelPicker({
         type="button"
         className="settings-model-picker__trigger"
         disabled={disabled || (!includeSameDefault && !emptyOptionLabel && refs.length === 0)}
+        aria-label={ariaLabel}
         aria-haspopup="listbox"
         aria-expanded={open}
         onClick={() => setOpen((next) => !next)}

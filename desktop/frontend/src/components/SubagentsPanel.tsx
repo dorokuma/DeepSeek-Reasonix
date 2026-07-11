@@ -31,6 +31,26 @@ function toolsSummaryLabel(allowedTools: string[] | undefined, t: ReturnType<typ
   return t("subagents.toolCount", { n: allowedTools.length });
 }
 
+function builtinDescription(name: string, fallback: string, t: ReturnType<typeof useT>): string {
+  switch (name) {
+    case "explore":
+      return t("subagents.builtinExploreDescription");
+    case "research":
+      return t("subagents.builtinResearchDescription");
+    case "review":
+      return t("subagents.builtinReviewDescription");
+    case "security-review":
+      return t("subagents.builtinSecurityReviewDescription");
+    default:
+      return fallback;
+  }
+}
+
+function shortModelRef(ref: string): string {
+  const parts = ref.split("/");
+  return parts[parts.length - 1] || ref;
+}
+
 // SubagentsSettingsPage is a self-contained subagent-profile management page
 // embedded inside the settings centre. A "subagent profile" is a skill file
 // with runAs=subagent + invocation=manual (see internal/skill): it stays
@@ -100,7 +120,7 @@ export function SubagentsSettingsPage({ s }: { s: SettingsView }) {
   return (
     <section className="mem-section">
       {err && <div className="banner banner--error">{err}</div>}
-      <div className="cap-search">
+      <div className="cap-search subagents-toolbar">
         <input
           className="mem-input"
           type="search"
@@ -168,6 +188,10 @@ export function SubagentsSettingsPage({ s }: { s: SettingsView }) {
               busy={busy}
               onSetModel={(ref) => void mutate(() => app.SetSubagentProfileModel(sk.name, ref))}
               onSetEffort={(level) => void mutate(() => app.SetSubagentProfileEffort(sk.name, level))}
+              onReset={() => void mutate(async () => {
+                if (sk.configuredModel) await app.SetSubagentProfileModel(sk.name, "");
+                if (sk.configuredEffort) await app.SetSubagentProfileEffort(sk.name, "");
+              })}
             />
           ))}
         </div>
@@ -206,15 +230,20 @@ function BuiltinSubagentRow({
   busy,
   onSetModel,
   onSetEffort,
+  onReset,
 }: {
   skill: SkillView;
   s: SettingsView;
   busy: boolean;
   onSetModel: (ref: string) => void;
   onSetEffort: (level: string) => void;
+  onReset: () => void;
 }) {
   const t = useT();
   const toolsLabel = toolsSummaryLabel(skill.allowedTools, t);
+  const inheritedModel = shortModelRef(toRef(s.subagentModel || s.defaultModel, s)) || t("common.auto");
+  const inheritedEffort = s.subagentEffort || t("common.auto");
+  const overridden = Boolean(skill.configuredModel || skill.configuredEffort);
   return (
     <div className="cap-skill-card">
       <div className="cap-skill-card__top">
@@ -231,33 +260,52 @@ function BuiltinSubagentRow({
           </span>
         </span>
       </div>
-      <div className="cap-skill-card__desc">{skill.description}</div>
+      <div className="cap-skill-card__desc">{builtinDescription(skill.name, skill.description, t)}</div>
       <div className="subagents-builtin-overrides">
-        <Tooltip label={t("subagents.builtinReadOnlyHint")}>
-          <span className="subagents-builtin-overrides__label">{t("subagents.builtinOverrideLabel")}</span>
-        </Tooltip>
-        <ModelPicker
-          s={s}
-          refs={allRefs(s)}
-          value={toRef(skill.configuredModel ?? "", s)}
-          disabled={busy}
-          emptyOptionLabel={t("settings.subagentModelDefault")}
-          emptyOptionHint={t("common.auto")}
-          onPick={onSetModel}
-        />
-        <select
-          className="mem-select"
-          value={skill.configuredEffort ?? ""}
-          disabled={busy}
-          onChange={(e) => onSetEffort(e.target.value)}
-        >
-          <option value="">{t("settings.subagentEffortDefault")}</option>
-          {EFFORT_PRESETS.map((level) => (
-            <option key={level} value={level}>
-              {level}
-            </option>
-          ))}
-        </select>
+        <div className="subagents-builtin-overrides__field">
+          <span className="subagents-builtin-overrides__field-label">{t("subagents.model")}</span>
+          <ModelPicker
+            s={s}
+            refs={allRefs(s)}
+            value={toRef(skill.configuredModel ?? "", s)}
+            disabled={busy}
+            ariaLabel={`${skill.name}: ${t("subagents.model")}`}
+            emptyOptionLabel={t("subagents.inheritDefault")}
+            emptyOptionHint={t("subagents.effectiveValue", { value: inheritedModel })}
+            onPick={onSetModel}
+          />
+        </div>
+        <label className="subagents-builtin-overrides__field">
+          <span className="subagents-builtin-overrides__field-label">{t("subagents.effort")}</span>
+          <select
+            className="mem-select"
+            value={skill.configuredEffort ?? ""}
+            disabled={busy}
+            aria-label={`${skill.name}: ${t("subagents.effort")}`}
+            onChange={(e) => onSetEffort(e.target.value)}
+          >
+            <option value="">{t("subagents.inheritDefaultWithValue", { value: inheritedEffort })}</option>
+            {EFFORT_PRESETS.map((level) => (
+              <option key={level} value={level}>
+                {level}
+              </option>
+            ))}
+          </select>
+        </label>
+        <div className="subagents-builtin-overrides__status">
+          {overridden ? (
+            <>
+              <span className="cap-skill-badge cap-skill-badge--project">{t("subagents.overridden")}</span>
+              <button className="btn btn--small" type="button" disabled={busy} onClick={onReset}>
+                {t("subagents.resetOverride")}
+              </button>
+            </>
+          ) : (
+            <Tooltip label={t("subagents.builtinReadOnlyHint")}>
+              <span className="subagents-inherit-badge">{t("subagents.inherited")}</span>
+            </Tooltip>
+          )}
+        </div>
       </div>
     </div>
   );
@@ -285,7 +333,7 @@ function CustomSubagentRow({
         <span className="cap-skill-card__head">
           {accent && <span className="subagents-color-dot" style={{ "--project-accent": accent } as CSSProperties} aria-hidden="true" />}
           <span className="cap-skill-card__main">
-            <span className="cap-skill-card__command">{skill.name}</span>
+            <span className="cap-skill-card__command">/{skill.name}</span>
             <span className="cap-skill-card__badges">
               <span className={`cap-skill-badge cap-skill-badge--${skill.scope}`}>{subagentScopeLabel(skill.scope, t)}</span>
               {skill.model && <span className="cap-skill-badge">{skill.model}</span>}
