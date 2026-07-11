@@ -226,7 +226,7 @@ third-party install scripts during plugin installation.
 
 Reasonix also reads Codex plugin manifests at `.codex-plugin/plugin.json` and
 Claude Marketplace manifests at `.claude-plugin/plugin.json`. Claude plugin
-capabilities Reasonix does not map yet (`commands/`, `agents/`,
+capabilities Reasonix does not map yet (`agents/`,
 `hooks/hooks.json`, `.mcp.json`) surface as install warnings instead of being
 silently dropped; multi-plugin `marketplace.json` indexes are not supported —
 install each plugin directory individually. For packages such
@@ -235,6 +235,13 @@ as Superpowers and Claude-style skill packs, Reasonix maps:
 - `skills` to Reasonix skill roots. A Claude manifest that declares no
   `skills` field falls back to the conventional `skills/` (or `.claude/skills/`)
   directory, matching Claude's own auto-discovery.
+- `commands/` (and `.claude/commands/`) to Reasonix custom slash commands: each
+  flat `<name>.md` prompt template becomes invocable as `/<name>`, with
+  frontmatter `description` / `argument-hint` and `$ARGUMENTS` / `$1..$N`
+  substitution honored. Plugin commands load at the lowest priority, so a
+  user- or project-authored command with the same name always wins. Native
+  `reasonix-plugin.json` manifests can declare the same thing explicitly with a
+  `"commands"` path list.
 - `hooks/session-start-codex` to the Reasonix `SessionStart` hook when present.
 - A plugin-root `CLAUDE.md` file to a built-in `SessionStart` context hook. The
   file is read directly by Reasonix, without spawning a shell command.

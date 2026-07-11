@@ -366,6 +366,8 @@ export const en = {
   "caps.pluginNoCapabilityDetails": "No detailed capability inventory is available for this plugin.",
   "caps.pluginSkillsTitle": "Skills",
   "caps.pluginSkillsHint": "Browse with /skills, invoke directly, or ask for the workflow by name.",
+  "caps.pluginCommandsTitle": "Commands",
+  "caps.pluginCommandsHint": "Slash-command prompt templates; type /<name> to run one.",
   "caps.pluginHooksTitle": "Hooks",
   "caps.pluginHooksHint": "Hooks trigger automatically on matching lifecycle events.",
   "caps.pluginMCPTitle": "MCP servers",

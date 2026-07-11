@@ -61,6 +61,23 @@ func mergeInstalledPluginPackages(cfg *Config, root string) []string {
 	return warnings
 }
 
+// pluginPackageCommandDirs returns the command directories contributed by
+// enabled installed plugin packages, in deterministic (name, path) order.
+// CommandDirsForRoot places them ahead of every user/project dir so they lose
+// name clashes; LoadInstalled already filters to enabled packages.
+func pluginPackageCommandDirs() []string {
+	reasonixHome := ReasonixHomeDir()
+	if strings.TrimSpace(reasonixHome) == "" {
+		return nil
+	}
+	installed, _ := pluginpkg.LoadInstalled(reasonixHome)
+	var out []string
+	for _, item := range installed {
+		out = append(out, item.Package.CommandRoots()...)
+	}
+	return out
+}
+
 // PluginPackageOwner reports the installed plugin package that contributed an
 // MCP server. Config-authored servers with the same name win during merge and
 // therefore have no package owner.

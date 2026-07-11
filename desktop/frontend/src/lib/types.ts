@@ -730,9 +730,11 @@ export interface PluginView {
   manifestKind?: string;
   enabled: boolean;
   skills: number;
+  commands?: number;
   hooks: number;
   mcpServers: number;
   skillDetails?: PluginSkillView[];
+  commandDetails?: PluginCommandView[];
   hookDetails?: PluginHookView[];
   mcpServerDetails?: PluginMCPServerView[];
   warnings?: string[];
@@ -744,6 +746,13 @@ export interface PluginSkillView {
   path?: string;
   invocation?: string;
   runAs?: string;
+}
+export interface PluginCommandView {
+  name: string;
+  description?: string;
+  argHint?: string;
+  path?: string;
+  invocation?: string;
 }
 export interface PluginHookView {
   event: string;

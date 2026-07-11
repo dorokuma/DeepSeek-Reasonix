@@ -207,13 +207,18 @@ Reasonix 原生插件在根目录声明 `reasonix-plugin.json`：
 ## Codex 与 Claude 兼容
 
 Reasonix 也会读取 `.codex-plugin/plugin.json` 和 `.claude-plugin/plugin.json`。
-Reasonix 尚未映射的 Claude 插件能力（`commands/`、`agents/`、`hooks/hooks.json`、
+Reasonix 尚未映射的 Claude 插件能力（`agents/`、`hooks/hooks.json`、
 `.mcp.json`）会以安装警告的形式提示，而不是被静默丢弃；多插件的
 `marketplace.json` 索引暂不支持——请逐个安装插件目录。
 对于 Superpowers 和 Claude 风格 skill 包，Reasonix 会映射：
 
 - `skills` 到 Reasonix skill root。Claude 清单若未声明 `skills` 字段，会回退到
   约定目录 `skills/`（或 `.claude/skills/`），与 Claude 自身的自动发现一致。
+- `commands/`（以及 `.claude/commands/`）映射为 Reasonix 自定义斜杠命令：每个
+  扁平的 `<name>.md` 提示词模板都可以用 `/<name>` 直接调用，frontmatter 的
+  `description` / `argument-hint` 以及 `$ARGUMENTS` / `$1..$N` 替换均生效。
+  插件命令以最低优先级加载，同名时用户或项目自定义的命令始终优先。原生
+  `reasonix-plugin.json` 清单也可以通过 `"commands"` 路径列表显式声明。
 - 如果存在 `hooks/session-start-codex`，映射为 Reasonix `SessionStart` hook。
 - 插件根目录的 `CLAUDE.md` 会映射为内置的 `SessionStart` 上下文 hook。
   Reasonix 会直接读取该文件，不通过 shell 命令。

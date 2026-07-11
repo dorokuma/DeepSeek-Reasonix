@@ -21,9 +21,11 @@ type PluginView struct {
 	ManifestKind     string                `json:"manifestKind,omitempty"`
 	Enabled          bool                  `json:"enabled"`
 	Skills           int                   `json:"skills"`
+	Commands         int                   `json:"commands"`
 	Hooks            int                   `json:"hooks"`
 	MCPServers       int                   `json:"mcpServers"`
 	SkillDetails     []PluginSkillView     `json:"skillDetails,omitempty"`
+	CommandDetails   []PluginCommandView   `json:"commandDetails,omitempty"`
 	HookDetails      []PluginHookView      `json:"hookDetails,omitempty"`
 	MCPServerDetails []PluginMCPServerView `json:"mcpServerDetails,omitempty"`
 	Warnings         []string              `json:"warnings,omitempty"`
@@ -43,6 +45,14 @@ type PluginSkillView struct {
 	Path        string `json:"path,omitempty"`
 	Invocation  string `json:"invocation,omitempty"`
 	RunAs       string `json:"runAs,omitempty"`
+}
+
+type PluginCommandView struct {
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+	ArgHint     string `json:"argHint,omitempty"`
+	Path        string `json:"path,omitempty"`
+	Invocation  string `json:"invocation,omitempty"`
 }
 
 type PluginHookView struct {
@@ -87,9 +97,19 @@ func (a *App) Plugins() []PluginView {
 }
 
 func applyPluginPackageDetails(view *PluginView, pkg pluginpkg.Package, warnings []string) {
-	view.Skills, view.Hooks, view.MCPServers = pkg.CapabilityCounts()
+	view.Skills, view.Commands, view.Hooks, view.MCPServers = pkg.CapabilityCounts()
 	view.Warnings = warnings
 	inv := pkg.Inventory()
+	view.CommandDetails = make([]PluginCommandView, 0, len(inv.Commands))
+	for _, cmd := range inv.Commands {
+		view.CommandDetails = append(view.CommandDetails, PluginCommandView{
+			Name:        cmd.Name,
+			Description: cmd.Description,
+			ArgHint:     cmd.ArgHint,
+			Path:        cmd.Path,
+			Invocation:  cmd.Invocation,
+		})
+	}
 	view.SkillDetails = make([]PluginSkillView, 0, len(inv.Skills))
 	for _, sk := range inv.Skills {
 		view.SkillDetails = append(view.SkillDetails, PluginSkillView{

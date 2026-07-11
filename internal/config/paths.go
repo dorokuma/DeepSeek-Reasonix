@@ -481,6 +481,12 @@ func CommandDirsForRoot(root string) []string {
 		}
 		dirs = append(dirs, dir)
 	}
+	// Enabled plugin packages contribute command dirs at the lowest priority,
+	// so a user- or project-authored command always wins a name clash with a
+	// plugin-shipped one.
+	for _, dir := range pluginPackageCommandDirs() {
+		add(dir)
+	}
 	if dir := legacyOSSupportDir(); dir != "" {
 		add(filepath.Join(dir, "commands"))
 	}

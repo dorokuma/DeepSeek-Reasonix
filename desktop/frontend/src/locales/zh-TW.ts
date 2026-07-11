@@ -282,6 +282,8 @@ export const zhTW: Record<DictKey, string> = {
   "caps.pluginNoCapabilityDetails": "此插件暫無可展示的能力明細。",
   "caps.pluginSkillsTitle": "Skills",
   "caps.pluginSkillsHint": "用 /skills 瀏覽，直接呼叫，或在對話中說出工作流名稱。",
+  "caps.pluginCommandsTitle": "Commands",
+  "caps.pluginCommandsHint": "斜線命令模板，輸入 /<名稱> 即可執行。",
   "caps.pluginHooksTitle": "Hooks",
   "caps.pluginHooksHint": "Hooks 會在匹配的生命週期事件中自動觸發。",
   "caps.pluginMCPTitle": "MCP 伺服器",

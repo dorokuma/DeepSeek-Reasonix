@@ -4,7 +4,7 @@ import { asArray } from "../lib/array";
 import { app, openExternal } from "../lib/bridge";
 import { useT } from "../lib/i18n";
 import { mcpServerLifecycleActions, mcpServerRetryableFromAvailableList } from "../lib/mcpServerLifecycle";
-import type { CapabilitiesView, MCPServerInput, PluginHookView, PluginInstallOptions, PluginMCPServerView, PluginSkillView, PluginView, ServerView, SkillRootSkillView, SkillRootView, SkillsSettingsView, SkillView, TabMeta } from "../lib/types";
+import type { CapabilitiesView, MCPServerInput, PluginCommandView, PluginHookView, PluginInstallOptions, PluginMCPServerView, PluginSkillView, PluginView, ServerView, SkillRootSkillView, SkillRootView, SkillsSettingsView, SkillView, TabMeta } from "../lib/types";
 import { InlineConfirmButton } from "./InlineConfirmButton";
 import { ResizableDrawer } from "./ResizableDrawer";
 import { Tooltip } from "./Tooltip";
@@ -2026,9 +2026,10 @@ function PluginRow({
 function PluginUsageDetails({ plugin }: { plugin: PluginView }) {
 	const t = useT();
 	const skills = asArray(plugin.skillDetails);
+	const commands = asArray(plugin.commandDetails);
 	const hooks = asArray(plugin.hookDetails);
 	const mcps = asArray(plugin.mcpServerDetails);
-	const hasDetails = skills.length > 0 || hooks.length > 0 || mcps.length > 0;
+	const hasDetails = skills.length > 0 || commands.length > 0 || hooks.length > 0 || mcps.length > 0;
 	return (
 		<div className="cap-plugin-usage">
 			<div className="cap-plugin-usage__title">{t("caps.pluginUsageTitle")}</div>
@@ -2037,6 +2038,7 @@ function PluginUsageDetails({ plugin }: { plugin: PluginView }) {
 			</div>
 			{hasDetails ? (
 				<div className="cap-plugin-capabilities">
+					{commands.length > 0 && <PluginCommandList commands={commands} />}
 					{skills.length > 0 && <PluginSkillList skills={skills} />}
 					{hooks.length > 0 && <PluginHookList hooks={hooks} />}
 					{mcps.length > 0 && <PluginMCPList servers={mcps} />}
@@ -2044,6 +2046,27 @@ function PluginUsageDetails({ plugin }: { plugin: PluginView }) {
 			) : (
 				<div className="cap-plugin-usage__empty">{t("caps.pluginNoCapabilityDetails")}</div>
 			)}
+		</div>
+	);
+}
+
+function PluginCommandList({ commands }: { commands: PluginCommandView[] }) {
+	const t = useT();
+	return (
+		<div className="cap-plugin-capability">
+			<div className="cap-plugin-capability__head">{t("caps.pluginCommandsTitle")}</div>
+			<div className="cap-plugin-capability__hint">{t("caps.pluginCommandsHint")}</div>
+			<div className="cap-plugin-capability__list">
+				{commands.map((command) => (
+					<div className="cap-plugin-capability__item" key={`${command.name}-${command.path || command.invocation || ""}`}>
+						<div className="cap-plugin-capability__line">
+							<span className="cap-plugin-capability__name">{command.invocation || `/${command.name}`}</span>
+							{command.argHint && <span className="cap-source-badge">{command.argHint}</span>}
+						</div>
+						<div className="cap-plugin-capability__desc">{command.description || t("caps.pluginNoDescription")}</div>
+					</div>
+				))}
+			</div>
 		</div>
 	);
 }
@@ -2125,9 +2148,11 @@ function normalizePluginView(plugin: PluginView): PluginView {
 		root: plugin.root || "",
 		enabled: Boolean(plugin.enabled),
 		skills: Number.isFinite(plugin.skills) ? plugin.skills : 0,
+		commands: Number.isFinite(plugin.commands) ? plugin.commands : 0,
 		hooks: Number.isFinite(plugin.hooks) ? plugin.hooks : 0,
 		mcpServers: Number.isFinite(plugin.mcpServers) ? plugin.mcpServers : 0,
 		skillDetails: asArray(plugin.skillDetails),
+		commandDetails: asArray(plugin.commandDetails),
 		hookDetails: asArray(plugin.hookDetails),
 		mcpServerDetails: asArray(plugin.mcpServerDetails),
 		warnings: asArray(plugin.warnings),
