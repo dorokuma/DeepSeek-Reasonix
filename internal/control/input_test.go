@@ -709,6 +709,9 @@ func TestSubmitUserTurnBypassesCommandDispatch(t *testing.T) {
 	for _, input := range []string{"!echo should stay a prompt", "/clear"} {
 		c.SubmitUserTurn(input, input)
 		waitForTurnDone(t, events)
+		// The next SubmitUserTurn must wait out the finishing window or it is
+		// silently dropped by runGuarded — see waitIdle.
+		waitIdle(t, c)
 	}
 
 	if len(runner.inputs) != 2 {
@@ -738,6 +741,26 @@ func TestSubmitRememberCommandQuickAddsMemory(t *testing.T) {
 	}
 	if !strings.Contains(string(body), "- use tabs") {
 		t.Fatalf("memory file missing note:\n%s", body)
+	}
+}
+
+// waitIdle blocks until the controller's turn-admission gate reopens.
+// TurnDone is emitted INSIDE the finishing window (finishGuardedTurn sets
+// running=false, finishing=true, emits, then clears finishing), and runGuarded
+// silently no-ops while finishing is set — so "received TurnDone" does NOT
+// mean "may submit the next turn". A submit raced into that window is
+// dropped, and the next turn's TurnDone never arrives; under parallel test
+// load the window is wide enough to hit (observed in CI and on a clean
+// main-v2 worktree). Poll the same running||finishing gate the controller
+// admission checks.
+func waitIdle(t *testing.T, c *Controller) {
+	t.Helper()
+	deadline := time.Now().Add(30 * time.Second)
+	for c.Running() {
+		if time.Now().After(deadline) {
+			t.Fatal("timed out waiting for the controller to return to idle")
+		}
+		time.Sleep(time.Millisecond)
 	}
 }
 
