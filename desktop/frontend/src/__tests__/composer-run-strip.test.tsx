@@ -295,16 +295,14 @@ console.log("\ncomposer run strip");
   dom.window.close();
 }
 
-// Two suspended tabs: tab A's wait must not subtract from tab B's model clock.
-//
-// Setup: B's turn started 5s before the test. While A stays suspended for ~3s,
-// wall time advances so B's turn age is ~8s when we resume B.
-// - Correct (scope reset): waitAccum ≈ B's own short pause only → ticker ~8s
-// - Bug (shared since): waitAccum ≈ full A+B pause (~3s) → ticker collapses to ~5s
+// Background user-wait is controller-scoped: B already waited ~3s off-screen
+// while A was foregrounded. Model work for B must stay ~5s (8s turn − 3s wait),
+// and tab A's local pause must never be subtracted from B.
 {
   const dom = installDom();
   const tabAStart = Date.now() - 60_000;
-  const tabBStart = Date.now() - 5_000;
+  const tabBStart = Date.now() - 8_000;
+  const tabBWaitStarted = Date.now() - 3_000;
   const { root, rerender } = await renderComposer({
     running: true,
     turnStartAt: tabAStart,
@@ -313,14 +311,17 @@ console.log("\ncomposer run strip");
     disabled: true,
   });
 
+  // A stays locally suspended for a while (clear-context style / no controller wait).
   await act(async () => {
-    await new Promise((resolve) => setTimeout(resolve, 3000));
+    await new Promise((resolve) => setTimeout(resolve, 2400));
   });
 
-  // pauseWorkClock stays true across the draft switch.
+  // Switch to B, already awaiting approval since tabBWaitStarted (background).
   await rerender({
     sessionKey: "tab-b",
     turnStartAt: tabBStart,
+    turnWaitAccumMs: 0,
+    promptWaitStartedAt: tabBWaitStarted,
     suspendedByDecision: true,
     disabled: true,
   });
@@ -328,11 +329,19 @@ console.log("\ncomposer run strip");
     await new Promise((resolve) => setTimeout(resolve, 300));
   });
 
-  await rerender({ suspendedByDecision: false, disabled: false });
+  // Controller closes the open wait into turnWaitAccumMs on resolve.
+  const closedWaitMs = Date.now() - tabBWaitStarted;
+  await rerender({
+    suspendedByDecision: false,
+    disabled: false,
+    promptWaitStartedAt: undefined,
+    turnWaitAccumMs: closedWaitMs,
+  });
 
   const ticker = document.querySelector(".composer-run-strip__text")?.textContent ?? "";
-  ok(/ 7s| 8s| 9s/.test(ticker), `tab B includes wall time spent on suspended tab A in turn age only (got "${ticker}")`);
-  ok(!/ 4s| 5s| 6s/.test(ticker), "tab A's pause interval is not subtracted from tab B");
+  // 8s turn age − ~3.3s user wait ≈ 5s model work (not ~8s wall, not ~0–2s from A leak).
+  ok(/ 4s| 5s| 6s/.test(ticker), `tab B excludes background user-wait from model clock (got "${ticker}")`);
+  ok(!/ 7s| 8s| 9s| 10s| 11s/.test(ticker), "background suspension is not counted as model work");
   ok(!/ 5[5-9]s| 6[0-9]s/.test(ticker), "tab B does not show tab A's ~60s turn age as model time");
 
   await act(async () => {

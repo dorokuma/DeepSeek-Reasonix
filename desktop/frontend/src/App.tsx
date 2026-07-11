@@ -3815,6 +3815,8 @@ export default function App() {
               decisionPending={rewindCommitting || state.messageAction != null || Boolean(decisionSurface)}
               ready={controllerReady}
               turnStartAt={state.turnStartAt}
+              turnWaitAccumMs={state.turnWaitAccumMs}
+              promptWaitStartedAt={state.promptWaitStartedAt}
               turnTokens={state.turnTokens}
               retry={state.retry}
               suspendedByDecision={Boolean(decisionSurface)}

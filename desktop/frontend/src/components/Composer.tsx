@@ -508,6 +508,8 @@ export function Composer({
   decisionPending = false,
   ready,
   turnStartAt,
+  turnWaitAccumMs = 0,
+  promptWaitStartedAt,
   turnTokens,
   retry,
   suspendedByDecision = false,
@@ -562,6 +564,10 @@ export function Composer({
   // and a completed turn may have installed skills or MCP prompts.
   ready?: boolean;
   turnStartAt?: number;
+  // Tab-scoped user-wait from the controller (approval/ask). Counts while the
+  // tab is in the background so Composer does not invent a wait start on focus.
+  turnWaitAccumMs?: number;
+  promptWaitStartedAt?: number;
   turnTokens?: number;
   retry?: { attempt: number; max: number };
   // True while a footer decision surface (approval / ask / clear context) owns
@@ -2489,30 +2495,37 @@ export function Composer({
   // Legacy tests that pass pendingApprovalLabel without suspendedByDecision
   // still keep the approval bar usable mid-prompt.
   const approvalBarDisabled = Boolean(disabled) && !(pendingApprovalLabel && !suspendedByDecision);
-  // Waiting on the user (approval/ask/decision) is not model work: pause the
-  // ticker clock so elapsed time means "model time". Retries keep counting —
-  // they are system time, not user time. Scoped by draftKey + turnStartAt so
-  // switching between two suspended tabs cannot subtract tab A's wait from B.
-  const [waitAccumMs, setWaitAccumMs] = useState(0);
-  const pauseSinceRef = useRef<number | null>(null);
+  // Waiting on the user is not model work. Approval/ask wait is owned by the
+  // per-tab controller (turnWaitAccumMs + promptWaitStartedAt) so background
+  // tabs keep accumulating. Composer only tracks local pauses for surfaces the
+  // controller does not know about (clear-context, legacy strip tests).
+  const controllerTracksWait = typeof promptWaitStartedAt === "number" && promptWaitStartedAt > 0;
+  const controllerWaitMs = Math.max(0, turnWaitAccumMs || 0)
+    + (controllerTracksWait ? Math.max(0, now - promptWaitStartedAt) : 0);
+  const trackLocalPause = pauseWorkClock && !controllerTracksWait;
+  const [localWaitAccumMs, setLocalWaitAccumMs] = useState(0);
+  const localPauseSinceRef = useRef<number | null>(null);
   useEffect(() => {
-    pauseSinceRef.current = null;
-    setWaitAccumMs(0);
-    if (pauseWorkClock) pauseSinceRef.current = Date.now();
-    // pauseWorkClock is read from the render that changed draft/turn so a
-    // still-suspended tab switch restarts the open interval for the new scope.
+    localPauseSinceRef.current = null;
+    setLocalWaitAccumMs(0);
+    if (trackLocalPause) localPauseSinceRef.current = Date.now();
+    // trackLocalPause is read from the render that changed draft/turn.
     // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional scope-only reset
   }, [draftKey, turnStartAt]);
   useEffect(() => {
-    if (pauseWorkClock) {
-      if (pauseSinceRef.current == null) pauseSinceRef.current = Date.now();
+    if (trackLocalPause) {
+      if (localPauseSinceRef.current == null) localPauseSinceRef.current = Date.now();
       return;
     }
-    if (pauseSinceRef.current == null) return;
-    const delta = Date.now() - pauseSinceRef.current;
-    pauseSinceRef.current = null;
-    if (delta > 0) setWaitAccumMs((total) => total + delta);
-  }, [pauseWorkClock]);
+    if (localPauseSinceRef.current == null) return;
+    const delta = Date.now() - localPauseSinceRef.current;
+    localPauseSinceRef.current = null;
+    if (delta > 0) setLocalWaitAccumMs((total) => total + delta);
+  }, [trackLocalPause]);
+  const localOpenWaitMs = localPauseSinceRef.current != null
+    ? Math.max(0, now - localPauseSinceRef.current)
+    : 0;
+  const waitAccumMs = controllerWaitMs + localWaitAccumMs + localOpenWaitMs;
   // Close menus/popovers while a decision surface owns the footer.
   useEffect(() => {
     if (!suspendedByDecision) return;
