@@ -49,19 +49,6 @@ func (s *skillSet) listAll() []skill.Skill {
 	return s.enabled
 }
 
-// byName resolves an enabled skill by name, preferring the live store.
-func (s *skillSet) byName(name string) (skill.Skill, bool) {
-	if s.store != nil {
-		return s.store.Read(name)
-	}
-	for _, sk := range s.enabled {
-		if sk.Name == name {
-			return sk, true
-		}
-	}
-	return skill.Skill{}, false
-}
-
 func (s *skillSet) bySlashName(name string) (skill.Skill, bool) {
 	if s.store != nil {
 		return s.store.ReadSlash(name)
