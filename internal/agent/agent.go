@@ -538,7 +538,7 @@ func (a *Agent) Run(ctx context.Context, input string) error {
 		a.steerCh = make(chan string, 8)
 	}
 	a.repeatSuccessCounts = nil
-	a.sink.Emit(event.Event{Kind: event.TurnStarted})
+	a.sink.Emit(event.Event{Kind: event.TurnStarted, AutoReentry: input == ""})
 	// Parse multimodal data URLs embedded in the input text (e.g.
 	// [REASONIX_IMAGE:data:image/jpeg;base64,...]) and convert them to
 	// ContentPart objects so the model can "see" images directly.

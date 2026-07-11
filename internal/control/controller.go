@@ -27,6 +27,7 @@ import (
 	"reasonix/internal/ctxmode"
 	"reasonix/internal/diff"
 	"reasonix/internal/event"
+	"reasonix/internal/multiagent"
 	"reasonix/internal/hook"
 	"reasonix/internal/memory"
 	"reasonix/internal/nilutil"
@@ -261,6 +262,7 @@ func New(opts Options) *Controller {
 		// MultiAgent completion: arm pending + idle wake (busy → queue empty reentry).
 		// Same-turn flushes already drain mailbox; empty wake no-ops if nothing left.
 		if ma := c.executor.MultiAgentControl(); ma != nil {
+			ma.Sink = c.sink // agent_status: wire event sink for sub-agent lifecycle events
 			ma.OnCompletion = func() {
 				c.SetPendingToolResult(true)
 				c.autoReenter()
@@ -522,6 +524,14 @@ func (c *Controller) Running() bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.running
+}
+
+// MultiAgentControl returns the session-scoped multi-agent controller, if any.
+func (c *Controller) MultiAgentControl() *multiagent.Control {
+	if c.executor == nil {
+		return nil
+	}
+	return c.executor.MultiAgentControl()
 }
 
 // Turn returns the current turn number (0 before the first submit).

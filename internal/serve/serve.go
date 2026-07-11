@@ -23,6 +23,7 @@ import (
 	"reasonix/internal/config"
 	"reasonix/internal/control"
 	"reasonix/internal/event"
+	"reasonix/internal/multiagent"
 )
 
 // Server wires a controller to its HTTP surface. The Broadcaster must be the
@@ -204,6 +205,28 @@ func writeTimeoutMiddleware(next http.Handler, timeout time.Duration) http.Handl
 	})
 }
 
+// ---- agent API response types ----
+
+type agentResp struct {
+	Ok    bool   `json:"ok"`
+	Data  any    `json:"data,omitempty"`
+	Error string `json:"error,omitempty"`
+}
+
+// agentItem is one entry in the GET /agents response.
+type agentItem struct {
+	Path      string `json:"path"`
+	Nickname  string `json:"nickname"`
+	Status    any    `json:"status"`
+	Task      any    `json:"task,omitempty"`
+	ElapsedMs int64  `json:"elapsed_ms,omitempty"`
+}
+
+func writeAgentJSON(w http.ResponseWriter, status int, ok bool, data any, errMsg string) {
+	w.WriteHeader(status)
+	writeJSON(w, agentResp{Ok: ok, Data: data, Error: errMsg})
+}
+
 func (s *Server) handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /events", s.events)
@@ -214,6 +237,9 @@ func (s *Server) handler() http.Handler {
 	mux.HandleFunc("POST /steer", s.steer)
 	mux.HandleFunc("POST /approve", s.approve)
 	mux.HandleFunc("POST /answer", s.answer)
+	mux.HandleFunc("GET /agents", s.agents)
+	mux.HandleFunc("POST /agents/{path}/interrupt", s.agentsInterrupt)
+	mux.HandleFunc("POST /agents/{path}/send", s.agentsSend)
 	return logMiddleware(securityHeadersMiddleware(s.auth.middleware(csrfGuard(writeTimeoutMiddleware(mux, 60*time.Second)))))
 }
 
@@ -576,6 +602,79 @@ func (s *Server) answer(w http.ResponseWriter, r *http.Request) {
 	}
 	s.ctl().AnswerQuestion(body.ID, body.Answers)
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) agents(w http.ResponseWriter, _ *http.Request) {
+	mac := s.ctl().MultiAgentControl()
+	if mac == nil {
+		writeAgentJSON(w, http.StatusOK, true, []agentItem{}, "")
+		return
+	}
+	listed := mac.List("", "")
+	items := make([]agentItem, 0, len(listed))
+	for _, a := range listed {
+		items = append(items, agentItem{
+			Path:     a.AgentName,
+			Nickname: multiagent.LeafName(a.AgentName),
+			Status:   a.AgentStatus,
+			Task:     nil,
+			ElapsedMs: func() int64 {
+				if a.StartedAt.IsZero() {
+					return 0
+				}
+				return time.Since(a.StartedAt).Milliseconds()
+			}(),
+		})
+	}
+	writeAgentJSON(w, http.StatusOK, true, items, "")
+}
+
+func (s *Server) agentsInterrupt(w http.ResponseWriter, r *http.Request) {
+	path := r.PathValue("path")
+	if path == "" {
+		writeAgentJSON(w, http.StatusBadRequest, false, nil, "missing agent path")
+		return
+	}
+	mac := s.ctl().MultiAgentControl()
+	if mac == nil {
+		writeAgentJSON(w, http.StatusNotFound, false, nil, "multi-agent control not available")
+		return
+	}
+	prev, err := mac.Interrupt(path)
+	if err != nil {
+		writeAgentJSON(w, http.StatusInternalServerError, false, nil, err.Error())
+		return
+	}
+	writeAgentJSON(w, http.StatusOK, true, map[string]any{"previous_status": prev}, "")
+}
+
+func (s *Server) agentsSend(w http.ResponseWriter, r *http.Request) {
+	path := r.PathValue("path")
+	if path == "" {
+		writeAgentJSON(w, http.StatusBadRequest, false, nil, "missing agent path")
+		return
+	}
+	var body struct {
+		Message string `json:"message"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeAgentJSON(w, http.StatusBadRequest, false, nil, "invalid JSON body")
+		return
+	}
+	if body.Message == "" {
+		writeAgentJSON(w, http.StatusBadRequest, false, nil, "missing message")
+		return
+	}
+	mac := s.ctl().MultiAgentControl()
+	if mac == nil {
+		writeAgentJSON(w, http.StatusNotFound, false, nil, "multi-agent control not available")
+		return
+	}
+	if err := mac.SendMessage("", path, body.Message, false); err != nil {
+		writeAgentJSON(w, http.StatusInternalServerError, false, nil, err.Error())
+		return
+	}
+	writeAgentJSON(w, http.StatusOK, true, map[string]string{"status": "sent"}, "")
 }
 
 func (s *Server) status(w http.ResponseWriter, r *http.Request) {

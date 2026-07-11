@@ -101,7 +101,7 @@ func NewCoordinator(planner provider.Provider, plannerSession *Session, plannerP
 
 // Run plans with the planner model, then hands the plan to the executor.
 func (c *Coordinator) Run(ctx context.Context, input string) error {
-	c.sink.Emit(event.Event{Kind: event.TurnStarted})
+	c.sink.Emit(event.Event{Kind: event.TurnStarted, AutoReentry: input == ""})
 	// Background sub-agent completion triggers auto-reentry with input "".
 	// The executor must drain the tool result; routing through the planner drops it.
 	if c.executor != nil && c.executor.ctrl != nil && c.executor.ctrl.PendingToolResult() {

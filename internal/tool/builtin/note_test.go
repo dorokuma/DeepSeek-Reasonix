@@ -212,19 +212,12 @@ func TestNote_PostCallGuidance_ReturnsWorkflow(t *testing.T) {
 	if guidance == "" {
 		t.Fatal("PostCallGuidance should return non-empty guidance")
 	}
-	// Guidance intentionally says "Re-read" without naming the tool (avoids
-	// banned tool-name leaks into post-call text). Assert the re-load step.
-	if !strings.Contains(guidance, "Re-read") {
-		t.Fatalf("guidance should mention Re-read step, got: %q", guidance)
-	}
+	// Guidance lists the required post-call steps.
 	if !strings.Contains(guidance, "audit_finish") {
 		t.Fatalf("guidance should mention audit_finish, got: %q", guidance)
 	}
 	if !strings.Contains(guidance, "final assistant message") {
 		t.Fatalf("guidance should mention final assistant message, got: %q", guidance)
-	}
-	if !strings.Contains(guidance, ".notes.md") {
-		t.Fatalf("guidance should mention .notes.md path, got: %q", guidance)
 	}
 }
 
@@ -237,9 +230,8 @@ func TestNote_PostCallGuidance_MentionsOverridePath(t *testing.T) {
 	if guidance == "" {
 		t.Fatal("PostCallGuidance should return non-empty guidance")
 	}
-	if !strings.Contains(guidance, "custom.md") {
-		t.Fatalf("guidance should mention the override path, got: %q", guidance)
-	}
+	// Path is no longer mentioned in the guidance (the Re-read step was removed).
+	// Just verify that guidance is returned without errors.
 }
 
 func TestNote_PostCallGuidance_EmptyForInvalidArgs(t *testing.T) {

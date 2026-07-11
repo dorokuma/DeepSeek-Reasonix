@@ -20,7 +20,18 @@ type wireEvent struct {
 	Compaction   *wireCompaction `json:"compaction,omitempty"`
 	RetryAttempt int             `json:"retryAttempt,omitempty"`
 	RetryMax     int             `json:"retryMax,omitempty"`
-	Err          string          `json:"err,omitempty"`
+	AutoReentry  bool              `json:"auto_reentry,omitempty"`
+	AgentStatus  *wireAgentStatus  `json:"agent_status,omitempty"`
+	Err          string            `json:"err,omitempty"`
+}
+
+// wireAgentStatus is the JSON form of an event.AgentStatusData.
+// agent_status:
+type wireAgentStatus struct {
+	AgentPath string `json:"agent_path"`
+	Status    string `json:"status"`
+	Error     string `json:"error,omitempty"`
+	Timestamp int64  `json:"timestamp"`
 }
 
 // wireCompaction is the JSON form of an event.Compaction. On a compaction_started
@@ -127,6 +138,7 @@ var kindNames = map[event.Kind]string{
 	event.CompactionDone:    "compaction_done",
 	event.ToolProgress:      "tool_progress",
 	event.MCPSurfaceReady:   "mcp_surface_ready",
+	event.AgentStatus:       "agent_status",
 	event.Retrying:          "retrying",
 }
 
@@ -193,11 +205,22 @@ func toWire(e event.Event) wireEvent {
 			Trigger: e.Compaction.Trigger, Messages: e.Compaction.Messages,
 			Summary: e.Compaction.Summary, Archive: e.Compaction.Archive,
 		}
+	case event.AgentStatus:
+		if e.AgentStatus != nil {
+			w.AgentStatus = &wireAgentStatus{
+				AgentPath: e.AgentStatus.AgentPath,
+				Status:    e.AgentStatus.Status,
+				Error:     e.AgentStatus.Error,
+				Timestamp: e.AgentStatus.Timestamp,
+			}
+		}
 	case event.Retrying:
 		w.RetryAttempt = e.RetryAttempt
 		w.RetryMax = e.RetryMax
 	case event.MCPSurfaceReady:
 		// Text is already set on w.Text
+	case event.TurnStarted:
+		w.AutoReentry = e.AutoReentry
 	case event.TurnDone:
 		if e.Err != nil {
 			w.Err = e.Err.Error()

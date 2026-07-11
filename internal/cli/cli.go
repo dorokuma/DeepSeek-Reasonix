@@ -458,8 +458,14 @@ func runServe(args []string) int {
 	password := fs.String("password", "", "password for auth=password (use --hash-password to store a hash instead)")
 	hashPassword := fs.Bool("hash-password", false, "print a bcrypt hash of --password and exit")
 	behindProxy := fs.Bool("behind-proxy", false, "trust X-Forwarded-For / X-Forwarded-Proto headers from a reverse proxy")
+	sessionDir := fs.String("session-dir", "", "session directory (default: ~/.config/reasonix/sessions/)")
 	if err := fs.Parse(args); err != nil {
 		return 2
+	}
+
+	// Apply --session-dir override before any session resolution.
+	if *sessionDir != "" {
+		config.SetSessionDir(*sessionDir)
 	}
 	// Reject cleanup-pending sessions before any provider setup.
 	var resumePath string

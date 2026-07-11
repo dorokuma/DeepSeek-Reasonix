@@ -82,6 +82,10 @@ const (
 	// A frontend shows a transient "retrying (n/m)" indicator that the next stream
 	// event — or TurnDone — clears. Appended last to keep the Kind values before
 	// it wire-stable.
+	// AgentStatus: sub-agent lifecycle transition. Emitted when a sub-agent
+	// completes, errors, or is interrupted. Carries AgentStatusData.
+	// agent_status:
+	AgentStatus
 	Retrying
 )
 
@@ -230,10 +234,21 @@ type Event struct {
 	Level           Level      // Notice
 	Approval        Approval   // ApprovalRequest
 	Ask             Ask        // AskRequest
+	AutoReentry     bool       // TurnStarted: true if triggered by background sub-agent completion (input=="")
 	Err             error      // TurnDone: non-nil on failure
 	Compaction      Compaction // Compaction
 	RetryAttempt    int        // Retrying: 1-based attempt about to be made
 	RetryMax        int        // Retrying: total attempts before giving up
+	AgentStatus     *AgentStatusData // AgentStatus: sub-agent lifecycle transition
+}
+
+// AgentStatusData describes a sub-agent lifecycle transition.
+// agent_status:
+type AgentStatusData struct {
+	AgentPath string // agent path like "/task_1/read_source"
+	Status    string // "errored" or "interrupted" or "completed"
+	Error     string // error message (only for errored)
+	Timestamp int64  // unix ms
 }
 
 // Sink consumes a turn's events. The agent calls Emit from multiple goroutines

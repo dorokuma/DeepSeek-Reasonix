@@ -7,6 +7,7 @@ package config
 import (
 	"fmt"
 	"log/slog"
+	"sync"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -1040,10 +1041,38 @@ func ArchiveDir() string {
 	return filepath.Join(dir, "reasonix", "archive")
 }
 
-// SessionDir is where chat sessions are persisted (one .jsonl per session).
-// Used by `reasonix chat --continue` / `--resume` to find the recent ones. Empty
+// sessionDirOverride is set by SetSessionDir (e.g., from --session-dir CLI flag).
+var sessionDirOverride string
+var mu sync.RWMutex
+
+// SetSessionDir overrides the default session directory. Called from CLI flag
+// parsing so --session-dir on serve/run/chat takes effect before any resume
+// resolution. The REASONIX_SESSION_DIR environment variable takes precedence
+// over this override.
+func SetSessionDir(dir string) {
+	mu.Lock()
+	defer mu.Unlock()
+	sessionDirOverride = dir
+}
+
+// SessionDir returns the directory where chat sessions are persisted (one .jsonl
+// per session). Priority:
+//  1. REASONIX_SESSION_DIR environment variable
+//  2. SetSessionDir override (from --session-dir CLI flag)
+//  3. Default: ~/.config/reasonix/sessions/
+//
+// Used by reasonix chat --continue / --resume to find the recent ones. Empty
 // if the user config dir can't be resolved — sessions then aren't saved.
 func SessionDir() string {
+	if env := os.Getenv("REASONIX_SESSION_DIR"); env != "" {
+		return env
+	}
+	mu.RLock()
+	if sessionDirOverride != "" {
+		mu.RUnlock()
+		return sessionDirOverride
+	}
+	mu.RUnlock()
 	dir, err := os.UserConfigDir()
 	if err != nil {
 		return ""

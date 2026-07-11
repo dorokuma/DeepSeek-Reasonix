@@ -8,6 +8,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"reasonix/internal/event"
 )
 
 // Codex MultiAgentV2Config-ish defaults.
@@ -59,6 +61,7 @@ type Control struct {
 	OnTriggerTurn func()
 	OnCompletion  func()
 	runningCount  atomic.Int32
+	Sink          event.Sink // agent_status: event sink for sub-agent lifecycle events
 }
 
 // NewControl builds a root-session multi-agent controller (at most one per session).
@@ -183,6 +186,19 @@ func (c *Control) runAgent(runCtx context.Context, rec *Metadata, path, message 
 	lastErr := rec.LastError
 	rec.mu.Unlock()
 
+	// agent_status: emit lifecycle event for terminal states
+	if c.Sink != nil {
+		c.Sink.Emit(event.Event{
+			Kind: event.AgentStatus,
+			AgentStatus: &event.AgentStatusData{
+				AgentPath: path,
+				Status:    string(status),
+				Error:     lastErr,
+				Timestamp: time.Now().UnixMilli(),
+			},
+		})
+	}
+
 	// Codex: forward completion to parent mailbox (trigger_turn=false).
 	parent := ParentPath(path)
 	if parent == "" {
@@ -272,6 +288,7 @@ type ListedAgent struct {
 	AgentName       string `json:"agent_name"`
 	AgentStatus     any    `json:"agent_status"`
 	LastTaskMessage any    `json:"last_task_message"` // string or null
+	StartedAt       time.Time `json:"-"`
 }
 
 // List returns live agents like Codex list_agents (root + tree, sorted by path).
@@ -311,6 +328,7 @@ func (c *Control) List(currentPath, pathPrefix string) []ListedAgent {
 	}
 	for _, r := range rows {
 		r.rec.mu.Lock()
+		startedAt := r.rec.StartedAt
 		st := r.rec.Status
 		last := r.rec.LastTaskMessage
 		r.rec.mu.Unlock()
@@ -329,6 +347,7 @@ func (c *Control) List(currentPath, pathPrefix string) []ListedAgent {
 			AgentName:       r.path,
 			AgentStatus:     StatusJSON(st, "", ""),
 			LastTaskMessage: lastMsg,
+			StartedAt:       startedAt,
 		})
 	}
 	return out

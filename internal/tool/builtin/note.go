@@ -209,18 +209,14 @@ func (n note) resolveNotePath(raw string) (string, error) {
 	return resolveWorkspacePath(n.workDir, noteDefaultBasename, raw)
 }
 
-// PostCallGuidance teaches the model what to do after writing a note: re-load
-// the sidecar, call audit_finish, and include the content in the final reply.
+// PostCallGuidance teaches the model what to do after writing a note: call
+// audit_finish and include the content in the final reply.
 func (n note) PostCallGuidance(args json.RawMessage) string {
 	var p struct {
 		Path string `json:"path,omitempty"`
 		Kind string `json:"kind,omitempty"`
 	}
 	if err := json.Unmarshal(args, &p); err != nil {
-		return ""
-	}
-	path, err := n.resolveNotePath(p.Path)
-	if err != nil {
 		return ""
 	}
 	kind := strings.TrimSpace(p.Kind)
@@ -232,9 +228,8 @@ func (n note) PostCallGuidance(args json.RawMessage) string {
 	}
 	// Full workflow for evidence notes (default).
 	return "You MUST:\n" +
-		"1. Re-read \"" + path + "\" to load the notes into context.\n" +
-		"2. Call `audit_finish(summary=...)` with the user-facing report.\n" +
-		"3. Include the full report in your final assistant message — the user sees THAT, not this tool result."
+		"1. Call `audit_finish(summary=...)` with the user-facing report.\n" +
+		"2. Include the full report in your final assistant message — the user sees THAT, not this tool result."
 }
 
 // formatNoteBlock produces the human-readable entry the user can grep / cat
