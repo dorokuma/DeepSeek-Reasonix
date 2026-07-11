@@ -432,7 +432,6 @@ export const en = {
   "composer.goalModeDesc": "Type a goal, then start goal mode.",
   "composer.goalModeActiveDesc": "Keeps working until complete, blocked, or stopped.",
   "composer.runtimeProfileTitle": "Work mode",
-  "composer.runtimeProfilePrefix": "Work",
   "composer.runtimeProfileTrigger": "Work mode · {mode}",
   "composer.runtimeProfileEconomy": "Lightweight · Use less",
   "composer.runtimeProfileEconomyShort": "Lightweight",

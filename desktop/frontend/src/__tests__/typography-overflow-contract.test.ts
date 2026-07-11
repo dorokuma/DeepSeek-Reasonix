@@ -201,8 +201,8 @@ ok(
   "composer compact controls activate at the capped theme width",
 );
 ok(
-  /@container\s*\(max-width:\s*460px\)[\s\S]*?\.composer-profile-trigger__prefix,[\s\S]*?\.composer-task-mode-trigger__separator\s*\{[\s\S]*?display\s*:\s*none/.test(styles),
-  "task and work category prefixes collapse only at the narrow breakpoint",
+  /@container\s*\(max-width:\s*460px\)[\s\S]*?\.composer-task-mode-trigger__prefix,[\s\S]*?\.composer-task-mode-trigger__separator\s*\{[\s\S]*?display\s*:\s*none/.test(styles),
+  "task category prefix collapses only at the narrow breakpoint",
 );
 eq(finalDeclaration(".md table", "overflow-x"), "auto", "markdown tables scroll horizontally");
 eq(finalDeclaration(".code", "overflow"), "auto", "code blocks scroll instead of widening the layout");

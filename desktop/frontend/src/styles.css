@@ -6157,10 +6157,6 @@ body > .mermaid-diagram--fullscreen {
   font-weight: var(--composer-control-font-weight);
 }
 
-.composer-profile-trigger__separator {
-  color: var(--fg-faint);
-}
-
 .composer-profile-trigger:hover:not(:disabled),
 .composer-profile-trigger:focus-visible,
 .composer-profile-trigger--open {
@@ -6368,8 +6364,6 @@ body > .mermaid-diagram--fullscreen {
     max-width: 68px;
   }
 
-  .composer-profile-trigger__prefix,
-  .composer-profile-trigger__separator,
   .composer-task-mode-trigger__prefix,
   .composer-task-mode-trigger__separator {
     display: none;
@@ -27604,11 +27598,6 @@ body > .mermaid-diagram--fullscreen {
   height: 28px;
   padding-inline: 7px;
   box-shadow: none;
-}
-
-.app--creation .composer-profile-trigger__prefix,
-:root[data-theme-style] .app--creation .composer-profile-trigger__prefix {
-  display: none;
 }
 
 .app--creation .composer-task-mode-trigger,

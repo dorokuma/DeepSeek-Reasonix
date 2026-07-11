@@ -433,7 +433,6 @@ export const zh: Record<DictKey, string> = {
   "composer.goalModeDesc": "先输入目标，再点目标启动。",
   "composer.goalModeActiveDesc": "会自动推进，直到完成、阻塞或停止。",
   "composer.runtimeProfileTitle": "工作模式",
-  "composer.runtimeProfilePrefix": "工作",
   "composer.runtimeProfileTrigger": "工作模式 · {mode}",
   "composer.runtimeProfileEconomy": "轻量 · 快速省用量",
   "composer.runtimeProfileEconomyShort": "轻量",

@@ -163,9 +163,8 @@ console.log("\ncomposer run strip");
 
   const profileTrigger = document.querySelector(".composer-profile-trigger") as HTMLButtonElement | null;
   if (!profileTrigger) throw new Error("work mode trigger did not render");
-  ok(profileTrigger.textContent?.includes("Work") === true, "balanced work mode keeps a compact category prefix");
-  ok(profileTrigger.textContent?.includes("Balanced") === true, "standalone control shows the current profile");
-  ok(profileTrigger.textContent?.includes("Work mode") === false, "work mode trigger avoids repeating the long menu title");
+  eq(profileTrigger.textContent?.trim(), "Balanced", "standalone control shows only the current profile");
+  eq(profileTrigger.getAttribute("aria-label"), "Work mode · Balanced", "work mode trigger keeps its full accessible name");
   ok(profileTrigger.querySelector(".lucide-scale") !== null, "balanced work mode uses a distinct balance icon");
 
   await act(async () => {

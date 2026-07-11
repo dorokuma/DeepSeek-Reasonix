@@ -1573,7 +1573,6 @@ export const zhTW: Record<DictKey, string> = {
   "composer.goalModeDesc": "先輸入目標，再點目標啟動。",
   "composer.goalModeActiveDesc": "會自動推進，直到完成、阻塞或停止。",
   "composer.runtimeProfileTitle": "工作模式",
-  "composer.runtimeProfilePrefix": "工作",
   "composer.runtimeProfileTrigger": "工作模式 · {mode}",
   "composer.runtimeProfileEconomy": "輕量 · 快速省用量",
   "composer.runtimeProfileEconomyShort": "輕量",

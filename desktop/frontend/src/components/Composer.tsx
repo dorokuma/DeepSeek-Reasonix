@@ -3225,8 +3225,6 @@ export function Composer({
                 >
                   <RuntimeProfileIcon size={14} aria-hidden="true" />
                   <span className="composer-profile-trigger__label">
-                    <span className="composer-profile-trigger__prefix">{t("composer.runtimeProfilePrefix")}</span>
-                    <span className="composer-profile-trigger__separator" aria-hidden="true">·</span>
                     <span className="composer-profile-trigger__value">{t(runtimeProfileShortKey)}</span>
                   </span>
                   <ChevronsUpDown size={11} aria-hidden="true" />
