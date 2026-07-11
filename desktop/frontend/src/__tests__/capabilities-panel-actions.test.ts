@@ -4,6 +4,7 @@ import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { MCPServersSettingsPage, PluginsSettingsPage } from "../components/CapabilitiesPanel";
 import { slashCommandKindTag } from "../components/SlashMenu";
+import { selectToolsOnFirstCustomUse } from "../components/SubagentsPanel";
 import type { AppBindings } from "../lib/bridge";
 import { LocaleProvider, t } from "../lib/i18n";
 import { mcpServerLifecycleActions, mcpServerRetryableFromAvailableList } from "../lib/mcpServerLifecycle";
@@ -12,6 +13,17 @@ import type { Meta, PluginInstallOptions, PluginView, ServerView, TabMeta } from
 function ok(value: unknown, message: string) {
   if (!value) throw new Error(message);
 }
+
+const subagentTools = [
+  { name: "read_file", description: "Read files" },
+  { name: "edit_file", description: "Edit files" },
+  { name: "bash", description: "Run commands" },
+];
+const firstCustomSelection = selectToolsOnFirstCustomUse(new Set(), subagentTools, false);
+ok(firstCustomSelection.size === subagentTools.length, "first custom-mode use should select every available tool");
+const savedCustomSelection = selectToolsOnFirstCustomUse(new Set(["read_file", "edit_file"]), subagentTools, true);
+ok(savedCustomSelection.size === 2 && !savedCustomSelection.has("bash"), "saved custom tool selections should be preserved");
+ok(selectToolsOnFirstCustomUse(new Set(), subagentTools, true).size === 0, "returning to custom mode should preserve a deliberate empty selection");
 
 function server(status: ServerView["status"]): ServerView {
   return {

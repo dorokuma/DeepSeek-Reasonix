@@ -404,6 +404,8 @@ function ToolMultiSelect({
   onChange: (next: Set<string>) => void;
 }) {
   const t = useT();
+  const selectedToolCount = tools.reduce((count, tool) => count + Number(selected.has(tool.name)), 0);
+  const allSelected = tools.length > 0 && selectedToolCount === tools.length;
   const toggle = (name: string, checked: boolean) => {
     const next = new Set(selected);
     if (checked) next.add(name);
@@ -412,6 +414,15 @@ function ToolMultiSelect({
   };
   return (
     <div className="subagents-tool-grid" role="group" aria-label={t("subagents.customToolsOption")}>
+      <div className="subagents-tool-grid__actions">
+        <span>{t("subagents.selectedToolCount", { n: selectedToolCount, total: tools.length })}</span>
+        <button type="button" disabled={allSelected} onClick={() => onChange(new Set(tools.map((tool) => tool.name)))}>
+          {t("subagents.selectAllTools")}
+        </button>
+        <button type="button" disabled={selected.size === 0} onClick={() => onChange(new Set())}>
+          {t("subagents.clearTools")}
+        </button>
+      </div>
       {tools.map((tool) => (
         <Tooltip key={tool.name} label={tool.description}>
           <label className="subagents-tool-option">
@@ -422,6 +433,15 @@ function ToolMultiSelect({
       ))}
     </div>
   );
+}
+
+export function selectToolsOnFirstCustomUse(
+  selected: ReadonlySet<string>,
+  tools: MCPToolView[],
+  hasUsedCustomMode: boolean,
+): Set<string> {
+  if (hasUsedCustomMode) return new Set(selected);
+  return new Set(tools.map((tool) => tool.name));
 }
 
 function SubagentProfileForm({
@@ -453,6 +473,7 @@ function SubagentProfileForm({
     editingSkill?.allowedTools && editingSkill.allowedTools.length > 0 ? "custom" : "all",
   );
   const [selectedTools, setSelectedTools] = useState<Set<string>>(() => new Set(editingSkill?.allowedTools ?? []));
+  const hasUsedCustomMode = useRef(Boolean(editingSkill?.allowedTools?.length));
   const [systemPrompt, setSystemPrompt] = useState(editingSkill?.body ?? "");
   const [scope, setScope] = useState<"global" | "project">(editingSkill?.scope === "project" ? "project" : "global");
   const [tryTask, setTryTask] = useState("");
@@ -556,7 +577,14 @@ function SubagentProfileForm({
           className="mem-select"
           value={toolMode}
           disabled={busy}
-          onChange={(e) => setToolMode(e.target.value === "custom" ? "custom" : "all")}
+          onChange={(e) => {
+            const nextMode = e.target.value === "custom" ? "custom" : "all";
+            if (nextMode === "custom") {
+              setSelectedTools(selectToolsOnFirstCustomUse(selectedTools, tools, hasUsedCustomMode.current));
+              hasUsedCustomMode.current = true;
+            }
+            setToolMode(nextMode);
+          }}
         >
           <option value="all">{t("subagents.allToolsOption")}</option>
           <option value="custom">{t("subagents.customToolsOption")}</option>

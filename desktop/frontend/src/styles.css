@@ -11704,6 +11704,30 @@ body > .mermaid-diagram--fullscreen {
   border-radius: 10px;
   background: color-mix(in srgb, var(--bg-soft) 72%, transparent);
 }
+.subagents-tool-grid__actions {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  color: var(--fg-faint);
+  font-size: 11px;
+}
+.subagents-tool-grid__actions button {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--fg-dim);
+  font: inherit;
+  cursor: pointer;
+}
+.subagents-tool-grid__actions button:hover:not(:disabled) {
+  color: var(--fg);
+}
+.subagents-tool-grid__actions button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
 .subagents-tool-option {
   display: flex;
   align-items: center;
