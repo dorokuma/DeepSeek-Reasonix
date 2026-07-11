@@ -149,6 +149,14 @@ func (t *installSourceTool) applyInstallPluginPackage(ctx context.Context, req r
 		if err := replaceCopiedPlugin(sourceRoot, target, req.Replace); err != nil {
 			return err
 		}
+		// Fail closed when the copied tree resolves to a different capability
+		// set than the plan the user approved — e.g. a symlink copyDir could
+		// not materialize safely. A silent gap here would install less than
+		// what was reviewed.
+		if err := verifyCopiedCapabilities(pkg, target); err != nil {
+			_ = os.RemoveAll(target)
+			return err
+		}
 	}
 	installed := pluginpkg.InstalledPlugin{
 		Name:         act.Name,
@@ -215,6 +223,26 @@ func (t *installSourceTool) preparePluginSource(ctx context.Context, source, mod
 		return path, "", func() {}, nil
 	}
 	return path, "", func() {}, nil
+}
+
+// verifyCopiedCapabilities re-parses the installed copy and requires its
+// capability counts to match the source tree the plan described. Discovery
+// follows symlinks but copy mode can only materialize links that stay inside
+// the package, so an unmaterializable link would otherwise silently install
+// fewer skills/commands than the approval covered.
+func verifyCopiedCapabilities(src pluginpkg.Package, target string) error {
+	installed, _, err := pluginpkg.ParseDir(target)
+	if err != nil {
+		return newErr(ErrInvalidManifest, "installed plugin tree failed to re-parse: %v", err)
+	}
+	ss, sc, sh, sm := src.CapabilityCounts()
+	is, ic, ih, im := installed.CapabilityCounts()
+	if ss != is || sc != ic || sh != ih || sm != im {
+		return newErr(ErrInvalidManifest,
+			"installed copy resolves to %d skills / %d commands / %d hooks / %d MCP servers but the approved plan counted %d/%d/%d/%d — the package likely uses symlinks copy mode cannot materialize safely; retry with mode=link or fix the package layout",
+			is, ic, ih, im, ss, sc, sh, sm)
+	}
+	return nil
 }
 
 // checkoutPluginCommit pins a fresh clone to the approved commit when its HEAD

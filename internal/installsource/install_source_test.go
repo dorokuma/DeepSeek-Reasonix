@@ -1750,3 +1750,85 @@ func TestGitHubPluginApplyRefusesUnpinnableDrift(t *testing.T) {
 		t.Fatal("drifted plugin must not be installed")
 	}
 }
+
+// TestCopyMaterializesInRootSymlinkedCommands pins that a command alias
+// symlinked to a file inside the package survives copy-mode installs: the
+// installed tree must resolve to the same capability set the plan counted.
+func TestCopyMaterializesInRootSymlinkedCommands(t *testing.T) {
+	src := t.TempDir()
+	writeFile(t, filepath.Join(src, ".claude-plugin", "plugin.json"), `{"name": "aliases"}`)
+	writeFile(t, filepath.Join(src, "skills", "s", "SKILL.md"), "---\ndescription: s\n---\nbody")
+	writeFile(t, filepath.Join(src, "commands", "plan.md"), "---\ndescription: plan\n---\nPlan")
+	if err := os.Symlink(filepath.Join(src, "commands", "plan.md"), filepath.Join(src, "commands", "pwf.md")); err != nil {
+		t.Skipf("symlinks unavailable on this platform: %v", err)
+	}
+
+	project := t.TempDir()
+	home := t.TempDir()
+	tl := NewTool(Options{ProjectRoot: project, HomeDir: home})
+	tool := tl.(*installSourceTool)
+	tool.preparePlugin = func(ctx context.Context, source, mode string) (string, string, func(), error) {
+		return src, "cafe0001", func() {}, nil
+	}
+
+	resp := execInstall(t, tl, map[string]any{
+		"source": "https://github.com/acme/aliases",
+		"kind":   "plugin",
+		"apply":  true,
+	})
+	if !resp.OK || resp.Status != "done" || len(resp.Actions) != 1 {
+		t.Fatalf("response = %+v", resp)
+	}
+	if resp.Actions[0].CommandCount != 2 {
+		t.Fatalf("planned commands = %d, want 2 (alias followed)", resp.Actions[0].CommandCount)
+	}
+	installedRoot := filepath.Join(home, ".reasonix", "plugins", "aliases")
+	pkg, _, err := pluginpkg.ParseDir(installedRoot)
+	if err != nil {
+		t.Fatalf("ParseDir installed: %v", err)
+	}
+	if _, commands, _, _ := pkg.CapabilityCounts(); commands != 2 {
+		t.Fatalf("installed commands = %d, want the symlinked alias materialized", commands)
+	}
+}
+
+// TestCopyRefusesUnmaterializableSymlinkCommands pins the fail-closed path: a
+// command symlinked to a file OUTSIDE the package counts during planning but
+// cannot be materialized by copy mode, so apply must refuse (and clean up)
+// rather than silently install fewer commands than approved.
+func TestCopyRefusesUnmaterializableSymlinkCommands(t *testing.T) {
+	outside := t.TempDir()
+	writeFile(t, filepath.Join(outside, "evil.md"), "---\ndescription: evil\n---\nEvil")
+	src := t.TempDir()
+	writeFile(t, filepath.Join(src, ".claude-plugin", "plugin.json"), `{"name": "escapes"}`)
+	writeFile(t, filepath.Join(src, "commands", "plan.md"), "---\ndescription: plan\n---\nPlan")
+	if err := os.Symlink(filepath.Join(outside, "evil.md"), filepath.Join(src, "commands", "evil.md")); err != nil {
+		t.Skipf("symlinks unavailable on this platform: %v", err)
+	}
+
+	project := t.TempDir()
+	home := t.TempDir()
+	tl := NewTool(Options{ProjectRoot: project, HomeDir: home})
+	tool := tl.(*installSourceTool)
+	tool.preparePlugin = func(ctx context.Context, source, mode string) (string, string, func(), error) {
+		return src, "cafe0001", func() {}, nil
+	}
+
+	resp := execInstall(t, tl, map[string]any{
+		"source": "https://github.com/acme/escapes",
+		"kind":   "plugin",
+		"apply":  true,
+	})
+	if resp.OK || resp.Status != "failed" || len(resp.Actions) != 1 || resp.Actions[0].Status != "failed" {
+		t.Fatalf("response = %+v, want a failed apply for the unmaterializable symlink", resp)
+	}
+	if !strings.Contains(resp.Actions[0].Error, "approved plan counted") {
+		t.Fatalf("action error = %q, want the capability-verification refusal", resp.Actions[0].Error)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".reasonix", "plugins", "escapes")); !os.IsNotExist(err) {
+		t.Fatal("failed install must not leave the copied tree behind")
+	}
+	if _, ok, _ := pluginpkg.FindInstalled(filepath.Join(home, ".reasonix"), "escapes"); ok {
+		t.Fatal("failed install must not be registered")
+	}
+}
