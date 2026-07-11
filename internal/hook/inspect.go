@@ -120,8 +120,8 @@ func inspectSettingsFile(path string, scope Scope) SourceStatus {
 		return st
 	}
 	count := 0
-	for _, e := range Events {
-		count += len(s.Hooks[e])
+	for _, hooks := range s.Hooks {
+		count += len(hooks)
 	}
 	st.HookCount = count
 	if count == 0 {
@@ -140,7 +140,35 @@ func appendInspectEntries(out *Inspection, s *Settings, scope Scope, source stri
 	if s == nil || s.Hooks == nil {
 		return
 	}
+	// Include every map key so misspelled event names remain diagnosable
+	// (hook.unknown_event). Known events first (stable product order), then
+	// remaining keys sorted alphabetically.
+	seen := map[Event]bool{}
 	for _, event := range Events {
+		if hooks, ok := s.Hooks[event]; ok {
+			seen[event] = true
+			for _, cfg := range hooks {
+				out.Entries = append(out.Entries, Entry{
+					Event:       event,
+					Match:       cfg.Match,
+					Command:     cfg.Command,
+					ContextFile: cfg.ContextFile,
+					Description: cfg.Description,
+					Timeout:     cfg.Timeout,
+					Scope:       scope,
+					Source:      source,
+				})
+			}
+		}
+	}
+	var unknown []Event
+	for event := range s.Hooks {
+		if !seen[event] {
+			unknown = append(unknown, event)
+		}
+	}
+	sort.Slice(unknown, func(i, j int) bool { return unknown[i] < unknown[j] })
+	for _, event := range unknown {
 		for _, cfg := range s.Hooks[event] {
 			out.Entries = append(out.Entries, Entry{
 				Event:       event,
@@ -172,9 +200,7 @@ func appendPluginInspect(out *Inspection, reasonixHomeDir, projectRoot string) {
 		sort.Strings(events)
 		for _, eventName := range events {
 			event := Event(eventName)
-			if !validEvent(event) {
-				continue
-			}
+			// Keep unknown event names so diagnostics can report them.
 			for _, h := range pkg.Manifest.Hooks[eventName] {
 				count++
 				command := h.Command

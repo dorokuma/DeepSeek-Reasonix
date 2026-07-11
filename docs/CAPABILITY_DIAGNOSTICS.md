@@ -9,7 +9,14 @@
 Reasonix ships a read-only capability diagnostics model shared by the CLI and
 desktop **Settings → Diagnostics**. It reports Skills, Commands, Hooks, plugin
 packages, MCP servers, and instruction docs (`AGENTS.md` / `REASONIX.md` /
-`CLAUDE.md`) without writing config, cache, or state.
+`CLAUDE.md`).
+
+**Write policy**
+
+| Mode | Config files | MCP stats / schema cache | Network / MCP processes |
+| --- | --- | --- | --- |
+| Static (default) + desktop | Never written (`LoadForRootReadOnly`) | Never written | None |
+| CLI `--live` | Never written | **Not written** (`SkipPersistence`) | Starts automatic MCP in an isolated Host |
 
 ## How to use (quick start)
 

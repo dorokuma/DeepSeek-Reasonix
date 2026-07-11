@@ -87,10 +87,6 @@ func urlHostOnly(raw string) string {
 	}
 	u, err := url.Parse(raw)
 	if err != nil || u.Host == "" {
-		// Avoid leaking query strings if parse fails mid-string.
-		if i := strings.IndexAny(raw, "?#"); i >= 0 {
-			raw = raw[:i]
-		}
 		return "<url>"
 	}
 	return u.Host

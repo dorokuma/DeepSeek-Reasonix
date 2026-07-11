@@ -8,7 +8,14 @@
 
 Reasonix 提供 CLI 与桌面端 **设置 → 诊断** 共用的只读能力诊断模型，覆盖 Skills、
 Commands、Hooks、插件包、MCP 服务器，以及指令文件（`AGENTS.md` /
-`REASONIX.md` / `CLAUDE.md`）。诊断不写配置、缓存或状态。
+`REASONIX.md` / `CLAUDE.md`）。
+
+**写入策略**
+
+| 模式 | 配置文件 | MCP stats / schema cache | 网络 / MCP 进程 |
+| --- | --- | --- | --- |
+| 静态（默认）+ 桌面端 | 永不写入（`LoadForRootReadOnly`） | 永不写入 | 无 |
+| CLI `--live` | 永不写入 | **不写入**（`SkipPersistence`） | 在隔离 Host 中启动 automatic MCP |
 
 ## 怎么用（快速上手）
 

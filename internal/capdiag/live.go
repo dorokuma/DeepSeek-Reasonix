@@ -18,7 +18,9 @@ func lookPath(cmd string) (string, error) {
 
 // probeLiveMCP starts automatic-intent servers in an isolated Host, records
 // connection results, and always closes the Host (including stdio children).
-func probeLiveMCP(rep *MCPReport, cfg *config.Config, root string, timeout time.Duration) []Issue {
+// Persistence (startup stats / schema cache) is disabled so --live stays
+// free of cache/state side effects under Reasonix home.
+func probeLiveMCP(rep *MCPReport, cfg *config.Config, root, home string, timeout time.Duration) []Issue {
 	var issues []Issue
 	if cfg == nil {
 		return issues
@@ -39,7 +41,6 @@ func probeLiveMCP(rep *MCPReport, cfg *config.Config, root string, timeout time.
 		if p.ShouldAutoStart() {
 			auto = append(auto, p)
 		} else {
-			// Mark skipped on report.
 			for i := range rep.Servers {
 				if rep.Servers[i].Name == p.Name {
 					rep.Servers[i].RuntimeStatus = "skipped"
@@ -59,6 +60,7 @@ func probeLiveMCP(rep *MCPReport, cfg *config.Config, root string, timeout time.
 		PerPluginTimeout: timeout,
 		Concurrency:      4,
 		AbortOnError:     false,
+		SkipPersistence:  true,
 	})
 	if host == nil {
 		return issues
@@ -87,7 +89,7 @@ func probeLiveMCP(rep *MCPReport, cfg *config.Config, root string, timeout time.
 				ToolCount: s.Tools, Tools: tools, StartIntent: "automatic",
 			})
 		}
-		if s.Tools == 0 {
+		if s.HasTools && s.Tools == 0 {
 			issues = append(issues, Issue{
 				Severity: "warning", Code: "mcp.no_tools", Subsystem: "mcp",
 				Name: s.Name, Message: "live probe: MCP server connected but exposes no tools",
@@ -97,18 +99,18 @@ func probeLiveMCP(rep *MCPReport, cfg *config.Config, root string, timeout time.
 		}
 	}
 	for _, f := range host.Failures() {
+		errText := sanitizeErrTextWithPaths(f.Error, root, home)
 		if i, ok := byName[f.Name]; ok {
 			rep.Servers[i].RuntimeStatus = "failed"
-			rep.Servers[i].Error = sanitizeErrText(f.Error)
+			rep.Servers[i].Error = errText
 		}
 		issues = append(issues, Issue{
 			Severity: "error", Code: "mcp.start_failed", Subsystem: "mcp",
-			Name: f.Name, Message: "live probe failed: " + sanitizeErrText(f.Error),
+			Name: f.Name, Message: "live probe failed: " + errText,
 			Remediation: "Fix command/URL/auth; re-run with --live after changes",
 			SettingsTab: "mcp",
 		})
 	}
-	// Automatic servers that neither connected nor failed — treat as start failure.
 	for _, p := range auto {
 		if connected[p.Name] {
 			continue
@@ -146,5 +148,6 @@ func HasErrorSeverity(r Report) bool {
 func LiveWarningMessage() string {
 	return strings.TrimSpace(`warning: --live will start third-party MCP servers in an isolated process.
 They may access the network and receive configured environment variables and headers.
-Tools are not registered into the agent registry. Host is always closed after the probe.`)
+Tools are not registered into the agent registry. Startup stats/schema cache writes are disabled.
+Host is always closed after the probe.`)
 }

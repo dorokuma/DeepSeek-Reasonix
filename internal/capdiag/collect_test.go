@@ -128,12 +128,8 @@ func TestMissingConventionDirsNoWarning(t *testing.T) {
 			t.Fatalf("missing dir should not warn: %+v", is)
 		}
 	}
-	// Roots may be missing status but no issues.
-	for _, rootInfo := range r.Skills.Roots {
-		if rootInfo.Status == "missing" {
-			// ok
-		}
-	}
+	// Roots may be missing; that is a normal status, not an issue.
+	_ = r.Skills.Roots
 }
 
 func TestTrustedProjectHooks(t *testing.T) {
@@ -169,6 +165,60 @@ func TestHasErrorSeverity(t *testing.T) {
 	}
 	if capdiag.HasErrorSeverity(capdiag.Report{Issues: []capdiag.Issue{{Severity: "warning"}}}) {
 		t.Fatal("warning alone should not fail")
+	}
+}
+
+func TestLoadForRootReadOnlyDoesNotRewriteTier(t *testing.T) {
+	root := t.TempDir()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("REASONIX_HOME", filepath.Join(home, ".reasonix"))
+	userCfg := filepath.Join(home, ".reasonix", "config.toml")
+	if err := os.MkdirAll(filepath.Dir(userCfg), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	original := "[[plugins]]\nname = \"x\"\ncommand = \"echo\"\ntier = \"eager\"\n"
+	if err := os.WriteFile(userCfg, []byte(original), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_ = capdiag.Collect(capdiag.Options{
+		Root: root, HomeDir: home, ReasonixHomeDir: filepath.Join(home, ".reasonix"),
+	})
+	raw, err := os.ReadFile(userCfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(raw) != original {
+		t.Fatalf("static diagnostics rewrote config file:\n got %q\nwant %q", raw, original)
+	}
+}
+
+func TestUnknownHookEventIsReported(t *testing.T) {
+	root := t.TempDir()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("REASONIX_HOME", filepath.Join(home, ".reasonix"))
+	write(t, filepath.Join(root, ".reasonix", "settings.json"), `{
+  "hooks": {
+    "NotARealEvent": [{"command": "echo hi"}]
+  }
+}`)
+	// Trust so project hooks load into inspect entries.
+	if err := hook.Trust(root, home); err != nil {
+		t.Fatal(err)
+	}
+	r := capdiag.Collect(capdiag.Options{
+		Root: root, HomeDir: home, ReasonixHomeDir: filepath.Join(home, ".reasonix"),
+	})
+	found := false
+	for _, is := range r.Issues {
+		if is.Code == "hook.unknown_event" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected hook.unknown_event, issues=%+v", r.Issues)
 	}
 }
 

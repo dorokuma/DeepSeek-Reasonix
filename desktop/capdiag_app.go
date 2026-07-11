@@ -10,14 +10,13 @@ import (
 // status is merged from the active tab Host only — no new MCP processes are
 // started, and no controller rebuild or session snapshot is triggered.
 func (a *App) CapabilityDiagnostics(includeSessionRuntime bool) capdiag.Report {
-	root := a.activeWorkspaceRootForDiag()
+	root, host := a.activeDiagSnapshot(includeSessionRuntime)
 	opts := capdiag.Options{Root: root, Live: false}
 
 	if !includeSessionRuntime {
 		return capdiag.Collect(opts)
 	}
 
-	host := a.activePluginHostForDiag()
 	opts.RuntimeHost = host
 	if host == nil {
 		return capdiag.CollectWithRuntimeUnavailable(opts)
@@ -25,22 +24,18 @@ func (a *App) CapabilityDiagnostics(includeSessionRuntime bool) capdiag.Report {
 	return capdiag.Collect(opts)
 }
 
-func (a *App) activeWorkspaceRootForDiag() string {
+// activeDiagSnapshot reads workspace root and optional Host under one lock so
+// a tab switch cannot pair project A's config with project B's runtime Host.
+func (a *App) activeDiagSnapshot(includeHost bool) (root string, host *plugin.Host) {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
 	tab := a.activeTabLocked()
 	if tab == nil {
-		return ""
+		return "", nil
 	}
-	return tab.WorkspaceRoot
-}
-
-func (a *App) activePluginHostForDiag() *plugin.Host {
-	a.mu.RLock()
-	defer a.mu.RUnlock()
-	tab := a.activeTabLocked()
-	if tab == nil || tab.Ctrl == nil {
-		return nil
+	root = tab.WorkspaceRoot
+	if includeHost && tab.Ctrl != nil {
+		host = tab.Ctrl.Host()
 	}
-	return tab.Ctrl.Host()
+	return root, host
 }

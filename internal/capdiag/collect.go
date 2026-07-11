@@ -46,7 +46,8 @@ func Collect(opts Options) Report {
 		}
 	}
 
-	cfg, cfgErr := config.LoadForRoot(root)
+	// Read-only load: never rewrite legacy tier lines or other config on disk.
+	cfg, cfgErr := config.LoadForRootReadOnly(root)
 	if cfg == nil {
 		cfg = config.Default()
 	}
@@ -55,7 +56,7 @@ func Collect(opts Options) Report {
 	if cfgErr != nil {
 		issues = append(issues, Issue{
 			Severity: "error", Code: "config.load_failed", Subsystem: "config",
-			Message:     "failed to load configuration: " + sanitizeErr(cfgErr),
+			Message:     "failed to load configuration: " + sanitizeErrTextWithPaths(cfgErr.Error(), root, home),
 			Remediation: "Fix reasonix.toml / config.toml syntax, then re-run doctor capabilities",
 		})
 	}
@@ -77,14 +78,10 @@ func Collect(opts Options) Report {
 
 	// Runtime host merge (desktop) or live probe (CLI).
 	if opts.Live {
-		liveIssues := probeLiveMCP(&mcpR, cfg, root, opts.LiveTimeout)
+		liveIssues := probeLiveMCP(&mcpR, cfg, root, home, opts.LiveTimeout)
 		issues = append(issues, liveIssues...)
 	} else if opts.RuntimeHost != nil {
-		mergeRuntimeHost(&mcpR, opts.RuntimeHost, &issues)
-	} else if opts.RuntimeHost == nil {
-		// Desktop callers pass includeSessionRuntime with a nil host when no
-		// session is active; surface a single info when they requested runtime.
-		// CLI static mode leaves RuntimeHost nil without this info.
+		mergeRuntimeHost(&mcpR, opts.RuntimeHost, root, home, &issues)
 	}
 
 	sortIssues(issues)
@@ -493,11 +490,14 @@ func collectMCP(cfg *config.Config, root, home string, disp func(string) string)
 					SettingsTab: "mcp",
 				})
 			} else if !commandExists(p.Command) {
+				// Static LookPath cannot mirror GUI/login-shell PATH enrichment used
+				// at runtime; treat as warning so diagnostics do not hard-fail a
+				// command that may still start under the real session environment.
 				issues = append(issues, Issue{
-					Severity: "error", Code: "mcp.command_not_found", Subsystem: "mcp",
+					Severity: "warning", Code: "mcp.command_not_found", Subsystem: "mcp",
 					Name: p.Name, Source: info.Source,
-					Message:     "MCP command is not found on PATH or as an absolute executable",
-					Remediation: "Install the binary or fix the command path",
+					Message:     "MCP command is not found via static PATH lookup (GUI/login-shell PATH may still resolve it at runtime)",
+					Remediation: "Use an absolute command path, set PATH in the server env, or verify with session runtime / --live",
 					SettingsTab: "mcp",
 				})
 			}
@@ -547,7 +547,7 @@ func commandExists(cmd string) bool {
 	return false
 }
 
-func mergeRuntimeHost(rep *MCPReport, host *plugin.Host, issues *[]Issue) {
+func mergeRuntimeHost(rep *MCPReport, host *plugin.Host, root, home string, issues *[]Issue) {
 	if host == nil {
 		return
 	}
@@ -564,7 +564,8 @@ func mergeRuntimeHost(rep *MCPReport, host *plugin.Host, issues *[]Issue) {
 			rep.Servers[i].RuntimeStatus = "connected"
 			rep.Servers[i].ToolCount = s.Tools
 			rep.Servers[i].Tools = tools
-			if s.Tools == 0 {
+			// Only warn when the server advertised a tools capability but listed none.
+			if s.HasTools && s.Tools == 0 {
 				*issues = append(*issues, Issue{
 					Severity: "warning", Code: "mcp.no_tools", Subsystem: "mcp",
 					Name: s.Name, Message: "MCP server connected but exposes no tools",
@@ -580,13 +581,14 @@ func mergeRuntimeHost(rep *MCPReport, host *plugin.Host, issues *[]Issue) {
 		}
 	}
 	for _, f := range host.Failures() {
+		errText := sanitizeErrTextWithPaths(f.Error, root, home)
 		if i, ok := byName[f.Name]; ok {
 			rep.Servers[i].RuntimeStatus = "failed"
-			rep.Servers[i].Error = sanitizeErrText(f.Error)
+			rep.Servers[i].Error = errText
 		}
 		*issues = append(*issues, Issue{
 			Severity: "error", Code: "mcp.start_failed", Subsystem: "mcp",
-			Name: f.Name, Message: "MCP server failed in the current session: " + sanitizeErrText(f.Error),
+			Name: f.Name, Message: "MCP server failed in the current session: " + errText,
 			Remediation: "Inspect server logs, command/URL, and authentication; retry from Settings → MCP",
 			SettingsTab: "mcp",
 		})
@@ -627,17 +629,129 @@ func sanitizeErr(err error) string {
 	return sanitizeErrText(err.Error())
 }
 
+// sanitizeErrText redacts secrets and machine-local identity from diagnostic
+// strings. Prefer sanitizeErrTextWithPaths when workspace/home are known.
 func sanitizeErrText(s string) string {
-	// Drop absolute home-looking segments that might appear in OS errors.
+	return sanitizeErrTextWithPaths(s, "", "")
+}
+
+func sanitizeErrTextWithPaths(s, workspace, home string) string {
 	s = strings.TrimSpace(s)
 	if s == "" {
 		return s
 	}
-	// Strip query-like fragments.
-	if i := strings.Index(s, "?"); i >= 0 {
-		s = s[:i]
+	// Collapse whitespace so multi-line stderr is one line.
+	s = strings.Join(strings.Fields(s), " ")
+
+	// Strip URL query/fragment early.
+	if i := strings.IndexAny(s, "?#"); i >= 0 {
+		// Only cut when it looks like a URL fragment, not ordinary prose "?".
+		prefix := s[:i]
+		if strings.Contains(prefix, "://") || strings.Contains(strings.ToLower(prefix), "http") {
+			s = prefix
+		}
+	}
+
+	// PATH=... (often embedded in stdio resolve errors).
+	s = redactKeyValue(s, "PATH=")
+	s = redactKeyValue(s, "path=")
+
+	// Common credential shapes.
+	s = redactBearer(s)
+	s = redactKeyValue(s, "Authorization=")
+	s = redactKeyValue(s, "authorization=")
+	s = redactKeyValue(s, "token=")
+	s = redactKeyValue(s, "api_key=")
+	s = redactKeyValue(s, "apikey=")
+
+	// Absolute paths: rewrite with displayPath when possible.
+	s = redactAbsolutePaths(s, workspace, home)
+
+	// Cap length after redaction.
+	const max = 400
+	if len(s) > max {
+		s = s[:max] + "…"
 	}
 	return s
+}
+
+func redactKeyValue(s, key string) string {
+	var b strings.Builder
+	for {
+		i := strings.Index(s, key)
+		if i < 0 {
+			b.WriteString(s)
+			return b.String()
+		}
+		b.WriteString(s[:i])
+		b.WriteString(key)
+		b.WriteString("<redacted>")
+		rest := s[i+len(key):]
+		end := len(rest)
+		if j := strings.IndexAny(rest, " \t\n\r;,"); j >= 0 {
+			end = j
+		}
+		s = rest[end:]
+	}
+}
+
+func redactBearer(s string) string {
+	var b strings.Builder
+	lower := strings.ToLower(s)
+	const needle = "bearer "
+	for {
+		i := strings.Index(lower, needle)
+		if i < 0 {
+			b.WriteString(s)
+			return b.String()
+		}
+		b.WriteString(s[:i])
+		b.WriteString("Bearer <redacted>")
+		rest := s[i+len(needle):]
+		end := len(rest)
+		if j := strings.IndexAny(rest, " \t\n\r;,\"'"); j >= 0 {
+			end = j
+		}
+		s = rest[end:]
+		lower = strings.ToLower(s)
+	}
+}
+
+func redactAbsolutePaths(s, workspace, home string) string {
+	// Walk for POSIX and Windows absolute path-like tokens.
+	var b strings.Builder
+	i := 0
+	for i < len(s) {
+		// Find candidate start: / or X:\
+		start := -1
+		if s[i] == '/' {
+			start = i
+		} else if i+2 < len(s) && ((s[i] >= 'A' && s[i] <= 'Z') || (s[i] >= 'a' && s[i] <= 'z')) && s[i+1] == ':' && (s[i+2] == '\\' || s[i+2] == '/') {
+			start = i
+		}
+		if start < 0 {
+			b.WriteByte(s[i])
+			i++
+			continue
+		}
+		j := start + 1
+		for j < len(s) {
+			c := s[j]
+			if c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '"' || c == '\'' || c == ',' || c == ';' || c == ')' || c == ']' {
+				break
+			}
+			j++
+		}
+		token := s[start:j]
+		// Only rewrite if it looks like a path with a directory separator beyond root.
+		if strings.ContainsAny(token, `/\`) && len(token) > 1 {
+			b.WriteString(displayPath(token, workspace, home))
+		} else {
+			b.WriteString(token)
+		}
+		i = j
+	}
+	return b.String()
 }
 
 func redactCommandDisplay(cmd, root, home string) string {

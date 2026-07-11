@@ -72,14 +72,24 @@ func captureStd(t *testing.T, fn func() int) (stdout, stderr string) {
 	rOut, wOut, _ := os.Pipe()
 	rErr, wErr, _ := os.Pipe()
 	os.Stdout, os.Stderr = wOut, wErr
-	defer func() {
-		os.Stdout, os.Stderr = oldOut, oldErr
+	// Drain while fn runs so a large JSON encode cannot fill the OS pipe
+	// buffer and deadlock (Windows CI timeout).
+	var bOut, bErr bytes.Buffer
+	doneOut := make(chan struct{})
+	doneErr := make(chan struct{})
+	go func() {
+		_, _ = io.Copy(&bOut, rOut)
+		close(doneOut)
+	}()
+	go func() {
+		_, _ = io.Copy(&bErr, rErr)
+		close(doneErr)
 	}()
 	_ = fn()
 	_ = wOut.Close()
 	_ = wErr.Close()
-	var bOut, bErr bytes.Buffer
-	_, _ = io.Copy(&bOut, rOut)
-	_, _ = io.Copy(&bErr, rErr)
+	os.Stdout, os.Stderr = oldOut, oldErr
+	<-doneOut
+	<-doneErr
 	return bOut.String(), bErr.String()
 }

@@ -25,7 +25,22 @@ func Load() (*Config, error) {
 // like Load(). This is the workspace-aware entry point: desktop tabs use it so
 // each project's reasonix.toml + .mcp.json are resolved independently without
 // changing the process cwd, while provider keys stay rooted in Reasonix home.
+//
+// Note: LoadForRoot may rewrite legacy MCP `tier` lines on disk (see
+// mergeRuntimeTOMLFile). Callers that must not mutate config files should use
+// LoadForRootReadOnly instead.
 func LoadForRoot(root string) (*Config, error) {
+	return loadForRoot(root, true)
+}
+
+// LoadForRootReadOnly is like LoadForRoot but never writes config files: it skips
+// on-disk legacy MCP tier migration. Prefer this for diagnostics, doctor, and
+// other read-only inspection paths.
+func LoadForRootReadOnly(root string) (*Config, error) {
+	return loadForRoot(root, false)
+}
+
+func loadForRoot(root string, migrateOnDisk bool) (*Config, error) {
 	root = resolveRoot(root)
 	expansionEnv := loadDotEnvForRoot(root)
 	cfg := Default()
@@ -37,10 +52,15 @@ func LoadForRoot(root string) (*Config, error) {
 		projectTOML = filepath.Join(root, "reasonix.toml")
 	}
 
+	mergeTOML := mergeFile
+	if migrateOnDisk {
+		mergeTOML = mergeRuntimeTOMLFile
+	}
+
 	var tomlSources []string
 	if uc := userConfigLoadPath(); uc != "" {
 		tomlSources = append(tomlSources, uc)
-		if err := mergeRuntimeTOMLFile(cfg, uc); err != nil {
+		if err := mergeTOML(cfg, uc); err != nil {
 			return nil, err
 		}
 	}
@@ -57,7 +77,7 @@ func LoadForRoot(root string) (*Config, error) {
 	}
 
 	tomlSources = append(tomlSources, projectTOML)
-	if err := mergeRuntimeTOMLFile(cfg, projectTOML); err != nil {
+	if err := mergeTOML(cfg, projectTOML); err != nil {
 		return nil, err
 	}
 	// Runtime step caps are user/global controls, not project policy. Keep the
@@ -73,6 +93,7 @@ func LoadForRoot(root string) (*Config, error) {
 	// TOML decoding replaces [[plugins]] wholesale, so cfg.Plugins now holds
 	// only the last file's. Re-merge by name across all sources (later wins) so a
 	// project reasonix.toml doesn't drop the global config's MCP servers.
+	// mergeTOMLPlugins only reads files; it does not run on-disk migrations.
 	plugins, err := mergeTOMLPlugins(tomlSources)
 	if err != nil {
 		return nil, err

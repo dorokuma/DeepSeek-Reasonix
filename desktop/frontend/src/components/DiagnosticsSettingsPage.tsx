@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { ChevronDown, ChevronRight, Clipboard, Loader2, RefreshCw } from "lucide-react";
 import { app } from "../lib/bridge";
 import { useT } from "../lib/i18n";
@@ -25,17 +25,25 @@ export function DiagnosticsSettingsPage({
     mcp: false,
   });
 
+  const loadSeq = useRef(0);
+
   const load = useCallback(async (runtime: boolean) => {
+    const seq = ++loadSeq.current;
     setLoading(true);
     setError(null);
     try {
       const next = await app.CapabilityDiagnostics(runtime);
+      // Last-request-wins: ignore stale responses after rapid refresh/toggle.
+      if (seq !== loadSeq.current) return;
       setReport(next);
     } catch (err) {
+      if (seq !== loadSeq.current) return;
       setError(err instanceof Error ? err.message : String(err));
       setReport(null);
     } finally {
-      setLoading(false);
+      if (seq === loadSeq.current) {
+        setLoading(false);
+      }
     }
   }, []);
 

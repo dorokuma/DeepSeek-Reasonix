@@ -56,6 +56,32 @@ func TestCapabilityDiagnosticsRuntimeUsesActiveHost(t *testing.T) {
 	}
 }
 
+func TestCapabilityDiagnosticsAtomicSnapshot(t *testing.T) {
+	isolateDesktopUserDirs(t)
+	app := NewApp()
+	host := plugin.NewHost()
+	ctrl := control.New(control.Options{Host: host})
+	root := t.TempDir()
+	app.mu.Lock()
+	app.tabs = map[string]*WorkspaceTab{
+		"t1": {
+			ID: "t1", Scope: "project", WorkspaceRoot: root, Ready: true,
+			Ctrl: ctrl, disabledMCP: map[string]ServerView{},
+		},
+	}
+	app.tabOrder = []string{"t1"}
+	app.activeTabID = "t1"
+	app.mu.Unlock()
+
+	gotRoot, gotHost := app.activeDiagSnapshot(true)
+	if gotRoot != root {
+		t.Fatalf("root = %q, want %q", gotRoot, root)
+	}
+	if gotHost != host {
+		t.Fatal("host mismatch from atomic snapshot")
+	}
+}
+
 func TestCapabilityDiagnosticsRuntimeUnavailableWithoutTab(t *testing.T) {
 	isolateDesktopUserDirs(t)
 	app := NewApp()

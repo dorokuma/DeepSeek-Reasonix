@@ -191,6 +191,11 @@ type StartPolicy struct {
 	// return an error (StartAll semantics). When false, failures are recorded
 	// on the host and other plugins keep going (StartAvailable semantics).
 	AbortOnError bool
+
+	// SkipPersistence disables RecordStartup / SaveCachedSchema side effects.
+	// Use for read-only live probes (capability diagnostics) that must not
+	// write MCP stats or schema cache files under Reasonix home.
+	SkipPersistence bool
 }
 
 // defaultStartConcurrency caps parallel handshakes for the batch-start wrappers.
@@ -316,8 +321,10 @@ func Start(ctx context.Context, specs []Spec, p StartPolicy) (*Host, []tool.Tool
 			if err != nil {
 				phaseADur := recordedPhaseADur()
 				cancelStartup()
-				h.bgWrites.Add(1)
-				go func() { defer h.bgWrites.Done(); _ = RecordStartup(spec.Name, phaseADur) }()
+				if !p.SkipPersistence {
+					h.bgWrites.Add(1)
+					go func() { defer h.bgWrites.Done(); _ = RecordStartup(spec.Name, phaseADur) }()
+				}
 				ch <- result{idx: idx, spec: spec, err: fmt.Errorf("start plugin %q: %w", spec.Name, err)}
 				return
 			}
@@ -326,8 +333,10 @@ func Start(ctx context.Context, specs []Spec, p StartPolicy) (*Host, []tool.Tool
 			if err != nil {
 				phaseADur := recordedPhaseADur()
 				cancelStartup()
-				h.bgWrites.Add(1)
-				go func() { defer h.bgWrites.Done(); _ = RecordStartup(spec.Name, phaseADur) }()
+				if !p.SkipPersistence {
+					h.bgWrites.Add(1)
+					go func() { defer h.bgWrites.Done(); _ = RecordStartup(spec.Name, phaseADur) }()
+				}
 				c.close()
 				ch <- result{idx: idx, spec: spec, err: fmt.Errorf("list tools from %q: %w", spec.Name, err)}
 				return
@@ -339,20 +348,22 @@ func Start(ctx context.Context, specs []Spec, p StartPolicy) (*Host, []tool.Tool
 			// recoverable (we just re-handshake or skip auto-demote).
 			phaseADur := recordedPhaseADur()
 			cancelStartup()
-			h.bgWrites.Add(1)
-			go func() {
-				defer h.bgWrites.Done()
-				_ = RecordStartup(spec.Name, phaseADur)
-				_ = SaveCachedSchema(spec.Name, CachedSchema{
-					SpecHash: SpecFingerprint(spec),
-					Capabilities: map[string]bool{
-						"tools":     c.hasTools,
-						"prompts":   c.hasPrompts,
-						"resources": c.hasResources,
-					},
-					Tools: cacheableToolsOf(ts),
-				})
-			}()
+			if !p.SkipPersistence {
+				h.bgWrites.Add(1)
+				go func() {
+					defer h.bgWrites.Done()
+					_ = RecordStartup(spec.Name, phaseADur)
+					_ = SaveCachedSchema(spec.Name, CachedSchema{
+						SpecHash: SpecFingerprint(spec),
+						Capabilities: map[string]bool{
+							"tools":     c.hasTools,
+							"prompts":   c.hasPrompts,
+							"resources": c.hasResources,
+						},
+						Tools: cacheableToolsOf(ts),
+					})
+				}()
+			}
 
 			// Prompts and resources are deferred to StartPhaseB so the boot path
 			// can return as soon as tools are ready — the slow-to-list surfaces
