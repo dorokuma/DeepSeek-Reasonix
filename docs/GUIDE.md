@@ -21,6 +21,7 @@
 - [Desktop hooks](#desktop-hooks)
 - [Keyboard shortcuts](#keyboard-shortcuts)
 - [Permissions & sandbox](#permissions--sandbox)
+- [Capability diagnostics](#capability-diagnostics)
 - [Plugins (MCP)](#plugins-mcp)
 - [Slash commands](#slash-commands)
 - [@ references](#-references)
@@ -533,6 +534,37 @@ a project `reasonix.toml` pins `[sandbox]` (a project file overrides
 Settings/user-config edits, and sandbox changes take effect after a session
 config reload or a new session).
 
+## Capability diagnostics
+
+Use this when a skill, slash command, hook, plugin package, MCP server, or
+`AGENTS.md` is missing, shadowed, untrusted, or fails to start. Full flag
+reference, JSON schema, and issue codes:
+**[Capability diagnostics](./CAPABILITY_DIAGNOSTICS.md)**.
+
+```bash
+# Static (default): no network, no MCP child processes
+reasonix doctor capabilities
+
+# Machine-readable (stdout is pure JSON)
+reasonix doctor capabilities --json
+
+# Another workspace root
+reasonix doctor capabilities --root /path/to/project
+
+# Live MCP probe — only when you explicitly allow starting third-party servers
+reasonix doctor capabilities --live --timeout 5s
+```
+
+| Surface | How |
+| --- | --- |
+| CLI | `reasonix doctor capabilities` (above) |
+| Desktop | **Settings → Diagnostics** — refresh, copy redacted JSON, optional “include current session runtime” (reads the active tab Host only; does **not** start MCP) |
+| Agent | `/reasonix-guide` (built-in inline skill) or ask naturally; it prefers static doctor JSON before `--live` |
+
+Exit code `0` allows warnings/info; `1` means at least one `error` (or a live
+start failure); `2` is bad flags. This is separate from `reasonix doctor`
+(providers/sandbox) and `reasonix plugin doctor <name>` (one package).
+
 ## Plugins (MCP)
 
 Reasonix is an MCP client. A `[[plugins]]` entry's `type` selects the transport:
@@ -590,7 +622,10 @@ headers = { Authorization = "Bearer ${STRIPE_KEY}" }
 Enabled MCP servers start connecting automatically in the background after a
 session begins, so chat stays usable while tools come online. Use `/mcp` or the
 desktop MCP panel to refresh status, reconnect a server, inspect failures, or
-disable a server for the current session.
+disable a server for the current session. For a read-only config/runtime health
+report across skills, hooks, packages, and MCP (without changing settings), see
+[Capability diagnostics](./CAPABILITY_DIAGNOSTICS.md)
+(`reasonix doctor capabilities` or **Settings → Diagnostics**).
 
 **Already have an `.mcp.json`?** Drop it in the project root and Reasonix
 reads it as-is — the `mcpServers` spec (`command`/`args`/`env`, `type`/`url`/
@@ -617,15 +652,21 @@ In an interactive `reasonix` session, built-in commands (`/compact`, `/new`, `/c
 `/tree`, `/branch`, `/switch`, `/todo`, `/model`, `/mcp`, `/skills`, `/hooks`,
 `/memory`, `/memory-v5`, `/goal`, `/output-style`, `/sandbox`, `/language`,
 `/auto-plan`, `/reasoning-language`, `/help`) run
-locally — `/help` lists them all. `/new` starts a new session while saving the
-previous transcript for history/resume; `/clear` asks for confirmation, then
-discards the current context without saving it. `/tree` shows saved conversation
-branches, `/branch [name]` forks the current conversation tip, `/branch <turn>
-[name]` forks from an earlier checkpointed turn, and `/switch <id|name>` loads
-another branch. **Custom commands** are Markdown files under `.reasonix/commands/`
-(project) or `~/.reasonix/commands/` (user) — `review.md` becomes
-`/review`, a subdirectory namespaces it (`git/commit.md` → `/git:commit`). The
-body is a prompt template; invoking the command sends it as a turn.
+locally — `/help` lists them all. Built-in **skills** such as `/init`,
+`/explore`, `/test`, and `/reasonix-guide` also appear in the slash menu and via
+`run_skill` (bodies load on demand; only the index line is cache-stable). Use
+`/reasonix-guide` when you need config or capability troubleshooting; it points
+at `reasonix doctor capabilities` (see
+[Capability diagnostics](./CAPABILITY_DIAGNOSTICS.md)). `/new` starts a new
+session while saving the previous transcript for history/resume; `/clear` asks
+for confirmation, then discards the current context without saving it. `/tree`
+shows saved conversation branches, `/branch [name]` forks the current
+conversation tip, `/branch <turn> [name]` forks from an earlier checkpointed
+turn, and `/switch <id|name>` loads another branch. **Custom commands** are
+Markdown files under `.reasonix/commands/` (project) or `~/.reasonix/commands/`
+(user) — `review.md` becomes `/review`, a subdirectory namespaces it
+(`git/commit.md` → `/git:commit`). The body is a prompt template; invoking the
+command sends it as a turn.
 
 `/memory` lists both memory documents (`REASONIX.md` / `AGENTS.md`) and saved
 auto-memory facts. During agent turns, the read-only `history` and `memory`

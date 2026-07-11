@@ -93,6 +93,15 @@ Check that the manifest and skill roots are readable:
 reasonix plugin doctor superpowers
 ```
 
+For a workspace-wide capability report (skills, hooks, MCP merge, package roots), see
+[Capability diagnostics](./CAPABILITY_DIAGNOSTICS.md):
+
+```bash
+reasonix doctor capabilities --json
+# Desktop: Settings → Diagnostics
+# Agent:   /reasonix-guide
+```
+
 Enable or disable a plugin without uninstalling it:
 
 ```bash

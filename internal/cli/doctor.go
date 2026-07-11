@@ -17,6 +17,9 @@ func doctorCommand(args []string, version string) int {
 	if len(args) > 0 && args[0] == "redact-sessions" {
 		return doctorRedactSessionsCommand(args[1:])
 	}
+	if len(args) > 0 && args[0] == "capabilities" {
+		return doctorCapabilitiesCommand(args[1:])
+	}
 	fs := flag.NewFlagSet("doctor", flag.ContinueOnError)
 	jsonOut := fs.Bool("json", false, "print diagnostics as JSON")
 	if err := fs.Parse(args); err != nil {

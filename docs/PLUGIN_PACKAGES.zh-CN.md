@@ -89,6 +89,15 @@ reasonix plugin show superpowers
 reasonix plugin doctor superpowers
 ```
 
+工作区级能力总览（skills / hooks / MCP 合并 / 包根目录）见
+[能力诊断](./CAPABILITY_DIAGNOSTICS.zh-CN.md)：
+
+```bash
+reasonix doctor capabilities --json
+# 桌面端：设置 → 诊断
+# Agent：  /reasonix-guide
+```
+
 在不卸载的情况下启用或禁用插件：
 
 ```bash

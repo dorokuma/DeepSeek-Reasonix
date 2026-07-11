@@ -32,8 +32,8 @@ function eq(actual: unknown, expected: unknown, label: string) {
   else ok(false, `${label}: expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`);
 }
 
-function flushTimers(): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, 0));
+function flushTimers(delay = 0): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, delay));
 }
 
 function installDom() {

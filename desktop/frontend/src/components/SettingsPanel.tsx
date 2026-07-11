@@ -56,7 +56,7 @@ import { getSuccessPreference, setSuccessPreference, getAttentionPreference, set
 import { ModalCloseButton } from "./ModalCloseButton";
 import { ShortcutComboDisplay } from "./ShortcutComboDisplay";
 
-const SETTINGS_TABS: SettingsTab[] = ["general", "models", "bots", "mcp", "skills", "plugins", "memory", "hooks", "shortcuts", "permissions", "sandbox", "network", "appearance", "updates"];
+const SETTINGS_TABS: SettingsTab[] = ["general", "models", "bots", "mcp", "skills", "plugins", "memory", "hooks", "diagnostics", "shortcuts", "permissions", "sandbox", "network", "appearance", "updates"];
 export type SettingsInitialFocus = { target: "bot-allowlist"; connectionId?: string };
 type DesktopPlatform = "darwin" | "windows" | "linux";
 
@@ -64,6 +64,7 @@ const MCPServersSettingsPage = lazy(() => import("./CapabilitiesPanel").then((mo
 const SkillsSettingsPage = lazy(() => import("./CapabilitiesPanel").then((module) => ({ default: module.SkillsSettingsPage })));
 const PluginsSettingsPage = lazy(() => import("./CapabilitiesPanel").then((module) => ({ default: module.PluginsSettingsPage })));
 const MemorySettingsPage = lazy(() => import("./MemoryPanel").then((module) => ({ default: module.MemorySettingsPage })));
+const DiagnosticsSettingsPage = lazy(() => import("./DiagnosticsSettingsPage").then((module) => ({ default: module.DiagnosticsSettingsPage })));
 const QRCodeSVG = lazy(() => import("qrcode.react").then((module) => ({ default: module.QRCodeSVG })));
 
 // SettingsPanel is the desktop settings centre — a centred modal with left
@@ -252,6 +253,7 @@ export function SettingsPanel({
                 {tab === "plugins" && <SettingsPageShell key={tab} s={s} tab={tab} busy={false} apply={apply}><Suspense fallback={lazySettingsPageFallback}><PluginsSettingsPage /></Suspense></SettingsPageShell>}
                 {tab === "memory" && <SettingsPageShell key={tab} s={s} tab={tab} busy={false} apply={apply}><Suspense fallback={lazySettingsPageFallback}><MemorySettingsPage /></Suspense></SettingsPageShell>}
                 {tab === "hooks" && <SettingsPageShell key={tab} s={s} tab={tab} busy={false} apply={apply}><HooksSection onChanged={onChanged} /></SettingsPageShell>}
+                {tab === "diagnostics" && <SettingsPageShell key={tab} s={s} tab={tab} busy={false} apply={apply}><Suspense fallback={lazySettingsPageFallback}><DiagnosticsSettingsPage onNavigate={setTab} /></Suspense></SettingsPageShell>}
                 {tab === "shortcuts" && <SettingsPageShell key={tab} s={s} tab={tab} busy={false} apply={apply}><ShortcutsSection /></SettingsPageShell>}
                 {tab === "permissions" && s && <SettingsPageShell key={tab} s={s} tab={tab} busy={busy} apply={apply}><PermissionsSection s={s} busy={busy} apply={apply} /></SettingsPageShell>}
                 {tab === "sandbox" && s && <SettingsPageShell key={tab} s={s} tab={tab} busy={busy} apply={apply}><SandboxSection s={s} busy={busy} apply={apply} windows={desktopPlatform === "windows"} /></SettingsPageShell>}
@@ -431,6 +433,7 @@ function settingsTabPageTitle(id: SettingsTab, t: ReturnType<typeof useT>): stri
     case "skills": return t("settings.tab.skills");
     case "plugins": return t("settings.tab.plugins");
     case "memory": return t("settings.tab.memory");
+    case "diagnostics": return t("settings.tab.diagnostics");
     case "shortcuts": return t("settings.tab.shortcuts");
     default: return settingsTabLabel(id, t);
   }
@@ -466,6 +469,8 @@ function settingsTabLabel(id: SettingsTab, t: ReturnType<typeof useT>): string {
       return t("settings.tab.memory");
     case "hooks":
       return t("settings.tab.hooks");
+    case "diagnostics":
+      return t("settings.tab.diagnostics");
     case "shortcuts":
       return t("settings.tab.shortcuts");
     case "network":
@@ -501,6 +506,8 @@ function settingsTabMeta(id: SettingsTab, s: SettingsView, t: ReturnType<typeof 
       return t("settings.tabSub.memory");
     case "hooks":
       return t("settings.tabSub.hooks");
+    case "diagnostics":
+      return t("settings.tabSub.diagnostics");
     case "shortcuts":
       return t("settings.tabSub.shortcuts");
     case "network":

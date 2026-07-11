@@ -876,7 +876,107 @@ export interface MemoryView {
 }
 
 // SettingsTab is the top-level navigation item in the Settings Centre modal.
-export type SettingsTab = "general" | "models" | "providers" | "bots" | "mcp" | "skills" | "plugins" | "memory" | "hooks" | "shortcuts" | "permissions" | "sandbox" | "network" | "appearance" | "updates";
+export type SettingsTab = "general" | "models" | "providers" | "bots" | "mcp" | "skills" | "plugins" | "memory" | "hooks" | "diagnostics" | "shortcuts" | "permissions" | "sandbox" | "network" | "appearance" | "updates";
+
+/** Capability diagnostics report from App.CapabilityDiagnostics (capdiag.Report). */
+export interface CapabilityDiagnosticsReport {
+  schema_version: number;
+  root: string;
+  live: boolean;
+  summary: {
+    errors: number;
+    warnings: number;
+    infos: number;
+    instructions: number;
+    skills: number;
+    commands: number;
+    hooks: number;
+    plugins: number;
+    mcp_servers: number;
+  };
+  instructions: { docs: Array<{ path: string; scope: string; order: number }> };
+  skills: CapabilityAssetReport;
+  commands: CapabilityAssetReport;
+  hooks: {
+    trusted_project: boolean;
+    project_defines_hooks: boolean;
+    sources: Array<{ scope: string; path: string; status: string; hook_count: number; parse_error?: string }>;
+    entries: Array<{
+      event: string;
+      match?: string;
+      command?: string;
+      context_file?: string;
+      description?: string;
+      timeout_ms?: number;
+      scope: string;
+      source: string;
+      blocking: boolean;
+    }>;
+  };
+  plugins: {
+    state_path?: string;
+    packages: Array<{
+      name: string;
+      enabled: boolean;
+      version?: string;
+      root: string;
+      manifest_kind?: string;
+      skills: number;
+      commands: number;
+      hooks: number;
+      mcp_servers: number;
+      warnings?: string[];
+      status: string;
+    }>;
+  };
+  mcp: {
+    servers: Array<{
+      name: string;
+      source?: string;
+      package_owner?: string;
+      transport: string;
+      start_intent: string;
+      command?: string;
+      url_host?: string;
+      env_keys?: string[];
+      header_keys?: string[];
+      runtime_status?: string;
+      tool_count?: number;
+      tools?: Array<{ name: string; read_only_hint?: boolean }>;
+      error?: string;
+    }>;
+  };
+  issues: CapabilityIssue[];
+}
+
+export interface CapabilityAssetReport {
+  roots: Array<{ path: string; scope?: string; status: string }>;
+  entries: Array<{
+    name: string;
+    description?: string;
+    scope?: string;
+    path: string;
+    status: string;
+    winner_path?: string;
+    error?: string;
+    run_as?: string;
+  }>;
+  winners: number;
+  shadowed: number;
+  disabled?: number;
+  parse_errors?: number;
+}
+
+export interface CapabilityIssue {
+  severity: "error" | "warning" | "info" | string;
+  code: string;
+  subsystem: string;
+  name?: string;
+  source?: string;
+  message: string;
+  remediation?: string;
+  settings_tab?: string;
+}
 
 // Settings panel payloads (desktop/settings_app.go).
 export interface ProviderView {

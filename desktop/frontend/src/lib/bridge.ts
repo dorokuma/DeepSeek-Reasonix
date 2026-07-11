@@ -26,6 +26,7 @@ import type {
   BotRuntimeStatusView,
   BotSettingsView,
   CapabilitiesView,
+  CapabilityDiagnosticsReport,
   CheckpointMeta,
   CommandInfo,
   ContextInfo,
@@ -221,6 +222,7 @@ export interface AppBindings {
   Capabilities(): Promise<CapabilitiesView>;
   MCPServers(): Promise<ServerView[]>;
   SkillsSettings(): Promise<SkillsSettingsView>;
+  CapabilityDiagnostics(includeSessionRuntime: boolean): Promise<CapabilityDiagnosticsReport>;
   Plugins(): Promise<PluginView[]>;
   PlanPluginInstall(source: string, options: PluginInstallOptions): Promise<string>;
   InstallPlugin(source: string, options: PluginInstallOptions): Promise<string>;
@@ -2580,6 +2582,85 @@ function makeMockApp(): AppBindings {
         skills: capSkills.map((s) => ({ ...s })),
         skillRoots: capSkillRoots.map((s) => ({ ...s })),
       };
+    },
+    async CapabilityDiagnostics(includeSessionRuntime: boolean) {
+      const report: CapabilityDiagnosticsReport = {
+        schema_version: 1,
+        root: "<workspace>",
+        live: false,
+        summary: {
+          errors: 0,
+          warnings: 1,
+          infos: includeSessionRuntime ? 1 : 0,
+          instructions: 1,
+          skills: capSkills.length,
+          commands: 0,
+          hooks: 0,
+          plugins: capPlugins.length,
+          mcp_servers: capServers.length,
+        },
+        instructions: { docs: [{ path: "<workspace>/AGENTS.md", scope: "project", order: 1 }] },
+        skills: {
+          roots: [{ path: "<workspace>/.reasonix/skills", scope: "project", status: "ok" }],
+          entries: capSkills.map((s) => ({
+            name: s.name,
+            description: s.description,
+            scope: s.scope,
+            path: "(mock)",
+            status: "winner",
+            run_as: s.runAs,
+          })),
+          winners: capSkills.length,
+          shadowed: 0,
+        },
+        commands: { roots: [], entries: [], winners: 0, shadowed: 0 },
+        hooks: { trusted_project: true, project_defines_hooks: false, sources: [], entries: [] },
+        plugins: {
+          packages: capPlugins.map((p) => ({
+            name: p.name,
+            enabled: p.enabled,
+            root: p.root || "<external>/plugin",
+            skills: p.skills ?? 0,
+            commands: 0,
+            hooks: p.hooks ?? 0,
+            mcp_servers: p.mcpServers ?? 0,
+            status: p.enabled ? "ok" : "disabled",
+          })),
+        },
+        mcp: {
+          servers: capServers.map((s) => ({
+            name: s.name,
+            transport: s.transport || "stdio",
+            start_intent: s.startIntent === "off" ? "off" : "automatic",
+            source: "toml",
+            runtime_status: includeSessionRuntime ? s.status || "connected" : undefined,
+            tool_count: s.tools,
+            env_keys: s.envKeys ?? [],
+            header_keys: s.headerKeys ?? [],
+          })),
+        },
+        issues: [
+          {
+            severity: "warning",
+            code: "skill.missing_description",
+            subsystem: "skills",
+            name: "example",
+            message: "mock warning for browser harness",
+            remediation: "Add a description frontmatter field",
+            settings_tab: "skills",
+          },
+          ...(includeSessionRuntime
+            ? [{
+                severity: "info" as const,
+                code: "mcp.runtime_unavailable",
+                subsystem: "mcp",
+                message: "browser mock has no live Host; runtime fields are synthetic",
+                settings_tab: "mcp",
+              }]
+            : []),
+        ],
+      };
+      return JSON.parse(JSON.stringify(report)) as CapabilityDiagnosticsReport;
     },
     async Plugins() {
       return capPlugins.map((p) => ({ ...p }));

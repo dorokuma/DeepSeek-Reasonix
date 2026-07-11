@@ -283,7 +283,7 @@ func appendUniqueToolNames(base []string, extra ...string) []string {
 func builtinSkills() []Skill {
 	readCodeTools := []string{"read_file", "ls", "glob", "grep", "code_index"}
 	reviewTools := append(append([]string(nil), readCodeTools...), "bash")
-	return []Skill{
+	base := []Skill{
 		{
 			Name:        "init",
 			Description: "Bootstrap or refresh this project's AGENTS.md — analyze the codebase (structure, build/test commands, architecture, conventions) and write a concise memory file loaded into every future session. Inlined — runs in the main loop so you see and approve the write.",
@@ -347,6 +347,9 @@ func builtinSkills() []Skill {
 			RunAs:       RunInline,
 		},
 	}
+	// Embedded directory skills (reasonix-guide, …) append after the const
+	// playbooks so the index order stays deterministic and bodies stay on-demand.
+	return append(base, loadEmbeddedBuiltins()...)
 }
 
 // BuiltinNames returns the built-in skill names, used by callers that wire

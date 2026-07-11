@@ -30020,3 +30020,144 @@ body > .mermaid-diagram--fullscreen {
   border-left-color: transparent;
   box-shadow: none;
 }
+
+/* Capability diagnostics settings page */
+.diag-page {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+.diag-page__toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.diag-page__runtime {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  min-width: 0;
+}
+.diag-page__actions {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.diag-page__hint {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-muted, #888);
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+.diag-summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  min-width: 0;
+}
+.diag-summary__item {
+  border: 1px solid var(--border, rgba(127,127,127,.25));
+  border-radius: 10px;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.diag-summary__item strong {
+  font-size: 20px;
+  line-height: 1.1;
+}
+.diag-summary__item--error strong { color: var(--danger, #e35); }
+.diag-summary__item--warning strong { color: var(--warn, #d90); }
+.diag-summary__item--info strong { color: var(--accent, #4af); }
+.diag-summary__meta {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--text-muted, #888);
+  min-width: 0;
+}
+.diag-section {
+  border: 1px solid var(--border, rgba(127,127,127,.25));
+  border-radius: 10px;
+  min-width: 0;
+  overflow: hidden;
+}
+.diag-section__header {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 12px;
+  background: transparent;
+  border: 0;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
+.diag-section__body {
+  padding: 0 12px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+.diag-issue-group h4 {
+  margin: 8px 0 4px;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  color: var(--text-muted, #888);
+}
+.diag-issue {
+  border: 1px solid var(--border, rgba(127,127,127,.2));
+  border-radius: 8px;
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.diag-issue header {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: baseline;
+}
+.diag-issue__name {
+  font-weight: 600;
+}
+.diag-issue__msg,
+.diag-issue__fix {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.4;
+}
+.diag-issue__fix {
+  color: var(--text-muted, #888);
+}
+.diag-path {
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  min-width: 0;
+}
+.diag-row {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 13px;
+  min-width: 0;
+}
