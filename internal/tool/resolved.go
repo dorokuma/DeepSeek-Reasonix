@@ -25,7 +25,9 @@ type ResolvedCall struct {
 	ProxyAction string
 	// CapabilityID is the capability catalog id being acted on.
 	CapabilityID string
-	// SkipExecute is set for inspect/decline which do not run a target tool.
+	// SkipExecute is set when resolution produced the final result without
+	// running a target tool (inspect, decline, unavailable, or an already-
+	// connected server directory call).
 	SkipExecute bool
 	// Result is a precomputed result when SkipExecute is true.
 	Result string

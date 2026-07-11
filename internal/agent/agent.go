@@ -2614,7 +2614,12 @@ func (a *Agent) executeOne(ctx context.Context, call provider.ToolCall) toolOutc
 			EmitProxyAudit(a.sink, rc)
 		}
 		if rc.SkipExecute {
-			// inspect/decline/unavailable: no target execution; still record meta receipt.
+			// Resolution completed without target execution; still record a meta receipt.
+			// A connected mcp-server call completes during resolution by listing
+			// its live tools, so account for that successful call here too.
+			if rc.ProxyAction == "call" && !rc.Unavailable {
+				a.noteCapabilityInvocation(call.Name, json.RawMessage(call.Arguments), nil)
+			}
 			result := secrets.RedactToolOutput(rc.Result)
 			if a.evidence != nil {
 				// inspect/decline are not mutations; unavailable call targets are not success.

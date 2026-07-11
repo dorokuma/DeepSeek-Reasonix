@@ -63,8 +63,10 @@ with the session); `action=inspect` lists live tools for connected servers and
 cached schemas otherwise, never starting a process. First discovery of a
 server with no schema cache goes through `action=call` on the `mcp-server:`
 id itself: it resolves to a gated connect (permission name = the server's
-`mcp__<server>__` prefix, so server-scoped rules match) that connects after
-approval and returns the live tool directory.
+dedicated `mcp_connect__<server>` identity, so an exact rule such as
+`deny = ["mcp_connect__github"]` blocks process startup) that connects after
+approval and returns the live tool directory. MCP tool rules remain exact;
+`mcp__github__*` is not a tool-name glob.
 
 `ask`, `explore`, `forget`, `history`, `install_skill`, `install_source`,
 `list_sessions`, `lsp_definition`, `lsp_diagnostics`, `lsp_hover`,

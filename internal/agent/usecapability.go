@@ -151,6 +151,14 @@ func (t *UseCapabilityTool) Execute(ctx context.Context, args json.RawMessage) (
 		return "", err
 	}
 	if resolved.SkipExecute {
+		if resolved.ProxyAction == "call" && !resolved.Unavailable {
+			if t.ledger != nil {
+				t.ledger.MarkSucceeded(resolved.CapabilityID)
+			}
+			if t.audit != nil {
+				t.audit.RecordMCPProxy(false, true, false)
+			}
+		}
 		return resolved.Result, nil
 	}
 	if resolved.Unavailable {
@@ -579,10 +587,9 @@ func (t *UseCapabilityTool) resolveServerConnect(ctx context.Context, server str
 	}
 	connect := &onDemandMCPConnect{proxy: t, spec: spec, server: server}
 	base.Target = connect
-	// The bare server tool prefix names the connect for permission and hook
-	// rules: a server-scoped rule (e.g. deny "mcp__github__*") gates the
-	// connect exactly like the server's tools, and no real tool can collide
-	// because real names always append a non-empty suffix.
+	// A dedicated exact identity names the connect for permission and hook
+	// rules. It cannot collide with a real mcp__ tool, and rules do not need to
+	// rely on unsupported tool-name glob matching.
 	base.TargetName = connect.Name()
 	// Connecting spawns a subprocess — never a read-only fast path; plan mode
 	// blocks it and Ask-style gates prompt before any process starts.
@@ -599,7 +606,7 @@ type onDemandMCPConnect struct {
 	server string
 }
 
-func (o *onDemandMCPConnect) Name() string { return plugin.ToolPrefix(o.server) }
+func (o *onDemandMCPConnect) Name() string { return plugin.MCPConnectPermissionName(o.server) }
 
 func (o *onDemandMCPConnect) Description() string {
 	return "connect MCP server " + o.server + " on demand and list its tools"

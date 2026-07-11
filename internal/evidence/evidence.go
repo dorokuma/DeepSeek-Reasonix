@@ -1099,22 +1099,18 @@ func completeStepVerificationCommands(args json.RawMessage) []string {
 // printed the content of the (normalized, slash-lowered) claimed path: a
 // content-printing program — cat/head/tail/diff/cmp or git diff/git show —
 // whose statically parsed argv names the path exactly or by trailing path
-// components. Statements inside pipelines are rejected (a pipe consumes or
-// transforms the content before the model sees it), as are redirected,
-// negated, background, or dynamically expanded commands, and summary/quiet
-// flags that suppress the patch body (--stat, --name-only, -q, …). Matching
-// is per-argument and exact, so reading path.bak never satisfies path.
+// components. The receipt must contain exactly one simple statement; compound
+// statements and pipelines are rejected because unrelated output can satisfy
+// the aggregate OutputBytes receipt. Redirected, negated, background, or
+// dynamically expanded commands and summary/quiet flags that suppress the
+// patch body (--stat, --name-only, -q, …) are rejected too. Matching is
+// per-argument and exact, so reading path.bak never satisfies path.
 func commandShowsContentForPath(command, needle string) bool {
 	file, err := shellparse.ParseBash(command)
-	if err != nil || shellparse.HasHereDoc(file) {
+	if err != nil || shellparse.HasHereDoc(file) || len(file.Stmts) != 1 {
 		return false
 	}
-	for _, stmt := range file.Stmts {
-		if contentStatementShowsPath(stmt, needle) {
-			return true
-		}
-	}
-	return false
+	return contentStatementShowsPath(file.Stmts[0], needle)
 }
 
 func contentStatementShowsPath(stmt *syntax.Stmt, needle string) bool {
@@ -1127,13 +1123,9 @@ func contentStatementShowsPath(stmt *syntax.Stmt, needle string) bool {
 	}
 	switch cmd := stmt.Cmd.(type) {
 	case *syntax.BinaryCmd:
-		switch cmd.Op {
-		case syntax.AndStmt, syntax.OrStmt:
-			return contentStatementShowsPath(cmd.X, needle) || contentStatementShowsPath(cmd.Y, needle)
-		default:
-			// Pipelines transform or swallow the printed content.
-			return false
-		}
+		// Pipelines transform or swallow content; AND/OR lists can contribute
+		// unrelated bytes to the aggregate receipt. Neither proves file output.
+		return false
 	case *syntax.CallExpr:
 		argv := make([]string, 0, len(cmd.Args))
 		for _, w := range cmd.Args {
@@ -1163,6 +1155,7 @@ func contentArgvShowsPath(argv []string, needle string) bool {
 		return false
 	}
 	rest := argv[1:]
+	gitShow := false
 	switch strings.ToLower(filepath.Base(argv[0])) {
 	case "cat", "head", "tail", "diff", "cmp":
 	case "git":
@@ -1173,6 +1166,7 @@ func contentArgvShowsPath(argv []string, needle string) bool {
 		if sub != "diff" && sub != "show" {
 			return false
 		}
+		gitShow = sub == "show"
 		rest = rest[1:]
 	default:
 		return false
@@ -1183,11 +1177,31 @@ func contentArgvShowsPath(argv []string, needle string) bool {
 		if contentSuppressingFlags[lower] || strings.HasPrefix(lower, "--stat") || strings.HasPrefix(lower, "--dirstat") {
 			return false
 		}
-		if argNamesPath(a, needle) {
+		if gitShow {
+			if argNamesGitRevisionPath(a, needle) {
+				named = true
+			}
+		} else if argNamesPath(a, needle) {
 			named = true
 		}
 	}
 	return named
+}
+
+// argNamesGitRevisionPath accepts only git show's REV:path form. The ordinary
+// `git show REV -- path` form can print commit metadata with no file body while
+// still producing a non-empty aggregate receipt.
+func argNamesGitRevisionPath(arg, needle string) bool {
+	tok := strings.ToLower(filepath.ToSlash(normalizePath(arg)))
+	if tok == "" || strings.HasPrefix(tok, "-") {
+		return false
+	}
+	i := strings.Index(tok, ":")
+	if i <= 0 || i == len(tok)-1 {
+		return false
+	}
+	path := tok[i+1:]
+	return path == needle || strings.HasSuffix(path, "/"+needle)
 }
 
 // argNamesPath reports whether one static argv token names the claimed path:

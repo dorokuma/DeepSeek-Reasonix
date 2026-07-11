@@ -34,7 +34,9 @@ func TestUseCapabilityFirstDiscoveryConnectListCall(t *testing.T) {
 	defer host.Close()
 	lifeCtx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	proxy := agent.NewUseCapabilityTool(lifeCtx, host, []plugin.Spec{mockSpec()}, tool.NewRegistry(), capability.NewLedger(), nil, nil)
+	ledger := capability.NewLedger()
+	audit := &capability.Audit{}
+	proxy := agent.NewUseCapabilityTool(lifeCtx, host, []plugin.Spec{mockSpec()}, tool.NewRegistry(), ledger, audit, nil)
 
 	resolved, err := proxy.ResolveCall(context.Background(), json.RawMessage(`{"action":"call","capability_id":"mcp-server:mock"}`))
 	if err != nil {
@@ -43,8 +45,8 @@ func TestUseCapabilityFirstDiscoveryConnectListCall(t *testing.T) {
 	if resolved.SkipExecute || resolved.Target == nil {
 		t.Fatalf("expected a deferred connect target, got %+v", resolved)
 	}
-	if resolved.TargetName != plugin.ToolPrefix("mock") {
-		t.Fatalf("connect permission name = %q, want %q", resolved.TargetName, plugin.ToolPrefix("mock"))
+	if resolved.TargetName != plugin.MCPConnectPermissionName("mock") {
+		t.Fatalf("connect permission name = %q, want %q", resolved.TargetName, plugin.MCPConnectPermissionName("mock"))
 	}
 	if resolved.ReadOnly {
 		t.Fatal("connect must not claim read-only: it spawns a subprocess")
@@ -74,6 +76,15 @@ func TestUseCapabilityFirstDiscoveryConnectListCall(t *testing.T) {
 	}
 	if !again.SkipExecute || !strings.Contains(again.Result, "mcp-tool:mock/echo") {
 		t.Fatalf("connected server call should list immediately, got %+v", again)
+	}
+	if _, err := proxy.Execute(context.Background(), json.RawMessage(`{"action":"call","capability_id":"mcp-server:mock"}`)); err != nil {
+		t.Fatalf("connected server call execute: %v", err)
+	}
+	if entry, ok := ledger.Get("mcp-server:mock"); !ok || entry.Outcome != capability.OutcomeSucceeded {
+		t.Fatalf("connected server call ledger = %+v, found=%v", entry, ok)
+	}
+	if snap := audit.Snapshot(); snap.MCPCall != 1 || snap.MCPCallFailures != 0 {
+		t.Fatalf("connected server call audit = %d/%d, want 1/0", snap.MCPCall, snap.MCPCallFailures)
 	}
 
 	// Then the discovered tool is callable end to end.

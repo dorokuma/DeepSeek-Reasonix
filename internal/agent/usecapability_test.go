@@ -10,6 +10,7 @@ import (
 	"reasonix/internal/capability"
 	"reasonix/internal/event"
 	"reasonix/internal/evidence"
+	"reasonix/internal/permission"
 	"reasonix/internal/plugin"
 	"reasonix/internal/provider"
 	"reasonix/internal/tool"
@@ -19,6 +20,26 @@ type denyAllGate struct{}
 
 func (denyAllGate) Check(_ context.Context, name string, _ json.RawMessage, _ bool) (bool, string, error) {
 	return false, "denied " + name, nil
+}
+
+type completedProxyCallTool struct{}
+
+func (completedProxyCallTool) Name() string            { return "use_capability" }
+func (completedProxyCallTool) Description() string     { return "" }
+func (completedProxyCallTool) Schema() json.RawMessage { return json.RawMessage(`{"type":"object"}`) }
+func (completedProxyCallTool) ReadOnly() bool          { return true }
+func (completedProxyCallTool) Execute(context.Context, json.RawMessage) (string, error) {
+	return "", nil
+}
+func (completedProxyCallTool) ResolveCall(context.Context, json.RawMessage) (tool.ResolvedCall, error) {
+	return tool.ResolvedCall{
+		DisplayName:  "use_capability",
+		ProxyAction:  "call",
+		CapabilityID: "mcp-server:mock",
+		SkipExecute:  true,
+		ReadOnly:     true,
+		Result:       "mcp-tool:mock/echo",
+	}, nil
 }
 
 func TestUseCapabilityDeclineAndInspect(t *testing.T) {
@@ -157,6 +178,10 @@ func TestReviewReportRejectsNonContentEvidence(t *testing.T) {
 		{"name only", "git diff --name-only -- internal/agent/agent.go", 64},
 		{"zero lines", "head -n 0 internal/agent/agent.go", 0},
 		{"pipeline transform", "cat internal/agent/agent.go | wc -l", 8},
+		{"and unrelated output", "git diff HEAD~1 -- internal/agent/agent.go && echo done", 512},
+		{"or unrelated output", "git diff HEAD~1 -- internal/agent/agent.go || echo done", 512},
+		{"separate unrelated output", "git diff HEAD~1 -- internal/agent/agent.go; echo done", 512},
+		{"git show metadata", "git show HEAD -- internal/agent/agent.go", 512},
 		{"substring superset", "cat internal/agent/agent.go.bak", 512},
 	}
 	for _, tc := range bashCases {
@@ -172,7 +197,7 @@ func TestReviewReportRejectsNonContentEvidence(t *testing.T) {
 	for _, cmd := range []string{
 		"cat internal/agent/agent.go",
 		"git show HEAD:internal/agent/agent.go",
-		"git diff HEAD~1 -- internal/agent/agent.go && echo done",
+		"git diff HEAD~1 -- internal/agent/agent.go",
 	} {
 		led := evidence.NewLedger()
 		rec := evidence.ReceiptFromToolCall("bash", json.RawMessage(`{"command":`+strconv.Quote(cmd)+`}`), true, true)
@@ -199,8 +224,21 @@ func TestUseCapabilityServerConnectGatedAndPlanModeBlocked(t *testing.T) {
 	if resolved.Target == nil || resolved.SkipExecute {
 		t.Fatalf("expected deferred connect target, got %+v", resolved)
 	}
-	if resolved.TargetName != plugin.ToolPrefix("lazy") || resolved.ReadOnly {
+	if resolved.TargetName != plugin.MCPConnectPermissionName("lazy") || resolved.ReadOnly {
 		t.Fatalf("connect gating identity wrong: name=%q readOnly=%v", resolved.TargetName, resolved.ReadOnly)
+	}
+	policyGate := permission.NewGate(permission.New("ask", nil, nil, []string{plugin.MCPConnectPermissionName("lazy")}), nil)
+	allow, _, err := policyGate.Check(context.Background(), resolved.TargetName, resolved.Args, resolved.ReadOnly)
+	if err != nil || allow {
+		t.Fatalf("exact MCP connect deny must block before spawn: allow=%v err=%v", allow, err)
+	}
+	deniedAgent := New(&scriptedProvider{name: "p"}, reg, NewSession("sys"), Options{Gate: policyGate}, event.Discard)
+	denied := deniedAgent.executeOne(context.Background(), provider.ToolCall{
+		ID: "deny", Name: "use_capability",
+		Arguments: `{"action":"call","capability_id":"mcp-server:lazy"}`,
+	})
+	if !denied.blocked || host.HasClient("lazy") {
+		t.Fatalf("exact connect deny must block before process start: outcome=%+v connected=%v", denied, host.HasClient("lazy"))
 	}
 	if host.HasClient("lazy") {
 		t.Fatal("server-level resolution must not start the server")
@@ -255,6 +293,28 @@ func TestProxyCallAuditCountsOnAgentPath(t *testing.T) {
 	}
 	if snap := audit.Snapshot(); snap.MCPCall != 1 || snap.MCPCallFailures != 0 {
 		t.Fatalf("MCPCall=%d failures=%d, want 1/0", snap.MCPCall, snap.MCPCallFailures)
+	}
+}
+
+func TestCompletedProxyCallCountsOnAgentSkipExecutePath(t *testing.T) {
+	reg := tool.NewRegistry()
+	reg.Add(completedProxyCallTool{})
+	ledger := capability.NewLedger()
+	audit := &capability.Audit{}
+	a := New(&scriptedProvider{name: "p"}, reg, NewSession("sys"),
+		Options{CapabilityLedger: ledger, CapabilityAudit: audit}, event.Discard)
+	out := a.executeOne(context.Background(), provider.ToolCall{
+		ID: "1", Name: "use_capability",
+		Arguments: `{"action":"call","capability_id":"mcp-server:mock"}`,
+	})
+	if out.blocked || out.errMsg != "" {
+		t.Fatalf("completed call failed: %+v", out)
+	}
+	if entry, ok := ledger.Get("mcp-server:mock"); !ok || entry.Outcome != capability.OutcomeSucceeded {
+		t.Fatalf("completed call ledger = %+v, found=%v", entry, ok)
+	}
+	if snap := audit.Snapshot(); snap.MCPCall != 1 || snap.MCPCallFailures != 0 {
+		t.Fatalf("completed call audit = %d/%d, want 1/0", snap.MCPCall, snap.MCPCallFailures)
 	}
 }
 
