@@ -92,6 +92,7 @@ import {
   type TokenMode,
   type ToolApprovalMode,
 } from "./lib/types";
+import type { InvocationKindMap } from "./lib/invocationDisplay";
 import {
   composerProfileFromMeta,
   composerProfileFromTab,
@@ -1358,12 +1359,23 @@ export default function App() {
   }, []);
 
   const [pendingPlanRevisionsByTab, setPendingPlanRevisionsByTab] = useState<Record<string, string>>({});
+  const [invocationKindsByTab, setInvocationKindsByTab] = useState<Record<string, InvocationKindMap>>({});
   const pendingPlanRevisionSendingTabsRef = useRef(new Set<string>());
   const [footerHeight, setFooterHeight] = useState(0);
   const footerHeightRef = useRef(0);
   const footerRef = useRef<HTMLElement>(null);
   const activeTabIdRef = useRef(activeTabId);
   const commitThenSendRef = useRef<(tabId: string, displayText: string, submitText?: string) => Promise<void>>(async () => {});
+  const handleInvocationKindsChange = useCallback((kinds: InvocationKindMap) => {
+    const sourceTabId = activeTabIdRef.current;
+    if (!sourceTabId) return;
+    setInvocationKindsByTab((current) => {
+      const previous = current[sourceTabId] ?? {};
+      const names = Object.keys(kinds);
+      if (names.length === Object.keys(previous).length && names.every((name) => previous[name] === kinds[name])) return current;
+      return { ...current, [sourceTabId]: kinds };
+    });
+  }, []);
   const rightDockDetailActive = rightDockMode !== "context" && workspacePreviewActive;
   const preferredWorkspacePanelWidth = rightDockDetailActive ? rightDockPreviewWidth : rightDockTreeWidth;
   const workspacePanelMinWidth = rightDockDetailActive ? RIGHT_DOCK_PREVIEW_MIN_WIDTH : RIGHT_DOCK_TREE_MIN_WIDTH;
@@ -3699,6 +3711,7 @@ export default function App() {
                 olderHistoryCount={state.historyStartTurn}
                 loadingOlderHistory={state.historyOlderLoading}
                 onLoadOlderHistory={() => activeTabId && loadOlderHistory(activeTabId)}
+                invocationKinds={activeTabId ? invocationKindsByTab[activeTabId] : undefined}
               />
             )}
           </main>
@@ -3804,6 +3817,7 @@ export default function App() {
               tabId={activeTabId}
               effort={state.effort}
               onSend={handleSend}
+              onInvocationKindsChange={handleInvocationKindsChange}
               onSteer={handleSteer}
               onCancel={cancel}
               onCycleMode={cycleMode}

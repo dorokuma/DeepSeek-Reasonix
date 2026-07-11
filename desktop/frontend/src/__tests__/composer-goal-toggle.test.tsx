@@ -5,7 +5,7 @@ import React from "react";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { Composer, composerPickFileEntry } from "../components/Composer";
-import { UserMessage } from "../components/Message";
+import { InvocationKindsContext, UserMessage } from "../components/Message";
 import { LocaleProvider } from "../lib/i18n";
 import { ToastProvider } from "../lib/toast";
 import type { AppBindings } from "../lib/bridge";
@@ -219,7 +219,7 @@ console.log("\ncomposer goal toggle");
   const dom = installDom();
   const { root, calls, rerender } = await renderComposer();
 
-  const textarea = document.querySelector("textarea") as HTMLTextAreaElement | null;
+  let textarea = document.querySelector("textarea") as HTMLTextAreaElement | null;
   if (!textarea) throw new Error("composer textarea did not render");
 
   await rerender({ insertRequest: { id: 1, text: "ship the release notes", mode: "replace" } });
@@ -291,7 +291,7 @@ console.log("\ncomposer goal toggle");
   const { root, rerender } = await renderComposer();
   await rerender({ insertRequest: { id: 2, text: "keep this draft", mode: "replace" } });
 
-  const textarea = document.querySelector("textarea") as HTMLTextAreaElement | null;
+  let textarea = document.querySelector("textarea") as HTMLTextAreaElement | null;
   if (!textarea) throw new Error("composer textarea did not render");
   const sendButton = document.querySelector(".composer__btn--send") as HTMLButtonElement | null;
   if (!sendButton) throw new Error("composer send button did not render");
@@ -1075,25 +1075,37 @@ console.log("\ncomposer goal toggle");
 
   const menuSizer = document.querySelector<HTMLElement>(".slashmenu__sizer");
   eq(menuSizer?.style.height, "94px", "short skill query keeps one group heading and both matching plugin names");
-  const textarea = document.querySelector("textarea") as HTMLTextAreaElement | null;
+  let textarea = document.querySelector("textarea") as HTMLTextAreaElement | null;
   if (!textarea) throw new Error("composer textarea did not render");
   await act(async () => {
     textarea.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
     await flushTimers();
   });
-  eq(textarea.value, "", "selecting a plugin skill keeps the task input separate from the invocation");
+  ok(document.querySelector(".composer__rich-input") !== null, "selecting a plugin skill switches to the rich task input");
   ok(document.querySelector(".invocation-display--composer")?.textContent?.includes("Writing Plans") === true, "selected skill renders as composer context");
   ok(document.querySelector(".invocation-display--composer")?.textContent?.includes("superpowers") === true, "selected plugin skill keeps its source visible");
-  ok(document.querySelector(".composer__content > .invocation-display--composer + textarea") !== null, "selected skill lives inside the task body column above the textarea");
+  ok(document.querySelector(".composer__rich-input .composer-invocation-token") !== null, "selected skill is an inline task entity");
+  ok(document.querySelector(".composer__rich-input .composer-invocation-caret-anchor")?.textContent === "\u00A0", "selected skill keeps a caret anchor after the inline entity");
 
+  const richInput = document.querySelector(".composer__rich-input") as HTMLDivElement | null;
+  if (!richInput) throw new Error("rich composer did not render");
+  const invocationToken = richInput.querySelector(".composer-invocation-token");
+  if (!invocationToken) throw new Error("rich invocation token did not render");
+  const richRange = document.createRange();
+  richRange.setStartAfter(invocationToken);
+  richRange.collapse(true);
+  document.getSelection()?.removeAllRanges();
+  document.getSelection()?.addRange(richRange);
   await act(async () => {
-    textarea.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Backspace", bubbles: true, cancelable: true }));
+    richInput.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Backspace", bubbles: true, cancelable: true }));
     await flushTimers();
   });
   ok(document.querySelector(".invocation-display--composer") === null, "Backspace removes a selected skill from an empty task input");
 
   await replaceComposerDraft(rerender, 2002, "/writing-plans");
   await waitFor("skill menu after removal", () => Boolean(document.querySelector(".slashmenu")));
+  textarea = document.querySelector("textarea") as HTMLTextAreaElement | null;
+  if (!textarea) throw new Error("composer textarea did not return after removing the skill");
   await act(async () => {
     textarea.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
     await flushTimers();
@@ -1112,6 +1124,8 @@ console.log("\ncomposer goal toggle");
 
   await replaceComposerDraft(rerender, 2004, "/mcp");
   await waitFor("builtin command menu", () => Boolean(document.querySelector(".slashmenu")));
+  textarea = document.querySelector("textarea") as HTMLTextAreaElement | null;
+  if (!textarea) throw new Error("composer textarea did not render for management command");
   await act(async () => {
     textarea.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
     await flushTimers();
@@ -1144,21 +1158,24 @@ console.log("\ncomposer goal toggle");
   });
   ok(document.querySelector(".invocation-display--message")?.textContent?.includes("Writing Plans") === true, "restored history renders the selected skill header");
   ok(document.querySelector(".invocation-display--message")?.textContent?.includes("superpowers") === true, "restored history retains plugin source from the qualified command");
-  eq(document.querySelector(".msg__text")?.textContent, "Draft the release plan", "history message keeps slash syntax out of the task body");
+  ok(document.querySelector(".msg__rich-text")?.textContent?.endsWith("Draft the release plan") === true, "history message keeps slash syntax out of the task body");
 
   await act(async () => {
     root.render(
       <LocaleProvider>
-        <UserMessage
-          id="h2"
-          text="Format this file"
-          submitText={"以下是用户引用的历史会话上下文：\n\n[会话：Earlier]\n...\n\n---\n\n当前用户问题：\n/my-formatter Format this file"}
-        />
+        <InvocationKindsContext.Provider value={{ "my-formatter": "subagent" }}>
+          <UserMessage
+            id="h2"
+            text="Format this file"
+            submitText={"以下是用户引用的历史会话上下文：\n\n[会话：Earlier]\n...\n\n---\n\n当前用户问题：\n/my-formatter Format this file"}
+          />
+        </InvocationKindsContext.Provider>
       </LocaleProvider>,
     );
     await flushTimers();
   });
   ok(document.querySelector(".invocation-display--message")?.textContent?.includes("My Formatter") === true, "history and trash previews recover selected abilities after referenced-session context");
+  ok(document.querySelector(".invocation-display--subagent") !== null, "restored custom subagents keep their command type styling");
 
   await act(async () => {
     root.render(

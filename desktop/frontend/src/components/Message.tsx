@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createContext, memo, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import type { FormEvent, KeyboardEvent as ReactKeyboardEvent } from "react";
 import { BrainCircuit, ChevronDown, ChevronRight, FileText, Folder, GitBranch, Image, MessageSquare, Pencil, RotateCcw, ScrollText } from "lucide-react";
 import { Markdown } from "./Markdown";
@@ -16,13 +16,14 @@ import { useGSAPCollapse } from "../lib/useGSAPCollapse";
 import { displayReasoningText } from "../lib/reasoningDisplay";
 import { stripMemoryCompilerExecution } from "../lib/memoryCompilerDisplay";
 import { visibleTranscriptMemoryCitations } from "../lib/memoryCitationVisibility";
-import { invocationDisplayFromMessage } from "../lib/invocationDisplay";
+import { invocationSegmentsFromMessage, type InvocationKindMap } from "../lib/invocationDisplay";
 import type { Item, MessageActionScope } from "../lib/useController";
 import type { CheckpointMeta, MemoryCitation } from "../lib/types";
 import { InvocationBadge } from "./InvocationBadge";
 
 type AssistantItem = Extract<Item, { kind: "assistant" }>;
 export type TurnActionMenu = "summary" | "rewind";
+export const InvocationKindsContext = createContext<InvocationKindMap>({});
 type ImSourceMessage = {
   provider: string;
   label: string;
@@ -195,11 +196,13 @@ export function UserMessage({
   editDisabled?: boolean;
 }) {
   const t = useT();
+  const invocationKinds = useContext(InvocationKindsContext);
   const imSource = parseImSourceMessage(text);
   const actionText = stripMemoryCompilerExecution(imSource?.text ?? text);
   const hasMemoryCompiler = Boolean(submitText?.includes("<memory-compiler-execution>"));
   const { text: displayText, attachments } = parseAttachmentRefsForDisplay(actionText);
-  const invocation = imSource ? null : invocationDisplayFromMessage(displayText, submitText);
+  const invocationSegments = imSource ? [] : invocationSegmentsFromMessage(displayText, submitText, invocationKinds);
+  const hasInvocationSegments = invocationSegments.some((segment) => segment.type === "invocation");
   const orderedAttachments = sortDisplayAttachments(attachments);
   const sourceLabel = imSource ? imSourceLabel(imSource, t) : "";
   const sentAt = createdAt === undefined ? null : messageDate(createdAt);
@@ -382,7 +385,6 @@ export function UserMessage({
       data-entrance={id || undefined}
     >
       <div className={`msg__body${editing ? " msg__body--editing" : ""}`}>
-        {invocation && <InvocationBadge invocation={invocation} variant="message" />}
         {editing ? (
           <form className="msg-edit" onSubmit={(event) => void submitEdit(event)}>
             {orderedDraftAttachments.length > 0 && (
@@ -446,7 +448,20 @@ export function UserMessage({
           </div>
         ) : (
           <>
-            {displaySegments.map((seg, i) => {
+            {hasInvocationSegments && pasteBlocks.length === 0 ? (
+              <div className="msg__text msg__rich-text">
+                {invocationSegments.map((segment, index) => segment.type === "text"
+                  ? <span key={`text:${segment.start}:${index}`}>{segment.content}</span>
+                  : (
+                    <InvocationBadge
+                      key={`invocation:${segment.invocation.name}:${segment.offset}:${index}`}
+                      invocation={segment.invocation}
+                      kind={segment.invocation.kind}
+                      variant="message"
+                    />
+                  ))}
+              </div>
+            ) : displaySegments.map((seg, i) => {
               if (seg.type === "text") {
                 return seg.content ? <div className="msg__text" key={`s${i}`}>{seg.content}</div> : null;
               }

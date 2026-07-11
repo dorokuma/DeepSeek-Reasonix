@@ -9,7 +9,13 @@ import { canUsePromptHistory, isFnKeyEvent, promptHistoryDirectionFromEvent } fr
 import { cacheGeneration, loadOlder } from "../lib/composerHistory";
 import { SPINNER_WORDS, useI18n } from "../lib/i18n";
 import { detectShortcutPlatform, formatShortcutCombo, matchesShortcut } from "../lib/keyboardShortcuts";
-import { commandUsesStructuredInvocation, invocationDisplayForCommand } from "../lib/invocationDisplay";
+import {
+  commandUsesStructuredInvocation,
+  replaceInvocationTextRange,
+  serializeInvocationSubmit,
+  trimInvocationDraft,
+  type ComposerInvocation,
+} from "../lib/invocationDisplay";
 import { clearLayoutSize, loadOptionalLayoutSize, saveLayoutSize } from "../lib/layoutPreferences";
 import { createRafResizeUpdater } from "../lib/resizeDrag";
 import { useToast } from "../lib/toast";
@@ -29,7 +35,12 @@ import { Tooltip } from "./Tooltip";
 import { ComposerContextCard } from "./ComposerContextCard";
 import { ContextWindowRing } from "./ContextWindowRing";
 import { ImageViewer } from "./ImageViewer";
-import { InvocationBadge } from "./InvocationBadge";
+import {
+  RichComposerInput,
+  type RichComposerInputHandle,
+  type RichComposerSelection,
+  type RichSlashQuery,
+} from "./RichComposerInput";
 import { VirtualMenu } from "./VirtualMenu";
 import { dirEntryMenuLabel, dirEntrySubmitPath } from "./FileReferenceMenu";
 import { ContextMenu, contextMenuPointFromEvent, type ContextMenuItem, type ContextMenuPoint } from "./ContextMenu";
@@ -59,7 +70,6 @@ const COMPOSER_MAX_HEIGHT = 360;
 const COMPOSER_RUN_STRIP_RESERVED = 30;
 const COMPOSER_MAX_VIEWPORT_RATIO = 0.4;
 const COMPOSER_AUTO_RESERVED_HEIGHT = 58;
-const COMPOSER_INVOCATION_RESERVED_HEIGHT = 32;
 const PROMPT_HISTORY_PREFETCH_REMAINING = 3;
 // Grace after compositionend to swallow a confirm-Enter that lands just after
 // it; the real gap is a few ms, so keep it short or a deliberate quick second
@@ -85,7 +95,7 @@ type FileRefSearchCacheEntry = {
 
 type ComposerDraft = {
   text: string;
-  selectedInvocation: CommandInfo | null;
+  invocations: ComposerInvocation[];
   attachments: Attachment[];
   workspaceRefs: WorkspaceReference[];
   pastedBlocks: PastedBlock[];
@@ -177,7 +187,7 @@ export function composerPickFileEntry(
 function emptyComposerDraft(): ComposerDraft {
   return {
     text: "",
-    selectedInvocation: null,
+    invocations: [],
     attachments: [],
     workspaceRefs: [],
     pastedBlocks: [],
@@ -205,7 +215,7 @@ function guidanceTextMatches(queued: string, consumed: string): boolean {
 function cloneComposerDraft(draft: ComposerDraft): ComposerDraft {
   return {
     text: draft.text,
-    selectedInvocation: draft.selectedInvocation ? { ...draft.selectedInvocation } : null,
+    invocations: draft.invocations.map((invocation) => ({ ...invocation, command: { ...invocation.command } })),
     attachments: [...draft.attachments],
     workspaceRefs: [...draft.workspaceRefs],
     pastedBlocks: [...draft.pastedBlocks],
@@ -262,7 +272,7 @@ function clipboardHasImageHint(data: DataTransfer): boolean {
   return Array.from(data.items).some((item) => imageType(item.type)) || Array.from(data.types).some(imageType);
 }
 
-function isPasteShortcut(e: KeyboardEvent<HTMLTextAreaElement>): boolean {
+function isPasteShortcut(e: KeyboardEvent<HTMLElement>): boolean {
   return e.key.toLowerCase() === "v" && (e.metaKey || e.ctrlKey) && !e.altKey;
 }
 
@@ -383,7 +393,7 @@ function useTick(on: boolean): number {
 }
 
 function isImeKeyEvent(
-  e: KeyboardEvent<HTMLTextAreaElement>,
+  e: KeyboardEvent<HTMLElement>,
   composing: boolean,
   lastCompositionEndAt: number,
 ): boolean {
@@ -534,6 +544,7 @@ export function Composer({
   cacheHitTokens,
   cacheMissTokens,
   balance,
+  onInvocationKindsChange,
 }: {
   running: boolean;
   collaborationMode: CollaborationMode;
@@ -546,6 +557,7 @@ export function Composer({
   tabId?: string;
   effort?: EffortInfo;
   onSend: (displayText: string, submitText?: string, tabId?: string) => void | Promise<void>;
+  onInvocationKindsChange?: (kinds: Record<string, "skill" | "subagent">) => void;
   onSteer?: (submitText: string, tabId?: string) => void | Promise<void>;
   // Returns the un-sent text when cancelling before the server replied (so it can
   // be restored to the input); undefined for a normal cancel.
@@ -615,13 +627,16 @@ export function Composer({
   }, []);
 
   const [workspaceRefs, setWorkspaceRefs] = useState<WorkspaceReference[]>([]);
-  const [selectedInvocation, setSelectedInvocation] = useState<CommandInfo | null>(null);
+  const [invocations, setInvocations] = useState<ComposerInvocation[]>([]);
+  const [richSelection, setRichSelection] = useState<RichComposerSelection>({ start: 0, end: 0 });
+  const [richSlashQuery, setRichSlashQuery] = useState<RichSlashQuery | null>(null);
   const [pastedBlocks, setPastedBlocks] = useState<PastedBlock[]>([]);
   const [openPastedLabels, setOpenPastedLabels] = useState<string[]>([]);
   const [pendingPaste, setPendingPaste] = useState(0);
   const pendingPasteRef = useRef(0);
   const pastedBlocksRef = useRef<PastedBlock[]>([]);
   const nextPasteId = useRef(1);
+  const nextInvocationId = useRef(1);
   const [active, setActive] = useState(0);
   const [dismissed, setDismissed] = useState(false);
   const [dragOver, setDragOver] = useState(false);
@@ -661,6 +676,7 @@ export function Composer({
   const [, setHistoryIndex] = useState(-1);
   const savedTextRef = useRef("");
   const taRef = useRef<HTMLTextAreaElement>(null);
+  const richInputRef = useRef<RichComposerInputHandle>(null);
   const composerCardRef = useRef<HTMLDivElement>(null);
   const intentMenuAnchorRef = useRef<HTMLButtonElement>(null);
   const moreMenuAnchorRef = useRef<HTMLButtonElement>(null);
@@ -688,13 +704,13 @@ export function Composer({
   const draftsBySessionRef = useRef<Record<string, ComposerDraft>>({});
   const activeDraftKeyRef = useRef(draftKey);
   const textRef = useRef(text);
-  const selectedInvocationRef = useRef(selectedInvocation);
+  const invocationsRef = useRef(invocations);
   const attachmentsRef = useRef(attachments);
   const workspaceRefsRef = useRef(workspaceRefs);
   const openPastedLabelsRef = useRef(openPastedLabels);
   const sessionRefsRef = useRef(sessionRefs);
   textRef.current = text;
-  selectedInvocationRef.current = selectedInvocation;
+  invocationsRef.current = invocations;
   attachmentsRef.current = attachments;
   workspaceRefsRef.current = workspaceRefs;
   pastedBlocksRef.current = pastedBlocks;
@@ -708,7 +724,7 @@ export function Composer({
 
   const snapshotComposerDraft = (): ComposerDraft => ({
     text: textRef.current,
-    selectedInvocation: selectedInvocationRef.current ? { ...selectedInvocationRef.current } : null,
+    invocations: invocationsRef.current.map((invocation) => ({ ...invocation, command: { ...invocation.command } })),
     attachments: [...attachmentsRef.current],
     workspaceRefs: [...workspaceRefsRef.current],
     pastedBlocks: [...pastedBlocksRef.current],
@@ -728,13 +744,14 @@ export function Composer({
   const restoreComposerDraft = (draft: ComposerDraft) => {
     const next = cloneComposerDraft(draft);
     textRef.current = next.text;
-    selectedInvocationRef.current = next.selectedInvocation;
+    invocationsRef.current = next.invocations;
     attachmentsRef.current = next.attachments;
     workspaceRefsRef.current = next.workspaceRefs;
     openPastedLabelsRef.current = next.openPastedLabels;
     sessionRefsRef.current = next.sessionRefs;
     setText(next.text);
-    setSelectedInvocation(next.selectedInvocation);
+    setInvocations(next.invocations);
+    setRichSlashQuery(null);
     setAttachments(next.attachments);
     setWorkspaceRefs(next.workspaceRefs);
     pastedBlocksRef.current = next.pastedBlocks;
@@ -905,7 +922,7 @@ export function Composer({
     if (guidanceExpanded && pendingGuidance.length <= 2) setGuidanceExpanded(false);
   }, [guidanceExpanded, pendingGuidance.length]);
 
-  // --- slash commands (whole-input "/token") ---
+  // --- slash commands ---
   const [commands, setCommands] = useState<CommandInfo[]>([]);
   useEffect(() => {
     let live = true;
@@ -918,11 +935,19 @@ export function Composer({
       live = false;
     };
   }, [ready, cwd, running, workspaceScopeKey]);
+  useEffect(() => {
+    onInvocationKindsChange?.(Object.fromEntries(
+      commands
+        .filter(commandUsesStructuredInvocation)
+        .map((command) => [command.name, command.kind === "subagent" ? "subagent" : "skill"]),
+    ));
+  }, [commands, onInvocationKindsChange]);
 
   const slashQuery = useMemo(() => {
+    if (invocations.length > 0) return richSlashQuery?.query ?? null;
     if (!text.startsWith("/") || /\s/.test(text)) return null;
     return text.slice(1).toLowerCase();
-  }, [text]);
+  }, [invocations.length, richSlashQuery, text]);
   const slashMatches = useMemo(
     () => slashQuery === null
       ? []
@@ -938,7 +963,7 @@ export function Composer({
   const [argRes, setArgRes] = useState<SlashArgsResult | null>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   useEffect(() => {
-    if (!text.startsWith("/") || !/\s/.test(text)) {
+    if (invocations.length > 0 || !text.startsWith("/") || !/\s/.test(text)) {
       setArgRes(null);
       return;
     }
@@ -968,7 +993,7 @@ export function Composer({
       live = false;
       clearTimeout(debounceRef.current);
     };
-  }, [text]);
+  }, [invocations.length, text]);
 
   // --- @ file references (token at the end of the text) ---
   // atRaw is everything after a trailing "@token"; atDir is its path up to the
@@ -1207,43 +1232,67 @@ export function Composer({
     void ensurePromptHistoryIndex(historyEntriesRef.current.length);
   };
 
-  const setTextCaretEnd = (next: string) => {
-    setText(next);
+  const focusComposerInput = () => {
+    if (invocationsRef.current.length > 0) richInputRef.current?.focus();
+    else taRef.current?.focus();
+  };
+
+  const getComposerSelection = () => {
+    if (invocationsRef.current.length > 0) return richInputRef.current?.getSelection() ?? richSelection;
+    const ta = taRef.current;
+    const start = ta?.selectionStart ?? textRef.current.length;
+    const end = ta?.selectionEnd ?? start;
+    return { start: Math.min(start, end), end: Math.max(start, end) };
+  };
+
+  const setComposerSelection = (start: number, end = start) => {
     requestAnimationFrame(() => {
-      const ta = taRef.current;
-      if (ta) {
-        ta.focus();
-        ta.selectionStart = ta.selectionEnd = next.length;
+      if (invocationsRef.current.length > 0) {
+        richInputRef.current?.setSelectionRange(start, end);
+        return;
       }
+      const ta = taRef.current;
+      if (!ta) return;
+      ta.focus();
+      ta.setSelectionRange(start, end);
+      lastSelectionRef.current = { start, end };
     });
   };
 
+  const setTextCaretEnd = (next: string) => {
+    textRef.current = next;
+    setText(next);
+    setComposerSelection(next.length);
+  };
+
   const rememberCaret = () => {
+    if (invocationsRef.current.length > 0) {
+      const selection = richInputRef.current?.getSelection();
+      if (selection) lastSelectionRef.current = { start: selection.start, end: selection.end };
+      return;
+    }
     const ta = taRef.current;
     if (!ta) return;
     lastSelectionRef.current = { start: ta.selectionStart ?? text.length, end: ta.selectionEnd ?? text.length };
   };
 
   const insertTextAtCaret = (snippet: string) => {
-    const ta = taRef.current;
-    const start = ta ? (ta.selectionStart ?? text.length) : Math.min(lastSelectionRef.current.start, text.length);
-    const end = ta ? (ta.selectionEnd ?? start) : Math.min(lastSelectionRef.current.end, text.length);
+    const selection = getComposerSelection();
+    const start = selection.start;
+    const end = selection.end;
     const before = text.slice(0, start);
     const after = text.slice(end);
     const leading = before.length === 0 || before.endsWith("\n\n") ? "" : before.endsWith("\n") ? "\n" : "\n\n";
     const body = snippet.trimEnd();
     const trailing = after.length === 0 ? "\n" : after.startsWith("\n") ? "" : "\n\n";
     const inserted = leading + body + trailing;
-    const next = before + inserted + after;
     const pos = before.length + inserted.length;
-    setText(next);
-    requestAnimationFrame(() => {
-      const node = taRef.current;
-      if (!node) return;
-      node.focus();
-      node.selectionStart = node.selectionEnd = pos;
-      lastSelectionRef.current = { start: pos, end: pos };
-    });
+    const updated = replaceInvocationTextRange(text, invocationsRef.current, start, end, inserted);
+    textRef.current = updated.text;
+    invocationsRef.current = updated.invocations;
+    setText(updated.text);
+    setInvocations(updated.invocations);
+    setComposerSelection(pos);
   };
 
   const replaceComposerText = (next: string) => {
@@ -1264,7 +1313,7 @@ export function Composer({
       workspaceRefsRef.current = next;
       return next;
     });
-    requestAnimationFrame(() => taRef.current?.focus());
+    requestAnimationFrame(focusComposerInput);
   };
 
   useEffect(() => {
@@ -1321,7 +1370,7 @@ export function Composer({
   const removeAttachment = (path: string) => {
     forgetAttachment(path);
     setAttachments(attachmentsRef.current.filter((x) => x.path !== path));
-    requestAnimationFrame(() => taRef.current?.focus());
+    requestAnimationFrame(focusComposerInput);
   };
 
   const attachmentSeenInDraft = (targetDraftKey: string, key: AttachmentDedupKey): boolean => {
@@ -1363,8 +1412,9 @@ export function Composer({
     if (targetDraftKey === activeDraftKeyRef.current) {
       textRef.current = "";
       setText("");
-      selectedInvocationRef.current = null;
-      setSelectedInvocation(null);
+      invocationsRef.current = [];
+      setInvocations([]);
+      setRichSlashQuery(null);
       historyIndexRef.current = -1;
       setHistoryIndex(-1);
       clearAttachments();
@@ -1381,7 +1431,7 @@ export function Composer({
     }
     const draft = cloneComposerDraft(draftsBySessionRef.current[targetDraftKey] ?? emptyComposerDraft());
     draft.text = "";
-    draft.selectedInvocation = null;
+    draft.invocations = [];
     draft.attachments = [];
     draft.workspaceRefs = [];
     draft.pastedBlocks = [];
@@ -1464,7 +1514,8 @@ export function Composer({
     const submitTabId = tabId;
     if (draftIsSubmitting(submitDraftKey)) return;
     const currentText = textRef.current;
-    const trimmedText = currentText.trim();
+    const trimmedDraft = trimInvocationDraft(currentText, invocationsRef.current);
+    const trimmedText = trimmedDraft.text;
     if (draftHasPendingPaste(submitDraftKey)) return;
     if (!imageInputEnabled && hasImageAttachments(attachmentsRef.current)) {
       warnImageInputFallback();
@@ -1474,7 +1525,7 @@ export function Composer({
     if (!trimmedText && currentAttachments.length === 0 && currentWorkspaceRefs.length === 0) {
       if (goalModeOn && !activeGoal) {
         setComposerPrompt(t("composer.goalInputRequired"));
-        requestAnimationFrame(() => taRef.current?.focus());
+        requestAnimationFrame(focusComposerInput);
       }
       return;
     }
@@ -1498,8 +1549,8 @@ export function Composer({
       const currentSessionRefs = sessionRefsRef.current;
       const currentPastedBlocks = [...pastedBlocksRef.current];
       const sessionContext = currentSessionRefs.length === 0 ? "" : await buildSessionContext(currentSessionRefs);
-      const invocationPrefix = selectedInvocationRef.current ? `/${selectedInvocationRef.current.name}` : "";
-      const baseSubmitText = [invocationPrefix, expandPastedBlocks(trimmedText, currentPastedBlocks), refs].filter(Boolean).join(" ");
+      const invocationText = serializeInvocationSubmit(trimmedText, trimmedDraft.invocations);
+      const baseSubmitText = [expandPastedBlocks(invocationText, currentPastedBlocks), refs].filter(Boolean).join(" ");
       const submitText = sessionContext ? `${sessionContext}${baseSubmitText}` : baseSubmitText;
       if (running) {
         const guidanceText = displayText.trim();
@@ -1659,7 +1710,7 @@ export function Composer({
     return onFilesDropped((paths) => void attachDroppedPaths(paths, activeDraftKeyRef.current));
   }, []);
 
-  const onPaste = (e: ClipboardEvent<HTMLTextAreaElement>) => {
+  const onPaste = (e: ClipboardEvent<HTMLTextAreaElement | HTMLDivElement>) => {
     clearNativeClipboardPasteTimer();
     const files = clipboardFiles(e.clipboardData);
     if (files.length > 0) {
@@ -1680,9 +1731,9 @@ export function Composer({
     // reconciliation cannot race with the native DOM update and lose the
     // pasted content (WebView2 / Windows). We insert the text manually below.
     e.preventDefault();
-    const ta = e.currentTarget;
-    const start = ta.selectionStart ?? text.length;
-    const end = ta.selectionEnd ?? text.length;
+    const selection = getComposerSelection();
+    const start = selection.start;
+    const end = selection.end;
 
     // Normalize CRLF from Windows clipboard so caret offsets match the
     // textarea's normalized value. The raw text (with CRLF) is preserved
@@ -1695,36 +1746,30 @@ export function Composer({
       const lines = lineCount(pasted);
       const label = t("composer.pastedLabel", { id, lines });
       const block: PastedBlock = { label, text: pasted }; // keep raw text (CRLF preserved)
-      const next = text.slice(0, start) + label + text.slice(end);
+      const next = replaceInvocationTextRange(text, invocationsRef.current, start, end, label, selection.afterInvocationId);
       pastedBlocksRef.current = [...pastedBlocksRef.current, block];
       setPastedBlocks((prev) => [...prev, block]);
-      setText(next);
-      requestAnimationFrame(() => {
-        const node = taRef.current;
-        if (!node) return;
-        const pos = start + label.length;
-        node.focus();
-        node.selectionStart = node.selectionEnd = pos;
-      });
+      textRef.current = next.text;
+      invocationsRef.current = next.invocations;
+      setText(next.text);
+      setInvocations(next.invocations);
+      setComposerSelection(start + label.length);
     } else {
       // Short paste: insert the raw text directly into state.
       resetPromptHistoryNavigation();
-      const next = text.slice(0, start) + normalizedPasted + text.slice(end);
-      setText(next);
-      requestAnimationFrame(() => {
-        const node = taRef.current;
-        if (!node) return;
-        const pos = start + normalizedPasted.length;
-        node.focus();
-        node.selectionStart = node.selectionEnd = pos;
-      });
+      const next = replaceInvocationTextRange(text, invocationsRef.current, start, end, normalizedPasted, selection.afterInvocationId);
+      textRef.current = next.text;
+      invocationsRef.current = next.invocations;
+      setText(next.text);
+      setInvocations(next.invocations);
+      setComposerSelection(start + normalizedPasted.length);
     }
   };
 
   const getInputSelection = () => {
-    const node = taRef.current;
-    const start = node?.selectionStart ?? text.length;
-    const end = node?.selectionEnd ?? text.length;
+    const selection = getComposerSelection();
+    const start = selection.start;
+    const end = selection.end;
     const from = Math.min(start, end);
     const to = Math.max(start, end);
     return {
@@ -1735,13 +1780,7 @@ export function Composer({
   };
 
   const focusInputRange = (start: number, end = start) => {
-    requestAnimationFrame(() => {
-      const node = taRef.current;
-      if (!node) return;
-      node.focus();
-      node.setSelectionRange(start, end);
-      lastSelectionRef.current = { start, end };
-    });
+    setComposerSelection(start, end);
   };
 
   const replaceInputRange = (
@@ -1752,14 +1791,18 @@ export function Composer({
   ) => {
     if (targetDraftKey === activeDraftKeyRef.current) {
       const current = textRef.current;
-      const next = current.slice(0, start) + value + current.slice(end);
-      textRef.current = next;
-      setText(next);
+      const next = replaceInvocationTextRange(current, invocationsRef.current, start, end, value);
+      textRef.current = next.text;
+      invocationsRef.current = next.invocations;
+      setText(next.text);
+      setInvocations(next.invocations);
       focusInputRange(start + value.length);
       return;
     }
     const draft = cloneComposerDraft(draftsBySessionRef.current[targetDraftKey] ?? emptyComposerDraft());
-    draft.text = draft.text.slice(0, start) + value + draft.text.slice(end);
+    const next = replaceInvocationTextRange(draft.text, draft.invocations, start, end, value);
+    draft.text = next.text;
+    draft.invocations = next.invocations;
     draftsBySessionRef.current[targetDraftKey] = draft;
   };
 
@@ -1979,21 +2022,31 @@ export function Composer({
     setTextCaretEnd([base, ...queued].filter((part) => part.trim() !== "").join("\n"));
   };
 
-  const clearSelectedInvocation = () => {
-    selectedInvocationRef.current = null;
-    setSelectedInvocation(null);
-    requestAnimationFrame(() => taRef.current?.focus());
-  };
-
   const pickCommand = (c: CommandInfo) => {
     if (!commandUsesStructuredInvocation(c)) {
-      setTextCaretEnd("/" + c.name + " ");
+      if (invocationsRef.current.length > 0 && richSlashQuery) {
+        richInputRef.current?.replaceRange(`/${c.name} `, richSlashQuery.from, richSlashQuery.to);
+      } else {
+        setTextCaretEnd("/" + c.name + " ");
+      }
       return;
     }
-    selectedInvocationRef.current = c;
-    setSelectedInvocation(c);
+    if (invocationsRef.current.length > 0 && richSlashQuery) {
+      richInputRef.current?.insertInvocation(c, richSlashQuery);
+      setRichSlashQuery(null);
+      return;
+    }
+    const invocation: ComposerInvocation = {
+      id: `composer-invocation-${nextInvocationId.current++}`,
+      offset: 0,
+      command: c,
+    };
     textRef.current = "";
-    setTextCaretEnd("");
+    invocationsRef.current = [invocation];
+    setText("");
+    setInvocations([invocation]);
+    setRichSlashQuery(null);
+    requestAnimationFrame(() => richInputRef.current?.setSelectionRange(0));
   };
 
   const activePastedBlocks = pastedBlocks.filter((block) => text.includes(block.label));
@@ -2002,7 +2055,7 @@ export function Composer({
   const removeWorkspaceReference = (target: WorkspaceReference) => {
     const key = workspaceReferenceKey(target);
     setWorkspaceRefs((prev) => prev.filter((ref) => workspaceReferenceKey(ref) !== key));
-    requestAnimationFrame(() => taRef.current?.focus());
+    requestAnimationFrame(focusComposerInput);
   };
 
   const togglePastedPreview = (label: string) => {
@@ -2037,17 +2090,19 @@ export function Composer({
       setTextareaAutoOverflow(false);
       return;
     }
+    const richHeight = invocationsRef.current.length > 0 ? richInputRef.current?.scrollHeight() : 0;
     const node = taRef.current;
-    if (!node) return;
-    const previousHeight = node.style.height;
-    node.style.height = "auto";
-    const maxHeight = composerAutoInputMaxHeight(selectedInvocationRef.current ? COMPOSER_INVOCATION_RESERVED_HEIGHT : 0);
-    const nextHeight = Math.min(node.scrollHeight, maxHeight);
-    const nextOverflow = node.scrollHeight > maxHeight + 1;
-    node.style.height = previousHeight;
+    if (!richHeight && !node) return;
+    const previousHeight = node?.style.height;
+    if (node) node.style.height = "auto";
+    const scrollHeight = richHeight || node?.scrollHeight || 0;
+    const maxHeight = composerAutoInputMaxHeight();
+    const nextHeight = Math.min(scrollHeight, maxHeight);
+    const nextOverflow = scrollHeight > maxHeight + 1;
+    if (node && previousHeight !== undefined) node.style.height = previousHeight;
     setTextareaAutoHeight((current) => (current === nextHeight ? current : nextHeight));
     setTextareaAutoOverflow((current) => (current === nextOverflow ? current : nextOverflow));
-  }, [composerHeight, selectedInvocation]);
+  }, [composerHeight, invocations.length]);
 
   useLayoutEffect(() => {
     measureTextareaAutoHeight();
@@ -2243,14 +2298,7 @@ export function Composer({
     setPastChatQuery("");
     setShowPastChats(false);
     setActive(0);
-    // Return focus to textarea so the user can keep typing immediately.
-    requestAnimationFrame(() => {
-      taRef.current?.focus();
-      taRef.current?.setSelectionRange(
-        taRef.current.value.length,
-        taRef.current.value.length,
-      );
-    });
+    setComposerSelection(textRef.current.length);
   };
 
   const removeSessionRef = (path: string) => {
@@ -2292,7 +2340,7 @@ export function Composer({
     }
   };
 
-  const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
+  const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement | HTMLDivElement>) => {
     const composing = isImeKeyEvent(e, composingRef.current, lastCompositionEndAt.current);
     const native = e.nativeEvent as globalThis.KeyboardEvent & {
       keyCode?: number;
@@ -2333,20 +2381,10 @@ export function Composer({
       return;
     }
 
-    if (
-      e.key === "Backspace" &&
-      !composing &&
-      selectedInvocationRef.current &&
-      e.currentTarget.value === "" &&
-      e.currentTarget.selectionStart === 0 &&
-      e.currentTarget.selectionEnd === 0
-    ) {
-      e.preventDefault();
-      clearSelectedInvocation();
-      return;
-    }
-
     syncPromptHistoryGeneration();
+
+    const inputSelection = getComposerSelection();
+    const inputValue = textRef.current;
 
     const canUseCurrentPromptHistory = () => canUsePromptHistory({
       direction: historyDirection,
@@ -2357,11 +2395,11 @@ export function Composer({
       metaKey: e.metaKey,
       shiftKey: e.shiftKey,
       fnKey,
-      value: e.currentTarget.value,
-      selectionStart: e.currentTarget.selectionStart,
-      selectionEnd: e.currentTarget.selectionEnd,
+      value: inputValue,
+      selectionStart: inputSelection.start,
+      selectionEnd: inputSelection.end,
       historyIndex: historyIndexRef.current,
-    });
+    }) && invocationsRef.current.length === 0;
 
     // Prompt history navigation: plain ↑/↓ only. Fn/Page/Home/End are left to
     // the native textarea/OS so macOS dictation and text navigation keep working.
@@ -2497,37 +2535,35 @@ export function Composer({
     ? ({ height: `${textareaAutoHeight}px`, overflowY: textareaAutoOverflow ? "auto" : "hidden" } as CSSProperties)
     : undefined;
   const composerAutoExpanded = composerHeight === null && textareaAutoHeight !== null && textareaAutoHeight > 40;
-  const composerResizeValue = composerHeight ?? clampComposerHeight(
-    (textareaAutoHeight ?? 0) + COMPOSER_AUTO_RESERVED_HEIGHT + (selectedInvocation ? COMPOSER_INVOCATION_RESERVED_HEIGHT : 0),
-  );
+  const composerResizeValue = composerHeight ?? clampComposerHeight((textareaAutoHeight ?? 0) + COMPOSER_AUTO_RESERVED_HEIGHT);
   void onSetMode;
   const chooseApprovalMode = (nextMode: ToolApprovalMode) => {
     onSetToolApprovalMode(nextMode);
-    requestAnimationFrame(() => taRef.current?.focus());
+    requestAnimationFrame(focusComposerInput);
   };
   const choosePlanMode = () => {
     closeIntentMenu(() => {
       onSetCollaborationMode(planModeOn ? "normal" : "plan");
-      requestAnimationFrame(() => taRef.current?.focus());
+      requestAnimationFrame(focusComposerInput);
     });
   };
   const chooseGoalMode = () => {
     if (goalModeOn) {
       closeIntentMenu(() => {
         onClearGoal();
-        requestAnimationFrame(() => taRef.current?.focus());
+        requestAnimationFrame(focusComposerInput);
       });
       return;
     }
     closeIntentMenu(() => {
       onSetCollaborationMode("goal");
-      requestAnimationFrame(() => taRef.current?.focus());
+      requestAnimationFrame(focusComposerInput);
     });
   };
   const chooseTokenMode = () => {
     closeIntentMenu(() => {
       onSetTokenMode(tokenModeOn ? "full" : "economy");
-      requestAnimationFrame(() => taRef.current?.focus());
+      requestAnimationFrame(focusComposerInput);
     });
   };
   const effortLevels = asArray(effort?.levels);
@@ -2539,7 +2575,7 @@ export function Composer({
   const chooseEffortLevel = (level: string) => {
     closeMoreMenu(() => {
       if (level !== currentEffort) onSetEffort(level);
-      requestAnimationFrame(() => taRef.current?.focus());
+      requestAnimationFrame(focusComposerInput);
     });
   };
   // Run-strip state machine: retry > waiting-approval > waiting-ask > streaming.
@@ -3091,7 +3127,7 @@ export function Composer({
           </div>
         )}
         <div
-          className={`composer${selectedInvocation ? " composer--has-invocation" : ""}${dragOver ? " composer--dragover" : ""}${disabled || readOnly ? " composer--disabled" : ""}${shellModeActive ? " composer--shell" : ""}`}
+          className={`composer${invocations.length > 0 ? " composer--has-invocation" : ""}${dragOver ? " composer--dragover" : ""}${disabled || readOnly ? " composer--disabled" : ""}${shellModeActive ? " composer--shell" : ""}`}
           onDrop={onDrop}
           onDragOver={onDragOver}
           onDragLeave={onDragLeave}
@@ -3099,48 +3135,70 @@ export function Composer({
           <div className="composer__input-row">
             <span className="composer__caret">{shellModeActive ? "$" : "›"}</span>
             <div className="composer__content">
-              {selectedInvocation && (() => {
-                const invocation = invocationDisplayForCommand(selectedInvocation);
-                return (
-                  <InvocationBadge
-                    invocation={invocation}
-                    kind={selectedInvocation.kind === "subagent" ? "subagent" : "skill"}
-                    description={selectedInvocation.description}
-                    onRemove={clearSelectedInvocation}
-                    variant="composer"
-                  />
-                );
-              })()}
-              <textarea
-                id="composer-input"
-                ref={taRef}
-                className="composer__input"
-                aria-label={t("composer.placeholder")}
-                value={text}
-                onChange={(e) => {
-                  resetPromptHistoryNavigation();
-                  setText(e.target.value);
-                  if (composerPrompt) setComposerPrompt(null);
-                }}
-                onSelect={rememberCaret}
-                onClick={rememberCaret}
-                onKeyUp={rememberCaret}
-                onFocus={rememberCaret}
-                onContextMenu={openInputMenu}
-                onPaste={onPaste}
-                onKeyDown={onKeyDown}
-                onCompositionStart={() => {
-                  composingRef.current = true;
-                }}
-                onCompositionEnd={() => {
-                  composingRef.current = false;
-                  lastCompositionEndAt.current = Date.now();
-                }}
-                style={textareaStyle}
-                placeholder={composerPlaceholder}
-                rows={1}
-                disabled={disabled || readOnly}
-              />
+              {invocations.length > 0 ? (
+                <RichComposerInput
+                  ref={richInputRef}
+                  text={text}
+                  invocations={invocations}
+                  placeholder={composerPlaceholder}
+                  disabled={disabled || readOnly}
+                  style={textareaStyle}
+                  onChange={(nextText, nextInvocations) => {
+                    resetPromptHistoryNavigation();
+                    textRef.current = nextText;
+                    invocationsRef.current = nextInvocations;
+                    setText(nextText);
+                    setInvocations(nextInvocations);
+                    if (composerPrompt) setComposerPrompt(null);
+                  }}
+                  onSelectionChange={(selection, query) => {
+                    setRichSelection(selection);
+                    setRichSlashQuery(query);
+                    lastSelectionRef.current = { start: selection.start, end: selection.end };
+                  }}
+                  onKeyDown={onKeyDown}
+                  onPaste={onPaste}
+                  onCompositionStart={() => {
+                    composingRef.current = true;
+                  }}
+                  onCompositionEnd={() => {
+                    composingRef.current = false;
+                    lastCompositionEndAt.current = Date.now();
+                  }}
+                />
+              ) : (
+                <textarea
+                  id="composer-input"
+                  ref={taRef}
+                  className="composer__input"
+                  aria-label={t("composer.placeholder")}
+                  value={text}
+                  onChange={(e) => {
+                    resetPromptHistoryNavigation();
+                    textRef.current = e.target.value;
+                    setText(e.target.value);
+                    if (composerPrompt) setComposerPrompt(null);
+                  }}
+                  onSelect={rememberCaret}
+                  onClick={rememberCaret}
+                  onKeyUp={rememberCaret}
+                  onFocus={rememberCaret}
+                  onContextMenu={openInputMenu}
+                  onPaste={onPaste}
+                  onKeyDown={onKeyDown}
+                  onCompositionStart={() => {
+                    composingRef.current = true;
+                  }}
+                  onCompositionEnd={() => {
+                    composingRef.current = false;
+                    lastCompositionEndAt.current = Date.now();
+                  }}
+                  style={textareaStyle}
+                  placeholder={composerPlaceholder}
+                  rows={1}
+                  disabled={disabled || readOnly}
+                />
+              )}
             </div>
             {composerPrompt && (
               <span className="composer__prompt" role="status">

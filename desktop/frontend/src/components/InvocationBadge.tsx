@@ -1,4 +1,4 @@
-import { Box, X } from "lucide-react";
+import { Bot, WandSparkles, X } from "lucide-react";
 import type { InvocationDisplay } from "../lib/invocationDisplay";
 import { useT } from "../lib/i18n";
 import { Tooltip } from "./Tooltip";
@@ -18,10 +18,12 @@ export function InvocationBadge({
 }) {
   const t = useT();
   return (
-    <div className={`invocation-display invocation-display--${variant} invocation-display--${kind}`} role="group" aria-label={t("composer.selectedInvocation")}>
+    <span className={`invocation-display invocation-display--${variant} invocation-display--${kind}`} role="group" aria-label={t("composer.selectedInvocation")}>
       <Tooltip label={description || `/${invocation.name}`}>
         <span className="invocation-display__identity">
-          <Box size={variant === "composer" ? 19 : 17} />
+          {kind === "subagent"
+            ? <Bot size={variant === "composer" ? 18 : 16} />
+            : <WandSparkles size={variant === "composer" ? 18 : 16} />}
           <span className="invocation-display__name">{invocation.label}</span>
           {invocation.source && <span className="invocation-display__source">{t("slash.plugin", { name: invocation.source })}</span>}
         </span>
@@ -38,6 +40,6 @@ export function InvocationBadge({
           </button>
         </Tooltip>
       )}
-    </div>
+    </span>
   );
 }

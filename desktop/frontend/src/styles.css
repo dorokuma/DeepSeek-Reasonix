@@ -5728,11 +5728,7 @@ body > .mermaid-diagram--fullscreen {
   flex: 1;
 }
 .composer__content {
-  display: flex;
   flex: 1;
-  flex-direction: column;
-  align-items: stretch;
-  gap: 5px;
   min-width: 0;
   min-height: 0;
   height: 100%;
@@ -5740,9 +5736,6 @@ body > .mermaid-diagram--fullscreen {
 .composer-card--resized .composer__input-row,
 .composer-card--autosized .composer__input-row {
   align-items: flex-start;
-}
-.composer--has-invocation .composer__caret {
-  margin-top: 32px;
 }
 .invocation-display {
   display: inline-flex;
@@ -5753,12 +5746,16 @@ body > .mermaid-diagram--fullscreen {
   color: var(--accent);
 }
 .invocation-display--composer {
-  align-self: flex-start;
-  height: 27px;
+  min-height: 24px;
+  vertical-align: baseline;
 }
 .invocation-display--message {
-  margin-bottom: 6px;
+  vertical-align: baseline;
   color: var(--accent);
+}
+.invocation-display--subagent,
+.invocation-display--subagent .invocation-display__name {
+  color: var(--ok);
 }
 .invocation-display--message .invocation-display__name {
   font-size: 13px;
@@ -5788,6 +5785,9 @@ body > .mermaid-diagram--fullscreen {
   line-height: 1.35;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.invocation-display--subagent .invocation-display__name {
+  color: var(--ok);
 }
 .invocation-display__source {
   flex: 0 1 auto;
@@ -5872,6 +5872,59 @@ body > .mermaid-diagram--fullscreen {
   outline: none;
   overflow-y: hidden;
   scrollbar-width: none;           /* Firefox */
+}
+.composer__rich-input {
+  width: 100%;
+  min-height: calc(var(--font-content) * 1.55);
+  max-height: none;
+  overflow-y: hidden;
+  border: none;
+  outline: none;
+  background: none;
+  color: var(--fg);
+  font: inherit;
+  font-size: var(--font-content);
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  caret-color: var(--fg);
+}
+.composer__rich-input:empty::before {
+  color: var(--fg-faint);
+  content: attr(data-placeholder);
+  pointer-events: none;
+}
+.composer-invocation-token {
+  display: inline-block;
+  max-width: min(100%, 320px);
+  margin: 0 3px;
+  vertical-align: baseline;
+  white-space: nowrap;
+}
+.composer-invocation-token:first-child {
+  margin-left: 0;
+}
+.composer-invocation-caret-anchor {
+  display: inline-block;
+  min-width: 8px;
+  min-height: 1em;
+  vertical-align: text-bottom;
+}
+.composer-card--resized .composer__rich-input {
+  height: auto;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-width: thin;
+}
+.msg__rich-text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.msg__rich-text .invocation-display {
+  margin: 0 3px;
+}
+.msg__rich-text .invocation-display:first-child {
+  margin-left: 0;
 }
 .composer__input::-webkit-scrollbar {
   display: none;                    /* Chrome / Safari / Wails webview */

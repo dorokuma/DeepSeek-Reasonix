@@ -1,10 +1,27 @@
 import type { CommandInfo } from "./types";
 
+export type InvocationKind = "skill" | "subagent";
+export type InvocationKindMap = Readonly<Record<string, InvocationKind>>;
+
 export type InvocationDisplay = {
   name: string;
   label: string;
   source?: string;
+  kind?: InvocationKind;
 };
+
+export type ComposerInvocation = {
+  id: string;
+  offset: number;
+  command: CommandInfo;
+};
+
+export type InvocationTextSegment =
+  | { type: "text"; content: string; start: number }
+  | { type: "invocation"; invocation: InvocationDisplay; offset: number };
+
+const invocationNamePattern = "[A-Za-z0-9_.:-]+";
+const knownSubagents = new Set(["general-purpose", "explore", "research", "review", "security_review"]);
 
 export function commandUsesStructuredInvocation(command: CommandInfo): boolean {
   return command.kind === "skill" || command.kind === "subagent";
@@ -24,30 +41,190 @@ export function invocationDisplayForCommand(command: CommandInfo): InvocationDis
     name: command.name,
     label: invocationLabel(command.name),
     source: command.plugin || command.name.split(":").slice(0, -1).join(":") || undefined,
+    kind: command.kind === "subagent" ? "subagent" : "skill",
   };
 }
 
-export function invocationDisplayFromMessage(displayText: string, submitText?: string): InvocationDisplay | null {
-  const display = displayText.trim();
-  const submit = submitText?.trim() ?? "";
-  if (!submit || submit === display || /^\/[A-Za-z0-9_.:-]+(?:\s|$)/.test(display)) return null;
+export function sortComposerInvocations(invocations: ComposerInvocation[]): ComposerInvocation[] {
+  return invocations
+    .map((invocation, index) => ({ invocation, index }))
+    .sort((a, b) => a.invocation.offset - b.invocation.offset || a.index - b.index)
+    .map(({ invocation }) => invocation);
+}
 
-  const sessionQuestionMarker = "当前用户问题：\n";
-  const markerIndex = submit.lastIndexOf(sessionQuestionMarker);
-  const invocationText = (markerIndex >= 0 ? submit.slice(markerIndex + sessionQuestionMarker.length) : submit).trimStart();
-  const match = markerIndex >= 0
-    ? /^\/([A-Za-z0-9_.:-]+)(?=\s|$)/.exec(invocationText)
-    : /(?:^|\n)\/([A-Za-z0-9_.:-]+)(?=\s|$)/.exec(invocationText);
-  if (!match) return null;
-  if (markerIndex < 0) {
-    const slashOffset = match.index + match[0].lastIndexOf("/");
-    const prefix = invocationText.slice(0, slashOffset).trim();
-    if (prefix && !prefix.startsWith("<") && !prefix.startsWith("[Plan mode")) return null;
-  }
-  const name = match[1];
+export function replaceInvocationTextRange(
+  text: string,
+  invocations: ComposerInvocation[],
+  start: number,
+  end: number,
+  value: string,
+  afterInvocationId?: string,
+): { text: string; invocations: ComposerInvocation[] } {
+  const from = Math.max(0, Math.min(start, end, text.length));
+  const to = Math.max(from, Math.min(Math.max(start, end), text.length));
+  const delta = value.length - (to - from);
+  const ordered = sortComposerInvocations(invocations);
+  const anchorIndex = from === to && afterInvocationId
+    ? ordered.findIndex((invocation) => invocation.id === afterInvocationId && invocation.offset === from)
+    : -1;
+  const nextInvocations = ordered
+    .filter((invocation) => invocation.offset <= from || invocation.offset >= to)
+    .map((invocation, index) => {
+      const shiftAtInsertion = from === to
+        && invocation.offset === to
+        && (anchorIndex < 0 || index > anchorIndex);
+      const shiftAfterRange = invocation.offset > to || (from < to && invocation.offset === to);
+      return {
+        ...invocation,
+        offset: shiftAtInsertion || shiftAfterRange ? invocation.offset + delta : invocation.offset,
+      };
+    });
   return {
-    name,
-    label: invocationLabel(name),
-    source: name.includes(":") ? name.split(":").slice(0, -1).join(":") : undefined,
+    text: text.slice(0, from) + value + text.slice(to),
+    invocations: sortComposerInvocations(nextInvocations),
   };
+}
+
+export function trimInvocationDraft(
+  text: string,
+  invocations: ComposerInvocation[],
+): { text: string; invocations: ComposerInvocation[] } {
+  const trimmedStart = text.trimStart();
+  const leading = text.length - trimmedStart.length;
+  const trimmed = trimmedStart.trimEnd();
+  return {
+    text: trimmed,
+    invocations: sortComposerInvocations(invocations.map((invocation) => ({
+      ...invocation,
+      offset: Math.max(0, Math.min(trimmed.length, invocation.offset - leading)),
+    }))),
+  };
+}
+
+export function serializeInvocationSubmit(text: string, invocations: ComposerInvocation[]): string {
+  const ordered = sortComposerInvocations(invocations);
+  if (ordered.length === 0) return text;
+
+  let cursor = 0;
+  let output = "";
+  for (const invocation of ordered) {
+    const offset = Math.max(cursor, Math.min(text.length, invocation.offset));
+    output += text.slice(cursor, offset);
+    if (output && !/\s$/.test(output)) output += " ";
+    output += `/${invocation.command.name}`;
+    if (offset < text.length && !/^\s/.test(text.slice(offset))) output += " ";
+    cursor = offset;
+  }
+  output += text.slice(cursor);
+  return output;
+}
+
+function invocationBody(submitText: string): string {
+  const sessionQuestionMarker = "当前用户问题：\n";
+  const markerIndex = submitText.lastIndexOf(sessionQuestionMarker);
+  return (markerIndex >= 0 ? submitText.slice(markerIndex + sessionQuestionMarker.length) : submitText).trim();
+}
+
+type SlashMatch = { start: number; end: number; name: string };
+
+function slashMatches(text: string): SlashMatch[] {
+  const re = new RegExp(`/${invocationNamePattern}(?=\\s|$)`, "g");
+  return Array.from(text.matchAll(re), (match) => ({
+    start: match.index ?? 0,
+    end: (match.index ?? 0) + match[0].length,
+    name: match[0].slice(1),
+  }));
+}
+
+function chunkVariants(chunk: string): string[] {
+  const values = [chunk];
+  if (chunk.startsWith(" ")) values.push(chunk.slice(1));
+  if (chunk.endsWith(" ")) values.push(chunk.slice(0, -1));
+  if (chunk.startsWith(" ") && chunk.endsWith(" ") && chunk.length > 1) values.push(chunk.slice(1, -1));
+  return Array.from(new Set(values));
+}
+
+function segmentsForSelection(
+  submit: string,
+  display: string,
+  matches: SlashMatch[],
+  mask: number,
+  invocationKinds: InvocationKindMap,
+): InvocationTextSegment[] | null {
+  const selected = matches.filter((_, index) => (mask & (1 << index)) !== 0);
+  if (selected.length === 0) return null;
+
+  const normalizedDisplay = display.trim();
+  const chunks: string[] = [];
+  let cursor = 0;
+  selected.forEach((match) => {
+    chunks.push(submit.slice(cursor, match.start));
+    cursor = match.end;
+  });
+  chunks.push(submit.slice(cursor));
+
+  let resolved: { text: string; offsets: number[] } | null = null;
+  const resolve = (index: number, text: string, offsets: number[]) => {
+    if (resolved || !normalizedDisplay.startsWith(text)) return;
+    if (index === chunks.length) {
+      if (text === normalizedDisplay) resolved = { text, offsets };
+      return;
+    }
+    for (const variant of chunkVariants(chunks[index])) {
+      const nextText = text + variant;
+      if (!normalizedDisplay.startsWith(nextText)) continue;
+      const nextOffsets = index < selected.length ? [...offsets, nextText.length] : offsets;
+      resolve(index + 1, nextText, nextOffsets);
+    }
+  };
+  resolve(0, "", []);
+  if (!resolved) return null;
+
+  const segments: InvocationTextSegment[] = [];
+  let textCursor = 0;
+  selected.forEach((match, index) => {
+    const offset = resolved!.offsets[index];
+    if (offset > textCursor) {
+      segments.push({ type: "text", content: normalizedDisplay.slice(textCursor, offset), start: textCursor });
+    }
+    segments.push({
+      type: "invocation",
+      offset,
+      invocation: {
+        name: match.name,
+        label: invocationLabel(match.name),
+        source: match.name.includes(":") ? match.name.split(":").slice(0, -1).join(":") : undefined,
+        kind: invocationKinds[match.name] ?? (knownSubagents.has(match.name) ? "subagent" : "skill"),
+      },
+    });
+    textCursor = offset;
+  });
+  if (textCursor < normalizedDisplay.length) {
+    segments.push({ type: "text", content: normalizedDisplay.slice(textCursor), start: textCursor });
+  }
+  return segments;
+}
+
+export function invocationSegmentsFromMessage(
+  displayText: string,
+  submitText?: string,
+  invocationKinds: InvocationKindMap = {},
+): InvocationTextSegment[] {
+  const display = displayText.trim();
+  const submit = invocationBody(submitText?.trim() ?? "");
+  if (!submit || submit === display) return [{ type: "text", content: display, start: 0 }];
+
+  const matches = slashMatches(submit);
+  if (matches.length === 0 || matches.length > 10) return [{ type: "text", content: display, start: 0 }];
+  const masks = 1 << matches.length;
+  for (let mask = masks - 1; mask > 0; mask -= 1) {
+    const segments = segmentsForSelection(submit, display, matches, mask, invocationKinds);
+    if (segments) return segments;
+  }
+  return [{ type: "text", content: display, start: 0 }];
+}
+
+export function invocationDisplayFromMessage(displayText: string, submitText?: string): InvocationDisplay | null {
+  const segment = invocationSegmentsFromMessage(displayText, submitText).find((item) => item.type === "invocation");
+  return segment?.type === "invocation" ? segment.invocation : null;
 }
