@@ -164,3 +164,39 @@ func TestNormalizeLegacyTupleItemsCanonicalByteFastPath(t *testing.T) {
 		t.Fatalf("tuple schema was not converted: %s", first)
 	}
 }
+
+func TestNormalizeLegacyTupleItemsKeepsParentDialectAcrossResourceBoundary(t *testing.T) {
+	// The nested $defs entry is an independent schema resource (it carries its
+	// own $schema). Its conversion must reserialize the document but must NOT
+	// upgrade the parent's untouched 2019-09 declaration — the parent's other
+	// keywords were written for 2019-09 semantics.
+	raw := json.RawMessage(`{"$schema":"https://json-schema.org/draft/2019-09/schema","$defs":{"pair":{"$schema":"https://json-schema.org/draft/2020-12/schema","items":[{"type":"string"}]}}}`)
+	var schema map[string]any
+	if err := json.Unmarshal(NormalizeLegacyTupleItemsForDraft202012(raw), &schema); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	if got := schema["$schema"]; got != "https://json-schema.org/draft/2019-09/schema" {
+		t.Fatalf("parent dialect changed across nested schema-resource boundary: %v", got)
+	}
+	pair := schema["$defs"].(map[string]any)["pair"].(map[string]any)
+	if got := pair["$schema"]; got != "https://json-schema.org/draft/2020-12/schema" {
+		t.Fatalf("nested resource $schema = %v, want 2020-12 kept", got)
+	}
+	if _, ok := pair["prefixItems"].([]any); !ok {
+		t.Fatalf("nested resource was not converted: %v", pair)
+	}
+}
+
+func TestNormalizeLegacyTupleItemsUpdatesParentForOwnResourceChanges(t *testing.T) {
+	// Contrast case: the converting subschema declares no $schema of its own,
+	// so it belongs to the parent's resource and the parent's legacy dialect
+	// must be updated.
+	raw := json.RawMessage(`{"$schema":"https://json-schema.org/draft/2019-09/schema","$defs":{"pair":{"type":"array","items":[{"type":"string"}]}}}`)
+	var schema map[string]any
+	if err := json.Unmarshal(NormalizeLegacyTupleItemsForDraft202012(raw), &schema); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	if got := schema["$schema"]; got != "https://json-schema.org/draft/2020-12/schema" {
+		t.Fatalf("parent dialect = %v, want 2020-12 for a conversion inside its own resource", got)
+	}
+}

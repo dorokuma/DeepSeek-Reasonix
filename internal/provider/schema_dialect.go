@@ -44,7 +44,7 @@ func NormalizeLegacyTupleItemsForDraft202012(raw json.RawMessage) json.RawMessag
 	if err := json.Unmarshal(raw, &schema); err != nil {
 		return raw
 	}
-	if !normalizeDraft202012Schema(schema) {
+	if _, documentChanged := normalizeDraft202012Schema(schema); !documentChanged {
 		return raw
 	}
 	out, err := json.Marshal(schema)
@@ -54,17 +54,22 @@ func NormalizeLegacyTupleItemsForDraft202012(raw json.RawMessage) json.RawMessag
 	return json.RawMessage(out)
 }
 
-// normalizeDraft202012Schema rewrites legacy tuple keywords in place and
-// reports whether anything changed. When a schema resource — an object
-// carrying its own $schema declaration — saw a conversion anywhere in its
-// subtree, an old-draft declaration is updated to 2020-12: leaving it would
-// make the output self-contradictory (an older dialect declared over
-// prefixItems / 2020-12 items), and MCP consumers may then apply the wrong
-// tuple semantics.
-func normalizeDraft202012Schema(value any) bool {
+// normalizeDraft202012Schema rewrites legacy tuple keywords in place. It
+// returns two signals: resourceChanged reports conversions that belong to the
+// CALLER's schema resource (the node itself plus descendants up to the next
+// $schema boundary), documentChanged reports conversions anywhere in the
+// subtree and drives reserialization.
+//
+// The distinction is what keeps dialect updates inside their own resource: an
+// object carrying its own $schema is an independent schema resource, so its
+// conversions update its own old-draft declaration and then stop — they must
+// not mark the parent as changed, or a 2019-09 parent embedding a converting
+// 2020-12 $defs resource would have its untouched declaration "upgraded" and
+// the semantics of unrelated parent keywords silently changed.
+func normalizeDraft202012Schema(value any) (resourceChanged, documentChanged bool) {
 	schema, ok := value.(map[string]any)
 	if !ok {
-		return false
+		return false, false
 	}
 	// Classify the resource's own dialect BEFORE touching anything: for an
 	// unknown/custom $schema this code cannot know whether the dialect defines
@@ -74,28 +79,29 @@ func normalizeDraft202012Schema(value any) bool {
 	// resource alone — so the whole custom resource, subtree included, stays
 	// untouched. Known legacy drafts and 2020-12 itself (where array-form
 	// items is simply malformed input worth repairing) proceed.
-	if decl, ok := schema["$schema"].(string); ok {
-		if !isLegacyJSONSchemaDialect(decl) && !isDraft202012Dialect(decl) {
-			return false
-		}
+	decl, hasDecl := schema["$schema"].(string)
+	if hasDecl && !isLegacyJSONSchemaDialect(decl) && !isDraft202012Dialect(decl) {
+		return false, false
 	}
-	changed := false
+	changed := false // within this resource, up to nested $schema boundaries
+	doc := false
+	visit := func(child any) {
+		childResource, childDocument := normalizeDraft202012Schema(child)
+		changed = changed || childResource
+		doc = doc || childDocument
+	}
 
 	for _, keyword := range []string{
 		"additionalItems", "additionalProperties", "contains", "contentSchema",
 		"else", "if", "items", "not", "propertyNames", "then",
 		"unevaluatedItems", "unevaluatedProperties",
 	} {
-		if normalizeDraft202012Schema(schema[keyword]) {
-			changed = true
-		}
+		visit(schema[keyword])
 	}
 	for _, keyword := range []string{"allOf", "anyOf", "oneOf", "prefixItems"} {
 		if children, ok := schema[keyword].([]any); ok {
 			for _, child := range children {
-				if normalizeDraft202012Schema(child) {
-					changed = true
-				}
+				visit(child)
 			}
 		}
 	}
@@ -104,23 +110,19 @@ func normalizeDraft202012Schema(value any) bool {
 	} {
 		if children, ok := schema[keyword].(map[string]any); ok {
 			for _, child := range children {
-				if normalizeDraft202012Schema(child) {
-					changed = true
-				}
+				visit(child)
 			}
 		}
 	}
 	if dependencies, ok := schema["dependencies"].(map[string]any); ok {
 		for _, child := range dependencies {
-			if normalizeDraft202012Schema(child) {
-				changed = true
-			}
+			visit(child)
 		}
 	}
 
 	if legacyItems, ok := schema["items"].([]any); ok {
 		for _, child := range legacyItems {
-			normalizeDraft202012Schema(child)
+			visit(child)
 		}
 		changed = true
 		delete(schema, "items")
@@ -140,11 +142,17 @@ func normalizeDraft202012Schema(value any) bool {
 	}
 
 	if changed {
-		if decl, ok := schema["$schema"].(string); ok && isLegacyJSONSchemaDialect(decl) {
+		doc = true
+		if hasDecl && isLegacyJSONSchemaDialect(decl) {
 			schema["$schema"] = "https://json-schema.org/draft/2020-12/schema"
 		}
 	}
-	return changed
+	if hasDecl {
+		// Resource boundary: this resource's changes (and its declaration
+		// update) are settled here and must not leak into the parent.
+		return false, doc
+	}
+	return changed, doc
 }
 
 // isLegacyJSONSchemaDialect reports whether decl names a pre-2020-12 JSON
