@@ -5623,12 +5623,12 @@ func (a *App) Commands() []CommandInfo {
 	if ctrl == nil {
 		return out
 	}
-	// Skills are invocable as /<name> (the model runs inline ones; subagent ones
+	// Skills are invocable as slash commands (the model runs inline ones; subagent ones
 	// run isolated). Listing them here is what surfaces /init, /explore, … in the
-	// composer's slash menu; selecting one submits "/<name>", which the controller
+	// composer's slash menu; selecting one submits its displayed slash name, which the controller
 	// resolves via RunSkill.
-	for _, s := range ctrl.Skills() {
-		out = append(out, CommandInfo{Name: s.Name, Description: s.Description, Kind: "skill"})
+	for _, s := range ctrl.SlashSkills() {
+		out = append(out, CommandInfo{Name: s.SlashName(), Description: s.Description, Kind: "skill", Plugin: s.Plugin})
 	}
 	for _, c := range ctrl.Commands() {
 		if c.Hidden {
@@ -5770,6 +5770,8 @@ type SkillView struct {
 	Scope       string `json:"scope"`
 	RunAs       string `json:"runAs"`
 	Enabled     bool   `json:"enabled"`
+	Plugin      string `json:"plugin,omitempty"`
+	Invocation  string `json:"invocation,omitempty"`
 }
 
 type SkillRootSkillView struct {
@@ -5777,6 +5779,8 @@ type SkillRootSkillView struct {
 	Description string `json:"description"`
 	Scope       string `json:"scope"`
 	RunAs       string `json:"runAs"`
+	Plugin      string `json:"plugin,omitempty"`
+	Invocation  string `json:"invocation,omitempty"`
 }
 
 // SkillRootView is one skill discovery root for the drawer's Sources section.
@@ -5836,7 +5840,8 @@ func (a *App) SkillsSettings() SkillsSettingsView {
 		out.Skills = append(out.Skills, SkillView{
 			Name: s.Name, Description: s.Description,
 			Scope: string(s.Scope), RunAs: string(s.RunAs),
-			Enabled: !disabled[config.SkillNameKey(s.Name)],
+			Enabled: !disabled[config.SkillNameKey(s.Name)], Plugin: s.Plugin,
+			Invocation: "/" + s.SlashName(),
 		})
 	}
 	out.SkillRoots = a.cachedSkillRootsView()
@@ -6091,11 +6096,15 @@ func skillRootsViewFrom(cwd string, cfg, userCfg *config.Config) []SkillRootView
 		excluded = cfg.SkillExcludedPaths()
 		maxDepth = cfg.SkillMaxDepth()
 	}
-	st := skill.New(skill.Options{ProjectRoot: cwd, CustomPaths: custom, ExcludedPaths: excluded, MaxDepth: maxDepth, DisableBuiltins: true, Stderr: io.Discard})
+	var pluginPaths map[string][]string
+	if cfg != nil {
+		pluginPaths = cfg.PluginPackageSkillOwners()
+	}
+	st := skill.New(skill.Options{ProjectRoot: cwd, CustomPaths: custom, PluginPaths: pluginPaths, ExcludedPaths: excluded, MaxDepth: maxDepth, DisableBuiltins: true, Stderr: io.Discard})
 	counts := map[string]int{}
 	skillItems := map[string][]SkillRootSkillView{}
 	roots := st.Roots()
-	for _, sk := range st.List() {
+	for _, sk := range st.SlashList() {
 		root := skillDisplayRoot(sk, roots)
 		counts[root]++
 		skillItems[root] = append(skillItems[root], SkillRootSkillView{
@@ -6103,11 +6112,13 @@ func skillRootsViewFrom(cwd string, cfg, userCfg *config.Config) []SkillRootView
 			Description: sk.Description,
 			Scope:       string(sk.Scope),
 			RunAs:       string(sk.RunAs),
+			Plugin:      sk.Plugin,
+			Invocation:  "/" + sk.SlashName(),
 		})
 	}
 	for root := range skillItems {
 		sort.Slice(skillItems[root], func(i, j int) bool {
-			return skillItems[root][i].Name < skillItems[root][j].Name
+			return skillItems[root][i].Invocation < skillItems[root][j].Invocation
 		})
 	}
 	userConfigured := map[string]bool{}
@@ -6175,6 +6186,7 @@ func skillRootsCacheKey(cwd string, cfg, userCfg *config.Config) string {
 	type cacheKey struct {
 		CWD       string   `json:"cwd"`
 		Custom    []string `json:"custom"`
+		Plugins   []string `json:"plugins"`
 		Excluded  []string `json:"excluded"`
 		MaxDepth  int      `json:"maxDepth"`
 		UserPaths []string `json:"userPaths"`
@@ -6182,6 +6194,12 @@ func skillRootsCacheKey(cwd string, cfg, userCfg *config.Config) string {
 	key := cacheKey{CWD: config.CanonicalSkillPath(cwd), MaxDepth: 3}
 	if cfg != nil {
 		key.Custom = canonicalSkillPaths(cfg.SkillCustomPaths())
+		for path, owners := range cfg.PluginPackageSkillOwners() {
+			for _, owner := range owners {
+				key.Plugins = append(key.Plugins, config.CanonicalSkillPath(path)+"\x00"+owner)
+			}
+		}
+		sort.Strings(key.Plugins)
 		key.Excluded = canonicalSkillPaths(cfg.SkillExcludedPaths())
 		key.MaxDepth = cfg.SkillMaxDepth()
 	}
@@ -6190,7 +6208,7 @@ func skillRootsCacheKey(cwd string, cfg, userCfg *config.Config) string {
 	}
 	b, err := json.Marshal(key)
 	if err != nil {
-		return fmt.Sprintf("%s|%v|%v|%d|%v", key.CWD, key.Custom, key.Excluded, key.MaxDepth, key.UserPaths)
+		return fmt.Sprintf("%s|%v|%v|%v|%d|%v", key.CWD, key.Custom, key.Plugins, key.Excluded, key.MaxDepth, key.UserPaths)
 	}
 	return string(b)
 }

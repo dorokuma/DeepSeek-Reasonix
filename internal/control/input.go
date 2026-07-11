@@ -622,7 +622,8 @@ func (c *Controller) CustomCommand(input string) (sent string, found bool) {
 	return "", false
 }
 
-// RunSkill resolves a "/<name> args…" line against the loaded skills, returning
+// RunSkill resolves a user-facing skill slash name (qualified for plugins)
+// against the loaded skills, returning
 // the skill's rendered body to send as a turn (found=false when no skill
 // matches). Invoking a skill by slash always inlines its body — the model reads
 // and follows the playbook in the main loop; a subagent skill's isolation is
@@ -634,7 +635,7 @@ func (c *Controller) RunSkill(input string) (sent string, found bool) {
 		return "", false
 	}
 	name := strings.TrimPrefix(fields[0], "/")
-	if sk, ok := c.skills.byName(name); ok {
+	if sk, ok := c.skills.bySlashName(name); ok {
 		return skill.Render(sk, strings.Join(fields[1:], " ")), true
 	}
 	return "", false

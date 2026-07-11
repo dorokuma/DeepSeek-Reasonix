@@ -694,12 +694,16 @@ export interface SkillView {
   scope: string;
   runAs: string;
   enabled: boolean;
+  plugin?: string;
+  invocation?: string;
 }
 export interface SkillRootSkillView {
   name: string;
   description: string;
   scope: string;
   runAs: string;
+  plugin?: string;
+  invocation?: string;
 }
 export interface SkillRootView {
   dir: string;
