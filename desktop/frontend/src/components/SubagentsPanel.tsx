@@ -561,7 +561,7 @@ function SubagentProfileForm({
           <option value="all">{t("subagents.allToolsOption")}</option>
           <option value="custom">{t("subagents.customToolsOption")}</option>
         </select>
-        <span>{t("subagents.toolsHint")}</span>
+        <span>{t(toolMode === "all" ? "subagents.allToolsHint" : "subagents.customToolsHint")}</span>
       </div>
       {toolMode === "custom" && <ToolMultiSelect tools={tools} selected={selectedTools} onChange={setSelectedTools} />}
       {toolMode === "custom" && !toolsReady && <div className="subagents-field-error">{t("subagents.selectAtLeastOneTool")}</div>}
