@@ -790,6 +790,9 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 			return "", fmt.Errorf("continue_from and fork_from are mutually exclusive; pass only continue_from")
 		}
 		parentID, _, _, _ := agent.CallContext(sctx)
+		if runOpts.HostInitiated {
+			parentID = ""
+		}
 		parentSession := agent.ParentSession(sctx)
 		var run *agent.SubagentRun
 		if subagentStore == nil || parentSession == "" {
@@ -1135,6 +1138,9 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 		AllSkills:              allSkills,
 		SkillStore:             skillStore,
 		AllSkillStore:          allSkillStore,
+		SkillRunner:            skillRunner,
+		ReadOnlySkillRunner:    readOnlySkillRunner,
+		SkillProfile:           skillProfile,
 		Hooks:                  hookRunner,
 		Memory:                 mem,
 		Cleanup:                cleanup,

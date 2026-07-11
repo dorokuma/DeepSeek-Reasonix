@@ -3230,6 +3230,14 @@ func (m *chatTUI) startTurn(sent, displayed, restore string) tea.Cmd {
 // prompt) used only for the controller's auto-plan scoring, so resolved
 // @-reference payloads can't inflate the complexity signal.
 func (m *chatTUI) startTurnWithRaw(sent, displayed, restore, raw string) tea.Cmd {
+	return m.startControllerTurn(displayed, restore, func() { m.ctrl.SendWithRaw(sent, raw) })
+}
+
+// startControllerTurn owns the TUI-side turn setup for controller entry points.
+// Most prompts use SendWithRaw; slash-invoked skills use SubmitDisplay so the
+// controller can choose inline vs isolated subagent execution from the live
+// skill's RunAs metadata without the TUI reimplementing that policy.
+func (m *chatTUI) startControllerTurn(displayed, restore string, start func()) tea.Cmd {
 	// Flush any half-streamed leftover before the new turn (defensive).
 	m.commitReasoning()
 	m.commitPending()
@@ -3252,7 +3260,7 @@ func (m *chatTUI) startTurnWithRaw(sent, displayed, restore, raw string) tea.Cmd
 	m.turnTokens = 0
 	// The controller owns the run goroutine, its context, and cancellation; it
 	// streams events to eventCh and emits TurnDone when the turn settles.
-	m.ctrl.SendWithRaw(sent, raw)
+	start()
 	return tea.Batch(m.spinner.Tick, elapsedTick())
 }
 
@@ -3698,8 +3706,17 @@ func (m *chatTUI) runSlashCommand(input string) tea.Cmd {
 		if sent, ok := m.ctrl.CustomCommand(input); ok {
 			return m.startTurn(sent, input, input)
 		}
-		if sent, ok := m.ctrl.RunSkill(input); ok {
-			return m.startTurn(sent, input, input)
+		if _, ok := m.ctrl.RunSkill(input); ok {
+			fields := strings.Fields(input)
+			name := strings.TrimPrefix(fields[0], "/")
+			for _, sk := range m.ctrl.Skills() {
+				if sk.Name == name && sk.RunAs == skill.RunSubagent && len(fields) == 1 {
+					m.echoLocalCommand(input)
+					m.notice("usage: /" + name + " <task>")
+					return nil
+				}
+			}
+			return m.startControllerTurn(input, input, func() { m.ctrl.SubmitDisplay(input, input) })
 		}
 		m.notice(fmt.Sprintf("%s: %s", i18n.M.SlashUnknown, cmd))
 	}

@@ -83,6 +83,16 @@ func withCallContext(ctx context.Context, parentID string, sink event.Sink, aske
 	return context.WithValue(ctx, callContextKey{}, callContext{parentID: parentID, sink: sink, asker: asker, planMode: planMode})
 }
 
+// WithToolCallContext stamps ctx as a host-initiated top-level tool call.
+// Normal model-selected tools receive this context from executeOne; controller
+// entry points that deliberately invoke the same tool machinery (for example a
+// user typing /<subagent-skill>) use this exported wrapper so nested sub-agent
+// activity still reaches the parent event stream and plan-mode policy remains
+// visible to the invoked runner.
+func WithToolCallContext(ctx context.Context, parentID string, sink event.Sink, asker Asker, planMode bool) context.Context {
+	return withCallContext(ctx, parentID, sink, asker, planMode)
+}
+
 // CallContext returns the executing call's ID, the agent's sink, and the asker,
 // if the context was set by an agent's executeOne. ok is false for a plain
 // context (headless tool tests, calls made outside the run loop).

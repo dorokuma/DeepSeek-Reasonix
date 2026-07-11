@@ -28,7 +28,7 @@ import (
 // authoring profile (a skill file), not a runtime record of one execution.
 //
 // A profile is always written with runAs=subagent and invocation=manual — it
-// stays invocable by name (/<name>, run_skill) but never enters the pinned
+// stays invocable by name (/<name> <task>, run_skill) but never enters the pinned
 // Skills index the model scans for candidates to call on its own initiative
 // (see internal/skill/index.go). This is deliberate: a profile authored
 // through a settings form has no triggers/auto-use tuning, so nothing about
@@ -41,15 +41,26 @@ type SubagentProfileInput struct {
 	Model        string   `json:"model"`
 	Effort       string   `json:"effort"`
 	AllowedTools []string `json:"allowedTools"`
-	// Scope is "project" or "global" (default when empty/unrecognized).
+	// Scope is "project" or "global" (empty defaults to global on create).
 	Scope string `json:"scope"`
 }
 
-func subagentProfileScope(raw string) skill.Scope {
-	if strings.TrimSpace(raw) == "project" {
-		return skill.ScopeProject
+func createSubagentProfileScope(raw string) (skill.Scope, error) {
+	if strings.TrimSpace(raw) == "" {
+		return skill.ScopeGlobal, nil
 	}
-	return skill.ScopeGlobal
+	return editableSubagentProfileScope(raw)
+}
+
+func editableSubagentProfileScope(raw string) (skill.Scope, error) {
+	switch strings.TrimSpace(raw) {
+	case "project":
+		return skill.ScopeProject, nil
+	case "global":
+		return skill.ScopeGlobal, nil
+	default:
+		return "", fmt.Errorf("unsupported subagent profile scope %q — manage custom-path skills from the Skills page", raw)
+	}
 }
 
 // CreateSubagentProfile writes a new user-authored subagent profile and
@@ -77,6 +88,10 @@ func (a *App) CreateSubagentProfile(input SubagentProfileInput) (string, error) 
 	if prompt == "" {
 		return "", fmt.Errorf("system prompt is required")
 	}
+	scope, err := createSubagentProfileScope(input.Scope)
+	if err != nil {
+		return "", err
+	}
 
 	_, ctrl := a.activeTabAndCtrl()
 	if ctrl == nil {
@@ -99,7 +114,7 @@ func (a *App) CreateSubagentProfile(input SubagentProfileInput) (string, error) 
 		Color:        strings.TrimSpace(input.Color),
 		Invocation:   "manual",
 	})
-	path, err := ctrl.CreateSkill(name, subagentProfileScope(input.Scope), content)
+	path, err := ctrl.CreateSkill(name, scope, content)
 	if err != nil {
 		return "", err
 	}
@@ -185,6 +200,10 @@ func (a *App) UpdateSubagentProfile(name, scope string, input SubagentProfileInp
 	if prompt == "" {
 		return fmt.Errorf("system prompt is required")
 	}
+	targetScope, err := editableSubagentProfileScope(scope)
+	if err != nil {
+		return err
+	}
 
 	_, ctrl := a.activeTabAndCtrl()
 	if ctrl == nil {
@@ -196,6 +215,9 @@ func (a *App) UpdateSubagentProfile(name, scope string, input SubagentProfileInp
 			continue
 		}
 		found = true
+		if sk.Scope != targetScope {
+			return fmt.Errorf("%q scope mismatch: requested %q, current scope is %q", name, targetScope, sk.Scope)
+		}
 		if err := editableSubagentProfile(sk); err != nil {
 			return err
 		}
@@ -216,7 +238,7 @@ func (a *App) UpdateSubagentProfile(name, scope string, input SubagentProfileInp
 		Color:        strings.TrimSpace(input.Color),
 		Invocation:   "manual",
 	})
-	if err := ctrl.UpdateSkill(name, subagentProfileScope(scope), content); err != nil {
+	if err := ctrl.UpdateSkill(name, targetScope, content); err != nil {
 		return err
 	}
 	if err := a.RefreshSkills(); err != nil {
@@ -234,6 +256,10 @@ func (a *App) DeleteSubagentProfile(name, scope string) error {
 	if name == "" {
 		return fmt.Errorf("name is required")
 	}
+	targetScope, err := editableSubagentProfileScope(scope)
+	if err != nil {
+		return err
+	}
 	_, ctrl := a.activeTabAndCtrl()
 	if ctrl == nil {
 		return fmt.Errorf("no active session")
@@ -249,6 +275,9 @@ func (a *App) DeleteSubagentProfile(name, scope string) error {
 			continue
 		}
 		found = true
+		if sk.Scope != targetScope {
+			return fmt.Errorf("%q scope mismatch: requested %q, current scope is %q", name, targetScope, sk.Scope)
+		}
 		if err := editableSubagentProfile(sk); err != nil {
 			return err
 		}
@@ -257,7 +286,7 @@ func (a *App) DeleteSubagentProfile(name, scope string) error {
 	if !found {
 		return fmt.Errorf("%q not found", name)
 	}
-	if err := ctrl.DeleteSkill(name, subagentProfileScope(scope)); err != nil {
+	if err := ctrl.DeleteSkill(name, targetScope); err != nil {
 		return err
 	}
 	if err := a.RefreshSkills(); err != nil {

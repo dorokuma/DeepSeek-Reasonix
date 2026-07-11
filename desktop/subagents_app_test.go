@@ -91,6 +91,58 @@ func TestCreateSubagentProfileRequiresDescriptionAndPrompt(t *testing.T) {
 	}
 }
 
+func TestCreateSubagentProfileScopeIsStrictButEmptyRemainsGlobal(t *testing.T) {
+	a := newTestSubagentApp(t)
+	path, err := a.CreateSubagentProfile(SubagentProfileInput{
+		Name: "default-global", Description: "d", SystemPrompt: "body",
+	})
+	if err != nil {
+		t.Fatalf("empty scope should preserve the legacy global default: %v", err)
+	}
+	if !strings.Contains(filepath.ToSlash(path), "/.reasonix/skills/") {
+		t.Fatalf("empty scope path = %q, want global Reasonix skills dir", path)
+	}
+	if _, err := a.CreateSubagentProfile(SubagentProfileInput{
+		Name: "bad-scope", Description: "d", SystemPrompt: "body", Scope: "custom",
+	}); err == nil || !strings.Contains(err.Error(), "unsupported") {
+		t.Fatalf("custom create scope error = %v, want explicit rejection", err)
+	}
+	for _, sk := range a.SkillsSettings().Skills {
+		if sk.Name == "bad-scope" {
+			t.Fatal("rejected custom scope must not fall back to a global file")
+		}
+	}
+}
+
+func TestUpdateAndDeleteSubagentProfileRejectUnsupportedScopeWithoutTouchingGlobal(t *testing.T) {
+	a := newTestSubagentApp(t)
+	path, err := a.CreateSubagentProfile(SubagentProfileInput{
+		Name: "scope-guard", Description: "original", SystemPrompt: "body", Scope: "global",
+	})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := a.UpdateSubagentProfile("scope-guard", "custom", SubagentProfileInput{
+		Description: "changed", SystemPrompt: "changed body",
+	}); err == nil || !strings.Contains(err.Error(), "unsupported") {
+		t.Fatalf("custom update scope error = %v, want explicit rejection", err)
+	}
+	if err := a.DeleteSubagentProfile("scope-guard", "anything-else"); err == nil || !strings.Contains(err.Error(), "unsupported") {
+		t.Fatalf("unknown delete scope error = %v, want explicit rejection", err)
+	}
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("rejected delete removed the global profile: %v", err)
+	}
+	if string(after) != string(before) {
+		t.Fatalf("rejected custom update modified the global profile:\nbefore=%s\nafter=%s", before, after)
+	}
+}
+
 func TestUpdateSubagentProfileOverwritesFields(t *testing.T) {
 	a := newTestSubagentApp(t)
 	if _, err := a.CreateSubagentProfile(SubagentProfileInput{

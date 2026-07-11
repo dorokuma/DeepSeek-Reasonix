@@ -83,12 +83,17 @@ export function SubagentsSettingsPage({ s }: { s: SettingsView }) {
   }, [skills, query]);
 
   const builtins = useMemo(() => filtered.filter((sk) => sk.scope === "builtin"), [filtered]);
-  // Only profiles this page created (invocation=manual) are listed as
-  // editable. Other runAs=subagent skills (hand-authored, possibly carrying
-  // read-only/triggers/auto-use frontmatter this form cannot round-trip) are
-  // managed on the Skills page instead; the backend refuses to update them
-  // regardless (editableSubagentProfile).
-  const custom = useMemo(() => filtered.filter((sk) => sk.scope !== "builtin" && sk.invocation === "manual"), [filtered]);
+  // This page creates only project/global profiles. Manual subagents loaded
+  // from configured custom paths remain visible, but their external ownership
+  // is preserved: they are read-only here and managed from the Skills page.
+  const custom = useMemo(
+    () => filtered.filter((sk) => (sk.scope === "project" || sk.scope === "global") && sk.invocation === "manual"),
+    [filtered],
+  );
+  const external = useMemo(
+    () => filtered.filter((sk) => sk.scope === "custom" && sk.invocation === "manual"),
+    [filtered],
+  );
 
   if (!skills) return <div className="empty">{t("caps.loading")}</div>;
 
@@ -173,18 +178,21 @@ export function SubagentsSettingsPage({ s }: { s: SettingsView }) {
           <div className="cap-skills-head__title">{t("subagents.customTitle")}</div>
         </div>
       </div>
-      {custom.length === 0 ? (
+      {custom.length === 0 && external.length === 0 ? (
         <div className="mem-empty">{query.trim() ? t("subagents.noMatches") : t("subagents.noCustom")}</div>
       ) : (
         <div className="cap-skills">
           {custom.map((sk) => (
             <CustomSubagentRow
-              key={sk.name}
+              key={`${sk.scope}:${sk.name}`}
               skill={sk}
               busy={busy}
               onEdit={() => { setAdding(false); setEditingSkill(sk); }}
               onDelete={() => void mutate(() => app.DeleteSubagentProfile(sk.name, sk.scope))}
             />
+          ))}
+          {external.map((sk) => (
+            <CustomSubagentRow key={`${sk.scope}:${sk.name}`} skill={sk} busy={busy} externallyManaged />
           ))}
         </div>
       )}
@@ -260,11 +268,13 @@ function CustomSubagentRow({
   busy,
   onEdit,
   onDelete,
+  externallyManaged = false,
 }: {
   skill: SkillView;
   busy: boolean;
-  onEdit: () => void;
-  onDelete: () => void;
+  onEdit?: () => void;
+  onDelete?: () => void;
+  externallyManaged?: boolean;
 }) {
   const t = useT();
   const toolsLabel = toolsSummaryLabel(skill.allowedTools, t);
@@ -285,19 +295,25 @@ function CustomSubagentRow({
             </span>
           </span>
         </span>
-        <span className="subagents-row-actions">
-          <button className="btn btn--small" type="button" disabled={busy} onClick={onEdit}>
-            {t("common.edit")}
-          </button>
-          <InlineConfirmButton
-            label={t("common.delete")}
-            confirmLabel={t("subagents.confirmDelete")}
-            cancelLabel={t("common.cancel")}
-            disabled={busy}
-            danger
-            onConfirm={onDelete}
-          />
-        </span>
+        {externallyManaged ? (
+          <Tooltip label={t("subagents.externalManagedHint")}>
+            <span className="cap-skill-badge">{t("subagents.externalManaged")}</span>
+          </Tooltip>
+        ) : (
+          <span className="subagents-row-actions">
+            <button className="btn btn--small" type="button" disabled={busy} onClick={() => onEdit?.()}>
+              {t("common.edit")}
+            </button>
+            <InlineConfirmButton
+              label={t("common.delete")}
+              confirmLabel={t("subagents.confirmDelete")}
+              cancelLabel={t("common.cancel")}
+              disabled={busy}
+              danger
+              onConfirm={() => onDelete?.()}
+            />
+          </span>
+        )}
       </div>
       <div className="cap-skill-card__desc">{skill.description}</div>
     </div>

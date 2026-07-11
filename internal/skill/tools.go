@@ -22,6 +22,11 @@ import (
 type SubagentRunOptions struct {
 	ContinueFrom string
 	ForkFrom     string
+	// HostInitiated marks an explicit controller entry point such as
+	// /<subagent-skill>. It may still carry a synthetic call context for nested
+	// UI events, but that ephemeral event ID must not be persisted as though it
+	// were a provider-visible parent tool call.
+	HostInitiated bool
 }
 
 type SubagentRunner func(ctx context.Context, sk Skill, task string, opts SubagentRunOptions) (string, error)

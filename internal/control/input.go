@@ -622,22 +622,33 @@ func (c *Controller) CustomCommand(input string) (sent string, found bool) {
 	return "", false
 }
 
-// RunSkill resolves a "/<name> args…" line against the loaded skills, returning
-// the skill's rendered body to send as a turn (found=false when no skill
-// matches). Invoking a skill by slash always inlines its body — the model reads
-// and follows the playbook in the main loop; a subagent skill's isolation is
-// only engaged when the model calls it via run_skill / the dedicated tool. The
-// caller applies Compose for plan-mode/memory framing.
-func (c *Controller) RunSkill(input string) (sent string, found bool) {
+// resolveSkillInvocation resolves a "/<name> args…" line to its live Skill and
+// task text. Submit uses RunAs to choose inline main-loop execution or isolated
+// subagent execution; RunSkill remains the compatibility renderer used by
+// management/existence checks and callers that explicitly need the body.
+func (c *Controller) resolveSkillInvocation(input string) (skill.Skill, string, bool) {
 	fields := strings.Fields(input)
 	if len(fields) == 0 {
-		return "", false
+		return skill.Skill{}, "", false
 	}
 	name := strings.TrimPrefix(fields[0], "/")
-	if sk, ok := c.skills.byName(name); ok {
-		return skill.Render(sk, strings.Join(fields[1:], " ")), true
+	sk, ok := c.skills.byName(name)
+	if !ok {
+		return skill.Skill{}, "", false
 	}
-	return "", false
+	return sk, strings.Join(fields[1:], " "), true
+}
+
+// RunSkill resolves a "/<name> args…" line against the loaded skills and
+// renders its body. Controller.Submit does not use this renderer for
+// runAs=subagent skills: direct slash invocation executes those through the
+// isolated SkillRunner instead.
+func (c *Controller) RunSkill(input string) (sent string, found bool) {
+	sk, task, ok := c.resolveSkillInvocation(input)
+	if !ok {
+		return "", false
+	}
+	return skill.Render(sk, task), true
 }
 
 // MCPPrompt resolves a "/mcp__server__prompt args…" line: it maps the positional

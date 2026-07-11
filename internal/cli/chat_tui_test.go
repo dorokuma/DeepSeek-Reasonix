@@ -20,6 +20,7 @@ import (
 	"reasonix/internal/event"
 	"reasonix/internal/i18n"
 	"reasonix/internal/provider"
+	"reasonix/internal/skill"
 )
 
 type blockingTurnRunner struct{ started chan struct{} }
@@ -2451,6 +2452,24 @@ func TestSlashQuitExit(t *testing.T) {
 		if _, ok := msg.(tea.QuitMsg); !ok {
 			t.Errorf("%s cmd should produce QuitMsg, got %T", cmd, msg)
 		}
+	}
+}
+
+func TestSlashSubagentWithoutTaskStaysIdleWithUsageHint(t *testing.T) {
+	ctrl := control.New(control.Options{Skills: []skill.Skill{{
+		Name: "helper", RunAs: skill.RunSubagent, Invocation: "manual", Scope: skill.ScopeGlobal,
+	}}})
+	m := newTestChatTUI()
+	m.ctrl = ctrl
+
+	if cmd := m.runSlashCommand("/helper"); cmd != nil {
+		t.Fatal("taskless subagent slash should be handled locally")
+	}
+	if m.state != tuiIdle {
+		t.Fatalf("taskless subagent slash left TUI state=%v, want idle", m.state)
+	}
+	if out := strings.Join(m.transcript, "\n"); !strings.Contains(out, "usage: /helper <task>") {
+		t.Fatalf("missing task usage hint:\n%s", out)
 	}
 }
 

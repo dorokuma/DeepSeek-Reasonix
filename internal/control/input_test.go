@@ -16,7 +16,9 @@ import (
 	"reasonix/internal/event"
 	"reasonix/internal/hook"
 	"reasonix/internal/memory"
+	"reasonix/internal/provider"
 	"reasonix/internal/skill"
+	"reasonix/internal/tool"
 )
 
 type fakeAutoPlanClassifier struct {
@@ -94,6 +96,238 @@ func TestSkillsReflectStoreChangesAfterControllerBuild(t *testing.T) {
 	}
 	if !strings.Contains(sent, "Hot body") || !strings.Contains(sent, "Arguments: now") {
 		t.Fatalf("rendered skill = %q", sent)
+	}
+}
+
+func TestSubmitSlashSubagentRunsIsolatedAndPersistsDistilledAnswer(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "session.jsonl")
+	sess := agent.NewSession("parent system")
+	exec := agent.New(nil, tool.NewRegistry(), sess, agent.Options{}, event.Discard)
+	events := make(chan event.Event, 16)
+	mainRunner := &fakeTurnRunner{}
+	var calls int
+	var gotSkill skill.Skill
+	var gotTask, gotParent, gotCallID string
+	var gotPlanMode bool
+	var gotHostInitiated bool
+	runner := func(ctx context.Context, sk skill.Skill, task string, opts skill.SubagentRunOptions) (string, error) {
+		calls++
+		gotSkill = sk
+		gotTask = task
+		gotParent = agent.ParentSession(ctx)
+		gotCallID, _, _, _ = agent.CallContext(ctx)
+		gotPlanMode = agent.PlanModeFromContext(ctx)
+		gotHostInitiated = opts.HostInitiated
+		agent.NestedSink(ctx, event.Discard).Emit(event.Event{
+			Kind: event.ToolDispatch,
+			Tool: event.Tool{ID: "child-read", Name: "read_file", ReadOnly: true},
+		})
+		return "isolated answer", nil
+	}
+	c := New(Options{
+		Runner:      mainRunner,
+		Executor:    exec,
+		Sink:        event.FuncSink(func(e event.Event) { events <- e }),
+		SessionDir:  dir,
+		SessionPath: path,
+		Skills: []skill.Skill{{
+			Name: "helper", Description: "isolated helper", Body: "secret child system prompt",
+			RunAs: skill.RunSubagent, Invocation: "manual", Scope: skill.ScopeGlobal,
+		}},
+		SkillRunner: runner,
+		ReadOnlySkillRunner: func(context.Context, skill.Skill, string, skill.SubagentRunOptions) (string, error) {
+			t.Fatal("normal-mode slash invocation must not use the read-only runner")
+			return "", nil
+		},
+		SkillProfile: func(skill.Skill) *event.Profile { return &event.Profile{Model: "test/model", Effort: "high"} },
+	})
+	defer c.Close()
+
+	c.SubmitDisplay("/helper inspect auth", "/helper inspect auth")
+	gotEvents := waitForTurnEvents(t, events)
+	if calls != 1 || gotSkill.Name != "helper" || !strings.Contains(gotTask, "inspect auth") {
+		t.Fatalf("isolated runner calls=%d skill=%q task=%q", calls, gotSkill.Name, gotTask)
+	}
+	if len(mainRunner.inputs) != 0 {
+		t.Fatalf("main runner must not receive a runAs=subagent slash turn: %q", mainRunner.inputs)
+	}
+	if gotParent != agent.BranchID(path) || !strings.HasPrefix(gotCallID, "slash-skill-") || gotPlanMode || !gotHostInitiated {
+		t.Fatalf("runner context parent=%q call=%q plan=%v hostInitiated=%v", gotParent, gotCallID, gotPlanMode, gotHostInitiated)
+	}
+	msgs := c.History()
+	if len(msgs) != 3 || msgs[1].Role != provider.RoleUser || msgs[2].Role != provider.RoleAssistant {
+		t.Fatalf("parent history = %+v, want system/user/assistant", msgs)
+	}
+	if !strings.Contains(msgs[1].Content, "inspect auth") || strings.Contains(msgs[1].Content, gotSkill.Body) {
+		t.Fatalf("parent user message should contain the task but not child system prompt: %q", msgs[1].Content)
+	}
+	if msgs[2].Content != "isolated answer" {
+		t.Fatalf("parent distilled answer = %q", msgs[2].Content)
+	}
+	var sawStart, sawParent, sawNested, sawText bool
+	for _, e := range gotEvents {
+		switch {
+		case e.Kind == event.TurnStarted:
+			sawStart = true
+		case e.Kind == event.ToolDispatch && e.Tool.Name == "run_skill":
+			sawParent = e.Tool.Profile != nil && e.Tool.Profile.Model == "test/model"
+		case e.Kind == event.ToolDispatch && e.Tool.Name == "read_file":
+			sawNested = e.Tool.ParentID == gotCallID && strings.HasPrefix(e.Tool.ID, gotCallID+"/")
+		case e.Kind == event.Text && e.Text == "isolated answer":
+			sawText = true
+		}
+	}
+	if !sawStart || !sawParent || !sawNested || !sawText {
+		t.Fatalf("slash subagent events missing: start=%v parent=%v nested=%v text=%v events=%+v", sawStart, sawParent, sawNested, sawText, gotEvents)
+	}
+
+	// The isolated turn must release the ordinary foreground admission gate so
+	// the same session can keep chatting immediately afterwards.
+	waitIdle(t, c)
+	c.SubmitUserTurn("next turn", "next turn")
+	waitForTurnEvents(t, events)
+	if len(mainRunner.inputs) != 1 || !strings.Contains(mainRunner.inputs[0], "next turn") {
+		t.Fatalf("normal chat did not resume after slash subagent: %q", mainRunner.inputs)
+	}
+}
+
+func TestSubmitSlashSubagentUsesReadOnlyRunnerInPlanMode(t *testing.T) {
+	sess := agent.NewSession("parent system")
+	exec := agent.New(nil, tool.NewRegistry(), sess, agent.Options{}, event.Discard)
+	events := make(chan event.Event, 12)
+	var normalCalls, readOnlyCalls int
+	var gotTask string
+	var gotPlanMode bool
+	c := New(Options{
+		Executor: exec,
+		Sink:     event.FuncSink(func(e event.Event) { events <- e }),
+		Skills: []skill.Skill{{
+			Name: "helper", Description: "isolated helper", Body: "child prompt",
+			RunAs: skill.RunSubagent, Invocation: "manual", Scope: skill.ScopeGlobal,
+		}},
+		SkillRunner: func(context.Context, skill.Skill, string, skill.SubagentRunOptions) (string, error) {
+			normalCalls++
+			return "", nil
+		},
+		ReadOnlySkillRunner: func(ctx context.Context, _ skill.Skill, task string, _ skill.SubagentRunOptions) (string, error) {
+			readOnlyCalls++
+			gotTask = task
+			gotPlanMode = agent.PlanModeFromContext(ctx)
+			return "read-only answer", nil
+		},
+	})
+	c.SetPlanMode(true)
+	c.Submit("/helper inspect only")
+	gotEvents := waitForTurnEvents(t, events)
+	if normalCalls != 0 || readOnlyCalls != 1 || !gotPlanMode || !strings.Contains(gotTask, PlanModeMarker) {
+		t.Fatalf("plan-mode runners normal=%d readonly=%d plan=%v task=%q", normalCalls, readOnlyCalls, gotPlanMode, gotTask)
+	}
+	for _, e := range gotEvents {
+		if e.Kind == event.ToolDispatch && e.Tool.Name == "run_skill" && !e.Tool.ReadOnly {
+			t.Fatal("plan-mode slash skill dispatch must be marked read-only")
+		}
+	}
+}
+
+func TestSubmitSlashSubagentRequiresTask(t *testing.T) {
+	events := make(chan event.Event, 2)
+	var calls int
+	c := New(Options{
+		Sink: event.FuncSink(func(e event.Event) { events <- e }),
+		Skills: []skill.Skill{{
+			Name: "helper", RunAs: skill.RunSubagent, Invocation: "manual", Scope: skill.ScopeGlobal,
+		}},
+		SkillRunner: func(context.Context, skill.Skill, string, skill.SubagentRunOptions) (string, error) {
+			calls++
+			return "", nil
+		},
+	})
+	c.Submit("/helper")
+	select {
+	case e := <-events:
+		if e.Kind != event.Notice || !strings.Contains(e.Text, "usage: /helper <task>") {
+			t.Fatalf("event = %+v", e)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("missing usage notice")
+	}
+	if calls != 0 || c.Running() || len(c.History()) != 0 {
+		t.Fatalf("taskless invocation calls=%d running=%v history=%v", calls, c.Running(), c.History())
+	}
+}
+
+func TestSubmitSlashSubagentWithoutRunnerFinishesWithError(t *testing.T) {
+	events := make(chan event.Event, 2)
+	c := New(Options{
+		Sink: event.FuncSink(func(e event.Event) { events <- e }),
+		Skills: []skill.Skill{{
+			Name: "helper", RunAs: skill.RunSubagent, Invocation: "manual", Scope: skill.ScopeGlobal,
+		}},
+	})
+	c.Submit("/helper inspect auth")
+	gotEvents := waitForTurnEvents(t, events)
+	waitIdle(t, c)
+	if len(gotEvents) != 1 || gotEvents[0].Kind != event.TurnDone || gotEvents[0].Err == nil ||
+		!strings.Contains(gotEvents[0].Err.Error(), "runner is unavailable") {
+		t.Fatalf("missing terminal runner error: %+v", gotEvents)
+	}
+}
+
+func TestCancelSlashSubagentStopsChildAndKeepsParentSessionUsable(t *testing.T) {
+	sess := agent.NewSession("parent system")
+	exec := agent.New(nil, tool.NewRegistry(), sess, agent.Options{}, event.Discard)
+	events := make(chan event.Event, 12)
+	started := make(chan struct{})
+	c := New(Options{
+		Executor: exec,
+		Sink:     event.FuncSink(func(e event.Event) { events <- e }),
+		Skills: []skill.Skill{{
+			Name: "helper", RunAs: skill.RunSubagent, Invocation: "manual", Scope: skill.ScopeGlobal,
+		}},
+		SkillRunner: func(ctx context.Context, _ skill.Skill, _ string, _ skill.SubagentRunOptions) (string, error) {
+			close(started)
+			<-ctx.Done()
+			return "", ctx.Err()
+		},
+	})
+	c.Submit("/helper inspect auth")
+	select {
+	case <-started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("slash subagent did not start")
+	}
+	c.Cancel()
+	gotEvents := waitForTurnEvents(t, events)
+	waitIdle(t, c)
+	if c.Running() {
+		t.Fatal("controller still running after cancelling slash subagent")
+	}
+	msgs := c.History()
+	if len(msgs) != 2 || msgs[1].Role != provider.RoleUser {
+		t.Fatalf("cancelled slash history = %+v, want system + preserved user task", msgs)
+	}
+	for _, e := range gotEvents {
+		if e.Kind == event.Message || (e.Kind == event.Text && e.Text != "") {
+			t.Fatalf("cancelled slash subagent emitted a final answer: %+v", e)
+		}
+	}
+}
+
+func waitForTurnEvents(t *testing.T, events <-chan event.Event) []event.Event {
+	t.Helper()
+	deadline := time.After(10 * time.Second)
+	var got []event.Event
+	for {
+		select {
+		case e := <-events:
+			got = append(got, e)
+			if e.Kind == event.TurnDone {
+				return got
+			}
+		case <-deadline:
+			t.Fatalf("timed out waiting for TurnDone; events=%+v", got)
+		}
 	}
 }
 
