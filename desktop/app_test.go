@@ -3370,11 +3370,22 @@ func newStaleWorkspaceBindingFixtureWithLayout(t *testing.T, suffix, layoutStyle
 	isolateDesktopUserDirs(t)
 	setDesktopTestCredential(t, "TEST_MODEL_KEY", "sk-test")
 
+	// Steers and idle-steer fallbacks start real provider turns (they are no
+	// longer command-interpreted), so the fixture's provider must complete
+	// instantly instead of pointing at an unreachable host — otherwise every
+	// steer leaves the controller running for the rest of the test.
+	providerStub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		_, _ = io.WriteString(w, "data: {\"choices\":[{\"delta\":{\"content\":\"ok\"}}]}\n\ndata: [DONE]\n\n")
+	}))
+	t.Cleanup(providerStub.Close)
+
 	cfg := config.Default()
 	cfg.DefaultModel = "test/test-model"
 	cfg.Desktop.ProviderAccess = []string{"test"}
 	cfg.Providers = []config.ProviderEntry{
-		{Name: "test", Kind: "openai", BaseURL: "https://example.invalid/v1", Model: "test-model", APIKeyEnv: "TEST_MODEL_KEY"},
+		{Name: "test", Kind: "openai", BaseURL: providerStub.URL, Model: "test-model", APIKeyEnv: "TEST_MODEL_KEY"},
 	}
 	if strings.TrimSpace(layoutStyle) != "" {
 		if err := cfg.SetDesktopLayoutStyle(layoutStyle); err != nil {
@@ -3566,7 +3577,10 @@ func TestEnsureTabControllerWorkspaceWarnsWhenPinnedSessionSwitchesWorkspace(t *
 func TestSteerForTabReconcilesStaleWorkspaceBeforeIdleFallback(t *testing.T) {
 	f := newStaleWorkspaceBindingFixture(t, "steer_idle_fallback")
 
-	if err := f.app.SteerForTab(f.tab.ID, "/unknown-command"); err != nil {
+	// The idle fallback submits the steer text verbatim as a provider turn
+	// (steers are never command-interpreted); the fixture's provider stub
+	// completes it instantly.
+	if err := f.app.SteerForTab(f.tab.ID, "steer guidance"); err != nil {
 		t.Fatalf("SteerForTab: %v", err)
 	}
 	waitNotRunning(t, f.tab.Ctrl)
@@ -3703,7 +3717,7 @@ func runQuickClickWorkspaceReconcileTest(t *testing.T, layoutStyle string) {
 	}
 	actions := []quickAction{
 		{name: "submit", run: func() error { return f.app.SubmitToTab(f.tab.ID, "/unknown-command") }},
-		{name: "steer", run: func() error { return f.app.SteerForTab(f.tab.ID, "/unknown-command") }},
+		{name: "steer", run: func() error { return f.app.SteerForTab(f.tab.ID, "steer guidance") }},
 		{name: "compact", run: func() error { return f.app.Compact() }},
 		{name: "submit-display", run: func() error { return f.app.SubmitDisplayToTab(f.tab.ID, "/unknown display", "/unknown-command") }},
 	}
@@ -3743,6 +3757,14 @@ func runQuickClickWorkspaceReconcileTest(t *testing.T, layoutStyle string) {
 	wg.Wait()
 	close(errs)
 	for err := range errs {
+		// The steer action holds a real provider turn now, so racing quick
+		// clicks may legitimately observe a busy controller. This test
+		// asserts workspace-rebuild serialization, not that every
+		// concurrent action wins the turn.
+		if strings.Contains(err.Error(), "turn already running") ||
+			strings.Contains(err.Error(), "cannot compact while a turn is running") {
+			continue
+		}
 		t.Error(err)
 	}
 	if t.Failed() {
