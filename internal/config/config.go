@@ -62,11 +62,22 @@ type Config struct {
 	Serve            ServeConfig         `toml:"serve"`
 	Secrets          SecretsConfig       `toml:"secrets"`
 
-	providerSources          map[string]providerSourceScope
-	shadowedProjectProviders []ProviderEntry
-	expansionEnv             map[string]string
-	pluginPackageOwners      map[string]string
-	pluginPackageSkillOwners map[string][]string
+	providerSources            map[string]providerSourceScope
+	shadowedProjectProviders   []ProviderEntry
+	ignoredProjectDefaultModel string
+	expansionEnv               map[string]string
+	pluginPackageOwners        map[string]string
+	pluginPackageSkillOwners   map[string][]string
+}
+
+// IgnoredProjectDefaultModel returns the project reasonix.toml default_model
+// that LoadForRoot ignored because no configured provider serves it (see
+// restoreUnresolvableProjectDefaultModel), or "" when none was ignored.
+func (c *Config) IgnoredProjectDefaultModel() string {
+	if c == nil {
+		return ""
+	}
+	return c.ignoredProjectDefaultModel
 }
 
 // SecretsConfig controls the credential protection layers. It is a user-global

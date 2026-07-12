@@ -58,15 +58,18 @@ func loadForRoot(root string, migrateOnDisk bool) (*Config, error) {
 	}
 
 	var tomlSources []string
+	userDefaultModelExplicit := false
 	if uc := userConfigLoadPath(); uc != "" {
 		tomlSources = append(tomlSources, uc)
 		if err := mergeTOML(cfg, uc); err != nil {
 			return nil, err
 		}
+		userDefaultModelExplicit = tomlFileDefinesKey(uc, "default_model")
 	}
 	globalMaxSteps := cfg.Agent.MaxSteps
 	globalPlannerMaxSteps := cfg.Agent.PlannerMaxSteps
 	globalMemoryCompiler := cfg.Agent.MemoryCompiler
+	userDefaultModel := cfg.DefaultModel
 	// Deep-copy: TOML decoding writes through an existing *bool rather than
 	// replacing it, so a shallow struct copy would alias the pointer and the
 	// project merge below would mutate the captured global value in place.
@@ -145,6 +148,9 @@ func loadForRoot(root string, migrateOnDisk bool) (*Config, error) {
 	backfillDeepSeekOfficialPrices(cfg)
 	normalizeEffortConfig(cfg)
 	backfillDeepSeekPro(cfg)
+	if userDefaultModelExplicit {
+		restoreUnresolvableProjectDefaultModel(cfg, userDefaultModel)
+	}
 	cfg.Agent.AutoPlan = userAutoPlanMode()
 	cfg.CredentialsStore = credentialsStoreMode()
 	cfg.setExpansionEnv(expansionEnv)
@@ -184,6 +190,48 @@ func userAutoPlanMode() string {
 	default:
 		return "off"
 	}
+}
+
+// restoreUnresolvableProjectDefaultModel falls back to the user/global
+// default_model when a project reasonix.toml overrides it with a reference no
+// configured provider serves (#4218). Pre-v1.11 persistence paths (e.g. the
+// "always allow" writer) full-rendered ./reasonix.toml and pinned the built-in
+// default_model ("deepseek-flash") into it; once the user's [[providers]]
+// replaced the built-in presets, that stale name resolved to nothing and boot
+// hard-failed in every launch from that folder. In-memory only — the project
+// file is untouched, and a project override that does resolve still wins. The
+// ignored value is kept so boot can surface a notice.
+//
+// Callers must only invoke this when the user config explicitly defines
+// default_model: falling back to the built-in default would silently mask a
+// broken ref when the project file is the user's only config, and that case
+// must keep the actionable boot error (TestBuildUnknownModelErrorIsActionable).
+func restoreUnresolvableProjectDefaultModel(c *Config, userDefault string) {
+	if c == nil {
+		return
+	}
+	if c.DefaultModel == userDefault {
+		return
+	}
+	if _, ok := c.ResolveModel(c.DefaultModel); ok {
+		return
+	}
+	if _, ok := c.ResolveModel(userDefault); !ok {
+		return
+	}
+	c.ignoredProjectDefaultModel = c.DefaultModel
+	c.DefaultModel = userDefault
+}
+
+// tomlFileDefinesKey reports whether the TOML file at path explicitly defines
+// the given top-level key. Missing or unparseable files report false.
+func tomlFileDefinesKey(path string, key ...string) bool {
+	var f Config
+	meta, err := decodeTOMLFile(path, &f)
+	if err != nil {
+		return false
+	}
+	return meta.IsDefined(key...)
 }
 
 // backfillDeepSeekPro restores deepseek-pro for configs the pre-fix setup wizard
