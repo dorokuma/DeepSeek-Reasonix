@@ -482,10 +482,11 @@ func TestUpsertProvider(t *testing.T) {
 
 	// Missing required fields error.
 	for _, bad := range []ProviderEntry{
-		{Kind: "openai", BaseURL: "u", Model: "m"}, // no name
-		{Name: "a", BaseURL: "u", Model: "m"},      // no kind
-		{Name: "a", Kind: "openai", Model: "m"},    // no base_url
-		{Name: "a", Kind: "openai", BaseURL: "u"},  // no model
+		{Kind: "openai", BaseURL: "u", Model: "m"},                                   // no name
+		{Name: "a", BaseURL: "u", Model: "m"},                                        // no kind
+		{Name: "a", Kind: "openai", Model: "m"},                                      // no base_url
+		{Name: "a", Kind: "openai", BaseURL: "u"},                                    // no model
+		{Name: "a", Kind: "openai", BaseURL: "u", Model: "m", APIKeyEnv: "grok-4.5"}, // invalid credential variable name
 	} {
 		if err := c.UpsertProvider(bad); err == nil {
 			t.Errorf("expected validation error for %+v", bad)

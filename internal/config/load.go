@@ -447,6 +447,30 @@ func mergeTOMLProviderAccess(paths []string) ([]string, bool, error) {
 	return merged, saw, nil
 }
 
+// DesktopProviderAccessDeclared reports whether path explicitly declares
+// desktop.provider_access. A missing declaration and an explicit empty list
+// both decode to an empty slice, but they have different product semantics:
+// legacy configs infer access from configured providers, while [] means the
+// user intentionally removed every desktop access entry.
+func DesktopProviderAccessDeclared(path string) (bool, error) {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return false, nil
+	}
+	if _, err := os.Stat(path); err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	var f Config
+	meta, err := decodeTOMLFile(path, &f)
+	if err != nil {
+		return false, fmt.Errorf("config %s: %w", path, err)
+	}
+	return meta.IsDefined("desktop", "provider_access"), nil
+}
+
 // LoadForEdit returns a config to seed the `reasonix setup` wizard when reconfiguring:
 // the built-in defaults with the file at path (if present) decoded on top, so a
 // reconfigure preserves the user's existing providers and agent settings instead

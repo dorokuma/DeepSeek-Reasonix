@@ -950,15 +950,12 @@ func setupConfig(args []string) int {
 	t := resolveSetupTargets(args)
 	path := t.config
 	if _, err := os.Stat(path); err == nil {
-		// Non-interactive must not clobber an existing config silently.
+		// Non-interactive must not clobber an existing config silently. On a TTY,
+		// setup is a non-destructive configuration manager, so opening an existing
+		// file no longer needs an overwrite confirmation.
 		if !isInteractive() {
 			fmt.Fprintf(os.Stderr, i18n.M.NotOverwritingFmt+"\n", path)
 			return 1
-		}
-		in := bufio.NewScanner(os.Stdin)
-		if !confirmReconfigureExistingConfig(path, in, os.Stdout) {
-			fmt.Println(i18n.M.KeepingExisting)
-			return 0
 		}
 	}
 
@@ -998,20 +995,14 @@ func initHint() int {
 	return 0
 }
 
-// interactiveSetup runs the setup wizard, then writes the config to configPath
-// and any entered API keys to Reasonix's global .env. The wizard
-// is intentionally minimal: pick language, pick
-// provider, enter API keys. Language is asked first so every subsequent prompt
-// is already in the user's language even when env auto-detection got it wrong.
-// Two-model collaboration is left as a manual config edit (planner_model) so
-// first-run never confronts newcomers with advanced choices.
+// interactiveSetup opens the staged provider manager. Nothing is written until
+// the user explicitly chooses Save and exit; q/Ctrl-C leaves both config and
+// credentials untouched.
 func interactiveSetup(configPath, envPath string) int {
 	// Seed from the existing config when reconfiguring, so a re-run to fix a key
 	// preserves the user's providers / agent settings instead of resetting to
 	// defaults. First run (no file) falls back to the built-in defaults.
 	cfg := config.LoadForEdit(configPath)
-	prevDefault := cfg.DefaultModel
-
 	lang, err := selectLanguage()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "\nsetup cancelled.")
@@ -1031,45 +1022,7 @@ func interactiveSetup(configPath, envPath string) int {
 	}))
 	fmt.Println()
 
-	enabled, err := selectEnabledProviders(cfg.Providers, cfg.DeepSeekOfficialPricingLanguage())
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "\n"+i18n.M.SetupCancelled)
-		return 1
-	}
-
-	envLines := configureKeys(enabled, os.Stdin, os.Stdout)
-
-	cfg.Providers = enabled
-	// Keep the previous default model if it's still enabled; otherwise fall back
-	// to the first selected provider.
-	cfg.DefaultModel = enabled[0].Name
-	for _, p := range enabled {
-		if p.Name == prevDefault {
-			cfg.DefaultModel = prevDefault
-			break
-		}
-	}
-
-	if err := cfg.SaveTo(configPath); err != nil {
-		fmt.Fprintln(os.Stderr, i18n.M.WriteConfigErr, err)
-		return 1
-	}
-	fmt.Printf("\n%s %s\n", green("✓"), fmt.Sprintf(i18n.M.WroteFileFmt, displayPath(configPath)))
-
-	if len(envLines) > 0 {
-		target, err := config.StoreCredentialLines(envLines)
-		if err != nil {
-			fmt.Fprintln(os.Stderr, i18n.M.WriteEnvErr, err)
-			return 1
-		}
-		if target == "" {
-			target = envPath
-		}
-		fmt.Printf("%s %s\n", green("✓"), fmt.Sprintf(i18n.M.WroteFileFmt, displayPath(target)))
-	}
-
-	fmt.Printf("\n%s %s\n", accent("◆"), i18n.M.SetupComplete)
-	return 0
+	return runProviderSetupManager(cfg, configPath, envPath)
 }
 
 // pickSessionToResume scans the session dir, takes the 10 most recent, and
@@ -1141,6 +1094,10 @@ func selectEnabledProviders(providers []config.ProviderEntry, pricingLanguage st
 	providers, stale := filterStaleCustomEntries(providers)
 	for _, s := range stale {
 		fmt.Fprintf(os.Stderr, "  %s\n", dim(fmt.Sprintf(i18n.M.SkipStaleCustomEntryFmt, s.Name, s.BaseURL)))
+	}
+	providers, keyEnvRepairs := repairInvalidProviderKeyEnvs(providers)
+	for _, repair := range keyEnvRepairs {
+		fmt.Fprintf(os.Stderr, "  %s\n", dim(fmt.Sprintf(i18n.M.RepairedAPIKeyEnvFmt, repair.provider, repair.old, repair.new)))
 	}
 	providers = withBuiltinFamiliesForLanguage(providers, pricingLanguage)
 
@@ -1461,6 +1418,37 @@ func apiKeyEnvFromProviderName(name string) string {
 	return stem + "_API_KEY"
 }
 
+type providerKeyEnvRepair struct {
+	provider string
+	old      string
+	new      string
+}
+
+func repairInvalidProviderKeyEnvs(providers []config.ProviderEntry) ([]config.ProviderEntry, []providerKeyEnvRepair) {
+	providers = append([]config.ProviderEntry(nil), providers...)
+	var repairs []providerKeyEnvRepair
+	for i := range providers {
+		old := strings.TrimSpace(providers[i].APIKeyEnv)
+		if old == "" || config.IsValidCredentialKey(old) {
+			continue
+		}
+		keyEnv := apiKeyEnvFromProviderName(providers[i].Name)
+		providers[i].APIKeyEnv = keyEnv
+		repairs = append(repairs, providerKeyEnvRepair{provider: providers[i].Name, old: old, new: keyEnv})
+	}
+	return providers, repairs
+}
+
+func promptAPIKeyEnvName(in *bufio.Scanner, w io.Writer, label, def string) string {
+	for {
+		keyEnv := ask(in, w, label, def)
+		if config.IsValidCredentialKey(keyEnv) {
+			return keyEnv
+		}
+		fmt.Fprintf(w, i18n.M.InvalidAPIKeyEnvFmt+"\n", keyEnv)
+	}
+}
+
 func fnv1a32Hex(s string) string {
 	hash := uint32(0x811c9dc5)
 	for _, unit := range utf16.Encode([]rune(strings.TrimSpace(s))) {
@@ -1522,18 +1510,20 @@ func promptCustomProviderManualWith(in *bufio.Scanner, baseURL, keyEnv, apiKey s
 		}
 	}
 	providerName := providerSlug("custom", baseURL)
+	modelName := ask(in, os.Stdout, i18n.M.CustomPromptModel, "")
+	if modelName == "" {
+		return nil, fmt.Errorf("model name is required")
+	}
 	if keyEnv == "" {
-		keyEnv = ask(in, os.Stdout, i18n.M.CustomPromptKeyEnv, apiKeyEnvFromProviderName(providerName))
+		keyEnv = promptAPIKeyEnvName(in, os.Stdout, i18n.M.CustomPromptKeyEnv, apiKeyEnvFromProviderName(providerName))
+	} else if !config.IsValidCredentialKey(keyEnv) {
+		return nil, fmt.Errorf("invalid API key variable name %q", keyEnv)
 	}
 	if apiKey == "" {
 		apiKey = ask(in, os.Stdout, i18n.M.CustomPromptAPIKey, "")
 	}
 	if apiKey != "" {
 		os.Setenv(keyEnv, apiKey)
-	}
-	modelName := ask(in, os.Stdout, i18n.M.CustomPromptModel, "")
-	if modelName == "" {
-		return nil, fmt.Errorf("model name is required")
 	}
 	entry := config.ProviderEntry{
 		Name: providerName, Kind: "openai", BaseURL: baseURL,
@@ -1556,7 +1546,7 @@ func promptCustomProviderFromURL() ([]config.ProviderEntry, error) {
 		return nil, fmt.Errorf("base URL is required")
 	}
 	providerName := providerSlug("custom", baseURL)
-	keyEnv := ask(in, os.Stdout, i18n.M.CustomPromptKeyEnv, apiKeyEnvFromProviderName(providerName))
+	keyEnv := promptAPIKeyEnvName(in, os.Stdout, i18n.M.CustomPromptKeyEnv, apiKeyEnvFromProviderName(providerName))
 	apiKey := ask(in, os.Stdout, i18n.M.CustomPromptAPIKey, "")
 	if apiKey != "" {
 		os.Setenv(keyEnv, apiKey)
@@ -1628,18 +1618,20 @@ func promptAnthropicProviderManualWith(in *bufio.Scanner, baseURL, keyEnv, apiKe
 			return nil, fmt.Errorf("base URL is required")
 		}
 	}
+	modelName := ask(in, os.Stdout, i18n.M.AnthropicPromptModel, "")
+	if modelName == "" {
+		return nil, fmt.Errorf("model name is required")
+	}
 	if keyEnv == "" {
-		keyEnv = ask(in, os.Stdout, i18n.M.AnthropicPromptKeyEnv, "ANTHROPIC_API_KEY")
+		keyEnv = promptAPIKeyEnvName(in, os.Stdout, i18n.M.AnthropicPromptKeyEnv, "ANTHROPIC_API_KEY")
+	} else if !config.IsValidCredentialKey(keyEnv) {
+		return nil, fmt.Errorf("invalid API key variable name %q", keyEnv)
 	}
 	if apiKey == "" {
 		apiKey = ask(in, os.Stdout, i18n.M.AnthropicPromptAPIKey, "")
 	}
 	if apiKey != "" {
 		os.Setenv(keyEnv, apiKey)
-	}
-	modelName := ask(in, os.Stdout, i18n.M.AnthropicPromptModel, "")
-	if modelName == "" {
-		return nil, fmt.Errorf("model name is required")
 	}
 	entry := config.ProviderEntry{
 		Name: providerSlug("anthropic", baseURL), Kind: "anthropic", BaseURL: baseURL,
@@ -1662,7 +1654,7 @@ func promptAnthropicProviderFromURL() ([]config.ProviderEntry, error) {
 	if baseURL == "" {
 		return nil, fmt.Errorf("base URL is required")
 	}
-	keyEnv := ask(in, os.Stdout, i18n.M.AnthropicPromptKeyEnv, "ANTHROPIC_API_KEY")
+	keyEnv := promptAPIKeyEnvName(in, os.Stdout, i18n.M.AnthropicPromptKeyEnv, "ANTHROPIC_API_KEY")
 	apiKey := ask(in, os.Stdout, i18n.M.AnthropicPromptAPIKey, "")
 	if apiKey != "" {
 		os.Setenv(keyEnv, apiKey)
