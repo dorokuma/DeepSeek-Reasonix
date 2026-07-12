@@ -28609,6 +28609,10 @@ body > .mermaid-diagram--fullscreen {
 .app--creation .sidebar,
 :root[data-theme-style] .app--creation .sidebar {
   --project-tree-row-radius: 9px;
+  --sidebar-content-inset: 10px;
+  --sidebar-topic-indent: 14px;
+  --sidebar-topic-marker-gutter: 10px;
+  --sidebar-topic-time-col: 42px;
   padding: 38px 12px 14px;
   border-right: 0;
   background: color-mix(in srgb, var(--sidebar-bg) 88%, transparent);
@@ -28618,14 +28622,20 @@ body > .mermaid-diagram--fullscreen {
 :root[data-theme-style] .app--creation .sidebar__brand {
   min-height: 30px;
   margin-bottom: 18px;
-  padding-inline: 8px;
+  /* Same content inset as 新对话 / 功能 items — no extra horizontal drift. */
+  padding-inline: var(--sidebar-content-inset);
+  justify-content: flex-start;
 }
 
 .app--creation .sidebar__brand-logo,
 :root[data-theme-style] .app--creation .sidebar__brand-logo {
   width: 118px;
   height: 28px;
-  margin-left: -15px;
+  /* Wordmark SVG has left transparent padding (~15% of viewBox). Pull the
+     glyph left so the R mark lines up with the 新建对话 icon edge
+     (same content inset). Scale of base -21px @ 136px → ~-18px @ 118px. */
+  margin-left: -18px;
+  object-position: left center;
 }
 
 .app--creation .sidebar__new,
@@ -28634,12 +28644,12 @@ body > .mermaid-diagram--fullscreen {
   height: 38px;
   min-height: 38px;
   margin-bottom: 12px;
-  padding-inline: 12px;
+  padding-inline: var(--sidebar-content-inset);
   border: 0;
   border-radius: 12px;
   background:
-    radial-gradient(120% 95% at 12% 0%, color-mix(in srgb, var(--accent) 11%, transparent) 0%, color-mix(in srgb, var(--accent) 5%, transparent) 38%, transparent 72%),
-    linear-gradient(135deg, color-mix(in srgb, var(--accent) 5%, color-mix(in srgb, var(--bg-elev) 30%, transparent)) 0%, color-mix(in srgb, var(--bg-elev) 18%, transparent) 48%, color-mix(in srgb, var(--bg) 10%, transparent) 100%);
+    radial-gradient(120% 95% at 12% 0%, color-mix(in srgb, var(--accent) 10%, transparent) 0%, color-mix(in srgb, var(--accent) 4%, transparent) 38%, transparent 72%),
+    linear-gradient(135deg, color-mix(in srgb, var(--accent) 4%, color-mix(in srgb, var(--bg-elev) 28%, transparent)) 0%, color-mix(in srgb, var(--bg-elev) 16%, transparent) 48%, color-mix(in srgb, var(--bg) 10%, transparent) 100%);
   color: var(--fg);
   font-size: 12.5px;
   font-weight: 650;
@@ -28654,11 +28664,11 @@ body > .mermaid-diagram--fullscreen {
 .app--creation .sidebar__new:hover,
 :root[data-theme-style] .app--creation .sidebar__new:hover {
   background:
-    radial-gradient(120% 95% at 12% 0%, color-mix(in srgb, var(--accent) 14%, transparent) 0%, color-mix(in srgb, var(--accent) 7%, transparent) 38%, transparent 72%),
-    linear-gradient(135deg, color-mix(in srgb, var(--accent) 7%, color-mix(in srgb, var(--bg-elev) 34%, transparent)) 0%, color-mix(in srgb, var(--bg-elev) 22%, transparent) 48%, color-mix(in srgb, var(--bg) 12%, transparent) 100%);
+    radial-gradient(120% 95% at 12% 0%, color-mix(in srgb, var(--accent) 13%, transparent) 0%, color-mix(in srgb, var(--accent) 6%, transparent) 38%, transparent 72%),
+    linear-gradient(135deg, color-mix(in srgb, var(--accent) 6%, color-mix(in srgb, var(--bg-elev) 32%, transparent)) 0%, color-mix(in srgb, var(--bg-elev) 20%, transparent) 48%, color-mix(in srgb, var(--bg) 12%, transparent) 100%);
   color: var(--fg);
   filter: none;
-  transform: translateY(-1px);
+  transform: none;
 }
 
 .app--creation .sidebar-feature-zone,
@@ -28666,8 +28676,9 @@ body > .mermaid-diagram--fullscreen {
   flex: 0 0 auto;
   display: grid;
   gap: 6px;
-  margin: 2px 0 16px;
-  padding: 0 0 2px;
+  margin: 2px 0 18px;
+  padding: 0 0 12px;
+  border-bottom: 1px solid color-mix(in srgb, var(--fg-faint) 8%, transparent);
 }
 
 .app--creation .sidebar-feature-zone__title,
@@ -28675,7 +28686,7 @@ body > .mermaid-diagram--fullscreen {
 :root[data-theme-style] .app--creation .sidebar-feature-zone__title,
 :root[data-theme-style] .app--creation .project-tree__header-title {
   min-height: 24px;
-  padding: 2px 6px 0;
+  padding: 2px var(--sidebar-content-inset) 0;
   color: color-mix(in srgb, var(--fg-faint) 78%, transparent);
   font-size: 12px;
   font-weight: 640;
@@ -28696,7 +28707,7 @@ body > .mermaid-diagram--fullscreen {
   gap: 8px;
   width: 100%;
   height: 30px;
-  padding: 0 9px;
+  padding: 0 var(--sidebar-content-inset);
   border: 1px solid transparent;
   border-radius: 9px;
   background: transparent;
@@ -28710,7 +28721,7 @@ body > .mermaid-diagram--fullscreen {
 .app--creation .sidebar-feature-zone__item svg,
 :root[data-theme-style] .app--creation .sidebar-feature-zone__item svg {
   flex: 0 0 auto;
-  color: color-mix(in srgb, var(--accent) 72%, var(--fg-faint));
+  color: color-mix(in srgb, var(--accent) 58%, var(--fg-faint));
 }
 
 .app--creation .sidebar-feature-zone__item:hover,
@@ -28724,7 +28735,7 @@ body > .mermaid-diagram--fullscreen {
 
 .app--creation .project-tree,
 :root[data-theme-style] .app--creation .project-tree {
-  gap: 13px;
+  gap: 14px;
 }
 
 .app--creation .project-tree__search,
@@ -28734,7 +28745,7 @@ body > .mermaid-diagram--fullscreen {
   height: 36px;
   min-height: 36px;
   margin: 0;
-  padding-inline: 11px;
+  padding-inline: var(--sidebar-content-inset);
   border-color: color-mix(in srgb, var(--fg-faint) 9%, transparent);
   border-radius: 11px;
   background: color-mix(in srgb, var(--bg-elev) 12%, transparent);
@@ -28750,7 +28761,7 @@ body > .mermaid-diagram--fullscreen {
 :root[data-theme-style] .app--creation .project-tree__header {
   order: 2;
   min-height: 24px;
-  padding: 2px 6px 0;
+  padding: 2px var(--sidebar-content-inset) 0;
   color: color-mix(in srgb, var(--fg-faint) 78%, transparent);
   font-size: 11px;
   font-weight: 560;
@@ -28764,6 +28775,7 @@ body > .mermaid-diagram--fullscreen {
 .app--creation .project-tree__list,
 :root[data-theme-style] .app--creation .project-tree__list {
   order: 3;
+  padding-bottom: 6px;
 }
 
 .app--creation .project-tree__header-icon,
@@ -28809,13 +28821,13 @@ body > .mermaid-diagram--fullscreen {
 :root[data-theme-style] .app--creation .project-tree__folder {
   height: 32px;
   min-height: 32px;
-  padding-inline: 2px;
+  padding-inline: 0;
 }
 
 .app--creation .project-tree__folder-main,
 :root[data-theme-style] .app--creation .project-tree__folder-main {
   gap: 8px;
-  padding-left: 9px !important;
+  padding-left: var(--sidebar-content-inset) !important;
 }
 
 .app--creation .project-tree__icon-stack,
@@ -28832,6 +28844,7 @@ body > .mermaid-diagram--fullscreen {
 .app--creation .project-tree__folder--active .project-tree__folder-label,
 :root[data-theme-style] .app--creation .project-tree__folder--active .project-tree__folder-label {
   color: var(--fg);
+  font-weight: 560;
 }
 
 .app--creation .project-tree__action-slot,
@@ -28883,10 +28896,10 @@ body > .mermaid-diagram--fullscreen {
 
 .app--creation .project-tree__topic,
 :root[data-theme-style] .app--creation .project-tree__topic {
-  min-height: 23px;
-  margin-left: 17px;
-  margin-right: 2px;
-  margin-bottom: 0;
+  min-height: 26px;
+  margin-left: var(--sidebar-topic-indent);
+  margin-right: 0;
+  margin-bottom: 1px;
   border: 1px solid transparent;
   font-size: 12px;
 }
@@ -28896,36 +28909,38 @@ body > .mermaid-diagram--fullscreen {
 :root[data-theme-style] .app--creation .project-tree__topic--active,
 :root[data-theme-style] .app--creation .project-tree__topic--active:hover {
   border-color: transparent;
-  background: transparent;
+  background: color-mix(in srgb, var(--accent) 3.5%, transparent);
 }
 
 .app--creation .project-tree__topic--active::before,
 :root[data-theme-style] .app--creation .project-tree__topic--active::before {
-  left: 6px;
-  top: 5px;
-  bottom: 5px;
+  left: 3px;
+  top: 7px;
+  bottom: 7px;
   width: 2px;
   border-radius: 999px;
-  background: var(--tree-row-marker);
+  background: color-mix(in srgb, var(--accent) 62%, var(--fg-faint));
 }
 
 .app--creation .project-tree__topic-main,
 :root[data-theme-style] .app--creation .project-tree__topic-main {
-  min-height: 23px;
-  padding-left: 12px;
+  min-height: 26px;
+  padding-left: var(--sidebar-topic-marker-gutter);
 }
 
 .app--creation .project-tree__topic--with-side,
 :root[data-theme-style] .app--creation .project-tree__topic--with-side {
-  min-height: 23px;
+  min-height: 26px;
 }
 
 .app--creation .project-tree__topic--with-side .project-tree__topic-main,
 :root[data-theme-style] .app--creation .project-tree__topic--with-side .project-tree__topic-main {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 8px;
-  min-height: 23px;
+  grid-template-columns: minmax(0, 1fr) var(--sidebar-topic-time-col);
+  column-gap: 6px;
+  align-items: center;
+  min-height: 26px;
+  padding-right: 4px;
 }
 
 .app--creation .project-tree__topic-label,
@@ -28939,6 +28954,7 @@ body > .mermaid-diagram--fullscreen {
 .app--creation .project-tree__topic--active .project-tree__topic-label,
 :root[data-theme-style] .app--creation .project-tree__topic--active .project-tree__topic-label {
   color: var(--fg);
+  font-weight: 560;
 }
 
 .app--creation .project-tree__topic-status,
@@ -28959,16 +28975,27 @@ body > .mermaid-diagram--fullscreen {
 
 .app--creation .project-tree__topic-side,
 :root[data-theme-style] .app--creation .project-tree__topic-side {
-  flex: 0 0 auto;
+  flex: 0 0 var(--sidebar-topic-time-col);
   display: inline-flex;
   align-items: center;
   justify-content: flex-end;
-  gap: 6px;
-  min-width: 38px;
-  color: color-mix(in srgb, var(--fg-faint) 76%, transparent);
-  font-size: 11px;
+  gap: 4px;
+  width: var(--sidebar-topic-time-col);
+  min-width: var(--sidebar-topic-time-col);
+  color: color-mix(in srgb, var(--fg-faint) 62%, transparent);
+  font-size: 10.5px;
   line-height: 1;
   white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.app--creation .project-tree__topic:hover .project-tree__topic-side,
+.app--creation .project-tree__topic:focus-within .project-tree__topic-side,
+.app--creation .project-tree__topic--active .project-tree__topic-side,
+:root[data-theme-style] .app--creation .project-tree__topic:hover .project-tree__topic-side,
+:root[data-theme-style] .app--creation .project-tree__topic:focus-within .project-tree__topic-side,
+:root[data-theme-style] .app--creation .project-tree__topic--active .project-tree__topic-side {
+  color: color-mix(in srgb, var(--fg-faint) 84%, transparent);
 }
 
 .app--creation .sidebar__nav,
@@ -29109,45 +29136,59 @@ body > .mermaid-diagram--fullscreen {
   box-shadow: none;
 }
 
-.app--creation .transcript,
-:root[data-theme-style] .app--creation .transcript {
-  scrollbar-width: auto;
-  scrollbar-color: auto;
+/* Creation: hide native chat scrollbar and use a controllable custom rail.
+   Native WebView2 thumb hover-size is unreliable; custom thumb can snap thick/thin. */
+.app--creation .transcript.transcript--creation-scrollbar,
+:root[data-theme-style] .app--creation .transcript.transcript--creation-scrollbar {
+  scrollbar-width: none;
+  scrollbar-color: transparent transparent;
 }
 
-.app--creation .transcript::-webkit-scrollbar,
-:root[data-theme-style] .app--creation .transcript::-webkit-scrollbar {
-  width: 6px !important;
-  height: 6px !important;
-  background: transparent !important;
-}
-
-.app--creation .transcript::-webkit-scrollbar-track,
-.app--creation .transcript::-webkit-scrollbar-track-piece,
-.app--creation .transcript::-webkit-scrollbar-corner,
-:root[data-theme-style] .app--creation .transcript::-webkit-scrollbar-track,
-:root[data-theme-style] .app--creation .transcript::-webkit-scrollbar-track-piece,
-:root[data-theme-style] .app--creation .transcript::-webkit-scrollbar-corner {
-  background: transparent !important;
-  border: 0 !important;
-  box-shadow: none !important;
-}
-
-.app--creation .transcript::-webkit-scrollbar-button,
-:root[data-theme-style] .app--creation .transcript::-webkit-scrollbar-button {
-  display: none !important;
+.app--creation .transcript.transcript--creation-scrollbar::-webkit-scrollbar,
+:root[data-theme-style] .app--creation .transcript.transcript--creation-scrollbar::-webkit-scrollbar {
   width: 0 !important;
   height: 0 !important;
+  display: none !important;
   background: transparent !important;
 }
 
-.app--creation .transcript::-webkit-scrollbar-thumb,
-:root[data-theme-style] .app--creation .transcript::-webkit-scrollbar-thumb {
-  min-height: 24px;
-  border: 0 !important;
+.app--creation .transcript__scrollbar,
+:root[data-theme-style] .app--creation .transcript__scrollbar {
+  --wails-draggable: no-drag;
+  position: absolute;
+  top: 0;
+  /* Hug the chat/right-dock seam; keep only a tiny air gap. */
+  right: 0;
+  bottom: 0;
+  z-index: var(--z-inline-sticky);
+  /* Narrow rail: still easy to hit, without a wide empty track. */
+  width: 10px;
+  pointer-events: auto;
+}
+
+.app--creation .transcript__scrollbar-thumb,
+:root[data-theme-style] .app--creation .transcript__scrollbar-thumb {
+  position: absolute;
+  /* Pin to the right edge of the rail so it sits next to the dock border. */
+  right: 1px;
+  left: auto;
+  width: 3px;
   border-radius: 999px;
-  background: var(--scrollbar-thumb) !important;
-  background-clip: border-box !important;
+  background: color-mix(in srgb, var(--fg-faint) 42%, transparent);
+  cursor: grab;
+  transition: none;
+  touch-action: none;
+}
+
+.app--creation .transcript__scrollbar--hot .transcript__scrollbar-thumb,
+.app--creation .transcript__scrollbar-thumb:active,
+:root[data-theme-style] .app--creation .transcript__scrollbar--hot .transcript__scrollbar-thumb,
+:root[data-theme-style] .app--creation .transcript__scrollbar-thumb:active {
+  /* Mild thicken only: 3 → 5. */
+  width: 5px;
+  right: 0;
+  background: color-mix(in srgb, var(--fg-dim) 64%, transparent);
+  cursor: grabbing;
 }
 
 .app--creation .transcript--empty {
@@ -30181,39 +30222,68 @@ body > .mermaid-diagram--fullscreen {
 .app--creation .workbench-dock__tools,
 :root[data-theme-style] .app--creation .workbench-dock__tools {
   height: 40px;
-  padding: 0 12px;
+  padding: 0 10px;
+  /* Tabs fill the free strip; each tab centers its own content. */
+  justify-content: flex-start;
 }
 
 .app--creation .workbench-dock__tabs,
 :root[data-theme-style] .app--creation .workbench-dock__tabs {
-  width: auto;
-  flex: 0 0 auto;
+  /* Full free strip so each tab can take an equal share and self-center. */
+  width: 100%;
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: none;
   display: flex;
   align-items: stretch;
   justify-content: flex-start;
-  gap: 2px;
+  gap: 0;
   padding: 0;
   border: 0;
   border-radius: 0;
   background: transparent;
+  overflow: hidden;
 }
 
 .app--creation .workbench-dock__tab,
 :root[data-theme-style] .app--creation .workbench-dock__tab {
-  flex: 0 0 auto;
+  /* Equal columns: 文件 / 改动 each center in their half as dock width changes. */
+  flex: 1 1 0;
   width: auto;
+  min-width: 0;
   max-width: none;
   height: 40px;
-  padding: 0 12px 1px;
-  gap: 6px;
+  /* Compact icon+label so default Creation dock (~252) shows text on Windows */
+  padding: 0 4px 1px;
+  gap: 4px;
   justify-content: center;
   color: color-mix(in srgb, var(--fg-dim) 72%, transparent);
-  font-size: 12px;
+  font-size: 11.5px;
   font-weight: 560;
   letter-spacing: 0.01em;
   border: 0;
   border-radius: 0;
   background: transparent;
+}
+
+/* Emergency only: when the dock is forced below the Creation default (viewport
+   squeeze), drop labels. Equal columns remain so icons stay self-centered. */
+@container (max-width: 250px) {
+  .app--creation .workbench-dock__tab,
+  :root[data-theme-style] .app--creation .workbench-dock__tab {
+    padding: 0;
+    gap: 0;
+  }
+
+  .app--creation .workbench-dock__tab-label,
+  :root[data-theme-style] .app--creation .workbench-dock__tab-label {
+    display: none;
+  }
+
+  .app--creation .workbench-dock__tab--active::after,
+  :root[data-theme-style] .app--creation .workbench-dock__tab--active::after {
+    width: 18px;
+  }
 }
 
 .app--creation .workbench-dock__tab--active,
@@ -30224,8 +30294,11 @@ body > .mermaid-diagram--fullscreen {
 
 .app--creation .workbench-dock__tab--active::after,
 :root[data-theme-style] .app--creation .workbench-dock__tab--active::after {
-  left: 28%;
-  right: 28%;
+  /* Center a short underline under the icon+label cluster, not the full half. */
+  left: 50%;
+  right: auto;
+  width: 36px;
+  transform: translateX(-50%);
   bottom: 0;
   height: 1px;
 }
@@ -31032,6 +31105,12 @@ body > .mermaid-diagram--fullscreen {
 
 .app--windows-frameless.app--creation {
   --windows-window-controls-height: 56px;
+  /* Tighter caption buttons free horizontal room for dock tabs at narrow widths.
+     classic/workbench keep the standard 46×3 = 138 strip. */
+  --windows-window-control-width: 36px;
+  --windows-window-controls-width: 108px;
+  --windows-window-controls-gap: 8px;
+  --windows-window-controls-safe: calc(var(--windows-window-controls-width) + var(--windows-window-controls-gap));
 }
 
 /* When workspace panel is open in creation mode, match the dock tools height
@@ -31076,6 +31155,26 @@ body > .mermaid-diagram--fullscreen {
 .app--windows-frameless .workbench-dock__tools,
 :root[data-theme-style] .app--windows-frameless .workbench-dock__tools {
   padding-right: var(--windows-window-controls-safe);
+}
+
+/* Creation sets tools padding via shorthand; re-assert the Windows safe
+   inset with higher specificity so 「文件 / 改动」 cannot sit under min/max/close.
+   Tabs fill this free strip; each tab is an equal column that self-centers. */
+.app--windows-frameless.app--creation .workbench-dock__tools,
+:root[data-theme-style] .app--windows-frameless.app--creation .workbench-dock__tools {
+  padding-left: 8px;
+  padding-right: calc(var(--windows-window-controls-width) + 6px);
+  justify-content: flex-start;
+}
+
+.app--windows-frameless.app--creation .workbench-dock__tabs,
+:root[data-theme-style] .app--windows-frameless.app--creation .workbench-dock__tabs {
+  width: 100%;
+  flex: 1 1 auto;
+  max-width: none;
+  min-width: 0;
+  overflow: hidden;
+  justify-content: flex-start;
 }
 
 .app--windows-frameless .workbench-dock__tabs,
