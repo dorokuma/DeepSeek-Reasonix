@@ -29,8 +29,8 @@ function eq(actual: unknown, expected: unknown, label: string) {
   else ok(false, `${label}: expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`);
 }
 
-function flushTimers(): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, 0));
+function flushTimers(ms = 0): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 class TestResizeObserver {
@@ -66,6 +66,7 @@ function installDom() {
   globalThis.ResizeObserver = TestResizeObserver;
   Object.defineProperty(dom.window.HTMLElement.prototype, "attachEvent", { configurable: true, value: () => {} });
   Object.defineProperty(dom.window.HTMLElement.prototype, "detachEvent", { configurable: true, value: () => {} });
+  Object.defineProperty(dom.window.HTMLElement.prototype, "scrollIntoView", { configurable: true, value: () => {} });
   Object.defineProperty(window, "matchMedia", {
     configurable: true,
     value: () => ({
@@ -479,6 +480,9 @@ console.log("\ncomposer goal toggle");
 
   const localDir = composerPickFileEntry("ask @sr", "sr", "", { name: "src", isDir: true });
   eq(localDir.text, "ask @src/", "local dir selection still keeps the menu-open slash");
+
+  const trailingNewline = composerPickFileEntry("ask @src/mai\n", "src/mai", "src/", { name: "main.go", isDir: false });
+  eq(trailingNewline.text, "ask @src/main.go ", "file selection ignores an invisible trailing newline");
 }
 
 {
@@ -1038,6 +1042,7 @@ console.log("\ncomposer goal toggle");
 {
   const dom = installDom();
   let commandsCalls = 0;
+  const slashArgInputs: string[] = [];
   let availableCommands: CommandInfo[] = [
     { name: "mcp", description: "Manage MCP servers", kind: "builtin", group: "integrations" },
     { name: "explore", description: "Investigate the codebase", kind: "subagent" },
@@ -1050,6 +1055,14 @@ console.log("\ncomposer goal toggle");
       commandsCalls += 1;
       return availableCommands;
     },
+    ListDirForTab: async () => [],
+    SearchFileRefsForTab: async () => [],
+    SlashArgs: async (input) => {
+      slashArgInputs.push(input);
+      return input === "/mcp "
+        ? { items: [{ label: "show", insert: "show", hint: "Show an MCP server", descend: false }], from: 5 }
+        : { items: [], from: 0 };
+    },
   });
   const { root, calls, rerender } = await renderComposer({ workspaceScopeKey: "runtime-0" });
 
@@ -1057,6 +1070,17 @@ console.log("\ncomposer goal toggle");
   await replaceComposerDraft(rerender, 1999, "/\n");
   await waitFor("slash menu before trailing newline", () => Boolean(document.querySelector(".slashmenu")));
   ok(document.querySelector(".slashmenu") !== null, "slash menu ignores an invisible trailing newline");
+
+  await replaceComposerDraft(rerender, 1998, "@\n");
+  await waitFor("file menu before trailing newline", () => Boolean(document.querySelector(".slashmenu")));
+  ok(document.querySelector(".slashmenu") !== null, "file menu ignores an invisible trailing newline");
+
+  await replaceComposerDraft(rerender, 1997, "/mcp \n");
+  await act(async () => {
+    await flushTimers(150);
+  });
+  await waitFor("slash argument menu before trailing newline", () => document.querySelector(".slashmenu")?.textContent?.includes("show") === true);
+  ok(slashArgInputs.includes("/mcp "), "slash argument completion removes an invisible trailing newline before lookup");
 
   await replaceComposerDraft(rerender, 2000, "/m");
   await waitFor("initial skill command menu", () => Boolean(document.querySelector(".slashmenu")));

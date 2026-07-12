@@ -6,6 +6,7 @@ import { act } from "react";
 import { createRoot } from "react-dom/client";
 import gsap from "gsap";
 import { ApprovalModal } from "../components/ApprovalModal";
+import { activeFileReferenceToken, pickInlineFileReference } from "../components/FileReferenceMenu";
 import { LocaleProvider } from "../lib/i18n";
 import type { AppBindings } from "../lib/bridge";
 import type { WireApproval } from "../lib/types";
@@ -156,6 +157,16 @@ async function selectAndConfirm(label: string) {
 }
 
 console.log("\napproval modal file references");
+
+{
+  const token = activeFileReferenceToken("please inspect @README\n");
+  eq(token?.raw, "README", "plan revision file trigger ignores an invisible trailing newline");
+  eq(
+    pickInlineFileReference("please inspect @README\n", token?.raw ?? null, token?.dir ?? "", { name: "README.md", isDir: false }),
+    "please inspect @README.md ",
+    "plan revision file selection removes an invisible trailing newline",
+  );
+}
 
 {
   const dom = installDom("en-US");

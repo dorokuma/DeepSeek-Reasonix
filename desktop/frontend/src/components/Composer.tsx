@@ -42,7 +42,7 @@ import {
   type RichSlashQuery,
 } from "./RichComposerInput";
 import { VirtualMenu } from "./VirtualMenu";
-import { dirEntryMenuLabel, dirEntrySubmitPath } from "./FileReferenceMenu";
+import { activeFileReferenceToken, dirEntryMenuLabel, dirEntrySubmitPath } from "./FileReferenceMenu";
 import { ContextMenu, contextMenuPointFromEvent, type ContextMenuItem, type ContextMenuPoint } from "./ContextMenu";
 interface Attachment {
   path: string;
@@ -175,8 +175,9 @@ export function composerPickFileEntry(
   atDir: string,
   entry: DirEntry,
 ): { text: string; workspaceRef?: WorkspaceReference } {
-  const atPos = text.length - (atRaw?.length ?? 0) - 1; // index of '@'
-  const prefix = text.slice(0, Math.max(0, atPos));
+  const queryText = text.replace(/[\r\n]+$/u, "");
+  const atPos = queryText.length - (atRaw?.length ?? 0) - 1; // index of '@'
+  const prefix = queryText.slice(0, Math.max(0, atPos));
   const refPath = dirEntrySubmitPath(entry, atDir);
   if (entry.path || entry.displayPath) {
     return { text: prefix, workspaceRef: { path: refPath, isDir: entry.isDir, displayPath: entry.displayPath } };
@@ -946,12 +947,12 @@ export function Composer({
     ));
   }, [commands, onInvocationMetadataChange]);
 
+  const slashText = useMemo(() => text.replace(/[\r\n]+$/u, ""), [text]);
   const slashQuery = useMemo(() => {
     if (invocations.length > 0) return richSlashQuery?.query ?? null;
-    const commandText = text.replace(/[\r\n]+$/u, "");
-    if (!commandText.startsWith("/") || /\s/.test(commandText)) return null;
-    return commandText.slice(1).toLowerCase();
-  }, [invocations.length, richSlashQuery, text]);
+    if (!slashText.startsWith("/") || /\s/.test(slashText)) return null;
+    return slashText.slice(1).toLowerCase();
+  }, [invocations.length, richSlashQuery, slashText]);
   const slashMatches = useMemo(
     () => slashQuery === null
       ? []
@@ -967,7 +968,7 @@ export function Composer({
   const [argRes, setArgRes] = useState<SlashArgsResult | null>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   useEffect(() => {
-    if (invocations.length > 0 || !text.startsWith("/") || !/\s/.test(text)) {
+    if (invocations.length > 0 || !slashText.startsWith("/") || !/\s/.test(slashText)) {
       setArgRes(null);
       return;
     }
@@ -975,7 +976,7 @@ export function Composer({
     clearTimeout(debounceRef.current);
     debounceRef.current = setTimeout(() => {
       app
-        .SlashArgs(text)
+        .SlashArgs(slashText)
         .then((r) => {
           if (!live) return;
           // Drop suggestions that wouldn't change the input — the token is already
@@ -987,7 +988,7 @@ export function Composer({
           // stale menu from the previous keystroke lingers (the /skill list bug).
           const items = asArray(r?.items);
           const from = r?.from ?? 0;
-          const useful = items.filter((it) => text.slice(0, from) + it.insert !== text);
+          const useful = items.filter((it) => slashText.slice(0, from) + it.insert !== slashText);
           setArgRes(useful.length > 0 ? { items: useful, from } : null);
           setActive(0);
         })
@@ -997,26 +998,16 @@ export function Composer({
       live = false;
       clearTimeout(debounceRef.current);
     };
-  }, [invocations.length, text]);
+  }, [invocations.length, slashText]);
 
   // --- @ file references (token at the end of the text) ---
   // atRaw is everything after a trailing "@token"; atDir is its path up to the
   // last "/", atFrag the part after. The menu lists one directory level (atDir)
   // and filters by atFrag — descending one level per pick.
-  const atRaw = useMemo(() => {
-    const m = /(?:^|\s)@([^\s]*)$/.exec(text);
-    return m ? m[1] : null;
-  }, [text]);
-  const atDir = useMemo(() => {
-    if (atRaw === null) return "";
-    const slash = atRaw.lastIndexOf("/");
-    return slash >= 0 ? atRaw.slice(0, slash + 1) : "";
-  }, [atRaw]);
-  const atFrag = useMemo(() => {
-    if (atRaw === null) return "";
-    const slash = atRaw.lastIndexOf("/");
-    return (slash >= 0 ? atRaw.slice(slash + 1) : atRaw).toLowerCase();
-  }, [atRaw]);
+  const activeAtToken = useMemo(() => activeFileReferenceToken(text), [text]);
+  const atRaw = activeAtToken?.raw ?? null;
+  const atDir = activeAtToken?.dir ?? "";
+  const atFrag = activeAtToken?.frag ?? "";
 
   const [entries, setEntries] = useState<DirEntry[]>([]);
   const [searchEntries, setSearchEntries] = useState<DirEntry[]>([]);
@@ -2278,7 +2269,7 @@ export function Composer({
 
 
   const removeAtToken = (value: string) => {
-    return value.replace(/(?:^|\s)@[^\s]*$/, "").trimEnd();
+    return value.replace(/[\r\n]+$/u, "").replace(/(?:^|\s)@[^\s]*$/, "").trimEnd();
   };
 
   const pickSession = (session: SessionMeta) => {
@@ -2314,7 +2305,7 @@ export function Composer({
   // level; a terminal item leaves the menu (next fetch returns nothing).
   const pickArg = (it: SlashArgItem) => {
     if (!argRes) return;
-    setTextCaretEnd(text.slice(0, argRes.from) + it.insert);
+    setTextCaretEnd(slashText.slice(0, argRes.from) + it.insert);
   };
 
   const pickActive = () => {
