@@ -214,6 +214,27 @@ function fileEntry(name: string): DirEntry {
   return { name, isDir: false };
 }
 
+function richComposerTaskText(input: HTMLElement): string {
+  const clone = input.cloneNode(true) as HTMLElement;
+  clone.querySelectorAll("[data-invocation-id], [data-composer-caret-anchor]").forEach((node) => node.remove());
+  return clone.textContent ?? "";
+}
+
+async function appendRichComposerInput(input: HTMLElement, text: string, composing = false) {
+  await act(async () => {
+    if (composing) input.dispatchEvent(new Event("compositionstart", { bubbles: true }));
+    input.appendChild(document.createTextNode(text));
+    input.dispatchEvent(new window.InputEvent("input", {
+      bubbles: true,
+      data: text,
+      inputType: composing ? "insertCompositionText" : "insertText",
+      isComposing: composing,
+    }));
+    if (composing) input.dispatchEvent(new Event("compositionend", { bubbles: true }));
+    await flushTimers();
+  });
+}
+
 async function replaceComposerDraft(rerender: RenderedComposer["rerender"], id: number, text: string) {
   await rerender({ insertRequest: { id, text, mode: "replace" } });
 }
@@ -1275,6 +1296,22 @@ console.log("\ncomposer goal toggle");
   ok(document.querySelector<HTMLElement>(".invocation-display--composer")?.style.getPropertyValue("--invocation-color") === "#d59a2f", "selected custom subagent uses its configured color");
   sendButton = document.querySelector(".composer__btn--send") as HTMLButtonElement | null;
   ok(sendButton?.disabled === true, "subagent-only invocation remains blocked until a task is entered");
+
+  const subagentInput = document.querySelector(".composer__rich-input") as HTMLDivElement | null;
+  if (!subagentInput) throw new Error("rich composer did not render for colored subagent");
+  await appendRichComposerInput(subagentInput, "Inspect ");
+  eq(richComposerTaskText(subagentInput), "Inspect ", "rich composer does not duplicate ordinary browser input");
+  await appendRichComposerInput(subagentInput, "仓库做了什么？", true);
+  eq(richComposerTaskText(subagentInput), "Inspect 仓库做了什么？", "rich composer does not duplicate committed IME input");
+
+  sendButton = document.querySelector(".composer__btn--send") as HTMLButtonElement | null;
+  if (!sendButton) throw new Error("composer send button did not render after subagent task input");
+  await act(async () => {
+    sendButton.click();
+    await flushTimers();
+  });
+  eq(calls.send[2], "Inspect 仓库做了什么？", "subagent task is sent exactly once after rich input");
+  eq(calls.structured[2]?.input, "Inspect 仓库做了什么？", "structured subagent input contains one task copy");
 
   await act(async () => {
     root.unmount();

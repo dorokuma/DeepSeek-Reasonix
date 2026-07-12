@@ -41,7 +41,24 @@ export type RichComposerInputHandle = {
 
 type PendingSelection = RichComposerSelection | null;
 
+type ComposerModel = {
+  text: string;
+  invocations: ComposerInvocation[];
+};
+
+type RenderedComposerModel = ComposerModel & {
+  version: number;
+};
+
 const CARET_SENTINEL = "\u00A0";
+
+function sameComposerModel(left: ComposerModel, right: ComposerModel | null): boolean {
+  if (!right || left.text !== right.text || left.invocations.length !== right.invocations.length) return false;
+  return left.invocations.every((item, index) => {
+    const candidate = right.invocations[index];
+    return item.id === candidate.id && item.offset === candidate.offset && item.command === candidate.command;
+  });
+}
 
 function modelFromDom(root: HTMLElement, known: Map<string, ComposerInvocation>) {
   let text = "";
@@ -182,6 +199,22 @@ export const RichComposerInput = forwardRef<RichComposerInputHandle, {
 }, ref) => {
   const rootRef = useRef<HTMLDivElement>(null);
   const pendingSelectionRef = useRef<PendingSelection>(null);
+  // contentEditable mutates its DOM before input fires. Keep that browser-owned
+  // DOM for the matching controlled-state echo; rendering the same text again
+  // would append a duplicate node because React does not own the browser's
+  // mutation. External model changes bump the root key and rebuild a clean DOM.
+  const domModelRef = useRef<ComposerModel | null>(null);
+  const renderedModelRef = useRef<RenderedComposerModel>({ text, invocations, version: 0 });
+  const incomingModel: ComposerModel = { text, invocations };
+  if (!sameComposerModel(incomingModel, domModelRef.current) && !sameComposerModel(incomingModel, renderedModelRef.current)) {
+    renderedModelRef.current = {
+      text,
+      invocations,
+      version: renderedModelRef.current.version + 1,
+    };
+    domModelRef.current = null;
+  }
+  const renderedModel = renderedModelRef.current;
   // True between compositionstart and compositionend. While an IME is
   // composing, the browser owns the DOM text node and the selection: syncing
   // the controlled model (a re-render patches the composing text node) or
@@ -250,6 +283,7 @@ export const RichComposerInput = forwardRef<RichComposerInputHandle, {
     if (!root) return;
     const selection = selectionFromDom(root, known);
     const next = modelFromDom(root, known);
+    domModelRef.current = next;
     pendingSelectionRef.current = selection;
     onSelectionChange(selection, slashQueryAt(next.text, selection));
     onChange(next.text, next.invocations);
@@ -291,7 +325,7 @@ export const RichComposerInput = forwardRef<RichComposerInputHandle, {
       root.removeEventListener("compositionstart", start);
       root.removeEventListener("compositionend", end);
     };
-  }, []);
+  }, [renderedModel.version]);
 
   const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     if (event.key === "Backspace" && !event.nativeEvent.isComposing) {
@@ -314,11 +348,12 @@ export const RichComposerInput = forwardRef<RichComposerInputHandle, {
     onKeyDown(event);
   };
 
+  const renderedOrdered = sortComposerInvocations(renderedModel.invocations);
   const children: React.ReactNode[] = [];
   let cursor = 0;
-  ordered.forEach((item) => {
-    const offset = Math.max(cursor, Math.min(text.length, item.offset));
-    if (offset > cursor) children.push(text.slice(cursor, offset));
+  renderedOrdered.forEach((item) => {
+    const offset = Math.max(cursor, Math.min(renderedModel.text.length, item.offset));
+    if (offset > cursor) children.push(renderedModel.text.slice(cursor, offset));
     const invocation = invocationDisplayForCommand(item.command);
     children.push(
       <span
@@ -332,8 +367,10 @@ export const RichComposerInput = forwardRef<RichComposerInputHandle, {
           kind={invocation.kind}
           description={item.command.description}
           onRemove={() => {
-            pendingSelectionRef.current = { start: offset, end: offset };
-            onSelectionChange({ start: offset, end: offset }, null);
+            const current = known.get(item.id);
+            const currentOffset = current?.offset ?? offset;
+            pendingSelectionRef.current = { start: currentOffset, end: currentOffset };
+            onSelectionChange({ start: currentOffset, end: currentOffset }, null);
             onChange(text, invocations.filter((candidate) => candidate.id !== item.id));
           }}
           variant="composer"
@@ -354,10 +391,11 @@ export const RichComposerInput = forwardRef<RichComposerInputHandle, {
     );
     cursor = offset;
   });
-  if (cursor < text.length) children.push(text.slice(cursor));
+  if (cursor < renderedModel.text.length) children.push(renderedModel.text.slice(cursor));
 
   return (
     <div
+      key={renderedModel.version}
       id="composer-input"
       ref={rootRef}
       className="composer__rich-input"
