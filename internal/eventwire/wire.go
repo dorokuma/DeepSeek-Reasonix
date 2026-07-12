@@ -11,6 +11,7 @@ type Event struct {
 	Kind            string           `json:"kind"`
 	Text            string           `json:"text,omitempty"`
 	Detail          string           `json:"detail,omitempty"`
+	Code            string           `json:"code,omitempty"`
 	Reasoning       string           `json:"reasoning,omitempty"`
 	MemoryCitations []MemoryCitation `json:"memoryCitations,omitempty"`
 	MemoryCompiler  *MemoryCompiler  `json:"memoryCompiler,omitempty"`
@@ -34,6 +35,7 @@ func ToWire(e event.Event) Event {
 	}
 	switch e.Kind {
 	case event.Notice:
+		w.Code = e.Code
 		if e.Level == event.LevelWarn {
 			w.Level = "warn"
 		} else {

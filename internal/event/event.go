@@ -239,10 +239,24 @@ const (
 
 // Event is one increment in a turn's event stream. Read the field(s) documented
 // for Kind; the others are zero.
+// Notice codes are stable machine-readable identifiers for known notices.
+// Frontends localize a notice's main copy by Code and fall back to matching
+// the English Text (or showing it raw) when Code is empty or unknown, so
+// wording edits in Go no longer silently break localization. Values are
+// wire-stable: never rename or reuse one once shipped.
+const (
+	NoticeCodeFinalReadiness  = "final_readiness"
+	NoticeCodeEmptyFinal      = "empty_final"
+	NoticeCodeExecutorHandoff = "executor_handoff"
+	NoticeCodeToolBudget      = "tool_budget"
+	NoticeCodeLoopGuard       = "loop_guard"
+)
+
 type Event struct {
 	Kind             Kind
 	Text             string                    // Reasoning / Text / Message / Notice / Phase
 	Detail           string                    // Notice: optional diagnostic text for expandable details
+	Code             string                    // Notice: stable id for frontend localization; empty = unmapped
 	Reasoning        string                    // Message: the full reasoning chain
 	MemoryCitations  []provider.MemoryCitation // Message: local memory references displayed by rich frontends
 	MemoryCompiler   *MemoryCompilerStats      // MemoryCompilerStats: content-free Memory v5 usage counters

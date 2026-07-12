@@ -419,7 +419,7 @@ export function historyMessagesToItems(messages: HistoryMessage[], idPrefix: str
     }
     if (m.role === "notice") {
       if (m.content.trim() !== "") {
-        const next = appendNoticeItem(items, seq, `${idPrefix}${seq}`, m.level === "warn" ? "warn" : "info", m.content, m.detail);
+        const next = appendNoticeItem(items, seq, `${idPrefix}${seq}`, m.level === "warn" ? "warn" : "info", m.content, m.detail, m.code);
         items = next.items;
         seq = next.seq;
       }
@@ -849,7 +849,7 @@ function applyEvent(s: State, e: WireEvent): State {
       return { ...s, usage, context: { ...s.context, used, sessionTokens }, turnTokens, turnTotalTokens, turnCost, sessionTokens, sessionCost, sessionCurrency };
     }
     case "notice":
-      return appendNoticeToState(s, e.level ?? "info", e.text ?? "", e.detail);
+      return appendNoticeToState(s, e.level ?? "info", e.text ?? "", e.detail, e.code);
     case "phase":
       return { ...s, seq: s.seq + 1, items: [...s.items, { kind: "phase", id: `p${s.seq}`, text: e.text ?? "" }] };
     case "compaction_started":
@@ -1221,6 +1221,26 @@ export function tokenModeSwitchNoticeText(err: unknown): string {
   });
 }
 
+// noticeCodeKeys maps the backend's stable notice codes (event.NoticeCode*) to
+// dictionary keys. Codes survive backend copy edits, unlike the exact-text
+// matching in backendNoticeKey, which stays only as the fallback for events
+// and replayed histories that carry no code.
+const noticeCodeKeys: Record<string, DictKey> = {
+  final_readiness: "notice.finalReadiness",
+  empty_final: "notice.emptyFinal",
+  executor_handoff: "notice.executorHandoff",
+  tool_budget: "notice.toolBudget",
+  loop_guard: "notice.loopGuard",
+};
+
+// localizedNoticeText localizes a notice's main copy by its stable code first,
+// then falls back to English-text matching for codeless payloads.
+export function localizedNoticeText(text: string, code?: string): string {
+  const key = code ? noticeCodeKeys[code] : undefined;
+  if (key) return t(key);
+  return localizedBackendNoticeText(text);
+}
+
 export function localizedBackendNoticeText(text: string): string {
   const msg = text.trim();
   const autosave = /^Session autosave failed: (.+)$/s.exec(msg);
@@ -1381,11 +1401,11 @@ function quietTranscriptNoticeKey(text: string): string {
   return "";
 }
 
-function appendNoticeItem(items: Item[], seq: number, id: string, level: "info" | "warn", rawText: string, detail?: string): { items: Item[]; seq: number } {
+function appendNoticeItem(items: Item[], seq: number, id: string, level: "info" | "warn", rawText: string, detail?: string, code?: string): { items: Item[]; seq: number } {
   if (quietTranscriptNoticeKey(rawText)) {
     return { items, seq };
   }
-  const text = localizedBackendNoticeText(rawText);
+  const text = localizedNoticeText(rawText, code);
   if (quietTranscriptNoticeKey(text)) {
     return { items, seq };
   }
@@ -1393,8 +1413,8 @@ function appendNoticeItem(items: Item[], seq: number, id: string, level: "info" 
   return { items: [...items, { kind: "notice", id, level, text, ...(trimmedDetail ? { detail: trimmedDetail } : {}) }], seq: seq + 1 };
 }
 
-function appendNoticeToState(s: State, level: "info" | "warn", text: string, detail?: string): State {
-  const next = appendNoticeItem(s.items, s.seq, `n${s.seq}`, level, text, detail);
+function appendNoticeToState(s: State, level: "info" | "warn", text: string, detail?: string, code?: string): State {
+  const next = appendNoticeItem(s.items, s.seq, `n${s.seq}`, level, text, detail, code);
   return { ...s, running: s.turnActive ? s.running : false, seq: next.seq, items: next.items };
 }
 

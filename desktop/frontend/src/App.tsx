@@ -38,7 +38,7 @@ import { useToast } from "./lib/toast";
 import { useWailsResizeFix } from "./lib/useWailsResizeFix";
 import { asArray } from "./lib/array";
 import { clearLegacyLangPref, normalizeLangPref, readLegacyLangPref, useI18n, useT, type Translator } from "./lib/i18n";
-import { localizedBackendNoticeText, useController, type Item, type LiveStream } from "./lib/useController";
+import { localizedNoticeText, useController, type Item, type LiveStream } from "./lib/useController";
 import { app, onEvent, onProjectTreeChanged, onReady, onRuntimeRebuilt, onSessionRecovered } from "./lib/bridge";
 import { generativeMusic, isGenerativeMusicEnabled } from "./lib/generative-music";
 import { clearAttentionChimeKeys, playAttentionChime, playSuccessChime, shouldPlayAttentionChimeForEvent } from "./lib/sound";
@@ -171,19 +171,19 @@ function noticePreviewMockEnabled(): boolean {
 }
 
 function noticePreviewItems(): Item[] {
-  const notice = (index: number, level: "info" | "warn", text: string, detail: string): Item => ({
+  const notice = (index: number, level: "info" | "warn", text: string, detail: string, code?: string): Item => ({
     kind: "notice",
     id: `notice-preview-${index}`,
     level,
-    text: localizedBackendNoticeText(text),
+    text: localizedNoticeText(text, code),
     detail,
   });
   return [
-    notice(0, "info", "Task status needs one more check; asking the assistant to finish or explain what is blocking it.", "final-answer readiness blocked: latest successful todo_write still has incomplete items: UI spinner in_progress, settings persistence pending"),
-    notice(1, "info", "No visible answer was produced; asking the assistant to respond again.", "empty final answer blocked: qwen3.7-plus returned no visible answer text (finish=stop, reasoning=2314 chars); retrying"),
-    notice(2, "info", "The assistant answered before taking action; asking it to use the required tools.", "executor handoff: assistant produced a proposal before running required repository commands; nudged to execute"),
-    notice(3, "info", "Tool round limit reached; asking the assistant to summarize progress.", "tool budget reached after 128 tool calls; requesting a progress summary before continuing"),
-    notice(4, "info", "The assistant is stuck retrying a blocked action; asking it to change approach.", "loop guard: repeated command failure matched the same stderr signature across 3 attempts"),
+    notice(0, "info", "Task status needs one more check; asking the assistant to finish or explain what is blocking it.", "final-answer readiness blocked: latest successful todo_write still has incomplete items: UI spinner in_progress, settings persistence pending", "final_readiness"),
+    notice(1, "info", "No visible answer was produced; asking the assistant to respond again.", "empty final answer blocked: qwen3.7-plus returned no visible answer text (finish=stop, reasoning=2314 chars); retrying", "empty_final"),
+    notice(2, "info", "The assistant answered before taking action; asking it to use the required tools.", "executor handoff: assistant produced a proposal before running required repository commands; nudged to execute", "executor_handoff"),
+    notice(3, "info", "Tool round limit reached; asking the assistant to summarize progress.", "tool budget reached after 128 tool calls; requesting a progress summary before continuing", "tool_budget"),
+    notice(4, "info", "The assistant is stuck retrying a blocked action; asking it to change approach.", "loop guard: repeated command failure matched the same stderr signature across 3 attempts", "loop_guard"),
     notice(5, "info", "Context is getting large; preserving cache until cleanup is needed.", "context window 82% full; deferred cleanup to preserve reusable prompt cache"),
     notice(6, "info", "Context cleanup skipped for now.", "cleanup skipped: recent turn included unresolved user approval state"),
     notice(7, "info", "Automatic context cleanup paused because the context window is too small.", "configured compact threshold exceeds current model context window; auto cleanup paused for this model"),

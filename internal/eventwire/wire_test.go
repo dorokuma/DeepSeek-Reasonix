@@ -27,6 +27,33 @@ func TestToWireRetryingJSON(t *testing.T) {
 	}
 }
 
+func TestToWireNoticeCarriesCode(t *testing.T) {
+	w := ToWire(event.Event{Kind: event.Notice, Level: event.LevelInfo, Code: event.NoticeCodeFinalReadiness, Text: "readiness copy"})
+	b, err := json.Marshal(w)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if !strings.Contains(string(b), `"code":"final_readiness"`) {
+		t.Fatalf("notice JSON = %s, want a stable code field", b)
+	}
+
+	w = ToWire(event.Event{Kind: event.Notice, Level: event.LevelInfo, Text: "codeless notice"})
+	if b, err = json.Marshal(w); err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if strings.Contains(string(b), `"code"`) {
+		t.Fatalf("codeless notice JSON = %s, must omit the code field", b)
+	}
+
+	w = ToWire(event.Event{Kind: event.Text, Code: "stray"})
+	if b, err = json.Marshal(w); err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if strings.Contains(string(b), `"code"`) {
+		t.Fatalf("non-notice JSON = %s, must not carry a code", b)
+	}
+}
+
 func TestKindNamesComplete(t *testing.T) {
 	for k := event.Kind(0); k < event.KindCount; k++ {
 		if ToWire(event.Event{Kind: k}).Kind == "" {

@@ -156,6 +156,8 @@ export interface WireEvent {
   kind: EventKind;
   text?: string;
   detail?: string;
+  // Stable notice id for localization; empty/absent = localize by text match.
+  code?: string;
   reasoning?: string;
   memoryCitations?: MemoryCitation[];
   memoryCompiler?: MemoryCompilerStats;
@@ -326,6 +328,7 @@ export interface HistoryMessage {
   role: string;
   content: string;
   detail?: string;
+  code?: string;
   submitText?: string;
   checkpointTurn?: number;
   createdAt?: number;
