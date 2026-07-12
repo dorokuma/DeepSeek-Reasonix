@@ -756,7 +756,7 @@ export function WorkspacePanel({
     }
     let cancelled = false;
     app.SearchFileRefsForTab(workspaceTabId, q).then((results) => {
-      if (!cancelled) setSearchResults(results);
+      if (!cancelled) setSearchResults(asArray(results));
     }).catch(() => {
       if (!cancelled) setSearchResults(null);
     });
