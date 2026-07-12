@@ -37,6 +37,34 @@ func TestRunSkillUnknown(t *testing.T) {
 	}
 }
 
+func TestRunSkillEnforcesRuntimeProfile(t *testing.T) {
+	home := t.TempDir()
+	writeSkill(t, home, ".reasonix/skills/delivery-only.md", "---\ndescription: ship it\nprofiles: delivery\n---\nDeliver it.")
+	store := New(Options{HomeDir: home, DisableBuiltins: true})
+	store.ConfigureInvocationPolicy("economy", nil)
+	tl := NewRunSkillTool(store, nil)
+
+	_, err := tl.Execute(context.Background(), json.RawMessage(`{"name":"delivery-only"}`))
+	if err == nil || !errors.Is(err, ErrInvocationUnavailable) || !strings.Contains(err.Error(), "unavailable in the economy profile") {
+		t.Fatalf("profile-restricted run_skill error = %v", err)
+	}
+}
+
+func TestRunSkillEnforcesRequiredCapabilities(t *testing.T) {
+	home := t.TempDir()
+	writeSkill(t, home, ".reasonix/skills/github-review.md", "---\ndescription: review github\nrequires: mcp-server:github, mcp-tool:github/search_issues\n---\nReview it.")
+	store := New(Options{HomeDir: home, DisableBuiltins: true})
+	store.ConfigureInvocationPolicy("delivery", func(requires []string) []string {
+		return []string{"mcp-tool:github/search_issues"}
+	})
+	tl := NewRunSkillTool(store, nil)
+
+	_, err := tl.Execute(context.Background(), json.RawMessage(`{"name":"github-review"}`))
+	if err == nil || !errors.Is(err, ErrInvocationUnavailable) || !strings.Contains(err.Error(), "requires unavailable capabilities: mcp-tool:github/search_issues") {
+		t.Fatalf("requires-gated run_skill error = %v", err)
+	}
+}
+
 func TestRunSkillSubagentNeedsRunner(t *testing.T) {
 	home := t.TempDir()
 	writeSkill(t, home, ".reasonix/skills/dig.md", "---\ndescription: dig\nrunAs: subagent\n---\nbody")

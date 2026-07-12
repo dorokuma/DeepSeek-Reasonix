@@ -108,6 +108,7 @@ func New(cfg provider.Config) (provider.Provider, error) {
 		thinking:    thinking,
 		effort:      effort,
 		vision:      vision,
+		mimo:        provider.IsMiMoEndpoint(root),
 		headers:     cleanCustomHeaders(headers),
 		authHeader:  authHeader,
 		http:        httpClient, // no overall timeout; lifecycle is ctx-driven
@@ -130,6 +131,7 @@ type client struct {
 	thinking    string // "adaptive" enables extended thinking; "" = off (config-driven)
 	effort      string // output_config.effort: low|medium|high|xhigh|max; "" = provider default
 	vision      bool   // model accepts image input — embed attached images as base64 image blocks
+	mimo        bool   // true for MiMo — upgrades legacy tuple schemas to Draft 2020-12
 	headers     map[string]string
 	authHeader  bool // send Authorization: Bearer instead of Anthropic's x-api-key header
 	http        *http.Client
@@ -217,7 +219,7 @@ func (c *client) Stream(ctx context.Context, req provider.Request) (<-chan provi
 	}
 	resp, err := provider.SendWithRetry(ctx, c.http, c.sendOpts(), newReq)
 	if err != nil {
-		return nil, err
+		return nil, provider.AnnotateToolSchemaError(err, req.Tools)
 	}
 	c.authed.Store(true)
 
@@ -305,6 +307,9 @@ func (c *client) buildRequest(req provider.Request) anthRequest {
 		schema := t.Parameters
 		if len(schema) == 0 {
 			schema = json.RawMessage(`{"type":"object","properties":{}}`)
+		}
+		if c.mimo {
+			schema = provider.NormalizeLegacyTupleItemsForDraft202012(schema)
 		}
 		tools = append(tools, anthTool{Name: t.Name, Description: t.Description, InputSchema: schema})
 	}

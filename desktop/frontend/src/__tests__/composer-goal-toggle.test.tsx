@@ -225,20 +225,43 @@ console.log("\ncomposer goal toggle");
 
   await rerender({ insertRequest: { id: 1, text: "ship the release notes", mode: "replace" } });
   eq(textarea.value, "ship the release notes", "insert request populates the composer draft");
+  // The insert queues a rAF that refocuses the textarea; drain that frame
+  // before focusing the trigger, or the late refocus blurs the tooltip away.
+  await act(async () => {
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+    await flushTimers();
+  });
 
   await rerender({ insertRequest: { id: 2, text: "/reviewer ", mode: "prefix" } });
   eq(textarea.value, "/reviewer ship the release notes", "prefix insert preserves the draft as a subagent task");
   eq(calls.send.length, 0, "prefix insert does not send the subagent task");
 
-  const intentButton = document.querySelector(".composer-action-trigger") as HTMLButtonElement | null;
+  const intentButton = document.querySelector(".composer-task-mode-trigger") as HTMLButtonElement | null;
   if (!intentButton) throw new Error("composer intent button did not render");
+  eq(intentButton.textContent?.trim(), "Standard", "execution method trigger shows only the current method");
+  eq(intentButton.getAttribute("aria-label"), "Execution method · Standard", "execution method trigger keeps its full accessible name");
+  const intentTooltipTrigger = intentButton.closest(".tooltip-trigger");
+  if (!intentTooltipTrigger) throw new Error("composer intent tooltip trigger did not render");
+  await act(async () => {
+    intentTooltipTrigger.dispatchEvent(new Event("focusin", { bubbles: true }));
+    await flushTimers();
+  });
+  await waitFor("execution method tooltip", () => document.querySelector('[role="tooltip"]') !== null);
+  eq(document.querySelector('[role="tooltip"]')?.textContent, "Execution method · Standard: Analyze and act as you go", "execution method tooltip combines category, value, and summary");
+  await act(async () => {
+    intentTooltipTrigger.dispatchEvent(new Event("focusout", { bubbles: true }));
+    await flushTimers();
+  });
 
   await act(async () => {
     intentButton.click();
     await flushTimers();
   });
 
-  const goalButton = document.querySelectorAll(".composer-intent-menu__item")[1] as HTMLButtonElement | undefined;
+  const taskModeItems = document.querySelectorAll(".composer-intent-menu__item");
+  eq(taskModeItems.length, 3, "task method menu exposes three mutually exclusive choices");
+  eq(document.querySelectorAll(".composer-intent-switch").length, 0, "task method menu does not present independent switches");
+  const goalButton = taskModeItems[2] as HTMLButtonElement | undefined;
   if (!goalButton) throw new Error("composer goal menu item did not render");
 
   await act(async () => {
@@ -249,6 +272,38 @@ console.log("\ncomposer goal toggle");
   eq(calls.send.length, 0, "enabling goal mode with a draft does not send");
   eq(calls.setCollaborationMode.join(","), "goal", "enabling goal mode switches only the collaboration axis");
   eq(textarea.value, "/reviewer ship the release notes", "enabling goal mode preserves the prefixed draft text");
+
+  await act(async () => {
+    root.unmount();
+  });
+  dom.window.close();
+}
+
+{
+  const dom = installDom();
+  const { root, calls } = await renderComposer({
+    collaborationMode: "goal",
+    goal: "finish the migration",
+  });
+
+  const intentButton = document.querySelector(".composer-task-mode-trigger") as HTMLButtonElement | null;
+  if (!intentButton) throw new Error("active goal task method trigger did not render");
+  ok(intentButton.textContent?.includes("Goal") === true, "task method trigger exposes an active goal");
+
+  await act(async () => {
+    intentButton.click();
+    await flushTimers();
+  });
+
+  const stopGoal = document.querySelector(".composer-intent-menu__stop") as HTMLButtonElement | null;
+  if (!stopGoal) throw new Error("explicit stop goal action did not render");
+  eq(stopGoal.textContent, "Stop goal", "active goal uses an explicit stop action");
+  await act(async () => {
+    stopGoal.click();
+    await flushTimers();
+  });
+  eq(calls.clearGoal, 1, "explicit stop action clears the active goal");
+  eq(calls.setCollaborationMode.length, 0, "stopping a goal does not race a second mode update");
 
   await act(async () => {
     root.unmount();
@@ -1245,6 +1300,130 @@ console.log("\ncomposer goal toggle");
   ok(document.querySelector(".invocation-display--message") === null, "ordinary referenced-session text does not turn task slash lines into a skill header");
 
   await act(async () => root.unmount());
+  dom.window.close();
+}
+
+{
+  const dom = installDom();
+  let savedFiles = 0;
+  mockApp({
+    Commands: async () => [{ name: "skill", description: "Manage skills", kind: "builtin" }],
+    ListDirForTab: async () => [fileEntry("README.md")],
+    SearchFileRefsForTab: async () => [],
+    ListSessions: async () => [{ path: "/sessions/recent.jsonl", title: "Recent session", current: false }],
+    SavePastedFile: async () => {
+      savedFiles += 1;
+      return ".reasonix/attachments/notes.txt";
+    },
+  });
+  const { root, rerender } = await renderComposer();
+  const textarea = document.querySelector("textarea") as HTMLTextAreaElement | null;
+  if (!textarea) throw new Error("composer textarea did not render");
+
+  const contentTrigger = document.querySelector(".composer-content-trigger") as HTMLButtonElement | null;
+  if (!contentTrigger) throw new Error("content menu trigger did not render");
+  await act(async () => {
+    contentTrigger.click();
+    await flushTimers();
+  });
+  ok(Boolean(document.querySelector(".composer-content-menu")), "plus trigger opens the add-content menu");
+  const initialContentItems = Array.from(document.querySelectorAll<HTMLButtonElement>(".composer-content-menu__item"));
+  eq(initialContentItems.length, 4, "add-content menu exposes four focused actions");
+  eq(initialContentItems[1]?.querySelector("kbd")?.textContent, "@", "add-content menu exposes the workspace reference shortcut");
+  eq(initialContentItems[2]?.querySelector("kbd")?.textContent, "#", "add-content menu exposes the recent-session shortcut");
+  eq(initialContentItems[3]?.querySelector("kbd")?.textContent, "/", "add-content menu exposes commands and skills");
+
+  const attachmentButton = initialContentItems[0];
+  const fileInput = document.querySelector(".composer-content-file-input") as HTMLInputElement | null;
+  if (!attachmentButton || !fileInput) throw new Error("attachment picker controls did not render");
+  await act(async () => {
+    attachmentButton.click();
+    Object.defineProperty(fileInput, "files", { configurable: true, value: [new File(["notes"], "notes.txt", { type: "text/plain" })] });
+    fileInput.dispatchEvent(new Event("change", { bubbles: true }));
+    await flushTimers();
+  });
+  await waitFor("attachment chosen from add-content menu", () => savedFiles === 1);
+  eq(savedFiles, 1, "attachment action reuses the existing file-save path");
+
+  await replaceComposerDraft(rerender, 3001, "@");
+  await waitFor("workspace menu before plus toggle", () => Boolean(document.querySelector(".slashmenu")));
+  await act(async () => {
+    contentTrigger.click();
+    await flushTimers();
+  });
+  ok(!document.querySelector(".slashmenu"), "opening add-content closes the active suggestion panel");
+  ok(Boolean(document.querySelector(".composer-content-menu")), "add-content remains the only open composer surface");
+
+  const sessionButton = document.querySelectorAll<HTMLButtonElement>(".composer-content-menu__item")[2];
+  if (!sessionButton) throw new Error("recent-session action did not render");
+  await act(async () => {
+    sessionButton.click();
+    await flushTimers();
+  });
+  await waitFor("direct recent-session picker", () => Boolean(document.querySelector(".slashmenu__search")));
+  eq(textarea.value, "@ #", "recent-session action inserts # at the remembered caret");
+  ok(!document.querySelector(".composer-content-menu"), "recent-session picker replaces the add-content menu");
+  const sessionSearch = document.querySelector(".slashmenu__search") as HTMLInputElement | null;
+  if (!sessionSearch) throw new Error("recent-session search did not render");
+  await act(async () => {
+    sessionSearch.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+    await flushTimers();
+  });
+  eq(textarea.value, "@", "Escape closes the direct recent-session picker and removes its # token");
+
+  await replaceComposerDraft(rerender, 3002, "");
+  await act(async () => {
+    contentTrigger.click();
+    await flushTimers();
+  });
+  const commandButton = document.querySelectorAll<HTMLButtonElement>(".composer-content-menu__item")[3];
+  if (!commandButton) throw new Error("command action did not render");
+  await act(async () => {
+    commandButton.click();
+    await flushTimers();
+  });
+  eq(textarea.value, "/", "command action inserts / at the caret");
+  await waitFor("slash menu from add-content action", () => Boolean(document.querySelector(".slashmenu")));
+
+  await replaceComposerDraft(rerender, 3003, "existing text");
+  await act(async () => {
+    contentTrigger.click();
+    await flushTimers();
+  });
+  const disabledCommandButton = document.querySelectorAll<HTMLButtonElement>(".composer-content-menu__item")[3];
+  if (!disabledCommandButton) throw new Error("command action did not render for non-empty input");
+  ok(disabledCommandButton.disabled, "command action is disabled while the composer has text");
+  await act(async () => {
+    disabledCommandButton.click();
+    await flushTimers();
+  });
+  eq(textarea.value, "existing text", "disabled command action does not insert / into existing text");
+
+  await rerender({ running: true });
+  await waitFor("content menu closes when a run starts", () => !document.querySelector(".composer-content-menu"));
+  await rerender({ running: false });
+  ok(!document.querySelector(".composer-content-menu"), "content menu stays closed after the run ends");
+
+  await replaceComposerDraft(rerender, 3004, "");
+  await act(async () => {
+    contentTrigger.click();
+    await flushTimers();
+  });
+  const runningSessionButton = document.querySelectorAll<HTMLButtonElement>(".composer-content-menu__item")[2];
+  if (!runningSessionButton) throw new Error("recent-session action did not render before running");
+  await act(async () => {
+    runningSessionButton.click();
+    await flushTimers();
+  });
+  await waitFor("recent-session picker before running", () => Boolean(document.querySelector(".slashmenu__search")));
+  await rerender({ running: true });
+  await waitFor("recent-session picker closes when a run starts", () => !document.querySelector(".slashmenu__search"));
+  await rerender({ running: false });
+  ok(!document.querySelector(".slashmenu__search"), "recent-session picker stays closed after the run ends");
+
+  await act(async () => {
+    root.unmount();
+  });
   dom.window.close();
 }
 

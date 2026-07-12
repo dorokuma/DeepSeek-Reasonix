@@ -57,7 +57,14 @@ func requestErrorReason(e *provider.APIError) string {
 	if e.Status != 400 && e.Status != 422 {
 		return ""
 	}
-	return providerBodyReason(e.Body)
+	reason := providerBodyReason(e.Body)
+	if e.ToolContext == "" {
+		return reason
+	}
+	if reason == "" {
+		return e.ToolContext
+	}
+	return reason + "\n" + e.ToolContext
 }
 
 // providerBodyReason pulls the human reason from an OpenAI/Anthropic-shaped error

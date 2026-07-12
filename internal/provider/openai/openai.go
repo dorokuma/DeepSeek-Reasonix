@@ -190,6 +190,7 @@ func New(cfg provider.Config) (provider.Provider, error) {
 		minimax:      minimax,
 		zhipu:        zhipu,
 		longcat:      longcat,
+		mimo:         IsMiMo(cfg.BaseURL),
 		thinkingType: thinkingType,
 		vision:       vision,
 		visionDetail: visionDetail,
@@ -224,6 +225,7 @@ type client struct {
 	minimax      bool          // true for api.minimaxi.com — emits MiniMax-M3's thinking knob instead of reasoning_effort
 	zhipu        bool          // true for Zhipu GLM (bigmodel.cn / z.ai) — gates thinking via thinking.type, ignores reasoning_effort
 	longcat      bool          // true for LongCat — gates thinking via thinking.type, ignores reasoning_effort
+	mimo         bool          // true for MiMo — upgrades legacy tuple schemas to Draft 2020-12
 	thinkingType string        // explicit `thinking` config override (enabled|disabled); "" = no override
 	vision       bool          // model accepts image input — embed attached images as image_url parts
 	visionDetail string        // image_url detail hint (low|high); "" = auto/omit
@@ -387,7 +389,7 @@ func (c *client) Stream(ctx context.Context, req provider.Request) (<-chan provi
 	}
 	resp, err := provider.SendWithRetry(ctx, c.http, c.sendOpts(), newReq)
 	if err != nil {
-		return nil, err
+		return nil, provider.AnnotateToolSchemaError(err, req.Tools)
 	}
 	c.authed.Store(true)
 
@@ -518,6 +520,9 @@ func (c *client) buildRequest(req provider.Request) chatRequest {
 		parameters := t.Parameters
 		if len(parameters) == 0 {
 			parameters = provider.CanonicalizeSchema(nil)
+		}
+		if c.mimo {
+			parameters = provider.NormalizeLegacyTupleItemsForDraft202012(parameters)
 		}
 		tools = append(tools, chatTool{
 			Type:     "function",

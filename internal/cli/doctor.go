@@ -11,6 +11,9 @@ import (
 )
 
 func doctorCommand(args []string, version string) int {
+	if len(args) > 0 && args[0] == "quality" {
+		return doctorQualityCommand(args[1:], version)
+	}
 	if len(args) > 0 && args[0] == "session" {
 		return doctorSessionCommand(args[1:], version)
 	}
@@ -37,6 +40,47 @@ func doctorCommand(args []string, version string) int {
 		return 0
 	}
 	fmt.Print(doctor.RenderText(report))
+	return 0
+}
+
+func doctorQualityCommand(args []string, version string) int {
+	ref := ""
+	jsonOut := false
+	for _, arg := range args {
+		switch arg {
+		case "-h", "--help":
+			fmt.Fprintln(os.Stdout, "usage: reasonix doctor quality <branch-id-or-path> [--json]")
+			fmt.Fprintln(os.Stdout, "Prints a public-safe, content-free coding-quality summary for one session.")
+			return 0
+		case "--json":
+			jsonOut = true
+		default:
+			if strings.HasPrefix(arg, "-") || ref != "" {
+				fmt.Fprintln(os.Stderr, "usage: reasonix doctor quality <branch-id-or-path> [--json]")
+				return 2
+			}
+			ref = arg
+		}
+	}
+	if ref == "" {
+		fmt.Fprintln(os.Stderr, "usage: reasonix doctor quality <branch-id-or-path> [--json]")
+		return 2
+	}
+	report, err := doctor.CollectQuality(doctor.QualityOptions{Version: version, SessionRef: ref})
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "error:", err)
+		return 1
+	}
+	if jsonOut {
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		if err := enc.Encode(report); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return 1
+		}
+		return 0
+	}
+	fmt.Print(doctor.RenderQualityText(report))
 	return 0
 }
 

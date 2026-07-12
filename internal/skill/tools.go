@@ -98,6 +98,9 @@ func (t *runSkillTool) Execute(ctx context.Context, args json.RawMessage) (strin
 	if !ok {
 		return "", fmt.Errorf("unknown skill %q — available: %s", name, availableNames(t.store))
 	}
+	if err := t.store.ValidateInvocation(sk); err != nil {
+		return "", fmt.Errorf("run_skill: %w", err)
+	}
 	rawArgs := strings.TrimSpace(p.Arguments)
 	opts := SubagentRunOptions{ContinueFrom: strings.TrimSpace(p.Continue), ForkFrom: strings.TrimSpace(p.Fork)}
 	if opts.ContinueFrom != "" && opts.ForkFrom != "" {
@@ -204,6 +207,9 @@ func (t *readOnlySkillTool) Execute(ctx context.Context, args json.RawMessage) (
 	if !ok {
 		return "", fmt.Errorf("unknown skill %q — available: %s", name, availableNames(t.store))
 	}
+	if err := t.store.ValidateInvocation(sk); err != nil {
+		return "", fmt.Errorf("read_only_skill: %w", err)
+	}
 	rawArgs := strings.TrimSpace(p.Arguments)
 	if sk.RunAs == RunSubagent {
 		if t.runner == nil {
@@ -298,6 +304,9 @@ func (t *readSkillTool) Execute(_ context.Context, args json.RawMessage) (string
 	if !ok {
 		return "", fmt.Errorf("unknown skill %q — available: %s", name, availableNames(t.store))
 	}
+	if err := t.store.ValidateInvocation(sk); err != nil {
+		return "", fmt.Errorf("read_skill: %w", err)
+	}
 	if sk.RunAs == RunSubagent {
 		return "", fmt.Errorf("read_skill: skill %q is a subagent and must be executed, not read — use run_skill (or the dedicated %s tool)", name, name)
 	}
@@ -341,6 +350,9 @@ func (t *subagentSkillTool) Execute(ctx context.Context, args json.RawMessage) (
 	sk, ok := t.store.Read(t.skillName)
 	if !ok {
 		return "", fmt.Errorf("%s: built-in skill %q is not registered", t.toolName, t.skillName)
+	}
+	if err := t.store.ValidateInvocation(sk); err != nil {
+		return "", fmt.Errorf("%s: %w", t.toolName, err)
 	}
 	// A user file overriding the built-in name with runAs:inline would lose
 	// isolation if dispatched here — bounce to run_skill where inline is defined.
@@ -405,7 +417,8 @@ func BuiltinSubagentTools(store *Store, runner SubagentRunner, profileResolver .
 	}
 	var out []tool.Tool
 	for _, s := range specs {
-		if _, ok := store.Read(s.skillName); !ok {
+		sk, ok := store.Read(s.skillName)
+		if !ok || store.runtimeProfile != "" && !AllowedInProfile(sk, store.runtimeProfile) {
 			continue
 		}
 		out = append(out, &subagentSkillTool{

@@ -7304,7 +7304,7 @@ func (s tabRuntimeSnapshot) currentTokenMode() string {
 
 func persistedTabTokenMode(mode string) string {
 	mode = boot.NormalizeTokenMode(mode)
-	if mode == boot.TokenModeEconomy {
+	if mode == boot.TokenModeEconomy || mode == boot.TokenModeDelivery {
 		return mode
 	}
 	return ""

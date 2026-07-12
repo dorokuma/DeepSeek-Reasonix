@@ -1093,6 +1093,26 @@ func TestLoadTabSessionProfileIgnoresTerminalGoalState(t *testing.T) {
 	}
 }
 
+func TestLoadTabSessionProfileMissingApprovalDefaultsAsk(t *testing.T) {
+	isolateDesktopUserDirs(t)
+	root := globalTabWorkspaceRoot()
+	dir := desktopSessionDir(root)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir session dir: %v", err)
+	}
+
+	sessionPath := filepath.Join(dir, "legacy-missing-approval.jsonl")
+	writeHistoryTestSession(t, sessionPath, "legacy prompt")
+	if err := agent.SaveBranchMetaPreserveUpdated(sessionPath, agent.BranchMeta{Mode: "normal"}); err != nil {
+		t.Fatalf("SaveBranchMetaPreserveUpdated: %v", err)
+	}
+
+	profile := loadTabSessionProfile(sessionPath)
+	if profile.toolApprovalMode != control.ToolApprovalAsk {
+		t.Fatalf("legacy missing tool approval mode = %q, want ask", profile.toolApprovalMode)
+	}
+}
+
 func writeHistoryTestSession(t *testing.T, path, prompt string) {
 	t.Helper()
 	session := agent.NewSession("")

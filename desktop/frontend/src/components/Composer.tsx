@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, ClipboardEvent, DragEvent, KeyboardEvent, MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent } from "react";
-import { ArrowUp, Check, ChevronDown, ChevronUp, ChevronsUpDown, CornerDownRight, Eye, FileText, Folder, Gauge, List, MessageSquare, Search, Shield, ShieldAlert, ShieldCheck, SlidersHorizontal, Square, Target, Trash2, X } from "lucide-react";
+import { ArrowRight, ArrowUp, AtSign, Check, ChevronDown, ChevronUp, ChevronsUpDown, CornerDownRight, Equal, Eye, FilePlus2, FileText, Flag, Folder, Gauge, Hash, List, MessageSquare, Plus, Search, Shield, ShieldAlert, ShieldCheck, Square, SquareTerminal, Target, Trash2, X } from "lucide-react";
 import { asArray } from "../lib/array";
 import { filterAtMatches } from "../lib/atMatches";
 import { DedupIndex, sha256 } from "../lib/attachDedup";
@@ -647,9 +647,13 @@ export function Composer({
   const [textareaAutoOverflow, setTextareaAutoOverflow] = useState(false);
   const [intentMenuOpen, setIntentMenuOpen] = useState(false);
   const [intentMenuClosing, setIntentMenuClosing] = useState(false);
+  const [profileMenuOpen, setProfileMenuOpen] = useState(false);
+  const [profileMenuClosing, setProfileMenuClosing] = useState(false);
   const [moreMenuOpen, setMoreMenuOpen] = useState(false);
   const [moreMenuClosing, setMoreMenuClosing] = useState(false);
+  const [contentMenuOpen, setContentMenuOpen] = useState(false);
   const [showPastChats, setShowPastChats] = useState(false);
+  const [directPastChats, setDirectPastChats] = useState(false);
   const [pastChats, setPastChats] = useState<SessionMeta[]>([]);
   const [pastChatQuery, setPastChatQuery] = useState("");
   const [sessionRefs, setSessionRefs] = useState<SessionReference[]>([]);
@@ -678,10 +682,14 @@ export function Composer({
   const savedTextRef = useRef("");
   const taRef = useRef<HTMLTextAreaElement>(null);
   const richInputRef = useRef<RichComposerInputHandle>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const composerCardRef = useRef<HTMLDivElement>(null);
+  const contentMenuAnchorRef = useRef<HTMLButtonElement>(null);
   const intentMenuAnchorRef = useRef<HTMLButtonElement>(null);
+  const profileMenuAnchorRef = useRef<HTMLButtonElement>(null);
   const moreMenuAnchorRef = useRef<HTMLButtonElement>(null);
   const intentCloseTimerRef = useRef<number | null>(null);
+  const profileCloseTimerRef = useRef<number | null>(null);
   const moreCloseTimerRef = useRef<number | null>(null);
   const wasRunningByDraftRef = useRef<Record<string, boolean>>({ [draftKey]: running });
   const composingRef = useRef(false);
@@ -778,6 +786,8 @@ export function Composer({
     lastSelectionRef.current = { start: next.text.length, end: next.text.length };
     setComposerPrompt(null);
     setShowPastChats(false);
+    setDirectPastChats(false);
+    setContentMenuOpen(false);
     setPastChatQuery("");
     setLoadingPastChats(false);
     setActive(0);
@@ -1122,14 +1132,16 @@ export function Composer({
 
   // --- which menu (if any) is open --- (slash command names win; then slash
   // arguments; then @-refs — they're rarely valid at once)
-  const menuMode: "slash" | "slasharg" | "at" | null =
-    slashMatches.length > 0 && !dismissed
-      ? "slash"
-      : argRes && argRes.items.length > 0 && !dismissed
-        ? "slasharg"
-        : atRaw !== null && !dismissed
-          ? "at"
-          : null;
+  const menuMode: "slash" | "slasharg" | "at" | "pastChats" | null =
+    directPastChats
+      ? "pastChats"
+      : slashMatches.length > 0 && !dismissed
+        ? "slash"
+        : argRes && argRes.items.length > 0 && !dismissed
+          ? "slasharg"
+          : atRaw !== null && !dismissed
+            ? "at"
+            : null;
   const countBase =
     menuMode === "slash"
       ? slashMatches.length
@@ -1137,7 +1149,9 @@ export function Composer({
         ? argRes!.items.length
         : menuMode === "at"
           ? atMenuItems.length
-          : 0;
+          : menuMode === "pastChats"
+            ? pastChats.length
+            : 0;
 
   // Reset highlight + un-dismiss whenever the active query changes.
   useEffect(() => {
@@ -1180,12 +1194,27 @@ export function Composer({
   // sub-menu and reset related state. Without this, showPastChats can outlive
   // the @ token and leave the session list visible with no way to dismiss it.
   useEffect(() => {
-    if (menuMode !== "at" && showPastChats) {
+    if (menuMode !== "at" && menuMode !== "pastChats" && showPastChats) {
       setShowPastChats(false);
       setPastChatQuery("");
       setActive(0);
     }
   }, [menuMode]);
+
+  useEffect(() => {
+    if (menuMode && menuMode !== "pastChats") setContentMenuOpen(false);
+  }, [menuMode]);
+
+  // A starting run closes the transient content surfaces. Without this the
+  // popover state survives the run (its open prop gates on !running) and the
+  // menu would pop back unprompted the moment the turn finishes.
+  useEffect(() => {
+    if (!running) return;
+    setContentMenuOpen(false);
+    setDirectPastChats(false);
+    setShowPastChats(false);
+    setPastChatQuery("");
+  }, [running]);
 
   const resetPromptHistoryNavigation = () => {
     if (historyIndexRef.current === -1) return;
@@ -1446,6 +1475,9 @@ export function Composer({
 
   const openIntentMenu = useCallback(() => {
     clearIntentCloseTimer();
+    setContentMenuOpen(false);
+    setDirectPastChats(false);
+    setDismissed(true);
     setIntentMenuClosing(false);
     setIntentMenuOpen(true);
   }, [clearIntentCloseTimer]);
@@ -1464,6 +1496,35 @@ export function Composer({
 
   useEffect(() => () => clearIntentCloseTimer(), [clearIntentCloseTimer]);
 
+  const clearProfileCloseTimer = useCallback(() => {
+    if (profileCloseTimerRef.current === null) return;
+    window.clearTimeout(profileCloseTimerRef.current);
+    profileCloseTimerRef.current = null;
+  }, []);
+
+  const openProfileMenu = useCallback(() => {
+    clearProfileCloseTimer();
+    setContentMenuOpen(false);
+    setDirectPastChats(false);
+    setDismissed(true);
+    setProfileMenuClosing(false);
+    setProfileMenuOpen(true);
+  }, [clearProfileCloseTimer]);
+
+  const closeProfileMenu = useCallback((afterClose?: () => void) => {
+    clearProfileCloseTimer();
+    setProfileMenuClosing(true);
+    window.requestAnimationFrame(() => setProfileMenuOpen(false));
+    const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    profileCloseTimerRef.current = window.setTimeout(() => {
+      profileCloseTimerRef.current = null;
+      setProfileMenuClosing(false);
+      afterClose?.();
+    }, reduceMotion ? 0 : ANCHORED_POPOVER_CLOSE_MS);
+  }, [clearProfileCloseTimer]);
+
+  useEffect(() => () => clearProfileCloseTimer(), [clearProfileCloseTimer]);
+
   const clearMoreCloseTimer = useCallback(() => {
     if (moreCloseTimerRef.current === null) return;
     window.clearTimeout(moreCloseTimerRef.current);
@@ -1472,6 +1533,9 @@ export function Composer({
 
   const openMoreMenu = useCallback(() => {
     clearMoreCloseTimer();
+    setContentMenuOpen(false);
+    setDirectPastChats(false);
+    setDismissed(true);
     setMoreMenuClosing(false);
     setMoreMenuOpen(true);
   }, [clearMoreCloseTimer]);
@@ -1498,7 +1562,6 @@ export function Composer({
   const planModeOn = collaborationMode === "plan";
   const activeGoal = (goal ?? "").trim();
   const goalModeOn = collaborationMode === "goal";
-  const tokenModeOn = tokenMode === "economy";
   const warnImageInputFallback = useCallback((message = t("composer.imageInputUnsupported")) => {
     showToast(message, "warn");
   }, [showToast, t]);
@@ -2234,6 +2297,46 @@ export function Composer({
     }
   };
 
+  const closeDirectPastChats = () => {
+    setText((current) => current.replace(/(?:^|\s)#[^\s]*$/, "").trimEnd());
+    setDirectPastChats(false);
+    setShowPastChats(false);
+    setPastChatQuery("");
+    setActive(0);
+    requestAnimationFrame(() => taRef.current?.focus());
+  };
+
+  const insertContentTrigger = (trigger: "@" | "#" | "/") => {
+    const selection = getInputSelection();
+    const current = textRef.current;
+    const needsSpace = selection.from > 0 && !/\s/.test(current.charAt(selection.from - 1));
+    const value = `${needsSpace ? " " : ""}${trigger}`;
+    setContentMenuOpen(false);
+    setDirectPastChats(false);
+    setShowPastChats(false);
+    setDismissed(false);
+    replaceInputRange(value, selection.from, selection.to);
+    if (trigger === "#") {
+      setDirectPastChats(true);
+      void openPastChats();
+    }
+  };
+
+  const openContentMenu = () => {
+    if (intentMenuOpen || intentMenuClosing) closeIntentMenu();
+    if (profileMenuOpen || profileMenuClosing) closeProfileMenu();
+    if (moreMenuOpen || moreMenuClosing) closeMoreMenu();
+    setDirectPastChats(false);
+    setShowPastChats(false);
+    setDismissed(true);
+    setContentMenuOpen(true);
+  };
+
+  const chooseAttachmentFiles = () => {
+    setContentMenuOpen(false);
+    fileInputRef.current?.click();
+  };
+
   // PR-C1: client-side filter for the past:chats list. Matches against the
   // human-visible fields (title, topic, preview, path, workspace) so users
   // can narrow long session lists without a backend round-trip. Lowercased
@@ -2256,7 +2359,7 @@ export function Composer({
 
   // Final menu item count: when the past:chats list is open, count the
   // filtered sessions instead of file entries + the "past:chats" row.
-  const count = menuMode === "at" && showPastChats
+  const count = (menuMode === "at" && showPastChats) || menuMode === "pastChats"
     ? filteredPastChats.length
     : countBase;
 
@@ -2289,7 +2392,10 @@ export function Composer({
         },
       ];
     });
-    setText((prev) => removeAtToken(prev));
+    setText((prev) => directPastChats
+      ? prev.replace(/(?:^|\s)#[^\s]*$/, "").trimEnd()
+      : removeAtToken(prev));
+    setDirectPastChats(false);
     setPastChatQuery("");
     setShowPastChats(false);
     setActive(0);
@@ -2319,12 +2425,13 @@ export function Composer({
       if (item) pickArg(item);
       return;
     }
-    if (menuMode === "at") {
+    if (menuMode === "at" || menuMode === "pastChats") {
       if (showPastChats) {
         const session = filteredPastChats[active];
         if (session) pickSession(session);
         return;
       }
+      if (menuMode === "pastChats") return;
       const item = atMenuItems[active];
       if (!item) return;
       if (item.kind === "pastChats") {
@@ -2467,7 +2574,9 @@ export function Composer({
       }
       if (e.key === "Escape") {
         e.preventDefault();
-        if (showPastChats) {
+        if (menuMode === "pastChats") {
+          closeDirectPastChats();
+        } else if (showPastChats) {
           setPastChatQuery("");
           setShowPastChats(false);
           setActive(0);
@@ -2507,9 +2616,12 @@ export function Composer({
       } else if (e.key === "Enter" || e.key === "Tab") {
         pickActive();
       } else if (e.key === "Escape") {
-        setPastChatQuery("");
-        setShowPastChats(false);
-        setActive(0);
+        if (menuMode === "pastChats") closeDirectPastChats();
+        else {
+          setPastChatQuery("");
+          setShowPastChats(false);
+          setActive(0);
+        }
       }
     }
   };
@@ -2536,31 +2648,58 @@ export function Composer({
     onSetToolApprovalMode(nextMode);
     requestAnimationFrame(focusComposerInput);
   };
-  const choosePlanMode = () => {
+  const chooseTaskMode = (nextMode: CollaborationMode) => {
     closeIntentMenu(() => {
-      onSetCollaborationMode(planModeOn ? "normal" : "plan");
+      if (nextMode !== collaborationMode) onSetCollaborationMode(nextMode);
       requestAnimationFrame(focusComposerInput);
     });
   };
-  const chooseGoalMode = () => {
-    if (goalModeOn) {
-      closeIntentMenu(() => {
-        onClearGoal();
-        requestAnimationFrame(focusComposerInput);
-      });
-      return;
-    }
+  const stopGoalMode = () => {
     closeIntentMenu(() => {
-      onSetCollaborationMode("goal");
+      onClearGoal();
       requestAnimationFrame(focusComposerInput);
     });
   };
-  const chooseTokenMode = () => {
-    closeIntentMenu(() => {
-      onSetTokenMode(tokenModeOn ? "full" : "economy");
+  const chooseTokenMode = (mode: TokenMode) => {
+    closeProfileMenu(() => {
+      if (mode !== tokenMode) onSetTokenMode(mode);
       requestAnimationFrame(focusComposerInput);
     });
   };
+  const runtimeProfileShortKey = tokenMode === "economy"
+    ? "composer.runtimeProfileEconomyShort"
+    : tokenMode === "delivery"
+      ? "composer.runtimeProfileDeliveryShort"
+      : "composer.runtimeProfileBalancedShort";
+  const runtimeProfileTooltipSummaryKey = tokenMode === "economy"
+    ? "composer.runtimeProfileEconomyTooltipSummary"
+    : tokenMode === "delivery"
+      ? "composer.runtimeProfileDeliveryTooltipSummary"
+      : "composer.runtimeProfileBalancedTooltipSummary";
+  const RuntimeProfileIcon = tokenMode === "economy" ? Gauge : tokenMode === "delivery" ? Flag : Equal;
+  const runtimeProfileTriggerLabel = t("composer.runtimeProfileTrigger", { mode: t(runtimeProfileShortKey) });
+  const runtimeProfileTooltipLabel = t("composer.controlTooltip", {
+    category: t("composer.runtimeProfileTitle"),
+    mode: t(runtimeProfileShortKey),
+    summary: t(runtimeProfileTooltipSummaryKey),
+  });
+  const taskModeShortKey = collaborationMode === "plan"
+    ? "composer.taskModePlanShort"
+    : collaborationMode === "goal"
+      ? "composer.taskModeGoalShort"
+      : "composer.taskModeDirectShort";
+  const taskModeTooltipSummaryKey = collaborationMode === "plan"
+    ? "composer.taskModePlanTooltipSummary"
+    : collaborationMode === "goal"
+      ? "composer.taskModeGoalTooltipSummary"
+      : "composer.taskModeDirectTooltipSummary";
+  const TaskModeIcon = collaborationMode === "plan" ? List : collaborationMode === "goal" ? Target : ArrowRight;
+  const taskModeTriggerLabel = t("composer.taskModeTrigger", { mode: t(taskModeShortKey) });
+  const taskModeTooltipLabel = t("composer.controlTooltip", {
+    category: t("composer.intentMenuTitle"),
+    mode: t(taskModeShortKey),
+    summary: t(taskModeTooltipSummaryKey),
+  });
   const effortLevels = asArray(effort?.levels);
   const currentEffort = effort?.current || "auto";
   const compactEffortTitle = currentEffort === "auto"
@@ -2623,9 +2762,13 @@ export function Composer({
   useEffect(() => {
     if (!suspendedByDecision) return;
     setDismissed(true);
+    setContentMenuOpen(false);
+    setDirectPastChats(false);
+    setShowPastChats(false);
     closeIntentMenu();
+    closeProfileMenu();
     closeMoreMenu();
-  }, [suspendedByDecision, closeIntentMenu, closeMoreMenu]);
+  }, [suspendedByDecision, closeIntentMenu, closeProfileMenu, closeMoreMenu]);
   const runStateText = retry
     ? t("status.retrying", { attempt: retry.attempt, max: retry.max })
     : waitingPrompt === "approval"
@@ -2662,7 +2805,6 @@ export function Composer({
   const composerMetaClass = [
     "composer-meta",
     hasEffort ? "composer-meta--has-effort" : "composer-meta--no-effort",
-    planModeOn || goalModeOn || tokenModeOn ? "composer-meta--has-intent-chip" : "composer-meta--no-intent-chip",
   ].join(" ");
 
   const inputSelection = getInputSelection();
@@ -2711,6 +2853,68 @@ export function Composer({
       style={{ "--wails-drop-target": "drop" } as CSSProperties}
       onDropCapture={onFileDropCapture}
     >
+      <input
+        ref={fileInputRef}
+        className="composer-content-file-input"
+        type="file"
+        multiple
+        tabIndex={-1}
+        aria-hidden="true"
+        onChange={(event) => {
+          const files = Array.from(event.currentTarget.files ?? []);
+          event.currentTarget.value = "";
+          if (files.length > 0) attachFiles(files);
+          requestAnimationFrame(() => taRef.current?.focus());
+        }}
+      />
+      <AnchoredPopover
+        open={contentMenuOpen && !disabled && !readOnly && !running}
+        anchorRef={contentMenuAnchorRef}
+        onClose={() => setContentMenuOpen(false)}
+        className="composer-access-menu composer-content-menu"
+        align="start"
+      >
+        <div className="composer-access-menu__section" role="menu" aria-label={t("composer.contentMenuTitle")}>
+          <button type="button" role="menuitem" className="composer-access-menu__item composer-content-menu__item" onClick={chooseAttachmentFiles}>
+            <FilePlus2 size={16} aria-hidden="true" />
+            <span className="composer-access-menu__copy">
+              <span className="composer-access-menu__title">{t("composer.contentAddAttachment")}</span>
+              <span className="composer-access-menu__desc">{t("composer.contentAddAttachmentDesc")}</span>
+            </span>
+          </button>
+          <button type="button" role="menuitem" className="composer-access-menu__item composer-content-menu__item" onClick={() => insertContentTrigger("@")}>
+            <AtSign size={16} aria-hidden="true" />
+            <span className="composer-access-menu__copy">
+              <span className="composer-access-menu__title">{t("composer.contentReferenceFiles")}</span>
+              <span className="composer-access-menu__desc">{t("composer.contentReferenceFilesDesc")}</span>
+            </span>
+            <kbd>@</kbd>
+          </button>
+          <button type="button" role="menuitem" className="composer-access-menu__item composer-content-menu__item" onClick={() => insertContentTrigger("#")}>
+            <Hash size={16} aria-hidden="true" />
+            <span className="composer-access-menu__copy">
+              <span className="composer-access-menu__title">{t("composer.contentReferenceSessions")}</span>
+              <span className="composer-access-menu__desc">{t("composer.contentReferenceSessionsDesc")}</span>
+            </span>
+            <kbd>#</kbd>
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            className="composer-access-menu__item composer-content-menu__item"
+            onClick={() => insertContentTrigger("/")}
+            disabled={text.trim().length > 0}
+            title={text.trim().length > 0 ? t("composer.contentUseCommandsEmptyOnly") : undefined}
+          >
+            <SquareTerminal size={16} aria-hidden="true" />
+            <span className="composer-access-menu__copy">
+              <span className="composer-access-menu__title">{t("composer.contentUseCommands")}</span>
+              <span className="composer-access-menu__desc">{text.trim().length > 0 ? t("composer.contentUseCommandsEmptyOnly") : t("composer.contentUseCommandsDesc")}</span>
+            </span>
+            <kbd>/</kbd>
+          </button>
+        </div>
+      </AnchoredPopover>
       <AnchoredPopover
         open={intentMenuOpen}
         closing={intentMenuClosing}
@@ -2719,56 +2923,99 @@ export function Composer({
         className="composer-access-menu composer-intent-menu"
         align="start"
       >
-        <div className="composer-access-menu__section">
+        <div className="composer-access-menu__section" role="menu" aria-label={t("composer.intentMenuTitle")}>
           <div className="composer-access-menu__label">{t("composer.intentMenuTitle")}</div>
           <button
             type="button"
-            className={`composer-access-menu__item composer-intent-menu__item${planModeOn ? " composer-access-menu__item--active" : ""}`}
-            onClick={choosePlanMode}
+            role="menuitemradio"
+            aria-checked={collaborationMode === "normal"}
+            className={`composer-access-menu__item composer-intent-menu__item${collaborationMode === "normal" ? " composer-access-menu__item--active" : ""}`}
+            onClick={() => chooseTaskMode("normal")}
             disabled={disabled || running}
-            title={planModeOn ? t("composer.exitPlanTitle") : t("composer.enterPlanTitle")}
+          >
+            <ArrowRight size={16} />
+            <span className="composer-access-menu__copy">
+              <span className="composer-access-menu__title">{t("composer.taskModeDirect")}</span>
+              <span className="composer-access-menu__desc">{t("composer.taskModeDirectDesc")}</span>
+            </span>
+            {collaborationMode === "normal" && <Check className="composer-intent-menu__check" size={16} aria-hidden="true" />}
+          </button>
+          <button
+            type="button"
+            role="menuitemradio"
+            aria-checked={planModeOn}
+            className={`composer-access-menu__item composer-intent-menu__item${planModeOn ? " composer-access-menu__item--active" : ""}`}
+            onClick={() => chooseTaskMode("plan")}
+            disabled={disabled || running}
           >
             <List size={16} />
             <span className="composer-access-menu__copy">
-              <span className="composer-access-menu__title">{t("composer.modePlan")}</span>
-              <span className="composer-access-menu__desc">{t("composer.planModeDesc")}</span>
+              <span className="composer-access-menu__title">{t("composer.taskModePlan")}</span>
+              <span className="composer-access-menu__desc">{t("composer.taskModePlanDesc")}</span>
             </span>
-            <span className={`composer-intent-switch${planModeOn ? " composer-intent-switch--on" : ""}`} aria-hidden="true">
-              <span />
-            </span>
+            {planModeOn && <Check className="composer-intent-menu__check" size={16} aria-hidden="true" />}
           </button>
           <button
             type="button"
+            role="menuitemradio"
+            aria-checked={goalModeOn}
             className={`composer-access-menu__item composer-intent-menu__item${goalModeOn ? " composer-access-menu__item--active" : ""}`}
-            onClick={chooseGoalMode}
+            onClick={() => chooseTaskMode("goal")}
             disabled={disabled || running}
-            title={goalModeOn ? activeGoal || t("composer.goalModeActiveDesc") : t("composer.goalModeDesc")}
+            title={activeGoal || undefined}
           >
             <Target size={16} />
             <span className="composer-access-menu__copy">
-              <span className="composer-access-menu__title">{t("composer.modeGoal")}</span>
-              <span className="composer-access-menu__desc">{goalModeOn ? activeGoal || t("composer.goalModeActiveDesc") : t("composer.goalModeDesc")}</span>
+              <span className="composer-access-menu__title">{t("composer.taskModeGoal")}</span>
+              <span className="composer-access-menu__desc">{activeGoal || t("composer.taskModeGoalDesc")}</span>
             </span>
-            <span className={`composer-intent-switch${goalModeOn ? " composer-intent-switch--on" : ""}`} aria-hidden="true">
-              <span />
-            </span>
+            {goalModeOn && <Check className="composer-intent-menu__check" size={16} aria-hidden="true" />}
           </button>
-          <button
-            type="button"
-            className={`composer-access-menu__item composer-intent-menu__item${tokenModeOn ? " composer-access-menu__item--active" : ""}`}
-            onClick={chooseTokenMode}
-            disabled={disabled || running}
-            title={tokenModeOn ? t("composer.tokenEconomyOnDesc") : t("composer.tokenEconomyDesc")}
-          >
-            <Gauge size={16} />
-            <span className="composer-access-menu__copy">
-              <span className="composer-access-menu__title">{t("composer.tokenEconomy")}</span>
-              <span className="composer-access-menu__desc">{tokenModeOn ? t("composer.tokenEconomyOnDesc") : t("composer.tokenEconomyDesc")}</span>
-            </span>
-            <span className={`composer-intent-switch${tokenModeOn ? " composer-intent-switch--on" : ""}`} aria-hidden="true">
-              <span />
-            </span>
-          </button>
+          {goalModeOn && activeGoal && (
+            <button
+              type="button"
+              className="composer-intent-menu__stop"
+              onClick={stopGoalMode}
+              disabled={disabled || running}
+            >
+              {t("composer.taskModeStopGoal")}
+            </button>
+          )}
+        </div>
+      </AnchoredPopover>
+      <AnchoredPopover
+        open={profileMenuOpen}
+        closing={profileMenuClosing}
+        anchorRef={profileMenuAnchorRef}
+        onClose={() => closeProfileMenu()}
+        className="composer-access-menu composer-profile-menu"
+        align="start"
+      >
+        <div className="composer-access-menu__section" role="menu" aria-label={t("composer.runtimeProfileTitle")}>
+          <div className="composer-access-menu__label">{t("composer.runtimeProfileTitle")}</div>
+          {([
+            ["economy", Gauge, "composer.runtimeProfileEconomy", "composer.runtimeProfileEconomyDesc"],
+            ["full", Equal, "composer.runtimeProfileBalanced", "composer.runtimeProfileBalancedDesc"],
+            ["delivery", Flag, "composer.runtimeProfileDelivery", "composer.runtimeProfileDeliveryDesc"],
+          ] as const).map(([profile, Icon, titleKey, descKey]) => (
+            <button
+              key={profile}
+              type="button"
+              role="menuitemradio"
+              className={`composer-access-menu__item composer-profile-menu__item${tokenMode === profile ? " composer-access-menu__item--active" : ""}`}
+              onClick={() => chooseTokenMode(profile)}
+              disabled={disabled || running}
+              title={t(descKey)}
+              aria-checked={tokenMode === profile}
+            >
+              <Icon size={16} strokeWidth={1.75} />
+              <span className="composer-access-menu__copy">
+                <span className="composer-access-menu__title">{t(titleKey)}</span>
+                <span className="composer-access-menu__desc">{t(descKey)}</span>
+              </span>
+              {tokenMode === profile && <Check size={15} aria-hidden="true" />}
+            </button>
+          ))}
         </div>
       </AnchoredPopover>
       <AnchoredPopover
@@ -2808,7 +3055,7 @@ export function Composer({
       {menuMode === "slasharg" && argRes && (
         <ArgMenu items={argRes.items} activeIndex={active} onPick={pickArg} onHover={setActive} />
       )}
-      {menuMode === "at" && (
+      {(menuMode === "at" || menuMode === "pastChats") && (
         showPastChats ? (
           <div className="slashmenu" role="listbox">
             {loadingPastChats ? (
@@ -2889,15 +3136,20 @@ export function Composer({
               className="slashmenu__item slashmenu__item--back"
               onMouseDown={(ev) => {
                 ev.preventDefault();
-                setPastChatQuery("");
-                setShowPastChats(false);
-                setActive(0);
+                if (menuMode === "pastChats") closeDirectPastChats();
+                else {
+                  setPastChatQuery("");
+                  setShowPastChats(false);
+                  setActive(0);
+                }
               }}
             >
-              <span className="slashmenu__name">← 返回文件列表</span>
+              <span className="slashmenu__name">
+                {menuMode === "pastChats" ? t("composer.contentCloseSessions") : "← 返回文件列表"}
+              </span>
             </button>
           </div>
-        ) : (
+        ) : menuMode === "at" ? (
           <VirtualMenu
             items={atMenuItems}
             activeIndex={active}
@@ -2939,7 +3191,7 @@ export function Composer({
               )
             }
           />
-        )
+        ) : null
       )}
       {pendingGuidance.length > 0 && (
         <div className="composer-guidance-shelf" aria-label={t("composer.guidanceQueue")}>
@@ -3235,82 +3487,62 @@ export function Composer({
         />
         <div className={composerMetaClass}>
           <div className="composer-meta__params">
+            <div className="composer-meta__control composer-meta__control--content">
+              <Tooltip label={t("composer.contentMenuTitle")} disabled={contentMenuOpen}>
+                <button
+                  ref={contentMenuAnchorRef}
+                  type="button"
+                  className={`composer-content-trigger${contentMenuOpen ? " composer-content-trigger--open" : ""}`}
+                  onClick={() => (contentMenuOpen ? setContentMenuOpen(false) : openContentMenu())}
+                  disabled={disabled || readOnly || running}
+                  aria-haspopup="menu"
+                  aria-expanded={contentMenuOpen}
+                  aria-label={t("composer.contentMenuTitle")}
+                >
+                  <Plus size={17} strokeWidth={1.8} aria-hidden="true" />
+                </button>
+              </Tooltip>
+            </div>
             <div className="composer-meta__control composer-meta__control--intent">
-              <Tooltip label={t("composer.intentMenuTitle")} disabled={intentMenuOpen || intentMenuClosing}>
+              <Tooltip label={taskModeTooltipLabel} disabled={intentMenuOpen || intentMenuClosing}>
                 <button
                   ref={intentMenuAnchorRef}
                   type="button"
-                  className={`composer-action-trigger${intentMenuOpen || intentMenuClosing ? " composer-action-trigger--open" : ""}`}
+                  className={`composer-task-mode-trigger${intentMenuOpen || intentMenuClosing ? " composer-task-mode-trigger--open" : ""}`}
                   onClick={() => (intentMenuOpen || intentMenuClosing ? closeIntentMenu() : openIntentMenu())}
                   disabled={disabled || running}
                   aria-haspopup="menu"
                   aria-expanded={intentMenuOpen && !intentMenuClosing}
-                  aria-label={t("composer.intentMenuTitle")}
-                  title={intentMenuOpen || intentMenuClosing ? undefined : t("composer.intentMenuTitle")}
+                  aria-label={taskModeTriggerLabel}
+                  title={intentMenuOpen || intentMenuClosing ? undefined : taskModeTriggerLabel}
                 >
-                  <SlidersHorizontal size={17} />
+                  <TaskModeIcon size={14} aria-hidden="true" />
+                  <span className="composer-task-mode-trigger__value">{t(taskModeShortKey)}</span>
+                  <ChevronsUpDown size={11} aria-hidden="true" />
                 </button>
               </Tooltip>
-              {planModeOn && (
-                <Tooltip label={t("composer.exitPlanTitle")}>
-                  <button
-                    type="button"
-                    className="composer-mode-chip composer-mode-chip--plan"
-                    onClick={choosePlanMode}
-                    disabled={disabled}
-                    title={t("composer.exitPlanTitle")}
-                    aria-label={t("composer.exitPlanTitle")}
-                  >
-                    <span className="composer-mode-chip__icon composer-mode-chip__icon--mode" aria-hidden="true">
-                      <List size={14} />
-                    </span>
-                    <span className="composer-mode-chip__icon composer-mode-chip__icon--dismiss" aria-hidden="true">
-                      <X size={11} />
-                    </span>
-                    <span className="composer-mode-chip__label">{t("composer.modePlan")}</span>
-                  </button>
-                </Tooltip>
-              )}
-              {goalModeOn && (
-                <Tooltip label={t("composer.exitGoalTitle")}>
-                  <button
-                    type="button"
-                    className="composer-mode-chip composer-mode-chip--goal"
-                    onClick={chooseGoalMode}
-                    disabled={disabled}
-                    title={activeGoal || t("composer.exitGoalTitle")}
-                    aria-label={t("composer.exitGoalTitle")}
-                  >
-                    <span className="composer-mode-chip__icon composer-mode-chip__icon--mode" aria-hidden="true">
-                      <Target size={14} />
-                    </span>
-                    <span className="composer-mode-chip__icon composer-mode-chip__icon--dismiss" aria-hidden="true">
-                      <X size={11} />
-                    </span>
-                    <span className="composer-mode-chip__label">{t("composer.modeGoal")}</span>
-                  </button>
-                </Tooltip>
-              )}
-              {tokenModeOn && (
-                <Tooltip label={t("composer.tokenEconomyOnDesc")}>
-                  <button
-                    type="button"
-                    className="composer-mode-chip composer-mode-chip--token"
-                    onClick={chooseTokenMode}
-                    disabled={disabled || running}
-                    title={t("composer.tokenEconomyExitTitle")}
-                    aria-label={t("composer.tokenEconomyExitTitle")}
-                  >
-                    <span className="composer-mode-chip__icon composer-mode-chip__icon--mode" aria-hidden="true">
-                      <Gauge size={14} />
-                    </span>
-                    <span className="composer-mode-chip__icon composer-mode-chip__icon--dismiss" aria-hidden="true">
-                      <X size={11} />
-                    </span>
-                    <span className="composer-mode-chip__label">{t("composer.tokenEconomyShort")}</span>
-                  </button>
-                </Tooltip>
-              )}
+            </div>
+            <div className="composer-meta__control composer-meta__control--profile">
+              <Tooltip label={runtimeProfileTooltipLabel} disabled={profileMenuOpen || profileMenuClosing}>
+                <button
+                  ref={profileMenuAnchorRef}
+                  type="button"
+                  data-profile={tokenMode}
+                  className={`composer-profile-trigger${profileMenuOpen || profileMenuClosing ? " composer-profile-trigger--open" : ""}`}
+                  onClick={() => (profileMenuOpen || profileMenuClosing ? closeProfileMenu() : openProfileMenu())}
+                  disabled={disabled || running}
+                  aria-haspopup="menu"
+                  aria-expanded={profileMenuOpen && !profileMenuClosing}
+                  aria-label={runtimeProfileTriggerLabel}
+                  title={profileMenuOpen || profileMenuClosing ? undefined : runtimeProfileTriggerLabel}
+                >
+                  <RuntimeProfileIcon size={14} strokeWidth={1.75} aria-hidden="true" />
+                  <span className="composer-profile-trigger__label">
+                    <span className="composer-profile-trigger__value">{t(runtimeProfileShortKey)}</span>
+                  </span>
+                  <ChevronsUpDown size={11} aria-hidden="true" />
+                </button>
+              </Tooltip>
             </div>
             <div className="composer-meta__control composer-meta__control--approval">
               {/* A pending tool approval disables the composer, but the approval
@@ -3354,6 +3586,7 @@ export function Composer({
                 </button>
               </div>
             </div>
+            <span className="composer-meta__divider" aria-hidden="true" />
             <div className="composer-meta__control composer-meta__control--model">
               {showContextWindowRing && (
                 <ContextWindowRing

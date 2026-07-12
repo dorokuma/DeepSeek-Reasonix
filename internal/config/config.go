@@ -127,7 +127,7 @@ type DesktopConfig struct {
 	DisplayMode             string   `toml:"display_mode"`               // standard|compact (legacy "minimal" maps to compact); transcript display mode
 	StatusBarStyle          string   `toml:"status_bar_style"`           // icon|text; desktop status bar metric labels
 	StatusBarItems          []string `toml:"status_bar_items"`           // ordered visible desktop status bar items
-	DefaultToolApprovalMode string   `toml:"default_tool_approval_mode"` // ask|auto|yolo; default for newly-created desktop sessions
+	DefaultToolApprovalMode string   `toml:"default_tool_approval_mode"` // ask|auto|yolo; defaults to auto for newly-created desktop sessions
 	CheckUpdates            *bool    `toml:"check_updates"`              // startup update checks; nil keeps the default enabled
 	Telemetry               *bool    `toml:"telemetry"`                  // anonymous launch ping (install id + version + OS); nil keeps the default enabled
 	Metrics                 *bool    `toml:"metrics"`                    // aggregate desktop metrics (anonymous signal/bucket counts; no content); nil keeps the default enabled
@@ -1545,6 +1545,7 @@ func Default() *Config {
 		DefaultModel:     "deepseek-flash",
 		CredentialsStore: CredentialsStoreAuto,
 		UI:               UIConfig{Theme: "auto"},
+		Desktop:          DesktopConfig{DefaultToolApprovalMode: "auto"},
 		Notifications: NotificationsConfig{
 			Enabled:         false,
 			TurnDone:        true,

@@ -534,6 +534,17 @@ a project `reasonix.toml` pins `[sandbox]` (a project file overrides
 Settings/user-config edits, and sandbox changes take effect after a session
 config reload or a new session).
 
+For coding-quality reports, run `reasonix doctor quality <branch-id-or-path>`
+(add `--json` for structured output). This reads the selected session but emits
+only content-free counts and profile categories: model family, runtime profile,
+collaboration / approval modes, message and tool-call counts, verification and persisted
+compaction-summary counts, plus desktop token/cache telemetry when available.
+It omits transcript text, paths, session identifiers, tool arguments and output,
+endpoints, and custom model names, so the result is suitable for a public issue
+or Discussion. This differs from `reasonix doctor session`, whose support zip
+contains the complete unredacted transcript and must remain in a trusted support
+channel.
+
 ## Capability diagnostics
 
 Use this when a skill, slash command, hook, plugin package, MCP server, or
@@ -876,6 +887,26 @@ reached, but writer-capable `task` / `run_skill` remain unavailable. In
 token economy mode, connect only this narrow surface with
 `connect_tool_source(source="read_only_skill")`; the full `skills` source still
 enables writer-capable skill tools and remains blocked in plan mode.
+
+Choose a per-session runtime profile with
+`--profile economy|balanced|delivery` (for example, `reasonix run --profile
+delivery "fix and verify this bug"`). Economy keeps the initial tool surface
+lean and connects optional sources on demand. Balanced is the byte-compatible
+default with the complete tool surface. Delivery keeps that complete surface,
+adds one stable proxy tool (`use_capability`) for on-demand MCP inspect/call
+without schema churn, and adds a stable contract to establish acceptance
+criteria, fix root causes, verify the result, and review the final diff. The
+host enforces that contract: mutations and verification commands are blocked
+until a concrete `todo_write` acceptance list exists; a changed result cannot
+finalize until it has been reviewed, verified after the latest mutation, and
+signed off with `complete_step`; Skill/MCP `require`/`prefer` routes must be
+invoked or declined with host-proven reasons; and medium/high-risk changes
+require structured review (and security review when high). Meta tools such as
+`task`, `run_skill`, and `review` are not counted as mutations by themselves —
+only real child writes are. Read-only analysis remains available without
+forcing a write.
+Desktop tabs expose the same three choices and persist Economy or Delivery;
+legacy empty/`full` values remain Balanced.
 
 For interactive frontends, plan mode is manual by default. Set
 `agent.auto_plan = "on"` to make complex-looking tasks enter plan mode

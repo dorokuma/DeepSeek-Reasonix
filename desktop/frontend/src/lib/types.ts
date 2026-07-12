@@ -472,7 +472,8 @@ export interface Meta {
 
 export type CollaborationMode = "normal" | "plan" | "goal";
 export type ToolApprovalMode = "ask" | "auto" | "yolo";
-export type TokenMode = "full" | "economy";
+// "full" is the persisted compatibility value for the Balanced runtime profile.
+export type TokenMode = "full" | "economy" | "delivery";
 export type GoalStatus = "running" | "complete" | "blocked" | "stopped";
 
 export interface AutoResearchCompactView {
@@ -546,6 +547,7 @@ export function normalizeToolApprovalMode(
 
 export function normalizeTokenMode(mode?: string): TokenMode {
   if (mode === "economy") return "economy";
+  if (mode === "delivery") return "delivery";
   return "full";
 }
 

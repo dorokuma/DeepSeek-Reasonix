@@ -13,11 +13,14 @@ import (
 
 	"reasonix/internal/boot"
 	"reasonix/internal/config"
+	"reasonix/internal/control"
 	"reasonix/internal/event"
 	"reasonix/internal/skill"
 )
 
-var setupSubagentCommand = setup
+var setupSubagentCommand = func(ctx context.Context, modelName string, maxStepsOverride int, requireKey bool, sink event.Sink) (*control.Controller, error) {
+	return setupProfile(ctx, modelName, maxStepsOverride, requireKey, sink, "")
+}
 
 const subagentUsageText = `usage:
   reasonix subagent list [--dir PATH]

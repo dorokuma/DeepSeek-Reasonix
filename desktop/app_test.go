@@ -4568,6 +4568,39 @@ func TestSetTokenModeRebuildsController(t *testing.T) {
 	}
 }
 
+func TestSetTokenModeDeliveryRebuildsAndPersistsProfile(t *testing.T) {
+	isolateDesktopUserDirs(t)
+
+	app := NewApp()
+	app.ctx = context.Background()
+	app.readyHook = func() {}
+	old := control.New(control.Options{Label: "old-controller"})
+	app.setTestCtrl(old, "deepseek-flash/deepseek-v4-flash")
+	defer func() {
+		if c := app.activeCtrl(); c != nil {
+			c.Close()
+		}
+	}()
+
+	if err := app.SetTokenMode(boot.TokenModeDelivery); err != nil {
+		t.Fatalf("SetTokenMode(delivery): %v", err)
+	}
+	if c := app.activeCtrl(); c == nil || c == old {
+		t.Fatal("delivery profile should rebuild the active controller")
+	}
+	tab := app.activeTab()
+	if got := currentTabTokenMode(tab); got != boot.TokenModeDelivery {
+		t.Fatalf("token mode = %q, want delivery", got)
+	}
+	if got := app.Meta().TokenMode; got != boot.TokenModeDelivery {
+		t.Fatalf("Meta token mode = %q, want delivery", got)
+	}
+	saved := loadTabsFile()
+	if len(saved.Tabs) != 1 || saved.Tabs[0].TokenMode != boot.TokenModeDelivery {
+		t.Fatalf("saved tabs = %+v, want delivery profile", saved.Tabs)
+	}
+}
+
 func TestSetTokenModeReusesCurrentSessionLease(t *testing.T) {
 	isolateDesktopUserDirs(t)
 	setDesktopTestCredential(t, "OLD_MODEL_KEY", "sk-test")

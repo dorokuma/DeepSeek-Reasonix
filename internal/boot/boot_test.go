@@ -308,6 +308,15 @@ func requestHasTool(req provider.Request, name string) bool {
 	return false
 }
 
+func requestMessageContains(messages []provider.Message, role provider.Role, needle string) bool {
+	for _, message := range messages {
+		if message.Role == role && strings.Contains(message.Content, needle) {
+			return true
+		}
+	}
+	return false
+}
+
 func requestToolSchemaContains(req provider.Request, name, want string) bool {
 	for _, schema := range req.Tools {
 		if schema.Name == name {
@@ -1241,6 +1250,106 @@ model = "x"
 	}
 	if requestHasTool(fullReq, "connect_tool_source") {
 		t.Fatalf("full mode should not expose economy connector; tools=%v", toolSchemaNames(fullReq.Tools))
+	}
+}
+
+func TestBuildTokenBalancedAliasMatchesDefaultRequestPrefix(t *testing.T) {
+	isolateConfigHome(t)
+	dir := robustTempDir(t)
+	t.Chdir(dir)
+
+	writeFile(t, dir, "reasonix.toml", `
+default_model = "test-model"
+
+[agent]
+system_prompt = "BASE"
+
+[[providers]]
+name = "test-model"
+kind = "boot-token-profile-test"
+model = "x"
+`)
+
+	defaultReq := firstTokenProfileRequest(t, "")
+	balancedReq := firstTokenProfileRequest(t, "balanced")
+	if !reflect.DeepEqual(balancedReq.Messages, defaultReq.Messages) {
+		t.Fatal("balanced alias changed provider-visible messages")
+	}
+	if !reflect.DeepEqual(balancedReq.Tools, defaultReq.Tools) {
+		t.Fatal("balanced alias changed provider-visible tool schemas")
+	}
+}
+
+func TestNormalizeTokenModeSupportsRuntimeProfilesAndLegacyAliases(t *testing.T) {
+	for input, want := range map[string]string{
+		"":           TokenModeFull,
+		"full":       TokenModeFull,
+		"balanced":   TokenModeFull,
+		"economy":    TokenModeEconomy,
+		"eco":        TokenModeEconomy,
+		"delivery":   TokenModeDelivery,
+		"quality":    TokenModeDelivery,
+		"unexpected": TokenModeFull,
+	} {
+		if got := NormalizeTokenMode(input); got != want {
+			t.Errorf("NormalizeTokenMode(%q) = %q, want %q", input, got, want)
+		}
+	}
+}
+
+func TestBuildTokenDeliveryKeepsFullSurfaceAndAddsStableContract(t *testing.T) {
+	isolateConfigHome(t)
+	dir := robustTempDir(t)
+	t.Chdir(dir)
+
+	writeFile(t, dir, "reasonix.toml", `
+default_model = "test-model"
+
+[agent]
+system_prompt = "BASE"
+
+[[providers]]
+name = "test-model"
+kind = "boot-token-profile-test"
+model = "x"
+`)
+
+	fullReq := firstTokenProfileRequest(t, TokenModeFull)
+	deliveryReq := firstTokenProfileRequest(t, TokenModeDelivery)
+	fullSystem := systemMessage(fullReq.Messages)
+	deliverySystem := systemMessage(deliveryReq.Messages)
+	if !strings.Contains(deliverySystem, tokenDeliveryPrompt) {
+		t.Fatalf("delivery contract missing from system prompt:\n%s", deliverySystem)
+	}
+	if strings.Replace(deliverySystem, "\n\n"+tokenDeliveryPrompt, "", 1) != fullSystem {
+		t.Fatal("delivery profile changed the full system prompt beyond its stable contract")
+	}
+	// Delivery keeps the full surface and adds one stable proxy tool.
+	if !requestHasTool(deliveryReq, "use_capability") {
+		t.Fatal("delivery profile must expose the stable use_capability proxy")
+	}
+	if requestHasTool(fullReq, "use_capability") {
+		t.Fatal("balanced/full profile must not expose use_capability")
+	}
+	fullNames := toolSchemaNames(fullReq.Tools)
+	deliveryNames := toolSchemaNames(deliveryReq.Tools)
+	// Every full tool must remain; delivery adds exactly use_capability.
+	for _, name := range fullNames {
+		if !requestHasTool(deliveryReq, name) {
+			t.Fatalf("delivery dropped tool %q from the full surface", name)
+		}
+	}
+	if len(deliveryNames) != len(fullNames)+1 {
+		t.Fatalf("delivery tools = %d, want full(%d)+use_capability", len(deliveryNames), len(fullNames))
+	}
+	if requestHasTool(deliveryReq, "connect_tool_source") {
+		t.Fatal("delivery profile should not expose the economy connector")
+	}
+	if !requestMessageContains(deliveryReq.Messages, provider.RoleUser, "<delivery-runtime>") {
+		t.Fatal("delivery profile did not reach the agent runtime turn contract")
+	}
+	if requestMessageContains(fullReq.Messages, provider.RoleUser, "<delivery-runtime>") {
+		t.Fatal("full profile unexpectedly received the delivery runtime contract")
 	}
 }
 

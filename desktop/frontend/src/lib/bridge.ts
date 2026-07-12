@@ -1276,7 +1276,7 @@ function makeMockApp(): AppBindings {
     displayMode: "compact",
     statusBarStyle: "text",
     statusBarItems: [...DEFAULT_STATUS_BAR_ITEMS],
-    defaultToolApprovalMode: "ask",
+    defaultToolApprovalMode: "auto",
     checkUpdates: true,
     telemetry: true,
     metrics: true,

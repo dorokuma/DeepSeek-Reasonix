@@ -53,6 +53,18 @@ func TestExplainError(t *testing.T) {
 		t.Errorf("400 should append the provider reason from a JSON body, got %q", jsonBody.Error())
 	}
 
+	toolSchema := explainError(&provider.APIError{
+		Provider:    "mimo",
+		Status:      400,
+		Body:        `{"error":{"message":"Tool 197 function has invalid 'parameters' schema"}}`,
+		ToolContext: `Provider tool 197 maps to Reasonix tool "mcp__files__search" (MCP server "files", tool "search").`,
+	})
+	for _, want := range []string{"invalid 'parameters' schema", `MCP server "files"`} {
+		if !strings.Contains(toolSchema.Error(), want) {
+			t.Errorf("400 tool schema error = %q, want %q", toolSchema.Error(), want)
+		}
+	}
+
 	rawBody := explainError(&provider.APIError{Provider: "deepseek", Status: 422, Body: "some unparseable detail"})
 	if !strings.Contains(rawBody.Error(), "some unparseable detail") {
 		t.Errorf("422 should fall back to the raw body, got %q", rawBody.Error())

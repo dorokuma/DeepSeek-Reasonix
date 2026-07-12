@@ -1607,16 +1607,17 @@ export default function App() {
     [activeTabId, patchActiveComposerProfile, syncModeToController],
   );
   const applyCollaborationMode = useCallback(
-    (m: CollaborationMode): Promise<void> => {
+    async (m: CollaborationMode): Promise<void> => {
       userPlanModeByTabRef.current = updateUserPlanModeIntent(userPlanModeByTabRef.current, activeTabId, m === "plan");
       if (m === "goal") {
         patchActiveComposerProfile({ collaborationMode: "normal", goalDraftMode: true, goal: "" }, ["collaborationMode", "goal"]);
         return setControllerCollaborationMode("normal");
       }
       patchActiveComposerProfile({ collaborationMode: m, goalDraftMode: false, goal: "" }, ["collaborationMode", "goal"]);
-      return setControllerCollaborationMode(m);
+      if (goal.trim()) await clearControllerGoal();
+      await setControllerCollaborationMode(m);
     },
-    [activeTabId, patchActiveComposerProfile, setControllerCollaborationMode],
+    [activeTabId, clearControllerGoal, goal, patchActiveComposerProfile, setControllerCollaborationMode],
   );
   const applyToolApprovalMode = useCallback(
     (m: ToolApprovalMode) => {

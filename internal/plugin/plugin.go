@@ -1242,6 +1242,23 @@ func ToolPrefix(server string) string {
 	return "mcp__" + normalizeName(server) + "__"
 }
 
+// MCPConnectPermissionName is the canonical permission and hook identity for
+// starting server on demand. It is intentionally outside the mcp__ tool
+// namespace: permission rules match tool names exactly, so a connect must have
+// its own non-colliding name instead of pretending a tool-prefix is a glob.
+func MCPConnectPermissionName(server string) string {
+	return "mcp_connect__" + normalizeName(server)
+}
+
+// ModelToolName is the canonical model-visible name for server's raw tool —
+// including the collision-hash suffix normalizeName appends when the raw name
+// needed sanitising. Every permission/hook/audit surface that names an MCP
+// tool must build the name through this function; a second normalization that
+// skips the hash would let deny/ask rules written for the executed name miss.
+func ModelToolName(server, raw string) string {
+	return toolName(server, raw)
+}
+
 var invalidNameChars = regexp.MustCompile(`[^a-zA-Z0-9_-]+`)
 
 func normalizeName(s string) string {

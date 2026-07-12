@@ -808,7 +808,7 @@ func (a *App) Settings() SettingsView {
 			DisplayMode:             "standard",
 			StatusBarStyle:          "text",
 			StatusBarItems:          config.DefaultDesktopStatusBarItems(),
-			DefaultToolApprovalMode: "ask",
+			DefaultToolApprovalMode: "auto",
 			CheckUpdates:            true,
 			Telemetry:               true,
 			Metrics:                 true,

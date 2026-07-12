@@ -874,7 +874,7 @@ func TestReadOnlyIndexBlockPointsAtReadOnlySkill(t *testing.T) {
 
 func TestSkillRoutingMetadataParsesButStaysOutOfIndex(t *testing.T) {
 	home := t.TempDir()
-	writeSkill(t, home, ".reasonix/skills/router.md", "---\ndescription: route me\ntriggers: code review, 检查代码\nnegative-triggers: explain only\nauto-use: prefer\nneeds-fresh-data: true\ncost: low\n---\nbody")
+	writeSkill(t, home, ".reasonix/skills/router.md", "---\ndescription: route me\ntriggers: code review, 检查代码\nnegative-triggers: explain only\nauto-use: prefer\nneeds-fresh-data: true\ncost: low\nrequires: mcp-server:github, mcp-tool:github/search_issues\nprofiles: delivery, balanced, economy, invalid\n---\nbody")
 	sk, ok := New(Options{HomeDir: home, DisableBuiltins: true}).Read("router")
 	if !ok {
 		t.Fatal("skill not loaded")
@@ -888,8 +888,17 @@ func TestSkillRoutingMetadataParsesButStaysOutOfIndex(t *testing.T) {
 	if sk.AutoUse != "prefer" || !sk.NeedsFreshData || sk.Cost != "low" {
 		t.Fatalf("routing metadata = auto:%q fresh:%v cost:%q", sk.AutoUse, sk.NeedsFreshData, sk.Cost)
 	}
+	if got := strings.Join(sk.Requires, ","); got != "mcp-server:github,mcp-tool:github/search_issues" {
+		t.Fatalf("Requires = %q", got)
+	}
+	if got := strings.Join(sk.Profiles, ","); got != "delivery,balanced,economy" {
+		t.Fatalf("Profiles = %q (invalid values should be dropped)", got)
+	}
+	if got := strings.Join(sk.InvalidProfiles, ","); got != "invalid" {
+		t.Fatalf("InvalidProfiles = %q (rejected values must be preserved for doctor)", got)
+	}
 	index := IndexBlock([]Skill{sk})
-	for _, forbidden := range []string{"code review", "auto-use", "needs-fresh-data"} {
+	for _, forbidden := range []string{"code review", "auto-use", "needs-fresh-data", "mcp-server:github", "profiles"} {
 		if strings.Contains(index, forbidden) {
 			t.Fatalf("routing metadata leaked into index (%q):\n%s", forbidden, index)
 		}

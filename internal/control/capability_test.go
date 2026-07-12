@@ -6,12 +6,38 @@ import (
 	"strings"
 	"testing"
 
+	"reasonix/internal/capability"
 	"reasonix/internal/skill"
 	"reasonix/internal/tool"
 )
 
 type capabilityRecordingRunner struct {
 	input string
+}
+
+func TestEconomyRoutesOnlyEconomyEligibleSkills(t *testing.T) {
+	runner := &capabilityRecordingRunner{}
+	reg := tool.NewRegistry()
+	reg.Add(capabilityTestTool{name: "run_skill"})
+	c := New(Options{
+		Runner: runner,
+		Skills: []skill.Skill{
+			{Name: "economy-review", Description: "review code", Triggers: []string{"review code"}, Profiles: []string{"economy"}},
+			{Name: "balanced-review", Description: "review code", Triggers: []string{"review code"}, Profiles: []string{"balanced"}},
+		},
+		Registry:       reg,
+		RuntimeProfile: capability.ProfileEconomy,
+	})
+
+	if err := c.Run(context.Background(), "review code"); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if !strings.Contains(runner.input, "skill:economy-review prefer") {
+		t.Fatalf("economy skill missing from route:\n%s", runner.input)
+	}
+	if strings.Contains(runner.input, "skill:balanced-review") {
+		t.Fatalf("balanced-only skill leaked into economy route:\n%s", runner.input)
+	}
 }
 
 func (r *capabilityRecordingRunner) Run(_ context.Context, input string) error {
