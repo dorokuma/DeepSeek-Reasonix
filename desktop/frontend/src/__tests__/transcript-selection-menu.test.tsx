@@ -9,6 +9,9 @@
 //   plain-browser sessions (no window.runtime) never open the menu
 // - a surviving message selection does not hijack right-clicks landing
 //   outside message bodies (project tree, tab bar, ... own those menus)
+// - the target message must itself touch the selection: selecting message A
+//   and right-clicking message B offers nothing (Copy would copy A), while a
+//   selection spanning both accepts a right-click on either
 
 import { JSDOM } from "jsdom";
 import React from "react";
@@ -95,11 +98,13 @@ console.log("\ntranscript selection menu");
   document.body.insertAdjacentHTML(
     "beforeend",
     "<div class=\"msg__body\">assistant reply text</div>" +
+      "<div class=\"msg__body\" id=\"second-message\">second reply text</div>" +
       "<p id=\"plain\">plain page text</p>" +
       "<div id=\"sidebar\">project tree area</div>" +
       "<textarea id=\"editor\"></textarea>",
   );
   const msgBody = document.querySelector(".msg__body") as HTMLElement;
+  const secondMsg = document.querySelector("#second-message") as HTMLElement;
   const plain = document.querySelector("#plain") as HTMLElement;
   const sidebar = document.querySelector("#sidebar") as HTMLElement;
   const editor = document.querySelector("#editor") as HTMLTextAreaElement;
@@ -140,6 +145,29 @@ console.log("\ntranscript selection menu");
   selectNodeText(plain.firstChild as Node);
   await dispatchContextMenu(plain);
   eq(document.querySelector(".context-menu"), null, "non-message selection does not open the menu");
+
+  // Selecting message A and right-clicking message B must offer nothing:
+  // Copy would copy A's text, not what sits under the click.
+  selectNodeText(msgBody.firstChild as Node);
+  const otherMessageEvent = await dispatchContextMenu(secondMsg);
+  eq(otherMessageEvent.defaultPrevented, false, "right-click on a message outside the selection leaves the event alone");
+  eq(document.querySelector(".context-menu"), null, "selection in message A does not open the menu on message B");
+
+  // A selection spanning both messages accepts a right-click on either.
+  {
+    const range = document.createRange();
+    range.setStartBefore(msgBody.firstChild as Node);
+    range.setEndAfter(secondMsg.firstChild as Node);
+    const selection = document.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+  }
+  await dispatchContextMenu(secondMsg);
+  ok(document.querySelector(".context-menu") != null, "cross-message selection opens the menu on either message");
+  await act(async () => {
+    window.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Escape" }));
+    await flushTimers();
+  });
 
   // A surviving message selection must not hijack right-clicks landing outside
   // message bodies — the project tree, tab bar, etc. own those context menus.
