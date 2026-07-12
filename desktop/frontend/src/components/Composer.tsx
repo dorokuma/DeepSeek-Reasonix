@@ -1163,6 +1163,17 @@ export function Composer({
     if (menuMode && menuMode !== "pastChats") setContentMenuOpen(false);
   }, [menuMode]);
 
+  // A starting run closes the transient content surfaces. Without this the
+  // popover state survives the run (its open prop gates on !running) and the
+  // menu would pop back unprompted the moment the turn finishes.
+  useEffect(() => {
+    if (!running) return;
+    setContentMenuOpen(false);
+    setDirectPastChats(false);
+    setShowPastChats(false);
+    setPastChatQuery("");
+  }, [running]);
+
   const resetPromptHistoryNavigation = () => {
     if (historyIndexRef.current === -1) return;
     historyIndexRef.current = -1;
@@ -2795,11 +2806,18 @@ export function Composer({
             <kbd>#</kbd>
           </button>
           <div className="composer-content-menu__divider" aria-hidden="true" />
-          <button type="button" role="menuitem" className="composer-access-menu__item composer-content-menu__item" onClick={() => insertContentTrigger("/")}>
+          <button
+            type="button"
+            role="menuitem"
+            className="composer-access-menu__item composer-content-menu__item"
+            onClick={() => insertContentTrigger("/")}
+            disabled={text.trim().length > 0}
+            title={text.trim().length > 0 ? t("composer.contentUseCommandsEmptyOnly") : undefined}
+          >
             <Slash size={16} aria-hidden="true" />
             <span className="composer-access-menu__copy">
               <span className="composer-access-menu__title">{t("composer.contentUseCommands")}</span>
-              <span className="composer-access-menu__desc">{t("composer.contentUseCommandsDesc")}</span>
+              <span className="composer-access-menu__desc">{text.trim().length > 0 ? t("composer.contentUseCommandsEmptyOnly") : t("composer.contentUseCommandsDesc")}</span>
             </span>
             <kbd>/</kbd>
           </button>

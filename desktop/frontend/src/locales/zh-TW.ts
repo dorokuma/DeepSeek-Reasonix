@@ -1635,6 +1635,7 @@ export const zhTW: Record<DictKey, string> = {
   "composer.contentReferenceSessionsDesc": "將最近會話加入目前上下文",
   "composer.contentUseCommands": "使用命令或 Skill",
   "composer.contentUseCommandsDesc": "瀏覽可用命令和技能",
+  "composer.contentUseCommandsEmptyOnly": "輸入框為空時可用——命令會構成整條訊息",
   "composer.contentCloseSessions": "關閉歷史會話",
   "composer.shellMode": "Shell 模式：給輸入前加 !",
   "composer.shellModeOn": "Shell 模式已開：點選移除 !",

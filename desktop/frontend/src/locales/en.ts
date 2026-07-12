@@ -503,6 +503,7 @@ export const en = {
   "composer.contentReferenceSessionsDesc": "Add a recent session to this context",
   "composer.contentUseCommands": "Use command or Skill",
   "composer.contentUseCommandsDesc": "Browse available commands and skills",
+  "composer.contentUseCommandsEmptyOnly": "Available when the input is empty — commands replace the whole message",
   "composer.contentCloseSessions": "Close recent sessions",
   "composer.searchProjects": "Search projects",
   "composer.noProjectMatches": "No matching projects",
