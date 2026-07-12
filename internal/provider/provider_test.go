@@ -354,15 +354,16 @@ func TestAuthErrorWithKeyEnv(t *testing.T) {
 	}
 }
 
-func TestAuthErrorWithBody(t *testing.T) {
-	e := &AuthError{Provider: "relay", Status: 401, Body: `{"error":{"message":"token expired"}}`}
-	msg := e.Error()
-	if !contains(msg, "server said:") || !contains(msg, "token expired") {
-		t.Errorf("AuthError.Error() should carry the server's reason: %s", msg)
+func TestAuthErrorBodyStaysOutOfError(t *testing.T) {
+	// Body carries the server's reason for display layers to extract, but it
+	// must never leak into Error(): servers echo masked key fragments in auth
+	// bodies, and the ambient string flows into logs and traces.
+	e := &AuthError{Provider: "relay", Status: 401, Body: `{"error":{"message":"Your api key: ****ae54 has expired"}}`}
+	if e.Body == "" {
+		t.Fatal("Body should carry the server's reason")
 	}
-	bare := &AuthError{Provider: "relay", Status: 401}
-	if contains(bare.Error(), "server said:") {
-		t.Errorf("AuthError without a body should not mention a server reason: %s", bare.Error())
+	if msg := e.Error(); contains(msg, "ae54") || contains(msg, "{") {
+		t.Errorf("AuthError.Error() must not include body content: %s", msg)
 	}
 }
 

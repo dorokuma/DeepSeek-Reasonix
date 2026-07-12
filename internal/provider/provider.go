@@ -676,8 +676,11 @@ type Config struct {
 // when known, the environment variable the key comes from — and it carries the
 // server's own reason as Body, because relay gateways explain *why* the key was
 // rejected ("token expired", key not entitled to the model) in the response
-// body. Providers should return this (rather than a generic status error) for
-// auth failures.
+// body. Body is deliberately NOT part of Error(): servers echo masked key
+// fragments in auth bodies, and the ambient error string flows into logs,
+// status lines, and traces where key material must never propagate. Display
+// layers that want the reason read Body and extract it themselves. Providers
+// should return this (rather than a generic status error) for auth failures.
 type AuthError struct {
 	Provider  string // the provider instance name, e.g. "deepseek"
 	KeyEnv    string // the api_key_env the key is read from, when known
@@ -695,12 +698,8 @@ func (e *AuthError) Error() string {
 	if e.KeySource != "" {
 		key += " from " + e.KeySource
 	}
-	s := fmt.Sprintf("authentication failed for provider %q (HTTP %d): %s is invalid or expired — update it (in .env or your environment) and retry, or run `reasonix setup`",
+	return fmt.Sprintf("authentication failed for provider %q (HTTP %d): %s is invalid or expired — update it (in .env or your environment) and retry, or run `reasonix setup`",
 		e.Provider, e.Status, key)
-	if e.Body != "" {
-		s += "; server said: " + e.Body
-	}
-	return s
 }
 
 // Factory builds a Provider from a resolved Config.
