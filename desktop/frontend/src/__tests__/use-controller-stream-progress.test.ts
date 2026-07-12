@@ -56,6 +56,21 @@ function ev(s: typeof initialState, e: WireEvent) {
   eq(s.turnArgChars, 0, "usage event resets the streaming estimate");
 }
 
+// --- 1b. partial dispatch without an ID never creates an orphan card ---
+{
+  let s = { ...initialState, running: true, turnActive: true };
+  // OpenAI-compatible streams can surface the name before the call ID.
+  s = ev(s, { kind: "tool_dispatch", tool: { name: "write_file", readOnly: false, partial: true, argChars: 2048 } } as WireEvent);
+  eq(s.items.filter((it) => it.kind === "tool").length, 0, "id-less partial creates no card");
+  eq(s.turnArgChars, 2048, "id-less partial still counts streaming progress");
+
+  s = ev(s, { kind: "tool_dispatch", tool: { id: "c1", name: "write_file", readOnly: false, partial: true, argChars: 4096 } } as WireEvent);
+  s = ev(s, { kind: "tool_dispatch", tool: { id: "c1", name: "write_file", args: '{"path":"a"}', readOnly: false } } as WireEvent);
+  eq(s.items.filter((it) => it.kind === "tool").length, 1, "late ID yields exactly one card, no orphan");
+  const only = s.items.find((it) => it.kind === "tool");
+  eq(only?.kind === "tool" ? only.id : "", "c1", "surviving card carries the real call ID");
+}
+
 // --- 2. usageSeq bumps for every source ---
 {
   let s = { ...initialState, running: true, turnActive: true };

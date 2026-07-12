@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"regexp"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -381,6 +380,11 @@ type Agent struct {
 	deliveryCriteriaEstablished bool
 	deliveryTaskExpected        bool
 	deliveryMutationExpected    bool
+
+	// classifierTaskText is the host-trusted task text for delivery intent
+	// classification, set by sub-agent spawners whose Run input carries host
+	// framing. Empty means classify the raw input verbatim.
+	classifierTaskText string
 
 	// preserveEvidenceOnce makes the next Run keep the turn evidence ledger
 	// instead of resetting it. RunSubAgentWithSession sets it before a
@@ -1006,6 +1010,13 @@ type Options struct {
 	// final answer. It changes host control flow, not tool schemas.
 	DeliveryProfile bool
 
+	// ClassifierTaskText, when non-empty, is the pristine task text delivery
+	// intent classification should judge instead of the raw Run input. Sub-agent
+	// spawners set it before prepending host framing (subagent/workspace context,
+	// review contracts) so framing verbs cannot arm expectations and user input
+	// dressed up as framing cannot disarm them.
+	ClassifierTaskText string
+
 	// CapabilityLedger is the optional turn-scoped capability route ledger for
 	// Delivery require/prefer gates. Nil disables capability gates.
 	CapabilityLedger *capability.Ledger
@@ -1129,6 +1140,7 @@ func New(prov provider.Provider, tools *tool.Registry, session *Session, opts Op
 		evidence:                 evidence.NewLedger(),
 		projectChecks:            append([]instruction.VerifyCheck(nil), opts.ProjectChecks...),
 		deliveryProfile:          opts.DeliveryProfile,
+		classifierTaskText:       opts.ClassifierTaskText,
 		capabilityLedger:         opts.CapabilityLedger,
 		capabilityAudit:          opts.CapabilityAudit,
 		contextWindow:            opts.ContextWindow,
@@ -1193,13 +1205,18 @@ func (a *Agent) Run(ctx context.Context, input string) (runErr error) {
 	}
 	a.preserveEvidenceOnce = false
 	a.deliveryCriteriaEstablished = a.hasIncompleteCanonicalCriteria()
-	// Classify delivery expectations from the user's task text only. Host
-	// framing (subagent/workspace context blocks, the delivery-runtime marker)
-	// contains incidental action verbs — "file tools resolve relative paths"
-	// once classified every workspace-wrapped subagent prompt as a mutation
-	// request and deadlocked read-only subagents on a state change they are
-	// not allowed to make.
-	classifierInput := classifierTaskText(rawInput)
+	// Classify delivery expectations from the task text. Sub-agent spawners
+	// pass the pristine task through Options.ClassifierTaskText (a trusted
+	// host channel) because their Run input carries host framing whose
+	// incidental verbs — "file tools resolve relative paths" — once classified
+	// every workspace-wrapped subagent prompt as a mutation request and
+	// deadlocked read-only subagents. Without the override the raw input is
+	// classified verbatim: stripping user-controllable markup here would let
+	// input dressed up as host framing disarm the delivery gates.
+	classifierInput := a.classifierTaskText
+	if strings.TrimSpace(classifierInput) == "" {
+		classifierInput = rawInput
+	}
 	a.deliveryTaskExpected = deliveryTaskNeedsEvidence(classifierInput)
 	a.deliveryMutationExpected = deliveryTaskNeedsMutation(classifierInput) && registryHasWriterTools(a.tools)
 	a.repeatSuccessCounts = nil
@@ -1734,30 +1751,6 @@ func (a *Agent) hasIncompleteCanonicalCriteria() bool {
 	a.todoMu.Lock()
 	defer a.todoMu.Unlock()
 	return len(a.todoState) > 0 && len(evidence.IncompleteTodos(a.todoState)) > 0
-}
-
-// reClassifierHostBlock matches the host-generated framing blocks prepended to
-// sub-agent prompts (subagent start context, workspace context). They are
-// transport framing, not task text, and must not feed intent classification.
-var reClassifierHostBlock = regexp.MustCompile(`^\s*<(subagent-context|workspace-context)\b[^>]*>[\s\S]*?</(subagent-context|workspace-context)>\s*`)
-
-// classifierTaskText reduces a raw Run input to the task text the delivery
-// classifiers should judge: leading transient/user-preference blocks, host
-// subagent framing blocks, and the trailing delivery-runtime marker are all
-// host transport, not user intent.
-func classifierTaskText(input string) string {
-	s := StripTransientUserBlocks(input)
-	for {
-		next := reClassifierHostBlock.ReplaceAllString(s, "")
-		if next == s {
-			break
-		}
-		s = next
-	}
-	if trimmed, cut := strings.CutSuffix(strings.TrimSpace(s), deliveryRuntimeMarker); cut {
-		s = trimmed
-	}
-	return strings.TrimSpace(s)
 }
 
 // registryHasWriterTools reports whether any registered tool can mutate state.

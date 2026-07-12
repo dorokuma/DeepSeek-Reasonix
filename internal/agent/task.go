@@ -788,8 +788,12 @@ func (t *TaskTool) resolveSubSessionRuntime(modelRef, effort string) (provider.P
 }
 
 func (t *TaskTool) runSubSession(ctx context.Context, prompt string, subReg *tool.Registry, sink event.Sink, maxSteps int, prov provider.Provider, pricing *provider.Pricing, ctxWin int, sess *Session, childDepth int) (string, error) {
+	opts := t.subagentOptions(ctx, maxSteps, pricing, ctxWin, childDepth)
+	// Capture the pristine task before host framing is prepended: delivery
+	// intent classification must judge the task, not the wrapper.
+	opts.ClassifierTaskText = prompt
 	prompt = t.withWorkspaceContext(prompt)
-	return RunSubAgentWithSession(ctx, prov, subReg, sess, prompt, t.subagentOptions(ctx, maxSteps, pricing, ctxWin, childDepth), sink)
+	return RunSubAgentWithSession(ctx, prov, subReg, sess, prompt, opts, sink)
 }
 
 // subagentOptions is the single construction point for the run options every
@@ -913,6 +917,12 @@ func RunSubAgentWithSession(ctx context.Context, prov provider.Provider, reg *to
 	}
 	if opts.SubagentDepth > 0 {
 		ctx = WithSubagentDepth(ctx, opts.SubagentDepth)
+	}
+	// Callers that wrap the prompt themselves (runSubSession) set
+	// ClassifierTaskText before wrapping; for everyone else the prompt is
+	// still pristine here, so capture it before host framing is prepended.
+	if strings.TrimSpace(opts.ClassifierTaskText) == "" {
+		opts.ClassifierTaskText = prompt
 	}
 	if opts.SubagentDepth > 0 && isFreshSubagentSession(sess) {
 		prompt = subagentStartContext + "\n\n" + prompt

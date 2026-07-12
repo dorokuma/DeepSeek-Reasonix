@@ -788,8 +788,14 @@ function applyEvent(s: State, e: WireEvent): State {
       // zero visible activity, indistinguishable from a hang. The full
       // dispatch that follows merges by ID and fills in args/summary.
       if (t.partial) {
-        const id = t.id || `tool${s.seq}`;
         const turnArgChars = t.argChars && t.argChars > 0 ? t.argChars : s.turnArgChars;
+        // Some OpenAI-compatible streams surface the call name before its ID.
+        // Without a stable ID the card could never be merged with the full
+        // dispatch (a synthetic `tool${seq}` id would orphan it as a forever-
+        // running duplicate), so count the progress but wait for the ID before
+        // creating the card.
+        if (!t.id) return { ...s, turnArgChars };
+        const id = t.id;
         const idx = s.items.findIndex((it) => it.kind === "tool" && it.id === id);
         if (idx >= 0) {
           const next = [...s.items];

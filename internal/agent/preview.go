@@ -8,12 +8,22 @@ import (
 
 var reTransientUserBlock = regexp.MustCompile(`(?s)^\s*<(?:response-language|reasoning-language|memory-update|background-jobs|active-goal|hook-context|capability-route)(?:\s+[^>]*)?>.*?</(?:response-language|reasoning-language|memory-update|background-jobs|active-goal|hook-context|capability-route)>\s*\n?`)
 
-// reTrailingDeliveryRuntime matches the delivery-runtime marker the agent
-// appends to user turns in delivery mode (agent.go deliveryRuntimeMarker).
-// Unlike the prefix blocks above it trails the user text, so preview/title
-// derivation needs a suffix cut — leaving it produced session titles like
-// "你是谁？ <delivery-run…".
-var reTrailingDeliveryRuntime = regexp.MustCompile(`(?s)\s*<delivery-runtime>.*?</delivery-runtime>\s*$`)
+// stripTrailingDeliveryRuntime removes the exact delivery-runtime marker the
+// agent appends to user turns in delivery mode (agent.go deliveryRuntimeMarker).
+// Unlike the prefix blocks it trails the user text, so preview/title derivation
+// needs a suffix cut — leaving it produced session titles like
+// "你是谁？ <delivery-run…". The cut is byte-exact rather than a regex: a lazy
+// pattern anchored at $ would swallow user prose between a literal
+// "<delivery-runtime>" mention in the text and the real marker at the end.
+// (The agent never appends the marker when the input already mentions the tag,
+// so user messages discussing it carry no host suffix at all.)
+func stripTrailingDeliveryRuntime(s string) string {
+	trimmed := strings.TrimRight(s, " \t\r\n")
+	if cut, ok := strings.CutSuffix(trimmed, deliveryRuntimeMarker); ok {
+		return strings.TrimRight(cut, " \t\r\n")
+	}
+	return s
+}
 
 const memoryCompilerExecutionOpen = "<memory-compiler-execution>"
 
@@ -49,7 +59,7 @@ func StripTransientUserBlocks(content string) string {
 		}
 		s = next
 	}
-	s = reTrailingDeliveryRuntime.ReplaceAllString(s, "")
+	s = stripTrailingDeliveryRuntime(s)
 	return strings.TrimLeft(s, " \t\r\n")
 }
 
