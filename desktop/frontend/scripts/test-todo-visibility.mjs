@@ -151,12 +151,12 @@ assert.notEqual(
   "new task content creates a new todo batch",
 );
 assert.equal(
-  shouldOpenTodoPanelByDefault(activeTodos),
-  true,
-  "new incomplete todo batches open by default",
+  shouldOpenTodoPanelByDefault(),
+  false,
+  "new incomplete todo batches collapse by default",
 );
 assert.equal(
-  shouldOpenTodoPanelByDefault(completedTodos),
+  shouldOpenTodoPanelByDefault(),
   false,
   "completed todo batches collapse by default",
 );
