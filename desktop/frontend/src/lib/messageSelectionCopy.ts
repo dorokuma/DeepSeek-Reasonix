@@ -105,13 +105,7 @@ function rangeIntersectsMessage(range: Range, root: ParentNode): boolean {
     ? [scope, ...Array.from(scope.querySelectorAll(MESSAGE_SELECTION_SELECTOR))]
     : Array.from(scope.querySelectorAll(MESSAGE_SELECTION_SELECTOR));
 
-  return candidates.some((node) => {
-    try {
-      return range.intersectsNode(node);
-    } catch {
-      return false;
-    }
-  });
+  return candidates.some((node) => rangeIntersectsNode(range, node));
 }
 
 function isEditableTarget(target: EventTarget | null): boolean {
