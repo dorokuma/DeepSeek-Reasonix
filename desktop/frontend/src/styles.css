@@ -1647,6 +1647,7 @@
 }
 
 :root[data-theme="light"][data-theme-style] .app--creation {
+  --creation-canvas-color: color-mix(in srgb, var(--accent) 2.5%, #faf8f6);
   --creation-canvas-bg: linear-gradient(
     180deg,
     color-mix(in srgb, var(--accent) 4%, #f8f6f4) 0%,
@@ -1754,6 +1755,7 @@
 
 @media (prefers-color-scheme: light) {
   :root[data-theme-style]:not([data-theme]) .app--creation {
+    --creation-canvas-color: color-mix(in srgb, var(--accent) 2.5%, #faf8f6);
     --creation-canvas-bg: linear-gradient(
       180deg,
       color-mix(in srgb, var(--accent) 4%, #f8f6f4) 0%,
@@ -29057,6 +29059,7 @@ body > .mermaid-diagram--fullscreen {
 
 .app--creation .transcript,
 :root[data-theme-style] .app--creation .transcript {
+  background-color: var(--creation-canvas-color, var(--bg));
   scrollbar-width: auto;
   scrollbar-color: auto;
 }
