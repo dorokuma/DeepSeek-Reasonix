@@ -1304,6 +1304,13 @@ console.log("\ncomposer goal toggle");
   await appendRichComposerInput(subagentInput, "仓库做了什么？", true);
   eq(richComposerTaskText(subagentInput), "Inspect 仓库做了什么？", "rich composer does not duplicate committed IME input");
 
+  await replaceComposerDraft(rerender, 2006, "");
+  const resetSubagentInput = document.querySelector(".composer__rich-input") as HTMLDivElement | null;
+  if (!resetSubagentInput) throw new Error("rich composer disappeared after external text replacement");
+  eq(richComposerTaskText(resetSubagentInput), "", "external replacement can restore the initially rendered rich-composer text");
+  await appendRichComposerInput(resetSubagentInput, "Inspect ");
+  await appendRichComposerInput(resetSubagentInput, "仓库做了什么？", true);
+
   sendButton = document.querySelector(".composer__btn--send") as HTMLButtonElement | null;
   if (!sendButton) throw new Error("composer send button did not render after subagent task input");
   await act(async () => {

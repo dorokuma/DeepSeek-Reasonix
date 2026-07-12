@@ -206,12 +206,17 @@ export const RichComposerInput = forwardRef<RichComposerInputHandle, {
   const domModelRef = useRef<ComposerModel | null>(null);
   const renderedModelRef = useRef<RenderedComposerModel>({ text, invocations, version: 0 });
   const incomingModel: ComposerModel = { text, invocations };
-  if (!sameComposerModel(incomingModel, domModelRef.current) && !sameComposerModel(incomingModel, renderedModelRef.current)) {
+  // The rendered snapshot intentionally lags accepted browser echoes.
+  const acceptedModelRef = useRef<ComposerModel>(incomingModel);
+  if (sameComposerModel(incomingModel, domModelRef.current)) {
+    acceptedModelRef.current = incomingModel;
+  } else if (!sameComposerModel(incomingModel, acceptedModelRef.current)) {
     renderedModelRef.current = {
       text,
       invocations,
       version: renderedModelRef.current.version + 1,
     };
+    acceptedModelRef.current = incomingModel;
     domModelRef.current = null;
   }
   const renderedModel = renderedModelRef.current;
