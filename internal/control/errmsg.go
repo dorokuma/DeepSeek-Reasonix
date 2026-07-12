@@ -28,7 +28,7 @@ func explainError(err error) error {
 		if msg == "" {
 			return err
 		}
-		if reason := requestErrorReason(apiErr); reason != "" {
+		if reason := apiErrorReason(apiErr); reason != "" {
 			return fmt.Errorf("%s\n%s", msg, reason)
 		}
 		return errors.New(msg)
@@ -50,13 +50,14 @@ func explainError(err error) error {
 	return err
 }
 
-// requestErrorReason returns the provider's verbatim reason for request-shaped
-// 4xx (400/422) — the localized line names the category, the body names the
-// actual cause (context-length exceeded, unpaired tool_calls). Empty otherwise.
-func requestErrorReason(e *provider.APIError) string {
-	if e.Status != 400 && e.Status != 422 {
-		return ""
-	}
+// apiErrorReason returns the provider's verbatim reason for a failed request —
+// the localized line names the category, the body names the actual cause
+// (context-length exceeded, unpaired tool_calls, a relay's "no available
+// channel"). Every mapped status surfaces its body, not just the
+// request-shaped 4xx: relay gateways wrap the real failure — dead upstream
+// channel, unsupported tools, exhausted quota — in a 402/429/5xx body, and
+// without it those errors are undiagnosable from the category line alone.
+func apiErrorReason(e *provider.APIError) string {
 	reason := providerBodyReason(e.Body)
 	if e.ToolContext == "" {
 		return reason

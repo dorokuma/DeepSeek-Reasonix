@@ -16,8 +16,8 @@ func TestExplainError(t *testing.T) {
 	}
 
 	bal := explainError(&provider.APIError{Provider: "deepseek", Status: 402, Body: "Insufficient Balance"})
-	if bal.Error() != i18n.M.ProviderErrInsufficientBalance {
-		t.Errorf("402 = %q, want the insufficient-balance message", bal.Error())
+	if !strings.Contains(bal.Error(), i18n.M.ProviderErrInsufficientBalance) || !strings.Contains(bal.Error(), "Insufficient Balance") {
+		t.Errorf("402 = %q, want the insufficient-balance message plus the provider body", bal.Error())
 	}
 
 	auth := explainError(&provider.AuthError{Provider: "deepseek", KeyEnv: "DEEPSEEK_API_KEY", Status: 401})
@@ -70,9 +70,27 @@ func TestExplainError(t *testing.T) {
 		t.Errorf("422 should fall back to the raw body, got %q", rawBody.Error())
 	}
 
-	noLeak := explainError(&provider.APIError{Provider: "deepseek", Status: 429, Body: `{"error":{"message":"slow down"}}`})
-	if noLeak.Error() != i18n.M.ProviderErrRateLimited {
-		t.Errorf("429 body must not leak into the message, got %q", noLeak.Error())
+	rate := explainError(&provider.APIError{Provider: "deepseek", Status: 429, Body: `{"error":{"message":"slow down"}}`})
+	if !strings.Contains(rate.Error(), i18n.M.ProviderErrRateLimited) || !strings.Contains(rate.Error(), "slow down") {
+		t.Errorf("429 should append the provider reason, got %q", rate.Error())
+	}
+
+	// Relay gateways (one-api/new-api style) wrap the real failure — dead
+	// upstream channel, unsupported tools, exhausted quota — in a 5xx JSON
+	// body; the category line alone made those undiagnosable.
+	relay := explainError(&provider.APIError{Provider: "relay", Status: 500, Body: `{"error":{"message":"no available channel for model claude-fable-5 in group default","type":"new_api_error"}}`})
+	if !strings.Contains(relay.Error(), i18n.M.ProviderErrServer) || !strings.Contains(relay.Error(), "no available channel") {
+		t.Errorf("500 should append the provider reason from a JSON body, got %q", relay.Error())
+	}
+
+	busy := explainError(&provider.APIError{Provider: "relay", Status: 503, Body: "upstream unavailable"})
+	if !strings.Contains(busy.Error(), i18n.M.ProviderErrServerBusy) || !strings.Contains(busy.Error(), "upstream unavailable") {
+		t.Errorf("503 should fall back to the raw body, got %q", busy.Error())
+	}
+
+	bare := explainError(&provider.APIError{Provider: "relay", Status: 500})
+	if bare.Error() != i18n.M.ProviderErrServer {
+		t.Errorf("500 without a body = %q, want exactly the localized message", bare.Error())
 	}
 
 	interrupted := explainError(&provider.StreamInterruptedError{Err: io.ErrUnexpectedEOF})
