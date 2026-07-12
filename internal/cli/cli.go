@@ -1081,105 +1081,6 @@ func selectLanguage() (string, error) {
 	return tags[idx], nil
 }
 
-// selectEnabledProviders prompts a single multi-select of provider families
-// (DeepSeek / custom / …) and returns one ProviderEntry per chosen
-// family, carrying the models the user picked. Built-in families try the
-// OpenAI-compatible GET /models endpoint first (so the user sees the real
-// list, not a stale hard-coded one) and fall back to the preset's static
-// model list when the call fails — offline first-run, missing key, or a
-// vendor that doesn't expose /models. All paths funnel through the same
-// fetchOrFallback / buildFamilyEntry helpers, so adding a new family only
-// requires a familyOf case.
-func selectEnabledProviders(providers []config.ProviderEntry, pricingLanguage string) ([]config.ProviderEntry, error) {
-	providers, stale := filterStaleCustomEntries(providers)
-	for _, s := range stale {
-		fmt.Fprintf(os.Stderr, "  %s\n", dim(fmt.Sprintf(i18n.M.SkipStaleCustomEntryFmt, s.Name, s.BaseURL)))
-	}
-	providers, keyEnvRepairs := repairInvalidProviderKeyEnvs(providers)
-	for _, repair := range keyEnvRepairs {
-		fmt.Fprintf(os.Stderr, "  %s\n", dim(fmt.Sprintf(i18n.M.RepairedAPIKeyEnvFmt, repair.provider, repair.old, repair.new)))
-	}
-	providers = withBuiltinFamiliesForLanguage(providers, pricingLanguage)
-
-	famOrder, famMembers, famInfo := groupByFamily(providers)
-
-	famItems := make([]menuItem, len(famOrder))
-	for i, k := range famOrder {
-		famItems[i] = menuItem{name: famInfo[k].name, desc: famInfo[k].desc}
-	}
-	customIdx := len(famItems)
-	famItems = append(famItems, menuItem{name: i18n.M.CustomProviderLabel, desc: i18n.M.CustomProviderDesc})
-	anthropicIdx := len(famItems)
-	famItems = append(famItems, menuItem{name: i18n.M.AnthropicProviderLabel, desc: i18n.M.AnthropicProviderDesc})
-
-	famIdxs, err := selectMany(i18n.M.SelectProvidersLabel, famItems)
-	if err != nil {
-		return nil, err
-	}
-
-	var enabled []config.ProviderEntry
-	for _, fi := range famIdxs {
-		switch fi {
-		case customIdx:
-			cps, err := promptCustomProvider()
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "custom provider error: %v\n", err)
-				continue
-			}
-			enabled = append(enabled, cps...)
-			continue
-		case anthropicIdx:
-			aps, err := promptAnthropicProvider()
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "anthropic provider error: %v\n", err)
-				continue
-			}
-			enabled = append(enabled, aps...)
-			continue
-		}
-
-		familyKey := famOrder[fi]
-		probe := providers[famMembers[familyKey][0]]
-		famName := famInfo[familyKey].name
-
-		// Seed the probe's static list with every member of the family (e.g. the
-		// flash and pro SKUs), not just the first — so a failed /models probe
-		// falls back to the whole family instead of collapsing to one model.
-		probe.Models = familyStaticModels(providers, famMembers[familyKey])
-
-		// Collect the key before probing /models: a keyless probe 401s and the
-		// fallback would hide the live SKUs. Mirrors the custom/anthropic flows;
-		// configureKeys later sees the env var set and won't ask twice.
-		ensureProbeKey(&probe, famName)
-
-		models := fetchOrFallback(&probe, famName)
-		if len(models) == 0 {
-			fmt.Fprintf(os.Stderr, "  %s\n", dim(fmt.Sprintf(i18n.M.NoModelsAvailableFmt, famName)))
-			continue
-		}
-
-		items := make([]menuItem, len(models))
-		for i, m := range models {
-			items[i] = menuItem{name: m}
-		}
-		idxs, err := selectMany(fmt.Sprintf(i18n.M.SelectModelsLabel, famName), items)
-		if err != nil || len(idxs) == 0 {
-			continue
-		}
-
-		selected := make([]string, 0, len(idxs))
-		for _, idx := range idxs {
-			selected = append(selected, models[idx])
-		}
-		members := make([]config.ProviderEntry, 0, len(famMembers[familyKey]))
-		for _, idx := range famMembers[familyKey] {
-			members = append(members, providers[idx])
-		}
-		enabled = append(enabled, buildFamilyEntries(probe, members, selected)...)
-	}
-	return enabled, nil
-}
-
 // familyStaticModels unions the preset model lists of every entry in the family,
 // preserving order and dropping duplicates. It is the fallback offered when the
 // live /models probe fails, so a family with separate flash/pro preset entries
@@ -1196,24 +1097,6 @@ func familyStaticModels(providers []config.ProviderEntry, idxs []int) []string {
 		}
 	}
 	return out
-}
-
-// ensureProbeKey prompts once for the family's API key when it isn't already in
-// the environment, so the /models probe can run and return the live SKU list.
-// The value is set in the env for the probe; configureKeys returns the same key
-// for Reasonix's global .env later and skips re-asking. A blank entry is fine —
-// the static fallback covers it.
-func ensureProbeKey(probe *config.ProviderEntry, famName string) {
-	if probe.APIKeyEnv == "" || os.Getenv(probe.APIKeyEnv) != "" {
-		probe.ResolveAPIKeyFromProcessEnvForProbe()
-		return
-	}
-	fmt.Printf("  %s\n", dim(fmt.Sprintf(i18n.M.FamilyKeyPromptFmt, famName)))
-	in := bufio.NewScanner(os.Stdin)
-	if key := strings.TrimSpace(ask(in, os.Stdout, "  "+probe.APIKeyEnv, "")); key != "" {
-		os.Setenv(probe.APIKeyEnv, key)
-	}
-	probe.ResolveAPIKeyFromProcessEnvForProbe()
 }
 
 // fetchOrFallback tries the OpenAI-compatible GET /models endpoint
