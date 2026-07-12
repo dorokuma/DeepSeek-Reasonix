@@ -18,11 +18,16 @@ export function messageSelectionCopyText(state: MessageSelectionCopyState): stri
 }
 
 // Gates the transcript right-click menu the same way the copy interceptor
-// gates ⌘C: a non-collapsed, non-editable selection touching a message or
-// reasoning body. Returns the text the menu would copy, or null when the
-// menu should not open. canWriteClipboard is true because the menu writes
-// through writeClipboardText rather than a ClipboardEvent's clipboardData.
+// gates ⌘C — a non-collapsed, non-editable selection touching a message or
+// reasoning body — plus one menu-only rule: the right-click itself must land
+// inside a message body. A selection outlives clicks elsewhere, and surfaces
+// like the project tree and tab bar own their right-click menus; without the
+// target gate this menu would open on top of theirs. Returns the text the
+// menu would copy, or null when the menu should not open. canWriteClipboard
+// is true because the menu writes through writeClipboardText rather than a
+// ClipboardEvent's clipboardData.
 export function messageSelectionContextText(doc: Document, target: EventTarget | null): string | null {
+  if (!targetWithinMessage(target)) return null;
   const selection = doc.getSelection();
   return messageSelectionCopyText({
     text: selection?.toString() ?? "",
@@ -31,6 +36,11 @@ export function messageSelectionContextText(doc: Document, target: EventTarget |
     intersectsMessage: selectionIntersectsMessage(selection, doc),
     canWriteClipboard: true,
   });
+}
+
+function targetWithinMessage(target: EventTarget | null): boolean {
+  const el = elementFromEventTarget(target);
+  return el?.closest(MESSAGE_SELECTION_SELECTOR) != null;
 }
 
 export function installMessageSelectionCopy(doc: Document = document): () => void {

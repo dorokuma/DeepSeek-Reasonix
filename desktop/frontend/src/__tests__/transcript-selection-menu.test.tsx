@@ -7,6 +7,8 @@
 //   writes the selection through the runtime clipboard bridge
 // - collapsed selections, non-message selections, editable targets, and
 //   plain-browser sessions (no window.runtime) never open the menu
+// - a surviving message selection does not hijack right-clicks landing
+//   outside message bodies (project tree, tab bar, ... own those menus)
 
 import { JSDOM } from "jsdom";
 import React from "react";
@@ -94,10 +96,12 @@ console.log("\ntranscript selection menu");
     "beforeend",
     "<div class=\"msg__body\">assistant reply text</div>" +
       "<p id=\"plain\">plain page text</p>" +
+      "<div id=\"sidebar\">project tree area</div>" +
       "<textarea id=\"editor\"></textarea>",
   );
   const msgBody = document.querySelector(".msg__body") as HTMLElement;
   const plain = document.querySelector("#plain") as HTMLElement;
+  const sidebar = document.querySelector("#sidebar") as HTMLElement;
   const editor = document.querySelector("#editor") as HTMLTextAreaElement;
 
   const root = createRoot(document.getElementById("root") as HTMLElement);
@@ -136,6 +140,13 @@ console.log("\ntranscript selection menu");
   selectNodeText(plain.firstChild as Node);
   await dispatchContextMenu(plain);
   eq(document.querySelector(".context-menu"), null, "non-message selection does not open the menu");
+
+  // A surviving message selection must not hijack right-clicks landing outside
+  // message bodies — the project tree, tab bar, etc. own those context menus.
+  selectNodeText(msgBody.firstChild as Node);
+  const sidebarEvent = await dispatchContextMenu(sidebar);
+  eq(sidebarEvent.defaultPrevented, false, "right-click outside message bodies leaves the event alone");
+  eq(document.querySelector(".context-menu"), null, "message selection does not open the menu over other surfaces");
 
   // Editable target keeps its native menu even while a message selection exists.
   selectNodeText(msgBody.firstChild as Node);
