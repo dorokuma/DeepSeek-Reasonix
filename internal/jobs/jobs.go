@@ -449,7 +449,18 @@ func mutationEvidenceFromArtifact(meta artifactMeta) evidence.ChildEvidenceSumma
 	if meta.Kind != "task" {
 		return evidence.ChildEvidenceSummary{}
 	}
+	if meta.MutationEvidenceVersion == 0 {
+		// Legacy artifact from before mutation evidence was persisted: that
+		// flow never published child receipts, so there is nothing to recover.
+		// Synthesizing a mutation here would retroactively demand inspection
+		// and review for work no collecting turn ever saw — pure burden with
+		// no safety gain over the old behavior.
+		return evidence.ChildEvidenceSummary{}
+	}
 	if meta.MutationEvidenceVersion != mutationEvidenceVersion {
+		// A newer build persisted a shape this one cannot parse. Assume the
+		// worst (an opaque mutation) so downgrade coexistence on a shared
+		// state directory cannot skip review.
 		return opaqueRecoveredTaskMutation()
 	}
 	if meta.MutationEvidence == nil {
@@ -1664,5 +1675,15 @@ func (m *Manager) TakeEvidenceForSession(parentSession, id string) evidence.Chil
 	out := make([]evidence.Receipt, len(j.evidence.Receipts))
 	copy(out, j.evidence.Receipts)
 	j.evidence = evidence.ChildEvidenceSummary{}
+	if len(out) > 0 {
+		// Drain the persisted copy too: the artifact meta still carries the
+		// mutation summary, and a restart would otherwise resurrect it for a
+		// re-polled job id, re-arming inspection and review demands for work
+		// the collecting turn already handled. Best-effort — a failed rewrite
+		// merely restores the conservative resurrection behavior.
+		if err := m.writeJobMetaLocked(j, j.status); err != nil {
+			j.noteArtifactErr("evidence drain: " + err.Error())
+		}
+	}
 	return evidence.ChildEvidenceSummary{Receipts: out}
 }

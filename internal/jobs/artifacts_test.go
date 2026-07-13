@@ -207,6 +207,15 @@ func TestTaskMutationEvidencePersistsWithoutSensitiveReceiptData(t *testing.T) {
 	if secondTake := second.TakeEvidenceForSession("session", j.ID); len(secondTake.Receipts) != 0 {
 		t.Fatalf("restored evidence was collectible twice: %+v", secondTake)
 	}
+
+	// The tombstone take drains the persisted copy as well — a further restart
+	// must not offer the same mutation a third time.
+	third := NewManager(event.Discard)
+	defer third.Close()
+	third.SetActiveSessionPath("session", sessionPath)
+	if thirdTake := third.TakeEvidenceForSession("session", j.ID); len(thirdTake.Receipts) != 0 {
+		t.Fatalf("restored evidence resurrected after a second restart: %+v", thirdTake)
+	}
 }
 
 func TestHighRiskTaskMutationEvidenceRestoresAsOpaque(t *testing.T) {
@@ -230,7 +239,11 @@ func TestHighRiskTaskMutationEvidenceRestoresAsOpaque(t *testing.T) {
 	}
 }
 
-func TestLegacyTaskArtifactRecoversAsOpaqueHighRiskMutation(t *testing.T) {
+func TestLegacyTaskArtifactRecoversNoEvidence(t *testing.T) {
+	// A pre-feature artifact (no mutationEvidenceVersion) never published child
+	// receipts, so recovery must not synthesize a mutation: doing so would
+	// retroactively demand inspection and review for work no collecting turn
+	// ever saw under the new contract.
 	sessionPath := filepath.Join(t.TempDir(), "session.jsonl")
 	dir := ArtifactDir(sessionPath)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -252,15 +265,63 @@ func TestLegacyTaskArtifactRecoversAsOpaqueHighRiskMutation(t *testing.T) {
 	m := NewManager(event.Discard)
 	defer m.Close()
 	m.SetActiveSessionPath("session", sessionPath)
-	summary := m.TakeEvidenceForSession("session", "task-1")
+	if summary := m.TakeEvidenceForSession("session", "task-1"); len(summary.Receipts) != 0 {
+		t.Fatalf("legacy task evidence = %+v, want none", summary)
+	}
+}
+
+func TestFutureVersionTaskArtifactRecoversAsOpaqueHighRiskMutation(t *testing.T) {
+	// A meta written by a newer build (unknown non-zero version) may contain
+	// real evidence in a shape this build cannot parse: recover it as an opaque
+	// mutation so downgrade coexistence cannot skip review.
+	meta := artifactMeta{
+		Kind:                    "task",
+		MutationEvidenceVersion: mutationEvidenceVersion + 1,
+	}
+	summary := mutationEvidenceFromArtifact(meta)
 	if len(summary.Receipts) != 1 || !summary.HasMutation() || len(summary.MutationPaths()) != 0 {
-		t.Fatalf("legacy task evidence = %+v, want one opaque mutation", summary)
+		t.Fatalf("future-version evidence = %+v, want one opaque mutation", summary)
 	}
 	ledger := evidence.NewLedger()
 	ledger.MergeChild(summary)
 	mutation, ok := ledger.LatestSuccessfulMutationIndex()
 	if !ok || ledger.MutationRiskAfter(mutation) != evidence.RiskHigh {
-		t.Fatalf("legacy task mutation was not recovered conservatively: %+v", ledger.Summary())
+		t.Fatalf("future-version mutation was not recovered conservatively: %+v", ledger.Summary())
+	}
+}
+
+func TestTakenEvidenceDoesNotResurrectAfterRestart(t *testing.T) {
+	// Collecting a task's evidence drains the persisted copy too: a restart
+	// must not resurrect receipts for a re-polled job id and re-arm review
+	// demands for work the collecting turn already handled.
+	sessionPath := filepath.Join(t.TempDir(), "session.jsonl")
+	first := NewManager(event.Discard)
+	first.SetActiveSessionPath("session", sessionPath)
+	j := first.StartForSession("session", "task", "writer", func(ctx context.Context, _ io.Writer) (string, error) {
+		PublishEvidence(ctx, evidence.ChildEvidenceSummary{Receipts: []evidence.Receipt{{
+			ToolName: "write_file", Success: true, Write: true, Mutation: true, Paths: []string{"changed.go"},
+		}}})
+		return "done", nil
+	})
+	<-j.done
+	if taken := first.TakeEvidenceForSession("session", j.ID); !taken.HasMutation() {
+		t.Fatalf("live take = %+v, want the published mutation", taken)
+	}
+	first.Close()
+
+	data, err := os.ReadFile(filepath.Join(ArtifactDir(sessionPath), j.ID+jobMetaExt))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), `"mutationEvidence"`) {
+		t.Fatalf("drained meta still carries mutation evidence:\n%s", data)
+	}
+
+	second := NewManager(event.Discard)
+	defer second.Close()
+	second.SetActiveSessionPath("session", sessionPath)
+	if summary := second.TakeEvidenceForSession("session", j.ID); len(summary.Receipts) != 0 {
+		t.Fatalf("collected evidence resurrected after restart: %+v", summary)
 	}
 }
 
