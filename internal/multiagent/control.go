@@ -49,6 +49,8 @@ type LiveSnapshot struct {
 	AgentName   string `json:"agent_name"`
 	AgentStatus string `json:"agent_status"`
 	ElapsedMs   int64  `json:"elapsed_ms"`
+	CurrentTool string `json:"current_tool,omitempty"`
+	LastActivityMs int64  `json:"last_activity_ms,omitempty"`
 }
 
 // Runner runs a spawned agent to completion (Codex child thread).
@@ -68,8 +70,28 @@ type Metadata struct {
 	Depth           int
 	StartedAt       time.Time
 	FinishedAt      time.Time // set when entering a terminal status
+	CurrentTool     string
+	ToolCallCount   int
+	LastActivityAt  time.Time
 	cancel          context.CancelFunc
 	mu              sync.Mutex
+}
+
+// StartTool records that a tool call is beginning (diagnostic metadata).
+func (m *Metadata) StartTool(name string) {
+	m.mu.Lock()
+	m.CurrentTool = name
+	m.ToolCallCount++
+	m.LastActivityAt = time.Now()
+	m.mu.Unlock()
+}
+
+// EndTool records that the current tool call has finished (diagnostic metadata).
+func (m *Metadata) EndTool() {
+	m.mu.Lock()
+	m.CurrentTool = ""
+	m.LastActivityAt = time.Now()
+	m.mu.Unlock()
 }
 
 // Control is session-scoped AgentControl (one per root thread tree).
@@ -397,12 +419,23 @@ func (c *Control) GetStatus(path string) (Status, string, string) {
 	return rec.Status, rec.LastAnswer, rec.LastError
 }
 
+// Meta returns the Metadata pointer for path, or nil if not found.
+// Callers that mutate fields must hold rec.mu.
+func (c *Control) Meta(path string) *Metadata {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.agents[path]
+}
+
 // ListedAgent matches Codex list_agents item schema.
 type ListedAgent struct {
 	AgentName       string    `json:"agent_name"`
 	AgentStatus     any       `json:"agent_status"`
 	LastTaskMessage any       `json:"last_task_message"` // string or null
 	ElapsedMs       int64     `json:"elapsed_ms,omitempty"`
+	CurrentTool     string    `json:"current_tool,omitempty"`
+	ToolCallCount   int       `json:"tool_call_count,omitempty"`
+	LastActivityMs  int64     `json:"last_activity_ms,omitempty"`
 	StartedAt       time.Time `json:"-"`
 }
 
@@ -446,6 +479,9 @@ func (c *Control) List(currentPath, pathPrefix string) []ListedAgent {
 		startedAt := r.rec.StartedAt
 		st := r.rec.Status
 		last := r.rec.LastTaskMessage
+		currentTool := r.rec.CurrentTool
+		toolCallCount := r.rec.ToolCallCount
+		lastActivityAt := r.rec.LastActivityAt
 		r.rec.mu.Unlock()
 		// List is live-only: pending_init + running. Interrupted/terminal omit.
 		// Registry still keeps records for followup/interrupt; results via mailbox.
@@ -465,11 +501,25 @@ func (c *Control) List(currentPath, pathPrefix string) []ListedAgent {
 				elapsed = 0
 			}
 		}
+		var lastActivityMs int64
+		ref := lastActivityAt
+		if ref.IsZero() {
+			ref = startedAt
+		}
+		if !ref.IsZero() {
+			lastActivityMs = time.Since(ref).Milliseconds()
+			if lastActivityMs < 0 {
+				lastActivityMs = 0
+			}
+		}
 		out = append(out, ListedAgent{
 			AgentName:       r.path,
 			AgentStatus:     StatusJSON(st, "", ""),
 			LastTaskMessage: lastMsg,
 			ElapsedMs:       elapsed,
+			CurrentTool:     currentTool,
+			ToolCallCount:   toolCallCount,
+			LastActivityMs:  lastActivityMs,
 			StartedAt:       startedAt,
 		})
 	}
@@ -703,6 +753,8 @@ func (c *Control) liveUnderSnapshot(forPath string) []LiveSnapshot {
 		r.rec.mu.Lock()
 		st := r.rec.Status
 		started := r.rec.StartedAt
+		currentTool := r.rec.CurrentTool
+		lastActivityAt := r.rec.LastActivityAt
 		r.rec.mu.Unlock()
 		if !IsListLive(st) {
 			continue
@@ -714,10 +766,23 @@ func (c *Control) liveUnderSnapshot(forPath string) []LiveSnapshot {
 				elapsed = 0
 			}
 		}
+		var lastActivityMs int64
+		ref := lastActivityAt
+		if ref.IsZero() {
+			ref = started
+		}
+		if !ref.IsZero() {
+			lastActivityMs = now.Sub(ref).Milliseconds()
+			if lastActivityMs < 0 {
+				lastActivityMs = 0
+			}
+		}
 		out = append(out, LiveSnapshot{
-			AgentName:   r.path,
-			AgentStatus: string(st),
-			ElapsedMs:   elapsed,
+			AgentName:      r.path,
+			AgentStatus:    string(st),
+			ElapsedMs:      elapsed,
+			CurrentTool:    currentTool,
+			LastActivityMs: lastActivityMs,
 		})
 	}
 	return out

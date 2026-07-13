@@ -287,6 +287,10 @@ func (interruptAgent) Execute(ctx context.Context, args json.RawMessage) (string
 	if err != nil {
 		return "", err
 	}
-	out, _ := json.Marshal(map[string]any{"previous_status": prev})
+	out, _ := json.Marshal(map[string]any{
+		"previous_status":   prev,
+		"context_preserved": true,
+		"ready_for_message": true,
+	})
 	return string(out), nil
 }

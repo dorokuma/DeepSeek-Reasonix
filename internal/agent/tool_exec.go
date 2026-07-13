@@ -397,7 +397,21 @@ func (a *Agent) executeOne(ctx context.Context, call provider.ToolCall) toolOutc
 	cctx = tool.WithProgress(cctx, func(chunk string) {
 		a.sink.Emit(event.Event{Kind: event.ToolProgress, Tool: event.Tool{ID: callID, Output: chunk}})
 	})
+	// Write diagnostic metadata before tool execution.
+	var diagMeta *multiagent.Metadata
+	if c, ok := multiagent.FromContext(cctx); ok {
+		if rec := c.Meta(multiagent.AgentPathFrom(cctx)); rec != nil {
+			rec.StartTool(call.Name)
+			diagMeta = rec
+		}
+	}
+
 	result, err := t.Execute(cctx, effectiveArgs)
+
+	// Clear diagnostic metadata after tool execution.
+	if diagMeta != nil {
+		diagMeta.EndTool()
+	}
 	if err == nil {
 		filePath := TryExtractPath(effectiveArgs)
 		if filePath != "" {
