@@ -902,7 +902,7 @@ func TestTaskToolBackgroundSalvagePublishesEvidenceForCollection(t *testing.T) {
 		t.Fatal("terminal background task did not publish its mutation evidence")
 	}
 	paths := summary.MutationPaths()
-	if len(paths) != 1 || paths[0] != "qa/bank.md" {
+	if len(paths) != 1 || filepath.ToSlash(paths[0]) != "qa/bank.md" {
 		t.Fatalf("background mutation paths = %v, want qa/bank.md", paths)
 	}
 	if second := jm.TakeEvidenceForSession("parent-session", jobID); len(second.Receipts) != 0 {
