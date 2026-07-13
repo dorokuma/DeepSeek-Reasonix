@@ -27,7 +27,6 @@ func waitUntil(t *testing.T, timeout time.Duration, cond func() bool) {
 		if cond() {
 			return
 		}
-		// Short yield so we do not busy-spin; not a fixed test timing assumption.
 		select {
 		case <-time.After(5 * time.Millisecond):
 		}
@@ -37,7 +36,6 @@ func waitUntil(t *testing.T, timeout time.Duration, cond func() bool) {
 
 func TestListShowsRunningAgents(t *testing.T) {
 	c := NewControl()
-	// Hold all workers until the test releases them so list can observe "running".
 	hold := make(chan struct{})
 	c.SetRunner(fakeRunner{fn: func(ctx context.Context, path, message string, depth int) (string, error) {
 		select {
@@ -55,12 +53,10 @@ func TestListShowsRunningAgents(t *testing.T) {
 	waitUntil(t, 2*time.Second, func() bool {
 		return int(c.runningCount.Load()) >= 3
 	})
-	// While running, list must include root + 3 children with running status.
 	list := c.List(RootPath, "")
 	if len(list) < 4 {
 		t.Fatalf("want root+3 agents, got %d: %+v", len(list), list)
 	}
-	// Encode like the tool does; ensure status fields present and not wiped by long messages.
 	b, err := json.Marshal(map[string]any{"agents": list})
 	if err != nil {
 		t.Fatal(err)
@@ -72,7 +68,6 @@ func TestListShowsRunningAgents(t *testing.T) {
 	if !strings.Contains(s, `"/root/a"`) && !strings.Contains(s, `/root/a`) {
 		t.Fatalf("expected canonical path agent_name:\n%s", s)
 	}
-	// last_task_message capped
 	for _, a := range list {
 		if a.AgentName == RootPath {
 			continue
@@ -81,7 +76,6 @@ func TestListShowsRunningAgents(t *testing.T) {
 			t.Fatalf("last_task_message not capped: %d", len([]rune(msg)))
 		}
 	}
-	// Mailbox empty while running
 	if c.Mailbox().HasPending() {
 		t.Fatal("mailbox should be empty while agents still running")
 	}
@@ -90,7 +84,6 @@ func TestListShowsRunningAgents(t *testing.T) {
 
 func TestSpawnWaitMailbox(t *testing.T) {
 	c := NewControl()
-	// Instant completion — Wait should observe mailbox without fixed sleep.
 	c.SetRunner(fakeRunner{fn: func(ctx context.Context, path, message string, depth int) (string, error) {
 		return "done-answer", nil
 	}})
@@ -101,13 +94,89 @@ func TestSpawnWaitMailbox(t *testing.T) {
 	if !strings.Contains(path, "explore") || nick == "" {
 		t.Fatalf("path/nick %q %q", path, nick)
 	}
-	msg, timedOut := c.Wait(context.Background(), 5000)
-	if timedOut || msg != "Wait completed." {
-		t.Fatalf("wait got %q timedOut=%v", msg, timedOut)
+	res := c.WaitFor(context.Background(), RootPath)
+	if res.Interrupted || res.Message != "Wait completed." {
+		t.Fatalf("wait got %+v", res)
 	}
-	mails := c.Mailbox().Drain()
-	if len(mails) != 1 || !strings.Contains(mails[0].Message, "done-answer") {
-		t.Fatalf("mails %#v", mails)
+	if res.MailCount != 1 || !strings.Contains(res.Results, "done-answer") {
+		t.Fatalf("want results in wait payload, got %+v", res)
+	}
+	if c.Mailbox().HasPendingFor(RootPath) {
+		t.Fatal("mail should already be taken by wait")
+	}
+}
+
+func TestWaitCollectsParallelBatch(t *testing.T) {
+	c := NewControl()
+	fastHold := make(chan struct{})
+	slowHold := make(chan struct{})
+	c.SetRunner(fakeRunner{fn: func(ctx context.Context, path, message string, depth int) (string, error) {
+		switch {
+		case strings.HasSuffix(path, "/fast"):
+			<-fastHold
+			return "fast-ans", nil
+		case strings.HasSuffix(path, "/slow"):
+			<-slowHold
+			return "slow-ans", nil
+		default:
+			return "x", nil
+		}
+	}})
+	if _, _, err := c.Spawn(context.Background(), RootPath, "fast", "f", 0); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := c.Spawn(context.Background(), RootPath, "slow", "s", 0); err != nil {
+		t.Fatal(err)
+	}
+	waitUntil(t, 2*time.Second, func() bool {
+		return c.liveUnderCount(RootPath) >= 2
+	})
+
+	done := make(chan WaitResult, 1)
+	go func() {
+		done <- c.WaitFor(context.Background(), RootPath)
+	}()
+
+	// Release fast first; wait must stay blocked until slow also finishes.
+	close(fastHold)
+	select {
+	case res := <-done:
+		t.Fatalf("wait returned before slow finished: %+v", res)
+	case <-time.After(80 * time.Millisecond):
+	}
+	close(slowHold)
+
+	select {
+	case res := <-done:
+		if res.Interrupted || res.MailCount != 2 {
+			t.Fatalf("want 2 mails one wait, got %+v", res)
+		}
+		if !strings.Contains(res.Results, "fast-ans") || !strings.Contains(res.Results, "slow-ans") {
+			t.Fatalf("missing answers: %s", res.Results)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("wait did not finish after both agents")
+	}
+}
+
+func TestWaitIgnoresMailForOtherRecipient(t *testing.T) {
+	c := NewControl()
+	c.mailbox.Enqueue(Mail{From: "/root/other", To: "/root/other", Message: "not for root"})
+	// No live agents under root → wait returns immediately; foreign mail stays.
+	res := c.WaitFor(context.Background(), RootPath)
+	if res.Interrupted {
+		t.Fatalf("unexpected interrupt: %+v", res)
+	}
+	if res.MailCount != 0 {
+		t.Fatalf("must not take other-recipient mail: %+v", res)
+	}
+	if !c.Mailbox().HasPendingFor("/root/other") {
+		t.Fatal("foreign mail should remain")
+	}
+	c.mailbox.Enqueue(Mail{From: "/root/child", To: RootPath, Message: "done"})
+	res = c.WaitFor(context.Background(), RootPath)
+	if res.MailCount != 1 || !strings.Contains(res.Results, "done") {
+		t.Fatalf("want root mail collected, got %+v", res)
 	}
 }
 
@@ -120,20 +189,18 @@ func TestWaitSteer(t *testing.T) {
 	if _, _, err := c.Spawn(context.Background(), RootPath, "slow", "long", 0); err != nil {
 		t.Fatal(err)
 	}
-	// Steer after spawn is registered (no sleep race: NotifySteer is concurrent-safe).
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		// Yield once so Wait has a chance to arm; still event-driven via mailbox.
 		select {
 		case <-time.After(1 * time.Millisecond):
 		}
 		c.NotifySteer()
 	}()
-	msg, timedOut := c.Wait(context.Background(), 5000)
+	res := c.WaitFor(context.Background(), RootPath)
 	<-done
-	if timedOut || !strings.Contains(msg, "interrupted") {
-		t.Fatalf("want steered, got %q timed=%v", msg, timedOut)
+	if !res.Interrupted || !strings.Contains(res.Message, "interrupted") {
+		t.Fatalf("want steered, got %+v", res)
 	}
 }
 
@@ -183,7 +250,6 @@ func TestListOmitsTerminalAgents(t *testing.T) {
 	if _, _, err := c.Spawn(context.Background(), RootPath, "slow", "s", 0); err != nil {
 		t.Fatal(err)
 	}
-	// Wait for fast to finish (event), not a fixed sleep.
 	select {
 	case <-fastDone:
 	case <-time.After(2 * time.Second):
@@ -196,7 +262,6 @@ func TestListOmitsTerminalAgents(t *testing.T) {
 				return false
 			}
 		}
-		// Ensure slow still listed as running.
 		for _, a := range list {
 			if strings.HasSuffix(a.AgentName, "/slow") {
 				return true
@@ -217,7 +282,6 @@ func TestListOmitsTerminalAgents(t *testing.T) {
 		t.Fatalf("running agent missing: %v", names)
 	}
 	close(block)
-	// Registry still resolves completed for followup.
 	if _, err := c.ResolveTarget("fast"); err != nil {
 		t.Fatalf("completed agent should remain resolvable: %v", err)
 	}
@@ -243,7 +307,6 @@ func TestListOmitsInterrupted(t *testing.T) {
 	if _, err := c.Interrupt(path); err != nil {
 		t.Fatal(err)
 	}
-	// Wait until runAgent has observed cancel and set terminal status.
 	waitUntil(t, 2*time.Second, func() bool {
 		list := c.List(RootPath, "")
 		for _, a := range list {
@@ -272,23 +335,15 @@ func TestMailboxDrainForRecipient(t *testing.T) {
 	if _, _, err := c.Spawn(context.Background(), RootPath, "child", "do it", 0); err != nil {
 		t.Fatal(err)
 	}
-	// Parent wait until completion mail lands.
-	if msg, timed := c.Wait(context.Background(), 3000); timed || msg != "Wait completed." {
-		t.Fatalf("wait %q timed=%v", msg, timed)
+	res := c.WaitFor(context.Background(), RootPath)
+	if res.Interrupted || res.MailCount != 1 || !strings.Contains(res.Results, "ans") {
+		t.Fatalf("wait %+v", res)
 	}
-	// Mail for /root only — DrainFor root gets it; other path empty.
-	if !c.Mailbox().HasPendingFor(RootPath) {
-		t.Fatal("expected pending for root")
-	}
-	if c.Mailbox().HasPendingFor("/root/other") {
-		t.Fatal("other path should not see root mail")
-	}
-	mails := c.Mailbox().DrainFor(RootPath)
-	if len(mails) != 1 {
-		t.Fatalf("want 1 mail, got %#v", mails)
+	if c.Mailbox().HasPendingFor(RootPath) {
+		t.Fatal("wait should have taken root mail")
 	}
 	if c.Mailbox().HasPending() {
-		t.Fatal("mailbox should be empty after DrainFor")
+		t.Fatal("mailbox should be empty")
 	}
 }
 
@@ -296,7 +351,6 @@ func TestNestedSpawnPath(t *testing.T) {
 	c := NewControl()
 	hold := make(chan struct{})
 	c.SetRunner(fakeRunner{fn: func(ctx context.Context, path, message string, depth int) (string, error) {
-		// Nested spawn from child path, then stay running so list can see both.
 		if depth == 1 {
 			if _, _, err := c.Spawn(ctx, path, "nested", "inner", depth); err != nil {
 				return "", err
@@ -312,7 +366,6 @@ func TestNestedSpawnPath(t *testing.T) {
 	if _, _, err := c.Spawn(context.Background(), RootPath, "outer", "work", 0); err != nil {
 		t.Fatal(err)
 	}
-	// Poll until nested path registers (eventual), not fixed sleep.
 	var joined string
 	waitUntil(t, 2*time.Second, func() bool {
 		list := c.List(RootPath, "")
@@ -329,5 +382,94 @@ func TestNestedSpawnPath(t *testing.T) {
 	}
 	if !strings.Contains(joined, "/root/outer/nested") {
 		t.Fatalf("missing nested path: %s", joined)
+	}
+}
+
+func TestWaitAgentSchemaHasNoTimeout(t *testing.T) {
+	s := string(waitAgent{}.Schema())
+	if strings.Contains(s, "timeout") {
+		t.Fatalf("timeout must not appear in wait_agent schema: %s", s)
+	}
+	d := waitAgent{}.Description()
+	if strings.Contains(strings.ToLower(d), "timeout_ms") {
+		t.Fatalf("timeout_ms must not appear in description: %s", d)
+	}
+}
+
+func TestSpawnRefusesWhileLive(t *testing.T) {
+	c := NewControl()
+	hold := make(chan struct{})
+	c.SetRunner(fakeRunner{fn: func(ctx context.Context, path, message string, depth int) (string, error) {
+		select {
+		case <-hold:
+			return "ok", nil
+		case <-ctx.Done():
+			return "", ctx.Err()
+		}
+	}})
+	if _, _, err := c.Spawn(context.Background(), RootPath, "job", "m1", 0); err != nil {
+		t.Fatal(err)
+	}
+	waitUntil(t, 2*time.Second, func() bool { return c.liveUnderCount(RootPath) >= 1 })
+	_, _, err := c.Spawn(context.Background(), RootPath, "job", "m2", 0)
+	if err == nil || !strings.Contains(err.Error(), "still running") {
+		t.Fatalf("want refuse while live, got %v", err)
+	}
+	close(hold)
+	_ = c.WaitFor(context.Background(), RootPath)
+}
+
+func TestSpawnRefusesAfterRecentInterrupt(t *testing.T) {
+	c := NewControl()
+	started := make(chan struct{})
+	c.SetRunner(fakeRunner{fn: func(ctx context.Context, path, message string, depth int) (string, error) {
+		close(started)
+		<-ctx.Done()
+		return "", ctx.Err()
+	}})
+	path, _, err := c.Spawn(context.Background(), RootPath, "job", "m", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("not started")
+	}
+	if _, err := c.Interrupt(path); err != nil {
+		t.Fatal(err)
+	}
+	waitUntil(t, 2*time.Second, func() bool {
+		st, _, _ := c.GetStatus(path)
+		return st == StatusInterrupted
+	})
+	_, _, err = c.Spawn(context.Background(), RootPath, "job", "again", 0)
+	if err == nil || !strings.Contains(err.Error(), "interrupted") {
+		t.Fatalf("want refuse after interrupt, got %v", err)
+	}
+}
+
+func TestSpawnAllowsAfterCompleted(t *testing.T) {
+	c := NewControl()
+	c.SetRunner(fakeRunner{fn: func(ctx context.Context, path, message string, depth int) (string, error) {
+		return "done", nil
+	}})
+	if _, _, err := c.Spawn(context.Background(), RootPath, "job", "first", 0); err != nil {
+		t.Fatal(err)
+	}
+	res := c.WaitFor(context.Background(), RootPath)
+	if res.MailCount != 1 {
+		t.Fatalf("first wait %+v", res)
+	}
+	path, _, err := c.Spawn(context.Background(), RootPath, "job", "second", 0)
+	if err != nil {
+		t.Fatalf("re-spawn after complete should work: %v", err)
+	}
+	if path != "/root/job" {
+		t.Fatalf("want reused path /root/job, got %s", path)
+	}
+	res = c.WaitFor(context.Background(), RootPath)
+	if res.MailCount != 1 {
+		t.Fatalf("second wait %+v", res)
 	}
 }

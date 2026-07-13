@@ -82,9 +82,9 @@ var Chinese = Messages{
 	CompactionAuto:    "自动",
 	CompactionManual:  "手动",
 
-	SlashCompactDone:   "已压缩",
+	SlashCompactDone:   "📦 上下文已压缩",
 	SlashCompactFailed: "压缩失败",
-	SlashNewDone:       "已开始新对话",
+	SlashNewDone:       "🆕 已开始新对话",
 	SlashNewFailed:     "新建对话失败",
 	SlashTodoCleared:   "任务列表已清空",
 

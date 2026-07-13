@@ -319,11 +319,11 @@ func (c *Controller) managementNotice(trimmed string) bool {
 		if len(fields) >= 3 && (sub == "enable" || sub == "disable") {
 			enabled := sub == "enable"
 			if err := c.SetSkillEnabled(fields[2], enabled); err != nil {
-				c.notice("skill " + sub + ": " + err.Error())
+				c.notice("⚠️ 技能" + sub + "失败：" + err.Error())
 			} else if enabled {
-				c.notice("enabled skill " + fields[2] + " — restart or refresh the session for the prompt and tools to update")
+				c.notice("✅ 已启用技能 " + fields[2] + " — 新对话或刷新会话后生效")
 			} else {
-				c.notice("disabled skill " + fields[2] + " — restart or refresh the session for the prompt and tools to update")
+				c.notice("🚫 已禁用技能 " + fields[2] + " — 新对话或刷新会话后生效")
 			}
 			return true
 		}
@@ -334,9 +334,9 @@ func (c *Controller) managementNotice(trimmed string) bool {
 		if len(fields) >= 3 && fields[1] == "connect" {
 			n, err := c.ConnectConfiguredMCPServer(fields[2])
 			if err != nil {
-				c.notice("mcp connect: " + err.Error())
+				c.notice("⚠️ 连接 MCP 失败：" + err.Error())
 			} else {
-				c.notice(fmt.Sprintf("connected %s — %d tools", fields[2], n))
+				c.notice(fmt.Sprintf("🔌 已连接 %s — %d 个工具", fields[2], n))
 			}
 			return true
 		}

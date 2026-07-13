@@ -188,14 +188,9 @@ func FormatUsageLine(u *provider.Usage, p *provider.Pricing, d *event.CacheDiagn
 	}
 	cacheCol := ""
 	if u.PromptTokens > 0 {
-		cached := u.CacheHitTokens
-		fresh := u.CacheMissTokens
-		if fresh == 0 {
-			if d := u.PromptTokens - cached; d > 0 {
-				fresh = d
-			}
-		}
-		cacheCol = fmt.Sprintf(" (%d cached / %d new)", cached, fresh)
+		uu := *u
+		uu.NormalizeCache()
+		cacheCol = fmt.Sprintf(" (%d cached / %d new)", uu.CacheHitTokens, uu.CacheMissTokens)
 	}
 	reasoning := ""
 	if u.ReasoningTokens > 0 {

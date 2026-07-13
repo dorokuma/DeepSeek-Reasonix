@@ -6,11 +6,11 @@ import (
 )
 
 func logMiss(surface, detail string) {
-	slog.Debug("rtk status=miss", "surface", surface, "detail", detail)
+	slog.Info("rtk status=miss", "surface", surface, "detail", detail)
 }
 
-func logHit(cmd, rewritten string) {
-	slog.Debug("rtk status=hit", "cmd", cmd, "rewritten", rewritten)
+func LogHit(cmd, rewritten string) {
+	slog.Info("rtk status=hit", "cmd", cmd, "rewritten", rewritten)
 }
 
 // LogFail records a failed RTK invocation (binary error, timeout, etc).

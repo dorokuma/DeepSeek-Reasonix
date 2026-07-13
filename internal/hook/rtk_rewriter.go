@@ -3,6 +3,7 @@ package hook
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 
 	"reasonix/internal/rtk"
 )
@@ -22,6 +23,7 @@ func (r *rtkRewriter) PostToolRewrite(_ context.Context, name string, args json.
 		rtk.LogMissPipe(name, "", len(result), "no_pipe_filter")
 		return result
 	}
+	rtk.LogHit(filter, fmt.Sprintf("tool=%s bytes=%d below_threshold", name, len(result)))
 	if len(result) < rtkPipeThreshold {
 		return result
 	}
@@ -35,6 +37,7 @@ func (r *rtkRewriter) PostToolRewrite(_ context.Context, name string, args json.
 		rtk.LogMissPipe(name, filter, len(result), "pipe_no_shrink")
 		return result
 	}
+	rtk.LogHit(filter, fmt.Sprintf("tool=%s compacted %d->%d", name, len(result), len(out)))
 	return out
 }
 

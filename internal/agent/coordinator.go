@@ -163,6 +163,7 @@ func (c *Coordinator) plan(ctx context.Context, input string) (string, error) {
 
 	// Merge planner's cache/cost stats into executor.
 	if c.executor != nil && usage != nil {
+		usage.NormalizeCache()
 		var cost float64
 		var currency string
 		if c.plannerPricing != nil {

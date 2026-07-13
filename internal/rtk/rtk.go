@@ -150,7 +150,7 @@ func rewriteWithMode(ctx context.Context, cmd string, mode Mode) string {
 		return ""
 	}
 	if result != "" && result != cmd && mode == ModeRewrite {
-		logHit(cmd, result)
+		LogHit(cmd, result)
 	}
 	return result
 }

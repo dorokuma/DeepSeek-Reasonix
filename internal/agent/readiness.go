@@ -74,6 +74,70 @@ Do not answer as the planner and do not ask how to trigger the executor.
 Use your available tools now to carry out the task. If a write or command is blocked by permissions or workspace boundaries, state that specific blocker and ask for the needed approval/path.`
 }
 
+// orchestratorIdleRetryMessage is injected when the root agent (main_agent_allowed
+// whitelist) returns a final answer without any tool call and without a clear
+// confirm/clarify question. Mechanism enforces "orchestrator must act", not prompt ban-lists.
+func orchestratorIdleRetryMessage() string {
+	return `You are the root orchestrator. You must not refuse a doable user task by claiming missing tools.
+
+Capability is defined by what you can delegate: use ask (or a short 对吗-style confirm) when intent is unclear; otherwise spawn_agent with a self-contained subtask (then wait_agent). Use run_skill only to load a playbook when that playbook is actually needed — loading a skill is not completing the work.
+
+Do not end with "I cannot" / "I have no search" as a final answer. Confirm or delegate now.`
+}
+
+// looksLikeCapabilityRefuse: model claims it cannot act (not a real confirm).
+// Mechanism: such finals never count as legitimate no-tool exits for the root.
+func looksLikeCapabilityRefuse(text string) bool {
+	t := strings.TrimSpace(text)
+	if t == "" {
+		return false
+	}
+	lower := strings.ToLower(t)
+	// Chinese capability / tool excuses
+	for _, p := range []string{"无法", "不能", "没有可用", "没有工具", "不具备", "做不到", "没法"} {
+		if strings.Contains(t, p) {
+			return true
+		}
+	}
+	for _, p := range []string{"cannot", "can't", "unable to", "no access", "don't have", "do not have", "i have no", "no tool"} {
+		if strings.Contains(lower, p) {
+			return true
+		}
+	}
+	return false
+}
+
+// isOrchestratorActionTool: tools that count as "actually did orchestrator work".
+// run_skill / recall / note alone do not — they only load text or notes.
+func isOrchestratorActionTool(name string) bool {
+	switch name {
+	case "spawn_agent", "wait_agent", "ask", "followup_task", "send_message", "interrupt_agent":
+		return true
+	default:
+		return false
+	}
+}
+
+// looksLikeConfirmOrClarify reports user-facing confirm/clarify replies that
+// legitimately use no tools (orchestrator step 3.1).
+func looksLikeConfirmOrClarify(text string) bool {
+	t := strings.TrimSpace(text)
+	if t == "" {
+		return false
+	}
+	if looksLikeCapabilityRefuse(t) {
+		return false
+	}
+	if strings.Contains(t, "对吗") || strings.Contains(t, "对不对") || strings.Contains(t, "是否") {
+		return true
+	}
+	runes := []rune(t)
+	if len(runes) > 240 {
+		return false
+	}
+	return strings.HasSuffix(t, "？") || strings.HasSuffix(t, "?")
+}
+
 func hasVisibleFinalAnswer(text, reasoning string) bool {
 	return strings.TrimSpace(text) != "" || strings.TrimSpace(reasoning) != ""
 }

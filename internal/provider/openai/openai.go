@@ -403,6 +403,10 @@ func (c *client) readStream(ctx context.Context, resp *http.Response, cr *provid
 	var order []int
 	var lastFinishReason string
 	var sawDone bool
+	// Accumulate one final Usage: OpenAI usage chunk + optional OpenCode
+	// inference-cost (authoritative cost + normalizedUsage). Emit once so the
+	// agent does not double-count tokens/cost.
+	var pendingUsage *provider.Usage
 
 	scanner := bufio.NewScanner(resp.Body)
 	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
@@ -428,6 +432,12 @@ func (c *client) readStream(ctx context.Context, resp *http.Response, cr *provid
 			break
 		}
 
+		// OpenCode proprietary cost frame (may have empty choices).
+		if u, ok := parseOpenCodeInferenceCost(data); ok {
+			pendingUsage = mergeUsagePreferOpenCode(pendingUsage, u)
+			continue
+		}
+
 		var sr streamResponse
 		if err := json.Unmarshal([]byte(data), &sr); err != nil {
 			return emitted, fmt.Errorf("%s: decode stream: %w", c.name, err)
@@ -441,10 +451,7 @@ func (c *client) readStream(ctx context.Context, resp *http.Response, cr *provid
 		if sr.Usage != nil {
 			u := normaliseUsage(sr.Usage)
 			u.FinishReason = lastFinishReason
-			emitted = true
-			if !cr.Send(ctx, provider.Chunk{Type: provider.ChunkUsage, Usage: u}) {
-				return emitted, ctx.Err()
-			}
+			pendingUsage = mergeUsagePreferOpenCode(pendingUsage, u)
 		}
 		if len(sr.Choices) == 0 {
 			continue
@@ -504,6 +511,18 @@ func (c *client) readStream(ctx context.Context, resp *http.Response, cr *provid
 		return emitted, fmt.Errorf("%s: read stream: %w", c.name, err)
 	}
 
+	// Single usage emission after stream body (merged OpenAI + OpenCode cost).
+	if pendingUsage != nil {
+		if pendingUsage.FinishReason == "" {
+			pendingUsage.FinishReason = lastFinishReason
+		}
+		pendingUsage.NormalizeCache()
+		emitted = true
+		if !cr.Send(ctx, provider.Chunk{Type: provider.ChunkUsage, Usage: pendingUsage}) {
+			return emitted, ctx.Err()
+		}
+	}
+
 	sort.Ints(order)
 	for _, idx := range order {
 		tc := acc[idx]
@@ -538,18 +557,120 @@ func normaliseUsage(u *wireUsage) *provider.Usage {
 	if miss == 0 && hit > 0 && u.PromptTokens > hit {
 		miss = u.PromptTokens - hit
 	}
+	// Do NOT invent miss=prompt when both zero — that fakes cache rate.
+	// OpenCode usually sends prompt_cache_* ; if only totals arrive, leave hit/miss 0.
 	reasoning := 0
 	if u.CompletionTokensDetails != nil {
 		reasoning = u.CompletionTokensDetails.ReasoningTokens
 	}
-	return &provider.Usage{
-		PromptTokens:     u.PromptTokens,
-		CompletionTokens: u.CompletionTokens,
-		TotalTokens:      u.TotalTokens,
-		CacheHitTokens:   hit,
-		CacheMissTokens:  miss,
-		ReasoningTokens:  reasoning,
+	out := &provider.Usage{
+		PromptTokens:          u.PromptTokens,
+		CompletionTokens:      u.CompletionTokens,
+		TotalTokens:           u.TotalTokens,
+		CacheHitTokens:        hit,
+		CacheMissTokens:       miss,
+		ReasoningTokens:       reasoning,
+		CacheBreakdownKnown:   hit+miss > 0,
 	}
+	out.NormalizeCache()
+	return out
+}
+
+// openCodeInferenceCost is the proprietary SSE frame after chat.completion usage:
+//
+//	{"choices":[],"x-opencode-type":"inference-cost","cost":"0.00020880",
+//	 "normalizedUsage":{"inputTokens":88,"outputTokens":16,"reasoningTokens":16,
+//	 "cacheReadTokens":0,"cacheWrite5mTokens":0,"cacheWrite1hTokens":0}}
+type openCodeInferenceCost struct {
+	Type            string `json:"x-opencode-type"`
+	Cost            string `json:"cost"`
+	NormalizedUsage *struct {
+		InputTokens        int `json:"inputTokens"`
+		OutputTokens       int `json:"outputTokens"`
+		ReasoningTokens    int `json:"reasoningTokens"`
+		CacheReadTokens    int `json:"cacheReadTokens"`
+		CacheWrite5mTokens int `json:"cacheWrite5mTokens"`
+		CacheWrite1hTokens int `json:"cacheWrite1hTokens"`
+	} `json:"normalizedUsage"`
+}
+
+func parseOpenCodeInferenceCost(data string) (*provider.Usage, bool) {
+	if !strings.Contains(data, "inference-cost") && !strings.Contains(data, "x-opencode-type") {
+		return nil, false
+	}
+	var ice openCodeInferenceCost
+	if err := json.Unmarshal([]byte(data), &ice); err != nil {
+		return nil, false
+	}
+	if ice.Type != "inference-cost" {
+		return nil, false
+	}
+	u := &provider.Usage{}
+	if ice.NormalizedUsage != nil {
+		n := ice.NormalizedUsage
+		u.PromptTokens = n.InputTokens
+		u.CompletionTokens = n.OutputTokens
+		u.ReasoningTokens = n.ReasoningTokens
+		u.CacheHitTokens = n.CacheReadTokens
+		write := n.CacheWrite5mTokens + n.CacheWrite1hTokens
+		u.CacheWriteTokens = write
+		// Uncached input = input - cache read (clamp).
+		if n.InputTokens > n.CacheReadTokens {
+			u.CacheMissTokens = n.InputTokens - n.CacheReadTokens
+		}
+		if n.CacheReadTokens > 0 || u.CacheMissTokens > 0 {
+			u.CacheBreakdownKnown = true
+		}
+		u.TotalTokens = n.InputTokens + n.OutputTokens
+	}
+	if c, err := strconv.ParseFloat(strings.TrimSpace(ice.Cost), 64); err == nil && c > 0 {
+		u.ReportedCost = c
+		// OpenCode zen bills in USD on the wire; keep symbol explicit.
+		u.ReportedCurrency = "$"
+	}
+	u.NormalizeCache()
+	return u, true
+}
+
+// mergeUsagePreferOpenCode folds b into a. OpenCode-reported cost and any
+// non-zero token fields from b win; earlier OpenAI usage fills gaps.
+func mergeUsagePreferOpenCode(a, b *provider.Usage) *provider.Usage {
+	if a == nil {
+		return b
+	}
+	if b == nil {
+		return a
+	}
+	out := *a
+	if b.PromptTokens > 0 {
+		out.PromptTokens = b.PromptTokens
+	}
+	if b.CompletionTokens > 0 {
+		out.CompletionTokens = b.CompletionTokens
+	}
+	if b.TotalTokens > 0 {
+		out.TotalTokens = b.TotalTokens
+	}
+	if b.ReasoningTokens > 0 {
+		out.ReasoningTokens = b.ReasoningTokens
+	}
+	if b.CacheBreakdownKnown || b.CacheHitTokens+b.CacheMissTokens > 0 {
+		out.CacheHitTokens = b.CacheHitTokens
+		out.CacheMissTokens = b.CacheMissTokens
+		out.CacheWriteTokens = b.CacheWriteTokens
+		out.CacheBreakdownKnown = true
+	}
+	if b.ReportedCost > 0 {
+		out.ReportedCost = b.ReportedCost
+		if b.ReportedCurrency != "" {
+			out.ReportedCurrency = b.ReportedCurrency
+		}
+	}
+	if b.FinishReason != "" {
+		out.FinishReason = b.FinishReason
+	}
+	out.NormalizeCache()
+	return &out
 }
 
 // --- OpenAI-compatible wire protocol ---
