@@ -581,6 +581,26 @@ func TestMatchesToolTranslatesClaudeToolNames(t *testing.T) {
 	if MatchesTool(native, "Bash") {
 		t.Error("native hook matcher must not be interpreted against Claude tool names")
 	}
+	// The subagent tool was renamed "Task" -> "Agent" by Claude; a matcher
+	// using either name must still fire against Reasonix's "task" tool.
+	if !MatchesTool(claude("Agent"), "task") {
+		t.Error(`Claude matcher "Agent" (current name) should match Reasonix tool "task"`)
+	}
+	if !MatchesTool(claude("Task"), "task") {
+		t.Error(`Claude matcher "Task" (legacy alias) should still match Reasonix tool "task"`)
+	}
+	if !MatchesTool(claude("AskUserQuestion"), "ask") {
+		t.Error(`Claude matcher "AskUserQuestion" should match Reasonix tool "ask"`)
+	}
+}
+
+func TestClaudeFacingToolNameUsesCurrentNames(t *testing.T) {
+	if got := claudeFacingToolName("task"); got != "Agent" {
+		t.Errorf(`claudeFacingToolName("task") = %q, want "Agent" (current Claude tool name)`, got)
+	}
+	if got := claudeFacingToolName("ask"); got != "AskUserQuestion" {
+		t.Errorf(`claudeFacingToolName("ask") = %q, want "AskUserQuestion"`, got)
+	}
 }
 
 func TestDecideOutcome(t *testing.T) {

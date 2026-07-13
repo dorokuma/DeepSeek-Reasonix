@@ -5117,9 +5117,23 @@ func (c *Controller) requestApprovalDecisionWithOptions(ctx context.Context, too
 	// decision here must preempt the prompt rather than just notify — this
 	// runs synchronously and before the dialog is shown. Native Reasonix
 	// PermissionRequest hooks stay advisory-only (see claudePermissionBlocking).
+	//
+	// A hook's auto-allow must never stand in for a fresh human decision:
+	// sandbox escapes, Reasonix config writes, memory remember/forget, and
+	// plan approval (RequiresFreshHumanApprovalTool) are deliberately excluded
+	// from YOLO/auto-approval and Guardian too, so a broadly-matched plugin
+	// hook returning "allow" can't silently rubber-stamp them. A deny still
+	// applies universally — refusing is always safe to honor automatically.
 	if hookSubject, hookArgs, ok := permissionRequestHookPayload(tool, subject, args); ok {
 		if decision, _ := c.hooks.PermissionRequest(ctx, tool, hookSubject, hookArgs); decision != nil {
-			return approvalReply{allow: *decision}, nil
+			switch {
+			case !*decision:
+				return approvalReply{}, nil
+			case !opts.fresh && !requiresFreshApprovalTool(tool):
+				return approvalReply{allow: true}, nil
+			}
+			// An "allow" opinion on a fresh-human-required decision is
+			// ignored; fall through to the normal interactive prompt.
 		}
 	}
 

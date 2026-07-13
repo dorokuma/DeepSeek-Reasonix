@@ -221,7 +221,12 @@ Reasonix 原生插件在根目录声明 `reasonix-plugin.json`：
 Reasonix 也会读取 `.codex-plugin/plugin.json` 和 `.claude-plugin/plugin.json`。
 安装预检会结构化显示“完全兼容 / 部分兼容 / 不兼容”、已映射能力和每个被跳过
 的条目。非原生插件如果没有任何可映射能力，会直接阻止安装，不再留下“安装成功
-但不可用”的记录。GitHub 仓库若在
+但不可用”的记录。“完全兼容”指清单里声明的每个能力都成功解析并映射到了
+Reasonix 的对应实现，并不代表导入 Hook 的每一种运行时决策都被遵守。
+`PreToolUse`/`PermissionRequest` 的“拒绝”与 `PermissionRequest` 的“批准”已经
+实现；但 Hook 的 `updatedInput`，以及 `PreToolUse` 的 `ask`/`defer` 决策，是
+脚本在实际运行时通过 stdout 决定的，并非清单里的静态字段，因此安装阶段无法
+据此标记——具体已实现范围见下面 Hook 条目。GitHub 仓库若在
 `.claude-plugin/marketplace.json` 中通过 `./plugins/example` 或
 `plugins/example` 这类相对字符串列出多个插件，可以直接从仓库根目录安装；
 预检会在写入前逐项展示安装动作。填写可选安装名称时，可只选择 marketplace

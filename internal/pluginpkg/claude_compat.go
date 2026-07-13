@@ -313,6 +313,20 @@ func compatibilityFailure(capability, path string, err error) ([]string, []Compa
 	return []string{path + ": " + reason}, []CompatibilityIssue{{Capability: capability, Path: path, Reason: reason}}
 }
 
+// compatibilityFor reports what appendClaudeCompatibility could determine
+// statically at install time: whether every declared capability in the
+// manifest parsed and mapped to a Reasonix construct ("full"), some did not
+// ("partial", see issues), or none did ("none"). It is not a guarantee that
+// every runtime decision path an imported hook can take is honored — in
+// particular, PreToolUse's "ask"/"defer" permissionDecision values and any
+// hookSpecificOutput.updatedInput are decided by the hook script's stdout at
+// call time, not by anything in the manifest, so they can't be flagged here.
+// PreToolUse/PermissionRequest's "deny" and PermissionRequest's "allow" are
+// the two runtime decisions Reasonix does implement (see claudeJSONDeny/
+// claudeJSONAllow in internal/hook); a hook that only ever uses those is
+// accurately "full". Statically detectable gaps (if/asyncRewake, Stop/
+// SubagentStop's inability to block the turn) already downgrade to "partial"
+// via issues appended in appendClaudeHooksFile.
 func compatibilityFor(pkg Package, issues []CompatibilityIssue) Compatibility {
 	mapped := make([]string, 0, 5)
 	skills, commands, hooks, mcp := pkg.CapabilityCounts()

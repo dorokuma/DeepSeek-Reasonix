@@ -244,6 +244,13 @@ Claude plugin manifests at `.claude-plugin/plugin.json`. The install preview
 reports `full`, `partial`, or `none` compatibility, lists mapped capabilities,
 and identifies every skipped entry. A non-native package with no mapped
 capabilities is blocked instead of being recorded as an unusable installation.
+`full` means every declared capability in the manifest parsed and mapped to a
+Reasonix construct; it does not by itself guarantee every runtime decision an
+imported hook can make is honored. `PreToolUse`/`PermissionRequest` "deny" and
+`PermissionRequest` "allow" are implemented, but a hook's `updatedInput` or
+`PreToolUse`'s `ask`/`defer` decisions are chosen by the script's stdout at
+call time, not by anything in the manifest, so they can't be flagged during
+install; see the hook bullet below for what's implemented.
 GitHub-hosted multi-plugin marketplaces with a
 `.claude-plugin/marketplace.json` can be installed from the repository root
 when their plugin entries use relative string sources such as

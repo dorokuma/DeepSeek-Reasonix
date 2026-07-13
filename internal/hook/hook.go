@@ -368,21 +368,26 @@ func MatchesTool(h ResolvedHook, toolName string) bool {
 	if m == "" || m == "*" {
 		return true
 	}
-	if h.PayloadFormat == "claude" {
-		toolName = claudeFacingToolName(toolName)
-	}
 	re, err := regexp.Compile("^(?:" + m + ")$")
 	if err != nil {
 		return false
 	}
-	return re.MatchString(toolName)
+	if h.PayloadFormat != "claude" {
+		return re.MatchString(toolName)
+	}
+	for _, candidate := range claudeMatchNames(toolName) {
+		if re.MatchString(candidate) {
+			return true
+		}
+	}
+	return false
 }
 
-// claudeToolNames maps Reasonix's own tool names to the Claude Code built-in
-// tool name a Claude plugin hook is authored against — its matcher and any
-// tool_name check inside the hook script itself both use these names (e.g.
-// "Bash", "Write"; see https://code.claude.com/docs/en/hooks). MCP tool names
-// already share the mcp__<server>__<tool> convention in both systems.
+// claudeToolNames maps Reasonix's own tool names to the *current* Claude Code
+// built-in tool name (https://code.claude.com/docs/en/tools-reference) — what
+// an imported hook's emitted tool_name payload field shows, and a script's own
+// tool_name check is written against. MCP tool names already share the
+// mcp__<server>__<tool> convention in both systems.
 var claudeToolNames = map[string]string{
 	"bash":          "Bash",
 	"read_file":     "Read",
@@ -392,18 +397,38 @@ var claudeToolNames = map[string]string{
 	"glob":          "Glob",
 	"grep":          "Grep",
 	"web_fetch":     "WebFetch",
-	"task":          "Task",
+	"task":          "Agent",
+	"ask":           "AskUserQuestion",
 	"todo_write":    "TodoWrite",
 	"notebook_edit": "NotebookEdit",
 	"bash_output":   "BashOutput",
 	"kill_shell":    "KillShell",
 }
 
-// claudeFacingToolName returns the name a Claude-imported hook's matcher and
-// tool_name payload field should see for a Reasonix tool call. Reasonix-only
-// tools (wait, code_index, move_file, ...) have no Claude equivalent and pass
-// through unchanged — an imported hook can't have been authored against a
-// name Claude never had.
+// claudeToolMatchAliases lists every tool name — current and legacy — an
+// imported hook's matcher may have been authored against for a Reasonix
+// tool, so a matcher written against an older Claude Code tool name keeps
+// firing after Claude renames the tool (the subagent tool was "Task" before
+// becoming "Agent"). claudeFacingToolName (the emitted tool_name payload)
+// always reports the current name; only matcher evaluation considers aliases.
+var claudeToolMatchAliases = map[string][]string{
+	"task": {"Agent", "Task"},
+}
+
+// claudeMatchNames returns every name an imported hook's matcher should be
+// tried against for a Reasonix tool call.
+func claudeMatchNames(name string) []string {
+	if aliases, ok := claudeToolMatchAliases[name]; ok {
+		return aliases
+	}
+	return []string{claudeFacingToolName(name)}
+}
+
+// claudeFacingToolName returns the current Claude tool name a Claude-imported
+// hook's tool_name payload field should see for a Reasonix tool call.
+// Reasonix-only tools (wait, code_index, move_file, ...) have no Claude
+// equivalent and pass through unchanged — an imported hook can't have been
+// authored against a name Claude never had.
 func claudeFacingToolName(name string) string {
 	if mapped, ok := claudeToolNames[name]; ok {
 		return mapped
