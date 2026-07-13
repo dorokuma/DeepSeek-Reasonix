@@ -2291,6 +2291,8 @@ export const zh: Record<DictKey, string> = {
   // 崩溃兜底页
   "crash.title": "Reasonix 遇到错误 —— 可以一键发送报告，或复制后反馈",
   "crash.copy": "复制",
+  "crash.copied": "已复制",
+  "crash.copyFailed": "复制失败 —— 请手动选择上方文本复制",
   "crash.send": "发送报告",
   "crash.sending": "发送中…",
   "crash.sent": "已发送，谢谢！",

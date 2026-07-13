@@ -1507,6 +1507,8 @@ export const zhTW: Record<DictKey, string> = {
   // 崩潰兜底頁
   "crash.title": "Reasonix 遇到錯誤 —— 請截圖傳送",
   "crash.copy": "複製",
+  "crash.copied": "已複製",
+  "crash.copyFailed": "複製失敗 —— 請手動選取上方文字複製",
 
   // 模擬/演示種子資料（僅瀏覽器開發模式）
   "mock.sessionFixLogin": "fix the login bug in auth.go",

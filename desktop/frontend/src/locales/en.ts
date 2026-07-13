@@ -2289,6 +2289,8 @@ export const en = {
   // crash page
   "crash.title": "Reasonix hit an error — send us the report, or copy it",
   "crash.copy": "Copy",
+  "crash.copied": "Copied",
+  "crash.copyFailed": "Copy failed — select the report text and copy manually",
   "crash.send": "Send report",
   "crash.sending": "Sending…",
   "crash.sent": "Sent — thanks!",
