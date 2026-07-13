@@ -5,11 +5,15 @@ compatibility_date = "2026-06-01"
 
 routes = [{ pattern = "crash.reasonix.io", custom_domain = true }]
 
-# Daily retention purge (03:47 Beijing) — drops time-series rows past the
-# dashboard's query horizon so the D1 database plateaus instead of hitting the
-# size cap and failing every ingest write. See purgeExpiredStatsRows.
+# First entry: daily retention purge (03:47 Beijing) — drops time-series rows
+# past the dashboard's query horizon so the D1 database plateaus instead of
+# hitting the size cap and failing every ingest write (purgeExpiredStatsRows).
+# Second entry: ingest sentinel four times a day (runIngestSentinel) — canary
+# write + today's ping count; alerts via the optional ALERT_WEBHOOK secret
+# (`wrangler secret put ALERT_WEBHOOK`), log-only when unset. The sentinel
+# expression must stay in sync with SENTINEL_CRON in src/index.ts.
 [triggers]
-crons = ["47 19 * * *"]
+crons = ["47 19 * * *", "17 1,7,13,19 * * *"]
 
 [vars]
 # Emails force-promoted to dashboard admin — the owner is never locked out even

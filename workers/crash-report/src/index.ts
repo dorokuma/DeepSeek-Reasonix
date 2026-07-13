@@ -297,6 +297,16 @@ async function readJSON(request: Request): Promise<unknown | Response> {
   }
 }
 
+// Ingest writes fail together when the database is unhealthy (e.g. the D1
+// size cap: every INSERT throws while reads stay fine). Surface that as a
+// deliberate 503 with a loud log instead of an opaque worker exception, so
+// `wrangler tail` / observability show the root cause and clients see a
+// retryable status.
+function storageUnavailable(op: string, err: unknown): Response {
+  console.error(`${op}: D1 write failed`, err);
+  return new Response("storage unavailable", { status: 503 });
+}
+
 async function handleReport(request: Request, env: Env): Promise<Response> {
   const ip = request.headers.get("cf-connecting-ip") ?? "unknown";
   const { success } = await env.RATE_LIMITER.limit({ key: ip });
@@ -338,82 +348,86 @@ async function handleReport(request: Request, env: Env): Promise<Response> {
   const buildCommit = r.buildCommit ?? "";
   const channel = r.channel ?? "";
   const severity = severityForReport({ kind: r.kind, source, label, errorType, errorMessage, topFrame });
-  const prior = await env.DB.prepare("SELECT status FROM groups WHERE fingerprint = ?1")
-    .bind(fingerprint)
-    .first<{ status: string }>();
-  const regressedAt = prior?.status === "resolved" ? now : "";
+  try {
+    const prior = await env.DB.prepare("SELECT status FROM groups WHERE fingerprint = ?1")
+      .bind(fingerprint)
+      .first<{ status: string }>();
+    const regressedAt = prior?.status === "resolved" ? now : "";
 
-  await env.DB.prepare(
-    `INSERT INTO groups (
-       fingerprint, kind, count, first_seen, last_seen, first_version, last_version,
-       status, title, source, label, error_type, top_frame, severity,
-       last_os, last_arch, last_build_commit, last_channel, last_sample_at, regressed_at
-     )
-     VALUES (?1, ?2, 1, ?3, ?3, ?4, ?4, 'open', ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?3, ?15)
-     ON CONFLICT (fingerprint) DO UPDATE SET
-       count = count + 1,
-       last_seen = ?3,
-       last_version = ?4,
-       title = ?5,
-       source = ?6,
-       label = ?7,
-       error_type = ?8,
-       top_frame = ?9,
-       last_os = ?11,
-       last_arch = ?12,
-       last_build_commit = ?13,
-       last_channel = ?14,
-       last_sample_at = ?3,
-       status = CASE WHEN status = 'resolved' THEN 'open' ELSE status END,
-       regressed_at = CASE WHEN status = 'resolved' THEN ?3 ELSE regressed_at END`,
-  )
-    .bind(fingerprint, r.kind, now, r.version, title, source, label, errorType, topFrame, severity, r.os, r.arch, buildCommit, channel, regressedAt)
-    .run();
-
-  await env.DB.prepare(
-    `INSERT INTO reports (
-       fingerprint, kind, version, os, arch, message, device, created_at,
-       source, label, error_type, error_message, top_frame, build_commit, channel,
-       language, view, breadcrumbs, component_stack, stack, occurred_at
-     )
-     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21)`,
-  )
-    .bind(
-      fingerprint,
-      r.kind,
-      r.version,
-      r.os,
-      r.arch,
-      message,
-      JSON.stringify(r.device ?? {}),
-      now,
-      source,
-      label,
-      errorType,
-      errorMessage,
-      topFrame,
-      buildCommit,
-      channel,
-      r.language ?? "",
-      view,
-      JSON.stringify(breadcrumbs),
-      componentStack,
-      stack,
-      r.occurredAt ?? "",
+    await env.DB.prepare(
+      `INSERT INTO groups (
+         fingerprint, kind, count, first_seen, last_seen, first_version, last_version,
+         status, title, source, label, error_type, top_frame, severity,
+         last_os, last_arch, last_build_commit, last_channel, last_sample_at, regressed_at
+       )
+       VALUES (?1, ?2, 1, ?3, ?3, ?4, ?4, 'open', ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?3, ?15)
+       ON CONFLICT (fingerprint) DO UPDATE SET
+         count = count + 1,
+         last_seen = ?3,
+         last_version = ?4,
+         title = ?5,
+         source = ?6,
+         label = ?7,
+         error_type = ?8,
+         top_frame = ?9,
+         last_os = ?11,
+         last_arch = ?12,
+         last_build_commit = ?13,
+         last_channel = ?14,
+         last_sample_at = ?3,
+         status = CASE WHEN status = 'resolved' THEN 'open' ELSE status END,
+         regressed_at = CASE WHEN status = 'resolved' THEN ?3 ELSE regressed_at END`,
     )
-    .run();
+      .bind(fingerprint, r.kind, now, r.version, title, source, label, errorType, topFrame, severity, r.os, r.arch, buildCommit, channel, regressedAt)
+      .run();
 
-  await env.DB.prepare(
-    `DELETE FROM reports
-     WHERE fingerprint = ?1
-       AND id NOT IN (
-         SELECT id FROM (SELECT id FROM reports WHERE fingerprint = ?1 ORDER BY id ASC LIMIT 1)
-         UNION
-         SELECT id FROM (SELECT id FROM reports WHERE fingerprint = ?1 ORDER BY id DESC LIMIT ?2)
-       )`,
-  )
-    .bind(fingerprint, LATEST_SAMPLES_PER_GROUP)
-    .run();
+    await env.DB.prepare(
+      `INSERT INTO reports (
+         fingerprint, kind, version, os, arch, message, device, created_at,
+         source, label, error_type, error_message, top_frame, build_commit, channel,
+         language, view, breadcrumbs, component_stack, stack, occurred_at
+       )
+       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21)`,
+    )
+      .bind(
+        fingerprint,
+        r.kind,
+        r.version,
+        r.os,
+        r.arch,
+        message,
+        JSON.stringify(r.device ?? {}),
+        now,
+        source,
+        label,
+        errorType,
+        errorMessage,
+        topFrame,
+        buildCommit,
+        channel,
+        r.language ?? "",
+        view,
+        JSON.stringify(breadcrumbs),
+        componentStack,
+        stack,
+        r.occurredAt ?? "",
+      )
+      .run();
+
+    await env.DB.prepare(
+      `DELETE FROM reports
+       WHERE fingerprint = ?1
+         AND id NOT IN (
+           SELECT id FROM (SELECT id FROM reports WHERE fingerprint = ?1 ORDER BY id ASC LIMIT 1)
+           UNION
+           SELECT id FROM (SELECT id FROM reports WHERE fingerprint = ?1 ORDER BY id DESC LIMIT ?2)
+         )`,
+    )
+      .bind(fingerprint, LATEST_SAMPLES_PER_GROUP)
+      .run();
+  } catch (err) {
+    return storageUnavailable("report", err);
+  }
 
   return new Response("ok", { status: 202 });
 }
@@ -429,14 +443,18 @@ async function handlePing(request: Request, env: Env): Promise<Response> {
   if (!parsed.success) return new Response("bad request", { status: 400 });
   const p = parsed.data;
 
-  await env.DB.prepare(
-    `INSERT INTO pings (date, install_id, version, os, arch, os_version, opens)
-     VALUES (date('now'), ?1, ?2, ?3, ?4, ?5, 1)
-     ON CONFLICT (date, install_id) DO UPDATE SET
-       opens = opens + 1, version = ?2, os_version = ?5`,
-  )
-    .bind(p.installId, p.version, p.os, p.arch, p.osVersion ?? "")
-    .run();
+  try {
+    await env.DB.prepare(
+      `INSERT INTO pings (date, install_id, version, os, arch, os_version, opens)
+       VALUES (date('now'), ?1, ?2, ?3, ?4, ?5, 1)
+       ON CONFLICT (date, install_id) DO UPDATE SET
+         opens = opens + 1, version = ?2, os_version = ?5`,
+    )
+      .bind(p.installId, p.version, p.os, p.arch, p.osVersion ?? "")
+      .run();
+  } catch (err) {
+    return storageUnavailable("ping", err);
+  }
 
   return new Response("ok", { status: 202 });
 }
@@ -458,7 +476,11 @@ async function handleMetrics(request: Request, env: Env): Promise<Response> {
      ON CONFLICT (date, version, os, signal, bucket) DO UPDATE SET
        count = count + ?5`,
   );
-  await env.DB.batch(m.counters.map((c) => upsert.bind(m.version, m.os, c.signal, c.bucket, c.count)));
+  try {
+    await env.DB.batch(m.counters.map((c) => upsert.bind(m.version, m.os, c.signal, c.bucket, c.count)));
+  } catch (err) {
+    return storageUnavailable("metrics", err);
+  }
   if (m.installId) {
     const userUpsert = env.DB.prepare(
       `INSERT INTO metric_users (date, version, os, signal, bucket, install_id)
@@ -997,6 +1019,73 @@ const RETENTION = [
 const RETENTION_CHUNK_ROWS = 10_000;
 const RETENTION_MAX_CHUNKS = 200;
 
+// Must match the sentinel entry in wrangler.toml [triggers] exactly — the
+// scheduled handler dispatches on controller.cron; every other trigger
+// (the retention cron, manual runs) falls through to the purge.
+const SENTINEL_CRON = "17 1,7,13,19 * * *";
+
+// Ingest sentinel. The 2026-07-03 blackout went unnoticed for ten days because
+// clients swallow ping failures by design and nothing watched the write path.
+// Four times a day (hours chosen so the UTC day always has >1h of traffic;
+// ~14k DAU means a healthy hour is never empty) this probes the two failure
+// shapes independently:
+//   1. canary write into `pings` (immediately deleted) — catches writes
+//      throwing, e.g. the D1 size cap, regardless of traffic;
+//   2. today's real ping count — catches ingest dying upstream of the worker
+//      (edge blocking, client regression) even while writes stay healthy.
+// Alerts go to the optional ALERT_WEBHOOK secret; without it they still land
+// in the worker logs. While broken this fires at most 4 alerts/day.
+const CANARY_INSTALL_ID = "ffffffffffffffffffffffffffffffff";
+
+function errText(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+async function sendAlert(env: Env, text: string): Promise<void> {
+  if (!env.ALERT_WEBHOOK) return;
+  const feishu = env.ALERT_WEBHOOK.includes("open.feishu.cn") || env.ALERT_WEBHOOK.includes("open.larksuite.com");
+  const body = feishu ? { msg_type: "text", content: { text } } : { text };
+  try {
+    const res = await fetch(env.ALERT_WEBHOOK, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) console.error(`alert webhook responded ${res.status}`);
+  } catch (err) {
+    console.error("alert webhook unreachable", err);
+  }
+}
+
+async function runIngestSentinel(env: Env): Promise<void> {
+  const problems: string[] = [];
+  try {
+    await env.DB.prepare(
+      `INSERT INTO pings (date, install_id, version, os, arch, opens)
+       VALUES (date('now'), ?1, 'canary', 'canary', 'canary', 0)
+       ON CONFLICT (date, install_id) DO NOTHING`,
+    )
+      .bind(CANARY_INSTALL_ID)
+      .run();
+    // Also removes any leftover canary from a run that died mid-way.
+    await env.DB.prepare("DELETE FROM pings WHERE install_id = ?1").bind(CANARY_INSTALL_ID).run();
+  } catch (err) {
+    problems.push(`canary write failed: ${errText(err)}`);
+  }
+  try {
+    const row = await env.DB.prepare("SELECT COUNT(*) AS n FROM pings WHERE date = date('now') AND install_id <> ?1")
+      .bind(CANARY_INSTALL_ID)
+      .first<{ n: number }>();
+    if (!Number(row?.n ?? 0)) problems.push("no launch pings recorded today (UTC)");
+  } catch (err) {
+    problems.push(`ping count read failed: ${errText(err)}`);
+  }
+  if (!problems.length) return;
+  const message = `crash.reasonix.io ingest sentinel: ${problems.join("; ")} — https://crash.reasonix.io/stats`;
+  console.error(message);
+  await sendAlert(env, message);
+}
+
 async function purgeExpiredStatsRows(env: Env): Promise<void> {
   for (const { table, keepDays } of RETENTION) {
     // Keep exactly the newest `keepDays` dates: today plus keepDays-1 back,
@@ -1107,7 +1196,11 @@ export default {
     return new Response("not found", { status: 404 });
   },
 
-  async scheduled(_controller: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
+  async scheduled(controller: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
+    if (controller.cron === SENTINEL_CRON) {
+      ctx.waitUntil(runIngestSentinel(env));
+      return;
+    }
     ctx.waitUntil(purgeExpiredStatsRows(env));
   },
 };

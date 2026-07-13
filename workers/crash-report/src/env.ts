@@ -18,4 +18,8 @@ export interface Env {
   APP_ORIGIN?: string;
   // Browsers allowed to call the registry API with credentials (comma-separated).
   ALLOWED_ORIGINS?: string;
+  // Optional incident webhook for the ingest sentinel (wrangler secret put
+  // ALERT_WEBHOOK). Feishu/Lark bot URLs get their native payload shape; any
+  // other receiver gets Slack-style {"text": ...}. Unset = log-only.
+  ALERT_WEBHOOK?: string;
 }
