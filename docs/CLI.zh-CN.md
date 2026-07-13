@@ -162,6 +162,12 @@ reasonix --allowed-tools "Bash(go test ./...)" --allowed-tools read_file
 `--allowed-tools` 是会话权限覆盖，不是 provider tool schema 过滤器。规则可以用逗号
 或空格分隔，也可重复传入参数。配置中的 deny 规则始终优先于命令行 allow 规则。
 
+在非交互运行（`reasonix run` / `-p`）下没有可应答的审批，各模式都以非阻塞方式解析：
+`ask`、`manual`、`acceptEdits` 保留 run 自主性，放行普通审批决策；`auto` 仍自动批准
+普通 fallback，但对命中显式 ask 规则的命令改为拒绝，而不是无人值守地执行；`dontAsk`
+拒绝；`bypassPermissions` 执行一切，仅始终需要人工新鲜批准的工具（记忆、plan、沙箱
+逃逸、受管配置写入）除外。
+
 ## 附加目录
 
 ```sh

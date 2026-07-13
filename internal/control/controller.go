@@ -1951,10 +1951,20 @@ func rulesWithoutFreshHumanApproval(rules []permission.Rule) []permission.Rule {
 // fresh-approval prompt: there is no key loop to answer them, and the default
 // infinite approval timeout would wedge the run forever on an Ask rule, the
 // `ask` tool, or a sandbox/config approval. Modes map straight onto a headless
-// gate — auto/yolo/bypass let the writer fallback through (Ask decisions already
-// resolve to allow under the nil-approver gate), dontAsk denies what would
-// otherwise ask — while deny rules and fresh-human tools stay enforced by the
-// gate for every mode.
+// gate, and each preserves the interactive contract as closely as a run with no
+// one to prompt allows:
+//
+//   - auto: auto-approve the writer fallback (Mode=Allow) but PRESERVE explicit
+//     ask rules. Interactive auto prompts on those (it never auto-approves them);
+//     headless can't prompt, so a would-ask decision fails closed (deny) rather
+//     than running silently. Only bypass may run such a command unattended.
+//   - yolo/bypassPermissions: skip every approval-gated decision (nil approver).
+//   - dontAsk: deny anything that would ask, and deny the writer fallback too.
+//
+// deny rules and fresh-human tools (memory, plan, sandbox, config) stay enforced
+// by the gate for every mode. ask/manual/acceptEdits are not routed here — the
+// caller leaves them at ToolApprovalAsk, keeping boot's default headless gate,
+// which resolves ordinary ask decisions to allow for `reasonix run` autonomy.
 func (c *Controller) ApplyHeadlessApprovalMode(mode string) {
 	mode = normalizeToolApprovalMode(mode)
 	c.approval.setMode(mode)
@@ -1963,9 +1973,12 @@ func (c *Controller) ApplyHeadlessApprovalMode(mode string) {
 	}
 	policy := c.policy
 	switch mode {
-	case ToolApprovalAuto, ToolApprovalYolo:
+	case ToolApprovalYolo:
 		policy.Mode = permission.Allow
 		c.executor.SetGate(NewHeadlessPermissionGate(policy))
+	case ToolApprovalAuto:
+		policy.Mode = permission.Allow
+		c.executor.SetGate(&freshHumanHeadlessGate{gate: permission.NewGate(policy, denyPermissionApprover{})})
 	case ToolApprovalDontAsk:
 		policy.Mode = permission.Deny
 		c.executor.SetGate(&freshHumanHeadlessGate{gate: permission.NewGate(policy, denyPermissionApprover{})})

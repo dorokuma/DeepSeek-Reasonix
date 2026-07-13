@@ -12,12 +12,13 @@ import (
 	"reasonix/internal/tool"
 )
 
-// TestApplyHeadlessApprovalModeAutoDoesNotPrompt reproduces the `reasonix run
-// --permission-mode auto` hang: a tool matching an explicit Ask rule must be
-// allowed without emitting an approval prompt, because a headless run has no key
-// loop to answer it and the default approval timeout is infinite. The turn must
-// complete and the write must execute.
-func TestApplyHeadlessApprovalModeAutoDoesNotPrompt(t *testing.T) {
+// runHeadlessWriteOnce drives one write_file tool call through a headless gate in
+// the given mode, with the given explicit ask rules, and reports how many
+// approval prompts were emitted (must always be 0 headless) and which paths were
+// actually written. It fails the test if the turn blocks (a wrongful prompt would
+// hang forever under the zero approval timeout).
+func runHeadlessWriteOnce(t *testing.T, mode string, askRules []string) (prompts int, written []string) {
+	t.Helper()
 	writer := &recordingWriter{}
 	reg := tool.NewRegistry()
 	reg.Add(writer)
@@ -28,12 +29,10 @@ func TestApplyHeadlessApprovalModeAutoDoesNotPrompt(t *testing.T) {
 	}}
 	ag := agent.New(prov, reg, agent.NewSession(""), agent.Options{}, event.Discard)
 
-	prompts := 0
 	c := New(Options{
 		Runner:   ag,
 		Executor: ag,
-		// An explicit Ask rule for the writer is the exact hang scenario.
-		Policy: permission.New("ask", nil, []string{"write_file"}, nil),
+		Policy:   permission.New("ask", nil, askRules, nil),
 		Sink: event.FuncSink(func(e event.Event) {
 			if e.Kind == event.ApprovalRequest {
 				prompts++
@@ -41,7 +40,7 @@ func TestApplyHeadlessApprovalModeAutoDoesNotPrompt(t *testing.T) {
 		}),
 		// ApprovalTimeout intentionally zero: a wrongful prompt would block forever.
 	})
-	c.ApplyHeadlessApprovalMode(ToolApprovalAuto)
+	c.ApplyHeadlessApprovalMode(mode)
 
 	done := make(chan error, 1)
 	go func() { done <- c.runTurnWithRaw(context.Background(), "edit", "edit") }()
@@ -51,15 +50,49 @@ func TestApplyHeadlessApprovalModeAutoDoesNotPrompt(t *testing.T) {
 			t.Fatalf("runTurnWithRaw: %v", err)
 		}
 	case <-time.After(5 * time.Second):
-		t.Fatal("headless auto approval must not block on an Ask-rule writer")
-	}
-	if prompts != 0 {
-		t.Fatalf("approval prompts = %d, want 0 (headless run has no UI to answer)", prompts)
+		t.Fatalf("headless %s must not block on a write", mode)
 	}
 	writer.mu.Lock()
 	defer writer.mu.Unlock()
-	if len(writer.paths) != 1 || writer.paths[0] != "a.txt" {
-		t.Fatalf("executed writes = %v, want a.txt allowed", writer.paths)
+	return prompts, append([]string(nil), writer.paths...)
+}
+
+// TestApplyHeadlessApprovalModeAutoDeniesExplicitAskRule pins the corrected auto
+// contract: a command the config explicitly marked "ask" must NOT run silently
+// under headless auto (there is no one to approve it), yet must not prompt or
+// hang either. auto preserves explicit ask rules by failing closed.
+func TestApplyHeadlessApprovalModeAutoDeniesExplicitAskRule(t *testing.T) {
+	prompts, written := runHeadlessWriteOnce(t, ToolApprovalAuto, []string{"write_file"})
+	if prompts != 0 {
+		t.Fatalf("approval prompts = %d, want 0 (headless run has no UI to answer)", prompts)
+	}
+	if len(written) != 0 {
+		t.Fatalf("executed writes = %v, want none (auto must not silently run an explicit ask rule)", written)
+	}
+}
+
+// TestApplyHeadlessApprovalModeAutoAllowsWriterFallback confirms auto still
+// auto-approves the ordinary writer fallback (no explicit rule): that is the
+// permissiveness auto is meant to add over the default headless gate.
+func TestApplyHeadlessApprovalModeAutoAllowsWriterFallback(t *testing.T) {
+	prompts, written := runHeadlessWriteOnce(t, ToolApprovalAuto, nil)
+	if prompts != 0 {
+		t.Fatalf("approval prompts = %d, want 0", prompts)
+	}
+	if len(written) != 1 || written[0] != "a.txt" {
+		t.Fatalf("executed writes = %v, want a.txt (auto auto-approves the writer fallback)", written)
+	}
+}
+
+// TestApplyHeadlessApprovalModeYoloBypassesAskRule confirms only bypass runs an
+// explicitly ask-gated command unattended.
+func TestApplyHeadlessApprovalModeYoloBypassesAskRule(t *testing.T) {
+	prompts, written := runHeadlessWriteOnce(t, ToolApprovalYolo, []string{"write_file"})
+	if prompts != 0 {
+		t.Fatalf("approval prompts = %d, want 0", prompts)
+	}
+	if len(written) != 1 || written[0] != "a.txt" {
+		t.Fatalf("executed writes = %v, want a.txt (bypass runs even explicit ask rules)", written)
 	}
 }
 
