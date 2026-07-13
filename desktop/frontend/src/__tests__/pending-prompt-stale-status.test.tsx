@@ -338,6 +338,45 @@ await act(async () => {
 eq(controller?.state.approval?.id, undefined, "a snapshot fetched after the prompt event still reconciles a dead prompt");
 eq(controller?.state.running, false, "fresh idle snapshot releases the blocked state");
 
+// #6432 backstop (reviewer round 2): after navigation drops the prompt anchor
+// (backend_activation_start on a rapid A→B→A, or single-surface state wipe), a
+// delayed replay of an already-answered prompt re-anchors it, so the
+// authoritative post-answer idle snapshot looks stale and is rejected — leaving
+// a zombie the frontend heuristic cannot disprove. The rejection must schedule a
+// fresh reconcile that refetches backend truth and clears the resolved prompt.
+{
+  // A snapshot fetch starts (its time is captured), then a prompt event arrives,
+  // so the snapshot is stale relative to the prompt when it finally dispatches.
+  const staleGate = deferred<void>();
+  holdNextListTabs = staleGate.promise;
+  let staleSync: Promise<string | undefined> | undefined;
+  await act(async () => {
+    staleSync = controller?.syncActiveTab(false);
+    await flushPromises();
+  });
+  await act(async () => {
+    for (const handler of eventHandlers) {
+      handler({ kind: "approval_request", tabId: "tab-a", approval: { id: "plan-zombie", tool: "exit_plan_mode", subject: "Approve plan" } } as WireEvent);
+    }
+    await flushPromises();
+  });
+  eq(controller?.state.approval?.id, "plan-zombie", "zombie approval is armed after the snapshot fetch started");
+  await act(async () => {
+    staleGate.resolve();
+    await staleSync;
+    await flushPromises();
+  });
+  eq(controller?.state.approval?.id, "plan-zombie", "the stale idle snapshot is rejected, the prompt survives for now");
+  // The backend reports idle (the prompt was resolved); the scheduled fresh
+  // reconcile refetches that truth and clears the zombie, unlocking input.
+  await act(async () => {
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 300));
+    await flushPromises();
+  });
+  eq(controller?.state.approval?.id, undefined, "the scheduled fresh reconcile clears the zombie the stale rejection preserved");
+  eq(controller?.state.running, false, "the fresh reconcile unlocks the input after clearing the zombie");
+}
+
 await act(async () => {
   root.unmount();
 });

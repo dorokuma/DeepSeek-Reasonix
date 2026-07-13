@@ -314,6 +314,11 @@ export function sameMeta(a?: Meta, b?: Meta): boolean {
 
 const STALE_TURN_RECONCILE_MS = 30_000;
 const CANCEL_RECONCILE_DELAYS_MS = [0, 100, 300, 1_000] as const;
+// After a stale runtime snapshot is rejected (its fetch predates the live
+// prompt), refetch authoritative backend state once. Short enough to be barely
+// perceptible, long enough to let any other in-flight replay events land first
+// so the refetch reflects settled backend truth (#6432).
+const STALE_PROMPT_RECONCILE_MS = 150;
 const STARTUP_READY_META_RECONCILE_MS = 250;
 const STARTUP_READY_META_RECONCILE_ATTEMPTS = 60;
 
@@ -1625,6 +1630,10 @@ export function useController() {
   const statesRef = useRef<TabStates>(new Map());
   const lastTurnActivityAtByTab = useRef(new Map<string, number>());
   const cancelReconcileTimers = useRef(new Map<string, number>());
+  const stalePromptReconcileTimers = useRef(new Map<string, number>());
+  // Indirection so dispatchRuntimeStatusForTab (defined above reconcileTabRuntime)
+  // can schedule an authoritative refetch after it rejects a stale snapshot.
+  const scheduleStalePromptReconcileRef = useRef<(tabId: string) => void>(() => {});
   const [activeTabId, setActiveTabId] = useState<string | undefined>();
   const activeTabIdRef = useRef<string | undefined>(undefined);
   // Invalidates async navigation completions even for ABA switches where the
@@ -1887,6 +1896,10 @@ export function useController() {
   // ignore snapshots that predate a live approval/ask event (#6429).
   const dispatchRuntimeStatusForTab = useCallback((tabId: string, tab: RuntimeMetaSnapshot, snapshotAt?: number) => {
     const foregroundRunning = foregroundRunningFromRuntimeMeta(tab);
+    // Will the reducer reject this as a snapshot that predates the live prompt?
+    // Computed on pre-dispatch state so we can schedule an authoritative
+    // refetch when a stale idle snapshot is ignored.
+    const rejectedStaleIdle = !tab.pendingPrompt && runtimeSnapshotPredatesPrompt(statesRef.current.get(tabId), snapshotAt);
     dispatchTo(tabId, {
       type: "backend_status",
       running: foregroundRunning,
@@ -1899,6 +1912,12 @@ export function useController() {
     // backend_status reconciliation can clear a live prompt from frontend state.
     // If the backend is still blocked, ask it to replay the approval/ask event.
     if (tab.pendingPrompt) replayPendingPromptsForActiveTab(tabId);
+    // A stale idle snapshot the reducer ignored cannot be trusted to have kept a
+    // GENUINE prompt: navigation can drop the prompt anchor, so a delayed replay
+    // of an already-answered prompt looks like a fresh prompt and re-anchors,
+    // making this authoritative idle look stale. Refetch backend truth once so a
+    // resolved prompt is cleared instead of surviving as a zombie (#6432).
+    if (rejectedStaleIdle) scheduleStalePromptReconcileRef.current(tabId);
     // A prompt that survived reconciliation (fresh pendingPrompt=true meta, or
     // a stale snapshot the reducer ignored) keeps the tab blocked on the user.
     // Report it as foreground-running so callers do not treat the snapshot as
@@ -1970,6 +1989,22 @@ export function useController() {
     if (balance) dispatchTo(tabId, { type: "balance", balance });
     return tabs;
   }, [dispatchRuntimeStatusForTab, loadSessionDataForTab]);
+
+  // Authoritative backstop for the prompt-freshness heuristic: after the reducer
+  // rejects a stale idle snapshot, refetch backend state once. If the backend
+  // resolved the prompt, the fresh snapshot (fetched after any in-flight replay)
+  // is newer than the anchor and reconciles the zombie away; if the prompt is
+  // genuinely pending, the fresh snapshot keeps it. Debounced per tab so a burst
+  // of stale snapshots schedules at most one refetch (#6432).
+  const scheduleStalePromptReconcile = useCallback((tabId: string) => {
+    if (stalePromptReconcileTimers.current.has(tabId)) return;
+    const timer = window.setTimeout(() => {
+      stalePromptReconcileTimers.current.delete(tabId);
+      void reconcileTabRuntime(tabId, { hydrateSessionData: false }).catch(() => {});
+    }, STALE_PROMPT_RECONCILE_MS);
+    stalePromptReconcileTimers.current.set(tabId, timer);
+  }, [reconcileTabRuntime]);
+  scheduleStalePromptReconcileRef.current = scheduleStalePromptReconcile;
 
   const clearCancelReconcileTimer = useCallback((tabId: string) => {
     const timer = cancelReconcileTimers.current.get(tabId);
@@ -2067,6 +2102,10 @@ export function useController() {
         window.clearTimeout(timer);
       }
       cancelReconcileTimers.current.clear();
+      for (const timer of stalePromptReconcileTimers.current.values()) {
+        window.clearTimeout(timer);
+      }
+      stalePromptReconcileTimers.current.clear();
       off();
       offReady();
     };
