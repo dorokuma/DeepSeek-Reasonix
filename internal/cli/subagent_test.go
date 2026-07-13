@@ -236,7 +236,6 @@ func TestSubagentRunTryDirPinsExplicitWorkspaceRoot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = os.Chdir(origWD) })
 
 	repo := t.TempDir()
 	if err := os.Mkdir(filepath.Join(repo, ".git"), 0o755); err != nil {
@@ -246,6 +245,10 @@ func TestSubagentRunTryDirPinsExplicitWorkspaceRoot(t *testing.T) {
 	if err := os.MkdirAll(sub, 0o755); err != nil {
 		t.Fatal(err)
 	}
+
+	// Register the cwd restore after repo's t.TempDir() cleanup so it runs
+	// first (LIFO): on Windows, RemoveAll fails while cwd sits inside repo.
+	t.Cleanup(func() { _ = os.Chdir(origWD) })
 	if err := os.Chdir(repo); err != nil {
 		t.Fatal(err)
 	}
