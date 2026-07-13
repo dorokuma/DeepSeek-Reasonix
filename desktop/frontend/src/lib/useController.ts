@@ -2000,6 +2000,30 @@ export function useController() {
     };
   }, [dispatchTo, loadSessionDataForTab, refreshCheckpoints, syncActiveTabFromBackend]);
 
+  // Keep shared all-source telemetry live between turn boundaries. Delivery
+  // mode can complete dozens of provider requests inside one UI turn, while
+  // the status bar reads state.context and would otherwise stay pinned to the
+  // previous turn_done snapshot. A usage event is emitted after the backend
+  // has recorded that request, so refresh the authoritative tab aggregate here.
+  // The usage sequence and active-tab checks make this latest-request-wins:
+  // slower snapshots cannot overwrite a newer usage event or a tab switch.
+  useEffect(() => {
+    const tabId = activeTabId;
+    const usageSeq = activeState.usageSeq;
+    if (!tabId || usageSeq <= 0 || !activeState.turnActive) return;
+
+    let cancelled = false;
+    void app.ContextUsageForTab(tabId).then((context) => {
+      if (cancelled || activeTabIdRef.current !== tabId) return;
+      if (statesRef.current.get(tabId)?.usageSeq !== usageSeq) return;
+      dispatchTo(tabId, { type: "context", context });
+    }).catch(() => {});
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeTabId, activeState.turnActive, activeState.usageSeq, dispatchTo]);
+
   // If the startup ready event is missed, keep the composer lock in sync with
   // the active tab's backend metadata without kicking off tab activation work.
   useEffect(() => {
