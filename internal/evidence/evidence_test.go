@@ -556,6 +556,7 @@ func TestToolCallMutatesForDeliveryProfile(t *testing.T) {
 		{name: "node test runner", toolName: "bash", args: `{"command":"node --test"}`},
 		{name: "node test snapshot update stays opaque", toolName: "bash", args: `{"command":"node --test --test-update-snapshots"}`, want: true},
 		{name: "node test reporter file stays opaque", toolName: "bash", args: `{"command":"node --test --test-reporter=junit --test-reporter-destination=result.txt"}`, want: true},
+		{name: "node test rerun state stays opaque", toolName: "bash", args: `{"command":"node --test --test-rerun-failures=state.json"}`, want: true},
 		{name: "diff review", toolName: "bash", args: `{"command":"git diff --check"}`},
 		{name: "formatter write", toolName: "bash", args: `{"command":"gofmt -w internal/a.go"}`, want: true},
 		{name: "file redirect", toolName: "bash", args: `{"command":"printf x > generated.txt"}`, want: true},
@@ -641,13 +642,16 @@ func TestNodeTestRunnerWriteFlagsCannotMasqueradeAsDeliveryVerification(t *testi
 	if !IsDeliveryVerificationCommand("node --test") {
 		t.Fatal("plain node --test should be recognized as a delivery verification")
 	}
-	// --test-update-snapshots rewrites checked-in snapshot fixtures and
-	// --test-reporter-destination can write arbitrary paths; both must stay
+	// --test-update-snapshots rewrites checked-in snapshot fixtures,
+	// --test-reporter-destination can write arbitrary paths, and
+	// --test-rerun-failures creates or updates a state file. They must stay
 	// opaque mutations so new files still require review and sign-off.
 	for _, command := range []string{
 		"node --test --test-update-snapshots",
 		"node --test --test-reporter=junit --test-reporter-destination=result.txt",
 		"node --test --test-reporter junit --test-reporter-destination result.txt",
+		"node --test --test-rerun-failures=state.json",
+		"node --test --test-rerun-failures state.json",
 	} {
 		if IsDeliveryVerificationCommand(command) {
 			t.Fatalf("%q writes files and must not be recognized as delivery verification", command)

@@ -1082,11 +1082,14 @@ func nodeSegmentIsVerification(args []string) bool {
 	case "--test":
 		// Match the repository's treatment of other conventional test runners,
 		// but fail closed on test-runner flags that write files: snapshot
-		// regeneration rewrites checked-in fixtures (the --update/-u class) and
-		// reporter destinations can write arbitrary paths.
+		// regeneration rewrites checked-in fixtures (the --update/-u class),
+		// reporter destinations can write arbitrary paths, and rerun-failure
+		// state is created or updated across test runs.
 		for _, arg := range args[1:] {
 			lower := strings.ToLower(arg)
-			if lower == "--test-update-snapshots" || strings.HasPrefix(lower, "--test-reporter-destination") {
+			if lower == "--test-update-snapshots" ||
+				strings.HasPrefix(lower, "--test-reporter-destination") ||
+				strings.HasPrefix(lower, "--test-rerun-failures") {
 				return false
 			}
 		}
