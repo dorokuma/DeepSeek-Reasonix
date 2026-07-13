@@ -23,13 +23,13 @@ function ok(value: unknown, label: string) {
 console.log("\nturn actions rendering");
 
 ok(
-  /\.app--creation \.transcript,[\s\S]*background-color:\s*var\(--creation-canvas-color, var\(--bg\)\);[\s\S]*scrollbar-width:\s*auto;/.test(styles),
-  "creation transcript paints an opaque canvas when stale action rows are removed",
+  /\.app--creation \.transcript,\n:root\[data-theme-style\] \.app--creation \.transcript \{\n  background-color: var\(--bg\);\n\}/.test(styles),
+  "creation transcript paints an opaque backdrop so removed turn actions repaint (#6359)",
 );
 
 ok(
-  styles.match(/--creation-canvas-color:\s*color-mix\(/g)?.length === 2,
-  "explicit and system light themes retain a creation-specific canvas color",
+  /:root\[data-theme="dark"\]\[data-theme-style\] \.app--creation \{[^}]*\n  background: var\(--bg\);\n\}/.test(styles),
+  "dark creation canvas stays opaque so the transcript backdrop matches it",
 );
 
 console.log(`\n${passed} passed, ${failed} failed, ${passed + failed} total`);
