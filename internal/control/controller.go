@@ -285,9 +285,10 @@ type RuntimeStatus struct {
 }
 
 const (
-	ToolApprovalAsk  = "ask"
-	ToolApprovalAuto = "auto"
-	ToolApprovalYolo = "yolo"
+	ToolApprovalAsk     = "ask"
+	ToolApprovalAuto    = "auto"
+	ToolApprovalDontAsk = "dontAsk"
+	ToolApprovalYolo    = "yolo"
 )
 
 const (
@@ -1892,6 +1893,8 @@ func (c *Controller) newInteractiveGate() *permission.Gate {
 	switch mode {
 	case ToolApprovalAuto, ToolApprovalYolo:
 		policy.Mode = permission.Allow
+	case ToolApprovalDontAsk:
+		policy.Mode = permission.Deny
 	default:
 		policy.Mode = permission.Ask
 	}
@@ -1899,13 +1902,23 @@ func (c *Controller) newInteractiveGate() *permission.Gate {
 		permission.Rule{Tool: memoryRememberTool},
 		permission.Rule{Tool: memoryForgetTool},
 	)
-	gate := permission.NewGate(policy, gateApprover{c})
+	var approver permission.Approver = gateApprover{c}
+	if mode == ToolApprovalDontAsk {
+		approver = denyPermissionApprover{}
+	}
+	gate := permission.NewGate(policy, approver)
 	gate.OnRemember = func(rule string) {
 		if c.onRemember != nil {
 			_ = c.onRemember(rule)
 		}
 	}
 	return gate
+}
+
+type denyPermissionApprover struct{}
+
+func (denyPermissionApprover) Approve(context.Context, string, string, json.RawMessage) (bool, bool, error) {
+	return false, false, nil
 }
 
 func (c *Controller) refreshInteractiveGate() {

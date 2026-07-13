@@ -17,6 +17,7 @@ import (
 	"reasonix/internal/agent"
 	"reasonix/internal/boot"
 	"reasonix/internal/config"
+	"reasonix/internal/control"
 	"reasonix/internal/event"
 	"reasonix/internal/i18n"
 	"reasonix/internal/notify"
@@ -267,7 +268,7 @@ func TestMetadataCommandsDoNotProbeTerminalTheme(t *testing.T) {
 	if !strings.Contains(out, "Usage:") && !strings.Contains(out, "用法：") {
 		t.Fatalf("help output missing usage:\n%s", out)
 	}
-	if !strings.Contains(out, "reasonix run  [--model NAME] [--max-steps N] [-c|--continue] [--resume PATH] [--copy] <task>") {
+	if !strings.Contains(out, "reasonix run [--model NAME] [--max-steps N] [-c|--continue] [--resume PATH] [--copy] [--output-format FORMAT] <task>") {
 		t.Fatalf("help output missing run resume flags:\n%s", out)
 	}
 }
@@ -347,8 +348,11 @@ func TestRunRoutesBareInteractiveFlagsToSession(t *testing.T) {
 		{"--continue=true"},
 		{"-c=true"},
 		{"--resume=true"},
+		{"-r=true"},
 		{"--yolo=true"},
 		{"--dangerously-skip-permissions=true"},
+		{"--permission-mode=plan"},
+		{"--effort=max"},
 	} {
 		var gotArgs []string
 		runInteractiveSession = func(args []string) int {
@@ -361,6 +365,35 @@ func TestRunRoutesBareInteractiveFlagsToSession(t *testing.T) {
 		}
 		if !reflect.DeepEqual(gotArgs, args) {
 			t.Fatalf("interactive args = %#v, want %#v", gotArgs, args)
+		}
+	}
+}
+
+func TestRunPrintAliasDispatchesRunFlags(t *testing.T) {
+	isolateCLIConfigHome(t)
+	errOut := captureStderr(t, func() {
+		if rc := Run([]string{"-p", "-h"}, "test-version"); rc != 2 {
+			t.Fatalf("Run(-p -h) rc = %d, want 2", rc)
+		}
+	})
+	if !strings.Contains(errOut, "Usage of run:") {
+		t.Fatalf("-p should dispatch to one-shot run flags, got:\n%s", errOut)
+	}
+}
+
+func TestParsePermissionModeClaudeAliases(t *testing.T) {
+	tests := map[string]cliPermissionMode{
+		"ask":               {approval: control.ToolApprovalAsk},
+		"manual":            {approval: control.ToolApprovalAsk},
+		"acceptEdits":       {approval: control.ToolApprovalAsk, allow: []string{"write_file", "edit_file", "multi_edit", "move_file", "notebook_edit", "delete_range", "delete_symbol"}},
+		"dontAsk":           {approval: control.ToolApprovalDontAsk},
+		"plan":              {approval: control.ToolApprovalAsk, plan: true},
+		"bypassPermissions": {approval: control.ToolApprovalYolo},
+	}
+	for input, want := range tests {
+		got, err := parsePermissionMode(input)
+		if err != nil || !reflect.DeepEqual(got, want) {
+			t.Errorf("parsePermissionMode(%q) = (%+v, %v), want %+v", input, got, err, want)
 		}
 	}
 }

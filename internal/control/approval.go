@@ -333,6 +333,8 @@ func normalizeToolApprovalMode(mode string) string {
 	switch strings.ToLower(strings.TrimSpace(mode)) {
 	case ToolApprovalAuto, "approve", "allow":
 		return ToolApprovalAuto
+	case "dontask", "dont-ask", "deny":
+		return ToolApprovalDontAsk
 	case ToolApprovalYolo, "full", "full-access", "bypass":
 		return ToolApprovalYolo
 	default:

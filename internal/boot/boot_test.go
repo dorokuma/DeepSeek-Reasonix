@@ -3444,6 +3444,171 @@ api_key_env = "REASONIX_TEST_KEY_UNSET"
 	defer ctrl.Close()
 }
 
+func TestNormalizeAdditionalDirs(t *testing.T) {
+	root := t.TempDir()
+	extra := filepath.Join(root, "extra")
+	if err := os.Mkdir(extra, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(root, "extra-link")
+	if err := os.Symlink(extra, link); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+
+	got, err := normalizeAdditionalDirs(root, []string{"extra", link, "", " extra "})
+	if err != nil {
+		t.Fatalf("normalizeAdditionalDirs: %v", err)
+	}
+	real, err := filepath.EvalSymlinks(extra)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got, []string{real}) {
+		t.Fatalf("normalized dirs = %v, want [%s]", got, real)
+	}
+}
+
+func TestAppendUniquePathsDeduplicatesSymlinkEquivalentRoots(t *testing.T) {
+	real := t.TempDir()
+	link := filepath.Join(t.TempDir(), "root-link")
+	if err := os.Symlink(real, link); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	got := appendUniquePaths([]string{link}, real)
+	if !reflect.DeepEqual(got, []string{link}) {
+		t.Fatalf("roots = %v, want only original symlink root", got)
+	}
+}
+
+func TestNormalizeAdditionalDirsRejectsInvalidPaths(t *testing.T) {
+	root := t.TempDir()
+	file := filepath.Join(root, "file.txt")
+	if err := os.WriteFile(file, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{"missing", file} {
+		t.Run(filepath.Base(path), func(t *testing.T) {
+			if _, err := normalizeAdditionalDirs(root, []string{path}); err == nil {
+				t.Fatalf("normalizeAdditionalDirs(%q) unexpectedly succeeded", path)
+			}
+		})
+	}
+}
+
+func TestBuildAdditionalDirsAllowWriterAndPreserveToolSchemas(t *testing.T) {
+	isolateConfigHome(t)
+	root := robustTempDir(t)
+	extra := t.TempDir()
+	t.Chdir(root)
+	writeFile(t, root, "reasonix.toml", `
+default_model = "test-model"
+
+[agent]
+system_prompt = "BASE"
+
+[[providers]]
+name = "test-model"
+kind = "boot-token-profile-test"
+model = "x"
+`)
+	registerBootTokenProfileTestProvider()
+
+	captureSchemas := func(opts Options) []byte {
+		t.Helper()
+		prov := testutil.NewMock("additional-dir-schema", testutil.Turn{Text: "done"})
+		setBootTokenProfileTestProvider(t, prov)
+		opts.Sink = event.Discard
+		ctrl, err := Build(context.Background(), opts)
+		if err != nil {
+			t.Fatalf("Build: %v", err)
+		}
+		if err := ctrl.Run(context.Background(), "capture schemas"); err != nil {
+			ctrl.Close()
+			t.Fatalf("Run: %v", err)
+		}
+		ctrl.Close()
+		reqs := prov.Requests()
+		if len(reqs) != 1 {
+			t.Fatalf("requests = %d, want 1", len(reqs))
+		}
+		encoded, err := json.Marshal(reqs[0].Tools)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return encoded
+	}
+
+	baseline := captureSchemas(Options{})
+	withOverrides := captureSchemas(Options{
+		AdditionalDirs:  []string{extra},
+		PermissionAllow: []string{"Bash(git *)", "Edit"},
+	})
+	if !bytes.Equal(baseline, withOverrides) {
+		t.Fatalf("session access overrides changed provider-visible tool schemas\nbaseline=%s\nwith=%s", baseline, withOverrides)
+	}
+
+	target := filepath.Join(extra, "written.txt")
+	prov := testutil.NewMock("additional-dir-write",
+		testutil.Turn{ToolCalls: []provider.ToolCall{{ID: "write-1", Name: "write_file", Arguments: fmt.Sprintf(`{"path":%q,"content":"ok"}`, target)}}},
+		testutil.Turn{Text: "done"},
+	)
+	setBootTokenProfileTestProvider(t, prov)
+	ctrl, err := Build(context.Background(), Options{Sink: event.Discard, AdditionalDirs: []string{extra}})
+	if err != nil {
+		t.Fatalf("Build writer: %v", err)
+	}
+	defer ctrl.Close()
+	if err := ctrl.Run(context.Background(), "write into the additional directory"); err != nil {
+		t.Fatalf("Run writer: %v", err)
+	}
+	if got, err := os.ReadFile(target); err != nil || string(got) != "ok" {
+		t.Fatalf("additional-dir file = %q, err=%v", got, err)
+	}
+}
+
+func TestBuildAdditionalDirsReachSandboxedBashWriteRoots(t *testing.T) {
+	if runtime.GOOS == "windows" || !sandbox.Available() {
+		t.Skip("requires a Unix sandbox backend")
+	}
+	isolateConfigHome(t)
+	root := robustTempDir(t)
+	extra := t.TempDir()
+	t.Chdir(root)
+	writeFile(t, root, "reasonix.toml", `
+default_model = "test-model"
+
+[agent]
+system_prompt = "BASE"
+
+[sandbox]
+bash = "enforce"
+
+[[providers]]
+name = "test-model"
+kind = "boot-token-profile-test"
+model = "x"
+`)
+	registerBootTokenProfileTestProvider()
+	target := filepath.Join(extra, "sandboxed.txt")
+	command := "printf ok > " + strconv.Quote(target)
+	prov := testutil.NewMock("additional-dir-bash",
+		testutil.Turn{ToolCalls: []provider.ToolCall{{ID: "bash-1", Name: "bash", Arguments: fmt.Sprintf(`{"command":%q}`, command)}}},
+		testutil.Turn{Text: "done"},
+	)
+	setBootTokenProfileTestProvider(t, prov)
+	ctrl, err := Build(context.Background(), Options{Sink: event.Discard, AdditionalDirs: []string{extra}})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	defer ctrl.Close()
+	if err := ctrl.Run(context.Background(), "write from sandboxed bash"); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if got, err := os.ReadFile(target); err != nil || string(got) != "ok" {
+		t.Fatalf("sandboxed file = %q, err=%v", got, err)
+	}
+}
+
 func TestBuildMigratesLegacyEagerBeforeStatsDemotion(t *testing.T) {
 	isolateConfigHome(t)
 	dir := robustTempDir(t)

@@ -228,6 +228,37 @@ func TestToolApprovalModeYoloForcesMemoryAskRules(t *testing.T) {
 	}
 }
 
+func TestToolApprovalModeDontAskDeniesWithoutPrompt(t *testing.T) {
+	requests := 0
+	c := New(Options{
+		Policy: permission.New("ask", nil, []string{"bash(git commit*)"}, nil).
+			WithSessionAllow([]string{"bash(go test*)"}),
+		Sink: event.FuncSink(func(e event.Event) {
+			if e.Kind == event.ApprovalRequest {
+				requests++
+			}
+		}),
+	})
+	c.SetToolApprovalMode(ToolApprovalDontAsk)
+	gate := c.newInteractiveGate()
+
+	allow, _, err := gate.Check(context.Background(), "bash", json.RawMessage(`{"command":"go test ./..."}`), false)
+	if err != nil || !allow {
+		t.Fatalf("session-allowed call = (%v, %v), want allow", allow, err)
+	}
+	allow, _, err = gate.Check(context.Background(), "bash", json.RawMessage(`{"command":"git commit -m x"}`), false)
+	if err != nil || allow {
+		t.Fatalf("explicit ask under dontAsk = (%v, %v), want deny", allow, err)
+	}
+	allow, _, err = gate.Check(context.Background(), "write_file", json.RawMessage(`{"path":"x.txt"}`), false)
+	if err != nil || allow {
+		t.Fatalf("fallback under dontAsk = (%v, %v), want deny", allow, err)
+	}
+	if requests != 0 {
+		t.Fatalf("dontAsk emitted %d approval requests, want 0", requests)
+	}
+}
+
 func TestToolApprovalModeAutoDrainsPendingFallbackApproval(t *testing.T) {
 	approvalRequests := make(chan event.Approval, 1)
 	c := New(Options{

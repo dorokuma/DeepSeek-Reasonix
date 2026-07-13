@@ -228,7 +228,8 @@ type chatTUI struct {
 	// pendingApproval holds the tool-call approval currently shown in the banner
 	// (nil when none). While set, the controller's run goroutine is blocked
 	// awaiting ctrl.Approve and key input is captured to answer it.
-	pendingApproval *event.Approval
+	pendingApproval   *event.Approval
+	approvalSelection int
 
 	// chooser holds the `ask` tool's question card (nil when none). While set, the
 	// run goroutine is blocked awaiting ctrl.AnswerQuestion and keys drive the card.
@@ -241,8 +242,11 @@ type chatTUI struct {
 	// resumePick is the interactive "/resume" session picker overlay. Non-nil
 	// while the user browses saved sessions with ↑/↓ and confirms with Enter.
 	resumePick *resumePicker
-	copyPick   *copyPicker
-	lastEsc    time.Time
+	// quickPick owns searchable single-choice overlays such as /model and
+	// /provider. It never invokes a raw-mode prompt inside Bubble Tea.
+	quickPick *quickPicker
+	copyPick  *copyPicker
+	lastEsc   time.Time
 
 	// mcp is the interactive "/mcp" manager overlay. mcpDisabled tracks servers
 	// turned off only for this chat session, matching the desktop connector
@@ -352,6 +356,7 @@ type controllerBuildSpec struct {
 	RuntimeProfile   string
 	ToolApprovalMode string
 	PlanMode         bool
+	EffortOverride   *string
 }
 
 // agentEventMsg is one typed event from the agent's run loop.
@@ -1004,6 +1009,10 @@ func (m chatTUI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// The resume picker is modal while open: keys navigate it.
 		if m.resumePick != nil {
 			return m.handleResumePickerKey(msg)
+		}
+		// Searchable command pickers are modal while open.
+		if m.quickPick != nil {
+			return m.handleQuickPickerKey(msg)
 		}
 		// The MCP manager is modal while open: keys navigate it.
 		if m.mcp != nil {
@@ -1668,6 +1677,7 @@ func (m chatTUI) bottomRows() int {
 		m.renderRewind(),
 		m.renderMCPImport(),
 		m.renderResumePicker(),
+		m.renderQuickPicker(),
 		m.renderCopyPicker(),
 		m.renderCompletion(),
 	} {
@@ -1709,7 +1719,7 @@ func (m chatTUI) bottomRows() int {
 // reserve rows for a composer that cannot receive input, leaving a confusing
 // blank/bordered area at the bottom of the TUI.
 func (m chatTUI) hideComposer() bool {
-	if m.mcp != nil || m.clearConfirm != nil || m.mcpImport != nil || m.skillPick != nil || m.resumePick != nil || m.copyPick != nil || m.rewind != nil || m.pendingApproval != nil {
+	if m.mcp != nil || m.clearConfirm != nil || m.mcpImport != nil || m.skillPick != nil || m.resumePick != nil || m.quickPick != nil || m.copyPick != nil || m.rewind != nil || m.pendingApproval != nil {
 		return true
 	}
 	return m.chooser != nil && !m.chooser.typing
@@ -2318,6 +2328,75 @@ func flushableMarkdownPrefix(buf string) string {
 // [plan] tag in sync when the plan is approved.
 const planApprovalTool = "exit_plan_mode"
 
+type approvalChoice struct {
+	label           string
+	allow           bool
+	allowForSession bool
+	persistToConfig bool
+}
+
+func approvalChoices(a *event.Approval) []approvalChoice {
+	if a == nil {
+		return nil
+	}
+	var decisions []approvalChoice
+	switch {
+	case a.Tool == planApprovalTool:
+		decisions = []approvalChoice{{allow: true}, {}}
+	case control.RequiresFreshHumanApprovalTool(a.Tool) && freshApprovalAllowsSession(a.Tool):
+		decisions = []approvalChoice{{allow: true}, {allow: true, allowForSession: true}, {}}
+	case control.RequiresFreshHumanApprovalTool(a.Tool):
+		decisions = []approvalChoice{{allow: true}, {}}
+	default:
+		decisions = []approvalChoice{
+			{allow: true},
+			{allow: true, allowForSession: true},
+			{allow: true, allowForSession: true, persistToConfig: true},
+			{},
+		}
+	}
+	labels := approvalChoiceLabels(a)
+	for i := range decisions {
+		if i < len(labels) {
+			decisions[i].label = labels[i]
+		}
+	}
+	return decisions
+}
+
+func approvalChoiceLabels(a *event.Approval) []string {
+	choices := i18n.M.FreshHumanApprovalChoices
+	if a.Tool == planApprovalTool {
+		choices = i18n.M.FreshHumanApprovalChoices
+	} else if !control.RequiresFreshHumanApprovalTool(a.Tool) {
+		exactSessionRule := permission.SessionGrantRuleForScope(a.Tool, a.Subject)
+		exactPersistentRule := permission.RememberRuleForScope(a.Tool, a.Subject)
+		choices = fmt.Sprintf(i18n.M.ToolApprovalChoices, exactSessionRule, exactPersistentRule)
+	}
+	if a.Tool == control.SandboxEscapeApprovalTool {
+		choices = i18n.M.SandboxEscapeApprovalChoices
+	}
+	if a.Tool == control.ManagedConfigWriteApprovalTool {
+		choices = i18n.M.ConfigWriteApprovalChoices
+	}
+	if a.Tool == agent.PlanModeReadOnlyCommandApprovalTool {
+		choices = i18n.M.PlanModeReadOnlyCommandChoices
+	}
+	if !control.RequiresFreshHumanApprovalTool(a.Tool) && a.Tool == "bash" && permission.BashCommandPrefix(a.Subject) != "" {
+		prefixRule := permission.RememberRuleForScope(a.Tool, a.Subject)
+		choices = fmt.Sprintf(i18n.M.BashPrefixChoices, prefixRule, prefixRule)
+	}
+	var labels []string
+	for _, line := range strings.Split(choices, "\n") {
+		line = strings.TrimSpace(line)
+		if len(line) < 3 || line[0] < '1' || line[0] > '9' || line[1] != '.' {
+			continue
+		}
+		labels = append(labels, strings.TrimSpace(line[2:]))
+	}
+	return labels
+}
+
 // handleApprovalKey resolves a pending approval from a keystroke and re-arms the
 // listener. 1/y/Enter allows once, 2/a allows for the rest of the session,
 // 3/p writes an "always allow" rule to the config file for ordinary tool
@@ -2327,9 +2406,9 @@ const planApprovalTool = "exit_plan_mode"
 // (planApprovalTool), allowing also drops the local [plan] tag — the
 // controller turns plan mode off on its side.
 func (m chatTUI) handleApprovalKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
-	freshToolApproval := control.RequiresFreshHumanApprovalTool(m.pendingApproval.Tool) && m.pendingApproval.Tool != planApprovalTool
-	freshSessionApproval := freshApprovalAllowsSession(m.pendingApproval.Tool)
-	answer := func(allow, session, persist bool) (tea.Model, tea.Cmd) {
+	choices := approvalChoices(m.pendingApproval)
+	answer := func(choice approvalChoice) (tea.Model, tea.Cmd) {
+		allow, session, persist := choice.allow, choice.allowForSession, choice.persistToConfig
 		if allow && m.pendingApproval.Tool == planApprovalTool {
 			m.planMode = false
 		}
@@ -2340,33 +2419,52 @@ func (m chatTUI) handleApprovalKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "ctrl+c":
 		m.ctrl.Cancel()
-		return answer(false, false, false)
+		return answer(approvalChoice{})
+	case "up", "k", "ctrl+p":
+		if m.approvalSelection > 0 {
+			m.approvalSelection--
+		}
+		return m, nil
+	case "down", "j", "ctrl+n":
+		if m.approvalSelection < len(choices)-1 {
+			m.approvalSelection++
+		}
+		return m, nil
 	case "enter":
-		return answer(true, false, false)
+		if m.approvalSelection >= 0 && m.approvalSelection < len(choices) {
+			return answer(choices[m.approvalSelection])
+		}
+		return m, nil
 	case "esc":
-		return answer(false, false, false)
+		return answer(approvalChoice{})
 	}
-	switch strings.ToLower(msg.String()) {
-	case "y", "1":
-		return answer(true, false, false)
-	case "a", "2":
-		if freshToolApproval && !freshSessionApproval {
-			if msg.String() == "2" {
-				return answer(false, false, false)
+	lower := strings.ToLower(msg.String())
+	if len(lower) == 1 && lower[0] >= '1' && lower[0] <= '9' {
+		idx := int(lower[0] - '1')
+		if idx < len(choices) {
+			return answer(choices[idx])
+		}
+		return m, nil
+	}
+	switch lower {
+	case "y":
+		if len(choices) > 0 {
+			return answer(choices[0])
+		}
+	case "a":
+		for _, choice := range choices {
+			if choice.allowForSession && !choice.persistToConfig {
+				return answer(choice)
 			}
-			return m, nil
 		}
-		return answer(true, true, false)
-	case "3", "p":
-		if freshSessionApproval && msg.String() == "3" {
-			return answer(false, false, false)
+	case "p":
+		for _, choice := range choices {
+			if choice.persistToConfig {
+				return answer(choice)
+			}
 		}
-		if freshToolApproval {
-			return m, nil
-		}
-		return answer(true, true, true)
-	case "4", "n":
-		return answer(false, false, false)
+	case "n":
+		return answer(approvalChoice{})
 	}
 	return m, nil
 }
@@ -2378,11 +2476,10 @@ func freshApprovalAllowsSession(toolName string) bool {
 var (
 	// Input box: only top + bottom borders, no sides. The concrete colors are
 	// refreshed from the active CLI theme during startup.
-	inputBoxStyle       lipgloss.Style
-	approvalBannerStyle lipgloss.Style
-	todoPanelStyle      lipgloss.Style
-	statusBlockStyle    lipgloss.Style
-	workingStyle        lipgloss.Style
+	inputBoxStyle    lipgloss.Style
+	todoPanelStyle   lipgloss.Style
+	statusBlockStyle lipgloss.Style
+	workingStyle     lipgloss.Style
 )
 
 func (m chatTUI) cancelRequested() bool {
@@ -2478,6 +2575,8 @@ func (m chatTUI) View() tea.View {
 		status = "  " + modeTag + " · MCP import"
 	case m.resumePick != nil:
 		status = "  " + modeTag + " · " + i18n.M.StatusResumePicker
+	case m.quickPick != nil:
+		status = "  " + modeTag + " · " + m.quickPick.title
 	case m.mcp != nil:
 		status = "  " + modeTag + " · MCP"
 	case m.skillPick != nil:
@@ -2499,42 +2598,18 @@ func (m chatTUI) View() tea.View {
 	default:
 		status = "  " + modeTag + " · " + i18n.M.ChatStatusIdle + " " + dim("("+m.cycleHint()+")")
 	}
-	if et := m.effortTag(); et != "" {
-		status += " · " + et
-	}
-	if gt := m.gitTag(); gt != "" {
-		status += " · " + gt
-	}
-	if mt := m.mouseTag(); mt != "" {
-		status += " · " + mt
-	}
 	// The spinning "thinking…" indicator is its own line ABOVE the input box (shown
 	// only while a turn runs); the status/data rows stay below. This mirrors Claude
 	// Code: live progress over the composer, shortcuts + stats under it.
 	working := m.runningWorkingLine(cancelRequested, true)
-	// Second status row: the live data (model, git, effort, context gauge, cache
-	// rates, jobs, balance). It lives on its own row so it's always visible; if it
-	// exceeds the terminal width it wraps to additional rows instead of being
-	// truncated. Wrapping is safe in the alt-screen view — there's no scrollback
-	// to strand — and computeStatusLineCount reserves the correct height.
+	// Keep the persistent data row deliberately compact. Detailed profile, cache,
+	// jobs, balance, effort, git, and mouse state is available through /status.
 	var data []string
 	if mt := m.modelTag(); mt != "" {
 		data = append(data, mt)
 	}
-	if wt := m.workModeTag(); wt != "" {
-		data = append(data, wt)
-	}
-	if cache := m.cacheTag(); cache != "" {
-		data = append(data, cache)
-	}
 	if ctxTag != "" {
 		data = append(data, ctxTag)
-	}
-	if jt := m.jobsTag(); jt != "" {
-		data = append(data, jt)
-	}
-	if m.balance != "" {
-		data = append(data, dim(m.balance))
 	}
 	dataLine := "  " + strings.Join(data, " · ")
 	// A configured custom status line replaces the built-in data row entirely.
@@ -2568,6 +2643,10 @@ func (m chatTUI) View() tea.View {
 		rowsAboveBox += strings.Count(card, "\n") + 1
 	}
 	if card := m.renderResumePicker(); card != "" {
+		parts = append(parts, card)
+		rowsAboveBox += strings.Count(card, "\n") + 1
+	}
+	if card := m.renderQuickPicker(); card != "" {
 		parts = append(parts, card)
 		rowsAboveBox += strings.Count(card, "\n") + 1
 	}
@@ -2816,40 +2895,27 @@ func (m chatTUI) renderApprovalBanner() string {
 	if m.pendingApproval == nil {
 		return ""
 	}
-	// A plan approval shows the gate prompt (the plan itself is already printed as
-	// the assistant's reply); a tool approval names the tool + subject.
+	var text string
 	if m.pendingApproval.Tool == planApprovalTool {
-		return approvalBannerStyle.Width(w).Render("⏸ " + i18n.M.PlanApprovalPrompt)
+		text = i18n.M.PlanApprovalPrompt
+	} else {
+		name, detail := approvalToolDetails(m.pendingApproval.Tool)
+		subj := strings.TrimSpace(m.pendingApproval.Subject)
+		if subj != "" {
+			subj = " " + truncateSubject(subj, w)
+		}
+		text = strings.TrimSpace(fmt.Sprintf(i18n.M.ToolApprovalPromptFmt, name, subj, detail, ""))
 	}
-	name, detail := approvalToolDetails(m.pendingApproval.Tool)
-	subj := strings.TrimSpace(m.pendingApproval.Subject)
-	if subj != "" {
-		subj = " " + truncateSubject(subj, w)
-	}
-	exactSessionRule := permission.SessionGrantRuleForScope(m.pendingApproval.Tool, m.pendingApproval.Subject)
-	exactPersistentRule := permission.RememberRuleForScope(m.pendingApproval.Tool, m.pendingApproval.Subject)
-	choices := i18n.M.FreshHumanApprovalChoices
-	if !control.RequiresFreshHumanApprovalTool(m.pendingApproval.Tool) {
-		choices = fmt.Sprintf(i18n.M.ToolApprovalChoices, exactSessionRule, exactPersistentRule)
-	}
-	if m.pendingApproval.Tool == control.SandboxEscapeApprovalTool {
-		choices = i18n.M.SandboxEscapeApprovalChoices
-	}
-	if m.pendingApproval.Tool == control.ManagedConfigWriteApprovalTool {
-		choices = i18n.M.ConfigWriteApprovalChoices
-	}
-	if m.pendingApproval.Tool == agent.PlanModeReadOnlyCommandApprovalTool {
-		choices = i18n.M.PlanModeReadOnlyCommandChoices
-	}
-	if !control.RequiresFreshHumanApprovalTool(m.pendingApproval.Tool) && m.pendingApproval.Tool == "bash" && permission.BashCommandPrefix(m.pendingApproval.Subject) != "" {
-		prefixRule := permission.RememberRuleForScope(m.pendingApproval.Tool, m.pendingApproval.Subject)
-		choices = fmt.Sprintf(i18n.M.BashPrefixChoices, prefixRule, prefixRule)
-	}
-	text := fmt.Sprintf(i18n.M.ToolApprovalPromptFmt, name, subj, detail, choices)
 	if reason := strings.TrimSpace(m.pendingApproval.Reason); reason != "" {
 		text += " · " + truncateSubject(reason, w)
 	}
-	return approvalBannerStyle.Width(w).Render("⏸ " + text)
+	var b strings.Builder
+	b.WriteString("⏸ " + text + "\n")
+	for i, choice := range approvalChoices(m.pendingApproval) {
+		b.WriteString(rowLine(i == m.approvalSelection, i+1, "", choice.label, false) + "\n")
+	}
+	b.WriteString(dim("↑/↓ navigate · Enter select · y/a/p/n shortcuts"))
+	return choicePanelStyle.Width(w).Render(b.String())
 }
 
 // approvalToolDetails turns provider-visible tool IDs into user-facing labels.
@@ -3036,6 +3102,8 @@ func (m chatTUI) computeStatusLineCount(width int) int {
 		status += " · MCP import"
 	case m.resumePick != nil:
 		status += " · " + i18n.M.StatusResumePicker
+	case m.quickPick != nil:
+		status += " · " + m.quickPick.title
 	case m.mcp != nil:
 		status += " · MCP"
 	case m.skillPick != nil:
@@ -3057,35 +3125,13 @@ func (m chatTUI) computeStatusLineCount(width int) int {
 	default:
 		status += " · " + i18n.M.ChatStatusIdle + " (" + m.cycleHint() + ")"
 	}
-	if et := m.effortTag(); et != "" {
-		status += " · " + et
-	}
-	if gt := m.gitTag(); gt != "" {
-		status += " · " + gt
-	}
-	if mt := m.mouseTag(); mt != "" {
-		status += " · " + mt
-	}
-
-	// Replicate the data line from View().
+	// Replicate the compact data line from View().
 	var data []string
 	if mt := m.modelTag(); mt != "" {
 		data = append(data, mt)
 	}
-	if wt := m.workModeTag(); wt != "" {
-		data = append(data, wt)
-	}
-	if cache := m.cacheTag(); cache != "" {
-		data = append(data, cache)
-	}
 	if ct := m.contextTag(); ct != "" {
 		data = append(data, ct)
-	}
-	if jt := m.jobsTag(); jt != "" {
-		data = append(data, jt)
-	}
-	if m.balance != "" {
-		data = append(data, m.balance)
 	}
 	dataLine := "  " + strings.Join(data, " · ")
 	if m.statuslineCmd != "" && m.statuslineOut != "" {
@@ -3138,11 +3184,24 @@ func (m *chatTUI) growInputToFit() {
 	}
 }
 
-// cycleMode handles the Shift+Tab mode gesture. It toggles Plan only; tool
-// approval modes stay on their own axis.
+// cycleMode handles the Shift+Tab gesture using the same three safe modes users
+// see in Claude Code: Ask → Auto → Plan → Ask. YOLO stays outside this cycle and
+// remains an explicit Ctrl+Y choice.
 func (m *chatTUI) cycleMode() {
-	m.planMode = !m.planMode
-	if m.planMode {
+	if m.ctrl == nil || m.ctrl.ToolApprovalMode() == control.ToolApprovalYolo {
+		return
+	}
+	switch {
+	case m.planMode:
+		m.planMode = false
+		m.ctrl.SetToolApprovalMode(control.ToolApprovalAsk)
+	case m.ctrl.ToolApprovalMode() == control.ToolApprovalDontAsk:
+		m.ctrl.SetToolApprovalMode(control.ToolApprovalAsk)
+	case m.ctrl.ToolApprovalMode() == control.ToolApprovalAsk:
+		m.ctrl.SetToolApprovalMode(control.ToolApprovalAuto)
+	case m.ctrl.ToolApprovalMode() == control.ToolApprovalAuto:
+		m.planMode = true
+		m.ctrl.SetToolApprovalMode(control.ToolApprovalAsk)
 		m.ctrl.ClearGoal()
 	}
 	m.ctrl.SetPlanMode(m.planMode)
@@ -3196,6 +3255,8 @@ func (m chatTUI) modeTagText() string {
 			return "Goal"
 		case toolApprovalMode == control.ToolApprovalAuto:
 			return "Auto"
+		case toolApprovalMode == control.ToolApprovalDontAsk:
+			return "Don't Ask"
 		default:
 			return "Ask"
 		}
@@ -3213,6 +3274,8 @@ func (m chatTUI) modeTagText() string {
 		return "YOLO"
 	case toolApprovalMode == control.ToolApprovalAuto:
 		return "Auto+Approve"
+	case toolApprovalMode == control.ToolApprovalDontAsk:
+		return "Don't Ask"
 	case m.planMode:
 		return "Plan"
 	case goalMode:
@@ -3502,6 +3565,7 @@ func (m *chatTUI) ingestEvent(e event.Event) {
 		// serialises them), so a plain field holds the current one.
 		a := e.Approval
 		m.pendingApproval = &a
+		m.approvalSelection = 0
 
 	case event.AskRequest:
 		// The `ask` tool raised a question card; the run goroutine blocks until
@@ -3558,11 +3622,12 @@ func elapsedTick() tea.Cmd {
 // runSlashCommand handles "/<cmd> <args>" input. Local commands queue their
 // output to scrollback; MCP prompt / custom commands resolve to a model turn.
 func (m *chatTUI) runSlashCommand(input string) tea.Cmd {
-	cmd := strings.TrimSpace(strings.SplitN(input, " ", 2)[0])
+	typedCmd := strings.TrimSpace(strings.SplitN(input, " ", 2)[0])
 
-	if strings.HasPrefix(cmd, "/mcp__") {
+	if strings.HasPrefix(typedCmd, "/mcp__") {
 		return m.runMCPPrompt(input)
 	}
+	cmd := canonicalBuiltinSlashCommand(typedCmd)
 
 	switch cmd {
 	case "/compact":
@@ -3572,7 +3637,7 @@ func (m *chatTUI) runSlashCommand(input string) tea.Cmd {
 		// card as they arrive; compactDoneMsg only handles the terminal error /
 		// snapshot once the pass returns. Any text after "/compact" is focus
 		// guidance steering what the summary keeps.
-		focus := strings.TrimSpace(strings.TrimPrefix(input, cmd))
+		focus := strings.TrimSpace(strings.TrimPrefix(input, typedCmd))
 		return func() tea.Msg { return compactDoneMsg{err: m.ctrl.Compact(context.Background(), focus)} }
 	case "/new":
 		m.echoLocalCommand(input)
@@ -3598,6 +3663,9 @@ func (m *chatTUI) runSlashCommand(input string) tea.Cmd {
 		m.notice(i18n.M.SlashClsDone)
 	case "/resume":
 		m.runResumeCommand(input)
+	case "/status":
+		m.echoLocalCommand(input)
+		m.showStatusDetails()
 	case "/rename":
 		m.runRenameCommand(input)
 	case "/todo":
@@ -3718,7 +3786,7 @@ func (m *chatTUI) runSlashCommand(input string) tea.Cmd {
 		m.showMemory()
 	case "/migrate", "/migration":
 		m.echoLocalCommand(input)
-		migration.RunLegacyRescueCommand(strings.TrimSpace(strings.TrimPrefix(input, cmd)), event.FuncSink(func(e event.Event) {
+		migration.RunLegacyRescueCommand(strings.TrimSpace(strings.TrimPrefix(input, typedCmd)), event.FuncSink(func(e event.Event) {
 			if e.Kind == event.Notice {
 				m.notice(e.Text)
 			}
@@ -3726,7 +3794,7 @@ func (m *chatTUI) runSlashCommand(input string) tea.Cmd {
 	case "/goal":
 		return m.runGoalSubcommand(input)
 	case "/remember":
-		note := strings.TrimSpace(strings.TrimPrefix(input, cmd))
+		note := strings.TrimSpace(strings.TrimPrefix(input, typedCmd))
 		if note == "" {
 			m.notice("nothing to remember")
 		} else if path, err := m.ctrl.QuickAdd(memory.ScopeProject, note); err != nil {
@@ -3741,7 +3809,7 @@ func (m *chatTUI) runSlashCommand(input string) tea.Cmd {
 	case "/export":
 		m.runExportCommand(input)
 	case "/forget":
-		m.forgetMemory(strings.TrimSpace(strings.TrimPrefix(input, cmd)))
+		m.forgetMemory(strings.TrimSpace(strings.TrimPrefix(input, typedCmd)))
 	default:
 		// A custom command wins over a skill of the same name; both resolve to a turn.
 		if sent, ok := m.ctrl.CustomCommand(input); ok {
@@ -3762,6 +3830,56 @@ func (m *chatTUI) runSlashCommand(input string) tea.Cmd {
 		m.notice(fmt.Sprintf("%s: %s", i18n.M.SlashUnknown, cmd))
 	}
 	return nil
+}
+
+// showStatusDetails keeps diagnostics available without permanently crowding
+// the two-line composer footer.
+func (m *chatTUI) showStatusDetails() {
+	var lines []string
+	lines = append(lines, viewHeader("%s", "Session status"))
+	mode := "Ask"
+	if m.ctrl != nil {
+		mode = m.modeTagText()
+	}
+	lines = append(lines, "  mode       "+mode)
+	model := strings.TrimSpace(m.modelRef)
+	if model == "" {
+		model = strings.TrimSpace(m.label)
+	}
+	if model != "" {
+		lines = append(lines, "  model      "+model)
+	}
+	if m.ctrl != nil {
+		if tag := m.contextTag(); tag != "" {
+			lines = append(lines, "  context    "+tag)
+		}
+	}
+	if tag := m.workModeTag(); tag != "" {
+		lines = append(lines, "  profile    "+tag)
+	}
+	if tag := m.effortTag(); tag != "" {
+		lines = append(lines, "  effort     "+tag)
+	}
+	if m.ctrl != nil {
+		if tag := m.cacheTag(); tag != "" {
+			lines = append(lines, "  cache      "+tag)
+		}
+	}
+	if tag := m.gitTag(); tag != "" {
+		lines = append(lines, "  git        "+tag)
+	}
+	if m.ctrl != nil {
+		if tag := m.jobsTag(); tag != "" {
+			lines = append(lines, "  jobs       "+tag)
+		}
+	}
+	if m.balance != "" {
+		lines = append(lines, "  balance    "+m.balance)
+	}
+	if tag := m.mouseTag(); tag != "" {
+		lines = append(lines, "  mouse      "+tag)
+	}
+	m.commitLine(strings.Join(lines, "\n"))
 }
 
 func (m *chatTUI) runGoalSubcommand(input string) tea.Cmd {

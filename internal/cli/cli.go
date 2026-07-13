@@ -37,6 +37,7 @@ import (
 	"reasonix/internal/serve"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/spf13/pflag"
 	"golang.org/x/term"
 )
 
@@ -63,6 +64,10 @@ func Run(args []string, version string) int {
 	}
 	if cmd == "--acp" {
 		cmd = "acp"
+	}
+	if cmd == "-p" || cmd == "--print" {
+		cmd = "run"
+		args = append([]string{"run", "--print"}, args[1:]...)
 	}
 	if len(args) > 0 && isDefaultInteractiveFlag(cmd) {
 		cmd = ""
@@ -147,7 +152,7 @@ func Run(args []string, version string) int {
 
 func isDefaultInteractiveFlag(arg string) bool {
 	switch arg {
-	case "--model", "--max-steps", "--continue", "-c", "--resume", "--copy", "--dangerously-skip-permissions", "--yolo", "--dir":
+	case "--model", "--max-steps", "--continue", "-c", "--resume", "-r", "--copy", "--dangerously-skip-permissions", "--yolo", "--permission-mode", "--effort", "--dir", "--add-dir", "--allowed-tools", "--allowedTools":
 		return true
 	}
 	if name, _, ok := strings.Cut(arg, "="); ok && isDefaultInteractiveFlag(name) {
@@ -215,16 +220,67 @@ func configureCLIThemeFromConfigNoProbe() {
 // workspaceRoot pins the project root explicitly (from --dir); empty falls back
 // to git-root detection.
 func setupProfile(ctx context.Context, modelName string, maxStepsOverride int, requireKey bool, sink event.Sink, profile string, workspaceRoot string) (*control.Controller, error) {
+	return setupProfileWithOverrides(ctx, modelName, maxStepsOverride, requireKey, sink, profile, cliBuildOverrides{WorkspaceRoot: workspaceRoot})
+}
+
+type cliBuildOverrides struct {
+	Effort          *string
+	PermissionAllow []string
+	AdditionalDirs  []string
+	WorkspaceRoot   string
+}
+
+func setupProfileWithOverrides(ctx context.Context, modelName string, maxStepsOverride int, requireKey bool, sink event.Sink, profile string, overrides cliBuildOverrides) (*control.Controller, error) {
 	migrateMCPConfigForCLIWorkspace()
 	return boot.Build(ctx, boot.Options{
-		Model:         modelName,
-		MaxSteps:      maxStepsOverride,
-		RequireKey:    requireKey,
-		Sink:          sink,
-		TokenMode:     profile,
-		SessionDir:    resolveCLISessionDir(),
-		WorkspaceRoot: workspaceRoot,
+		Model:           modelName,
+		MaxSteps:        maxStepsOverride,
+		RequireKey:      requireKey,
+		Sink:            sink,
+		TokenMode:       profile,
+		SessionDir:      resolveCLISessionDir(),
+		WorkspaceRoot:   overrides.WorkspaceRoot,
+		EffortOverride:  overrides.Effort,
+		PermissionAllow: overrides.PermissionAllow,
+		AdditionalDirs:  overrides.AdditionalDirs,
 	})
+}
+
+type cliPermissionMode struct {
+	approval string
+	plan     bool
+	allow    []string
+}
+
+func parsePermissionMode(value string) (cliPermissionMode, error) {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "", "default", "ask":
+		return cliPermissionMode{approval: control.ToolApprovalAsk}, nil
+	case "auto":
+		return cliPermissionMode{approval: control.ToolApprovalAuto}, nil
+	case "acceptedits", "accept-edits":
+		return cliPermissionMode{approval: control.ToolApprovalAsk, allow: []string{
+			"write_file", "edit_file", "multi_edit", "move_file", "notebook_edit", "delete_range", "delete_symbol",
+		}}, nil
+	case "manual":
+		return cliPermissionMode{approval: control.ToolApprovalAsk}, nil
+	case "dontask", "dont-ask":
+		return cliPermissionMode{approval: control.ToolApprovalDontAsk}, nil
+	case "plan":
+		return cliPermissionMode{approval: control.ToolApprovalAsk, plan: true}, nil
+	case "bypasspermissions", "bypass-permissions", "yolo":
+		return cliPermissionMode{approval: control.ToolApprovalYolo}, nil
+	default:
+		return cliPermissionMode{}, fmt.Errorf("unknown permission mode %q (want manual, ask, auto, acceptEdits, dontAsk, plan, or bypassPermissions)", value)
+	}
+}
+
+func applyPermissionMode(ctrl *control.Controller, mode cliPermissionMode) {
+	if ctrl == nil {
+		return
+	}
+	ctrl.SetToolApprovalMode(mode.approval)
+	ctrl.SetPlanMode(mode.plan)
 }
 
 // resolveCLISessionDir returns the session dir for CLI invocations. When the
@@ -244,15 +300,19 @@ func resolveCLISessionDir() string {
 // setupQuietProfile is like setupProfile but suppresses plugin subprocess
 // stderr. Used during model switch inside a bubbletea session to prevent plugin
 // logs from corrupting the TUI's terminal raw mode.
-func setupQuietProfile(ctx context.Context, modelName string, maxStepsOverride int, requireKey bool, sink event.Sink, profile string, workspaceRoot string) (*control.Controller, error) {
+func setupQuietProfile(ctx context.Context, modelName string, maxStepsOverride int, requireKey bool, sink event.Sink, profile string, overrides cliBuildOverrides) (*control.Controller, error) {
 	return boot.Build(ctx, boot.Options{
-		Model:         modelName,
-		MaxSteps:      maxStepsOverride,
-		RequireKey:    requireKey,
-		Sink:          sink,
-		Stderr:        io.Discard,
-		TokenMode:     profile,
-		WorkspaceRoot: workspaceRoot,
+		Model:           modelName,
+		MaxSteps:        maxStepsOverride,
+		RequireKey:      requireKey,
+		Sink:            sink,
+		Stderr:          io.Discard,
+		TokenMode:       profile,
+		SessionDir:      resolveCLISessionDir(),
+		WorkspaceRoot:   overrides.WorkspaceRoot,
+		EffortOverride:  overrides.Effort,
+		PermissionAllow: overrides.PermissionAllow,
+		AdditionalDirs:  overrides.AdditionalDirs,
 	})
 }
 
@@ -335,7 +395,8 @@ func withNotifications(sink event.Sink, cfg *config.Config) event.Sink {
 }
 
 func runAgent(args []string) int {
-	fs := flag.NewFlagSet("run", flag.ContinueOnError)
+	fs := pflag.NewFlagSet("run", pflag.ContinueOnError)
+	fs.SetInterspersed(true)
 	model := fs.String("model", "", "provider name (default: config default_model)")
 	profileFlag := fs.String("profile", "balanced", "runtime profile: economy | balanced | delivery")
 	maxSteps := fs.Int("max-steps", 0, "max tool-call rounds (0 = use config/default)")
@@ -346,7 +407,26 @@ func runAgent(args []string) int {
 	fs.BoolVar(cont, "c", false, "shorthand for --continue")
 	resume := fs.String("resume", "", "resume a specific session file (non-interactive; takes precedence over --continue)")
 	copySession := fs.Bool("copy", false, "with --resume/--continue: duplicate the session and continue in the copy (escape hatch when the original is held by another Reasonix process)")
+	effort := fs.String("effort", "", "session reasoning effort override")
+	permissionMode := fs.String("permission-mode", "ask", "permission mode: manual | ask | auto | acceptEdits | dontAsk | plan | bypassPermissions")
+	printOnly := fs.BoolP("print", "p", false, "print only the final response")
+	outputFormat := fs.String("output-format", "text", "output format: text | json | stream-json")
+	var additionalDirs []string
+	fs.StringArrayVar(&additionalDirs, "add-dir", nil, "allow tool access to an additional directory (repeatable)")
+	var allowedToolValues []string
+	fs.StringArrayVar(&allowedToolValues, "allowed-tools", nil, "comma or space-separated permission rules to allow")
+	fs.StringArrayVar(&allowedToolValues, "allowedTools", nil, "alias for --allowed-tools")
 	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	allowedTools, err := splitAllowedToolRules(allowedToolValues)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
+		return 2
+	}
+	format, err := parseRunOutputFormat(*outputFormat)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
 		return 2
 	}
 	profile, err := parseRuntimeProfile(*profileFlag)
@@ -354,6 +434,16 @@ func runAgent(args []string) int {
 		fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
 		return 2
 	}
+	permissions, err := parsePermissionMode(*permissionMode)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
+		return 2
+	}
+	if permissions.plan {
+		fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, "--permission-mode plan requires an interactive session")
+		return 2
+	}
+	allowedTools = uniqueStrings(append(allowedTools, permissions.allow...))
 	if rc := chdirTo(*dir); rc != 0 {
 		return rc
 	}
@@ -425,36 +515,59 @@ func runAgent(args []string) int {
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 	defer stop()
+	started := time.Now()
 
 	// Live run: render the agent's event stream to stdout. Markdown post-stream
 	// redraw (cursor moves) is enabled only on a TTY; piped / captured output
 	// keeps the raw stream.
-	var renderer agent.Renderer
-	termW := 80
-	if isTTY(os.Stdout) {
-		if w, _, err := term.GetSize(int(os.Stdout.Fd())); err == nil && w > 0 {
-			termW = w
+	var sink event.Sink
+	var resultOutput *runOutputSink
+	if *printOnly || format != runOutputText {
+		resultOutput = newRunOutputSink(os.Stdout, format)
+		sink = resultOutput
+	} else {
+		var renderer agent.Renderer
+		termW := 80
+		if isTTY(os.Stdout) {
+			if w, _, err := term.GetSize(int(os.Stdout.Fd())); err == nil && w > 0 {
+				termW = w
+			}
+			renderer = newMarkdownRenderer(termW)
 		}
-		renderer = newMarkdownRenderer(termW)
+		textSink := agent.NewTextSink(os.Stdout, renderer, termW)
+		textSink.SetShowReasoning(*showThinking)
+		sink = textSink
 	}
-	textSink := agent.NewTextSink(os.Stdout, renderer, termW)
-	textSink.SetShowReasoning(*showThinking)
-	var sink event.Sink = textSink
 	var metrics *metricsSink
 	if *metricsPath != "" {
-		metrics = &metricsSink{inner: textSink}
+		metrics = &metricsSink{inner: sink}
 		sink = metrics
 	}
 	sink = withNotifications(sink, cfg)
 	if resumePath != "" {
 		*model = modelForResumePath(*model, resumePath, cfg)
 	}
-	ctrl, err := setupProfile(ctx, *model, *maxSteps, true, sink, profile, workspaceRoot)
+	var effortOverride *string
+	if strings.TrimSpace(*effort) != "" {
+		effortOverride = effort
+	}
+	overrides := cliBuildOverrides{Effort: effortOverride, PermissionAllow: allowedTools, AdditionalDirs: additionalDirs, WorkspaceRoot: workspaceRoot}
+	ctrl, err := setupProfileWithOverrides(ctx, *model, *maxSteps, true, sink, profile, overrides)
 	if err != nil {
+		if resultOutput != nil && format != runOutputText {
+			if encodeErr := resultOutput.Finalize("", started, err); encodeErr != nil {
+				fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, encodeErr)
+			}
+			return 1
+		}
 		fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
 		return 1
 	}
 	defer ctrl.Close()
+	if permissions.approval != control.ToolApprovalAsk {
+		ctrl.EnableInteractiveApproval()
+		applyPermissionMode(ctrl, permissions)
+	}
 
 	// --resume: load a specific session file (non-interactive, meant for
 	// MCP/API callers that manage their own per-project session). Takes
@@ -497,8 +610,16 @@ func runAgent(args []string) int {
 			fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
 		}
 	}
+	if resultOutput != nil {
+		if err := resultOutput.Finalize(agent.BranchID(ctrl.SessionPath()), started, runErr); err != nil {
+			fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
+			return 1
+		}
+	}
 	if runErr != nil {
-		fmt.Fprintln(os.Stderr, "\n"+i18n.M.ErrorPrefix, runErr)
+		if resultOutput == nil {
+			fmt.Fprintln(os.Stderr, "\n"+i18n.M.ErrorPrefix, runErr)
+		}
 		return 1
 	}
 	return 0
@@ -667,18 +788,32 @@ func runServe(args []string) int {
 // prompt loop that keeps conversation context across turns. Exit with
 // 'exit'/'quit' or Ctrl-D.
 func chatREPL(args []string) int {
-	fs := flag.NewFlagSet("reasonix", flag.ContinueOnError)
+	fs := pflag.NewFlagSet("reasonix", pflag.ContinueOnError)
+	fs.SetInterspersed(true)
 	model := fs.String("model", "", "provider name (default: config default_model)")
 	profileFlag := fs.String("profile", "balanced", "runtime profile: economy | balanced | delivery")
 	maxSteps := fs.Int("max-steps", 0, "max tool-call rounds (0 = use config/default)")
 	cont := fs.Bool("continue", false, "resume the most recent saved session")
 	fs.BoolVar(cont, "c", false, "shorthand for --continue")
-	resume := fs.Bool("resume", false, "list saved sessions and pick one to resume")
+	resume := fs.StringP("resume", "r", "", "resume by session ID/query, or open the picker when no value is given")
+	fs.Lookup("resume").NoOptDefVal = resumePickerSentinel
 	copySession := fs.Bool("copy", false, "with --resume/--continue: duplicate the selected session and continue in the copy (escape hatch when the original is held by another Reasonix process)")
 	yolo := fs.Bool("dangerously-skip-permissions", false, "YOLO: auto-approve approval-gated tool calls this session; same runtime mode as Ctrl+Y")
 	fs.BoolVar(yolo, "yolo", false, "alias for --dangerously-skip-permissions")
 	dir := fs.String("dir", "", "change to this directory first (project root); config, sandbox and file tools resolve from here")
-	if err := fs.Parse(args); err != nil {
+	effort := fs.String("effort", "", "session reasoning effort override")
+	permissionMode := fs.String("permission-mode", "ask", "permission mode: manual | ask | auto | acceptEdits | dontAsk | plan | bypassPermissions")
+	var additionalDirs []string
+	fs.StringArrayVar(&additionalDirs, "add-dir", nil, "allow tool access to an additional directory (repeatable)")
+	var allowedToolValues []string
+	fs.StringArrayVar(&allowedToolValues, "allowed-tools", nil, "comma or space-separated permission rules to allow")
+	fs.StringArrayVar(&allowedToolValues, "allowedTools", nil, "alias for --allowed-tools")
+	if err := fs.Parse(normalizeOptionalResumeArg(args)); err != nil {
+		return 2
+	}
+	allowedTools, err := splitAllowedToolRules(allowedToolValues)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
 		return 2
 	}
 	profile, err := parseRuntimeProfile(*profileFlag)
@@ -686,6 +821,12 @@ func chatREPL(args []string) int {
 		fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
 		return 2
 	}
+	permissions, err := parsePermissionMode(*permissionMode)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
+		return 2
+	}
+	allowedTools = uniqueStrings(append(allowedTools, permissions.allow...))
 	if rc := chdirTo(*dir); rc != 0 {
 		return rc
 	}
@@ -703,11 +844,25 @@ func chatREPL(args []string) int {
 	// Decide whether we're starting fresh or resuming. --resume opens an
 	// interactive picker; --continue / -c jumps straight into the newest.
 	var resumePath string
+	resumeValue := strings.TrimSpace(*resume)
+	switch strings.ToLower(resumeValue) {
+	case "true":
+		resumeValue = resumePickerSentinel
+	case "false":
+		resumeValue = ""
+	}
 	switch {
-	case *resume:
+	case resumeValue == resumePickerSentinel:
 		path, rc := pickSessionToResume()
 		if rc != 0 {
 			return rc
+		}
+		resumePath = path
+	case resumeValue != "":
+		path, err := resolveSessionQuery(resolveCLISessionDir(), resumeValue)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
+			return 1
 		}
 		resumePath = path
 	case *cont:
@@ -760,7 +915,12 @@ func chatREPL(args []string) int {
 
 	var sink event.Sink = &eventSink{ch: eventCh}
 	sink = withNotifications(sink, cfg)
-	ctrl, err := setupProfile(ctx, *model, *maxSteps, false, sink, profile, workspaceRoot)
+	var effortOverride *string
+	if strings.TrimSpace(*effort) != "" {
+		effortOverride = effort
+	}
+	overrides := cliBuildOverrides{Effort: effortOverride, PermissionAllow: allowedTools, AdditionalDirs: additionalDirs, WorkspaceRoot: workspaceRoot}
+	ctrl, err := setupProfileWithOverrides(ctx, *model, *maxSteps, false, sink, profile, overrides)
 	if err != nil && errors.Is(err, boot.ErrUnknownModel) && isInteractive() && config.SourcePath() == "" {
 		// True first run whose default model can't resolve: guide setup, then retry.
 		// With a config present, fall through to the descriptive error — re-running
@@ -769,7 +929,7 @@ func chatREPL(args []string) int {
 		if rc := interactiveSetup(defaultConfigTarget(), defaultEnvTarget()); rc != 0 {
 			return rc
 		}
-		ctrl, err = setupProfile(ctx, *model, *maxSteps, false, sink, profile, workspaceRoot)
+		ctrl, err = setupProfileWithOverrides(ctx, *model, *maxSteps, false, sink, profile, overrides)
 	}
 	if err != nil {
 		fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
@@ -819,6 +979,7 @@ func chatREPL(args []string) int {
 	// event and blocks until the user answers via ctrl.Approve. Sub-agents (the
 	// task tool) keep their headless gate from setup — no UI to prompt through.
 	ctrl.EnableInteractiveApproval()
+	applyPermissionMode(ctrl, permissions)
 	// YOLO: skip every tool approval request for the session (deny rules still
 	// apply; ask questions and plan approvals still wait for the user).
 	if *yolo {
@@ -826,6 +987,7 @@ func chatREPL(args []string) int {
 	}
 
 	m := newChatTUI(ctrl, missing, eventCh, termW)
+	m.planMode = permissions.plan
 	m.leases = leases
 	if cfg, err := config.Load(); err == nil {
 		m.outputStyle = cfg.Agent.OutputStyle    // shown as the active entry in /output-style
@@ -839,9 +1001,16 @@ func chatREPL(args []string) int {
 	// runModelSubcommand performs the swap on the live copy. The same stable sink
 	// feeds the new controller, so events keep flowing to this TUI.
 	m.buildController = func(spec controllerBuildSpec, carry []provider.Message, resumePath string) (*control.Controller, error) {
-		c, err := setupQuietProfile(ctx, spec.ModelRef, *maxSteps, false, sink, spec.RuntimeProfile, workspaceRoot)
+		effectiveOverrides := overrides
+		if spec.EffortOverride != nil {
+			effectiveOverrides.Effort = spec.EffortOverride
+		}
+		c, err := setupQuietProfile(ctx, spec.ModelRef, *maxSteps, false, sink, spec.RuntimeProfile, effectiveOverrides)
 		if err != nil {
 			return nil, err
+		}
+		if spec.EffortOverride != nil {
+			overrides.Effort = spec.EffortOverride
 		}
 		// Keep the carried conversation in its existing file so the switch doesn't
 		// orphan a duplicate (#2807).
@@ -855,6 +1024,9 @@ func chatREPL(args []string) int {
 		return c, nil
 	}
 	m.runtimeProfile = profile
+	if effortOverride != nil {
+		m.effortLevel = *effortOverride
+	}
 	if cfg, e := config.Load(); e == nil {
 		name := *model
 		if name == "" {
@@ -864,7 +1036,9 @@ func chatREPL(args []string) int {
 			m.modelRef = entry.Name + "/" + entry.Model
 		}
 	}
-	m.refreshEffortStatus()
+	if effortOverride == nil {
+		m.refreshEffortStatus()
+	}
 
 	if m.nativeScrollback {
 		prepareNativeScrollback(os.Stdout, m.bottomRows())

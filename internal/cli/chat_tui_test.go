@@ -733,6 +733,78 @@ func TestModalPanelsHideComposerBox(t *testing.T) {
 	}
 }
 
+func TestApprovalChoicesPreserveDecisionSemantics(t *testing.T) {
+	tests := []struct {
+		name string
+		tool string
+		want []approvalChoice
+	}{
+		{
+			name: "ordinary tool",
+			tool: "bash",
+			want: []approvalChoice{
+				{allow: true},
+				{allow: true, allowForSession: true},
+				{allow: true, allowForSession: true, persistToConfig: true},
+				{},
+			},
+		},
+		{
+			name: "fresh decision",
+			tool: "remember",
+			want: []approvalChoice{{allow: true}, {}},
+		},
+		{
+			name: "fresh session grant",
+			tool: control.SandboxEscapeApprovalTool,
+			want: []approvalChoice{{allow: true}, {allow: true, allowForSession: true}, {}},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := approvalChoices(&event.Approval{Tool: tt.tool, Subject: "echo hi"})
+			if len(got) != len(tt.want) {
+				t.Fatalf("choices = %d, want %d", len(got), len(tt.want))
+			}
+			for i := range got {
+				got[i].label = ""
+				if got[i] != tt.want[i] {
+					t.Errorf("choice %d = %+v, want %+v", i, got[i], tt.want[i])
+				}
+			}
+		})
+	}
+}
+
+func TestApprovalArrowKeysMoveVisibleSelection(t *testing.T) {
+	m := newTestChatTUI()
+	m.pendingApproval = &event.Approval{ID: "approval", Tool: "bash", Subject: "echo hi"}
+	next, _ := m.handleApprovalKey(tea.KeyPressMsg{Code: tea.KeyDown})
+	m = next.(chatTUI)
+	if m.approvalSelection != 1 {
+		t.Fatalf("approval selection = %d, want 1", m.approvalSelection)
+	}
+	banner := ansi.Strip(m.renderApprovalBanner())
+	if !strings.Contains(banner, "❯ 2.") {
+		t.Fatalf("approval banner should highlight second row:\n%s", banner)
+	}
+}
+
+func TestStatusCommandShowsDetailsRemovedFromFooter(t *testing.T) {
+	m := newTestChatTUI()
+	m.modelRef = "provider/model"
+	m.effortLevel = "max"
+	m.runtimeProfile = "delivery"
+	m.balance = "$10.00"
+	m.runSlashCommand("/status")
+	out := ansi.Strip(strings.Join(m.transcript, "\n"))
+	for _, want := range []string{"Session status", "provider/model", "delivery", "effort max", "$10.00"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("/status output missing %q:\n%s", want, out)
+		}
+	}
+}
+
 func TestInputOwnedOverlaysKeepComposerBox(t *testing.T) {
 	ask := event.Ask{
 		ID: "ask-1",
@@ -2870,7 +2942,7 @@ func TestEscInPlanModeDoesNotExitPlan(t *testing.T) {
 	}
 }
 
-func TestDesktopShortcutLayoutShiftTabTogglesPlanOnly(t *testing.T) {
+func TestDesktopShortcutLayoutShiftTabCyclesSafeModes(t *testing.T) {
 	m := newTestChatTUI()
 	m.ctrl = control.New(control.Options{})
 	m.ctrl.SetToolApprovalMode(control.ToolApprovalAuto)
@@ -2885,8 +2957,8 @@ func TestDesktopShortcutLayoutShiftTabTogglesPlanOnly(t *testing.T) {
 	if !m.planMode || !m.ctrl.PlanMode() {
 		t.Fatalf("first Shift+Tab should enter plan mode, tui=%v controller=%v", m.planMode, m.ctrl.PlanMode())
 	}
-	if got := m.ctrl.ToolApprovalMode(); got != control.ToolApprovalAuto {
-		t.Fatalf("Shift+Tab changed approval mode to %q, want auto", got)
+	if got := m.ctrl.ToolApprovalMode(); got != control.ToolApprovalAsk {
+		t.Fatalf("plan mode approval = %q, want ask", got)
 	}
 
 	out, _ = m.Update(shiftTab)
@@ -2894,8 +2966,14 @@ func TestDesktopShortcutLayoutShiftTabTogglesPlanOnly(t *testing.T) {
 	if m.planMode || m.ctrl.PlanMode() {
 		t.Fatalf("second Shift+Tab should leave plan mode, tui=%v controller=%v", m.planMode, m.ctrl.PlanMode())
 	}
-	if got := m.ctrl.ToolApprovalMode(); got != control.ToolApprovalAuto {
-		t.Fatalf("second Shift+Tab changed approval mode to %q, want auto", got)
+	if got := m.ctrl.ToolApprovalMode(); got != control.ToolApprovalAsk {
+		t.Fatalf("cycle after plan = %q, want ask", got)
+	}
+
+	out, _ = m.Update(shiftTab)
+	m = out.(chatTUI)
+	if got := m.ctrl.ToolApprovalMode(); got != control.ToolApprovalAuto || m.planMode {
+		t.Fatalf("third Shift+Tab should enter auto, approval=%q plan=%v", got, m.planMode)
 	}
 }
 
@@ -2908,7 +2986,10 @@ func TestDesktopShortcutLayoutShiftTabClearsGoalWhenEnteringPlan(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	out, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyTab, Mod: tea.ModShift})
+	shiftTab := tea.KeyPressMsg{Code: tea.KeyTab, Mod: tea.ModShift}
+	out, _ := m.Update(shiftTab)
+	m = out.(chatTUI)
+	out, _ = m.Update(shiftTab)
 	m = out.(chatTUI)
 	if !m.planMode || !m.ctrl.PlanMode() {
 		t.Fatalf("Shift+Tab should enter plan mode, tui=%v controller=%v", m.planMode, m.ctrl.PlanMode())
@@ -3036,7 +3117,7 @@ func TestDesktopShortcutLayoutDoesNotStealCompletionTab(t *testing.T) {
 	}
 }
 
-func TestShiftTabStillTogglesPlanUnderClassicShortcutLayout(t *testing.T) {
+func TestShiftTabCyclesSafeModesUnderClassicShortcutLayout(t *testing.T) {
 	m := newTestChatTUI()
 	m.ctrl = control.New(control.Options{})
 	m.cfg = config.Default()
@@ -3046,10 +3127,30 @@ func TestShiftTabStillTogglesPlanUnderClassicShortcutLayout(t *testing.T) {
 
 	out, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyTab, Mod: tea.ModShift})
 	m = out.(chatTUI)
-	if !m.planMode || !m.ctrl.PlanMode() {
-		t.Fatalf("Shift+Tab should toggle plan mode, tui=%v controller=%v", m.planMode, m.ctrl.PlanMode())
+	if m.planMode || m.ctrl.PlanMode() || m.ctrl.ToolApprovalMode() != control.ToolApprovalAuto {
+		t.Fatalf("first Shift+Tab should enter auto, plan=%v approval=%q", m.planMode, m.ctrl.ToolApprovalMode())
 	}
+	out, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyTab, Mod: tea.ModShift})
+	m = out.(chatTUI)
+	if !m.planMode || !m.ctrl.PlanMode() || m.ctrl.ToolApprovalMode() != control.ToolApprovalAsk {
+		t.Fatalf("second Shift+Tab should enter plan, plan=%v approval=%q", m.planMode, m.ctrl.ToolApprovalMode())
+	}
+}
+
+func TestShiftTabLeavesDontAskForAskMode(t *testing.T) {
+	m := newTestChatTUI()
+	m.ctrl = control.New(control.Options{})
+	m.ctrl.SetToolApprovalMode(control.ToolApprovalDontAsk)
+	m.cfg = config.Default()
+	if err := m.cfg.SetUIShortcutLayout("desktop"); err != nil {
+		t.Fatal(err)
+	}
+	if got := m.modeTagText(); got != "Don't Ask" {
+		t.Fatalf("dontAsk mode tag = %q", got)
+	}
+
+	m.cycleMode()
 	if got := m.ctrl.ToolApprovalMode(); got != control.ToolApprovalAsk {
-		t.Fatalf("Shift+Tab changed approval mode to %q", got)
+		t.Fatalf("Shift+Tab from dontAsk = %q, want ask", got)
 	}
 }

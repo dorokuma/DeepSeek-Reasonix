@@ -87,6 +87,13 @@ type Options struct {
 	// EffortOverride is a session-local reasoning effort override. Nil means use
 	// the resolved provider config; a non-nil empty string means provider default.
 	EffortOverride *string
+	// PermissionAllow adds process-local allow rules (for example CLI
+	// --allowed-tools). They override configured ask rules but never deny rules
+	// and are not persisted.
+	PermissionAllow []string
+	// AdditionalDirs grants this session's file writers and sandboxed shell
+	// access to extra directories without changing persisted sandbox config.
+	AdditionalDirs []string
 	// Stderr is the writer for diagnostic warnings and plugin subprocess
 	// stderr output. When nil, defaults to os.Stderr. Set to io.Discard
 	// during model switch inside a bubbletea session to prevent any output
@@ -146,6 +153,10 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 		stderr = os.Stderr
 	}
 	root := resolveWorkspaceRoot(opts.WorkspaceRoot)
+	additionalDirs, err := normalizeAdditionalDirs(root, opts.AdditionalDirs)
+	if err != nil {
+		return nil, err
+	}
 	// One-time import of v1/v0.5 legacy config — runs before Load so the freshly
 	// written config + ~/.env are picked up this same boot. CLI Run also calls this
 	// before config-only commands; this call stays as the shared frontend fallback.
@@ -345,6 +356,7 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 
 	reg := tool.NewRegistry()
 	writeRoots := cfg.WriteRootsForRoot(root)
+	writeRoots = appendUniquePaths(writeRoots, additionalDirs...)
 	forbidReadRoots := cfg.ForbidReadRootsForRoot(root)
 	// managedConfig names the Reasonix-owned config FILES (config.toml,
 	// compatibility TOMLs, legacy v0.x config.json) the file-writers may repair
@@ -587,7 +599,8 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	// Controller.EnableInteractiveApproval.
 	// Sub-agents always run headless: they have no UI to answer a prompt, so they
 	// inherit this same gate.
-	policy := permission.New(cfg.Permissions.Mode, cfg.Permissions.Allow, cfg.Permissions.Ask, cfg.Permissions.Deny)
+	policy := permission.New(cfg.Permissions.Mode, cfg.Permissions.Allow, cfg.Permissions.Ask, cfg.Permissions.Deny).
+		WithSessionAllow(opts.PermissionAllow)
 	headlessGate := control.NewHeadlessPermissionGate(policy)
 
 	// Hooks: load the global settings.json plus the project's (only when trusted —
@@ -1561,6 +1574,83 @@ func resolveWorkspaceRoot(explicit string) string {
 		return root
 	}
 	return wd
+}
+
+func normalizeAdditionalDirs(root string, dirs []string) ([]string, error) {
+	if len(dirs) == 0 {
+		return nil, nil
+	}
+	base := strings.TrimSpace(root)
+	if base == "" {
+		base = "."
+	}
+	if !filepath.IsAbs(base) {
+		abs, err := filepath.Abs(base)
+		if err != nil {
+			return nil, fmt.Errorf("resolve workspace root: %w", err)
+		}
+		base = abs
+	}
+
+	var out []string
+	for _, raw := range dirs {
+		dir := strings.TrimSpace(raw)
+		if dir == "" {
+			continue
+		}
+		if !filepath.IsAbs(dir) {
+			dir = filepath.Join(base, dir)
+		}
+		dir, err := filepath.Abs(filepath.Clean(dir))
+		if err != nil {
+			return nil, fmt.Errorf("resolve additional directory %q: %w", raw, err)
+		}
+		real, err := filepath.EvalSymlinks(dir)
+		if err != nil {
+			return nil, fmt.Errorf("resolve additional directory %q: %w", raw, err)
+		}
+		info, err := os.Stat(real)
+		if err != nil {
+			return nil, fmt.Errorf("inspect additional directory %q: %w", raw, err)
+		}
+		if !info.IsDir() {
+			return nil, fmt.Errorf("additional path %q is not a directory", raw)
+		}
+		out = appendUniquePaths(out, filepath.Clean(real))
+	}
+	return out, nil
+}
+
+func appendUniquePaths(base []string, extra ...string) []string {
+	out := append([]string(nil), base...)
+	seen := make(map[string]struct{}, len(out)+len(extra))
+	for _, path := range out {
+		seen[pathComparisonKey(path)] = struct{}{}
+	}
+	for _, path := range extra {
+		path = filepath.Clean(path)
+		key := pathComparisonKey(path)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, path)
+	}
+	return out
+}
+
+func pathComparisonKey(path string) string {
+	path = filepath.Clean(path)
+	if abs, err := filepath.Abs(path); err == nil {
+		path = abs
+	}
+	if real, err := filepath.EvalSymlinks(path); err == nil {
+		path = real
+	}
+	if runtime.GOOS == "windows" {
+		return strings.ToLower(path)
+	}
+	return path
 }
 
 func nearestGitRoot(start string) (string, bool) {
