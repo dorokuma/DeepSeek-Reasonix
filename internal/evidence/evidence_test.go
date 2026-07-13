@@ -549,6 +549,9 @@ func TestToolCallMutatesForDeliveryProfile(t *testing.T) {
 		{name: "security_review meta", toolName: "security_review", args: `{"task":"security"}`},
 		{name: "use_capability meta", toolName: "use_capability", args: `{"action":"inspect","capability_id":"mcp-server:github"}`},
 		{name: "test command", toolName: "bash", args: `{"command":"go test ./..."}`},
+		{name: "node syntax check", toolName: "bash", args: `{"command":"node --check app.js"}`},
+		{name: "node syntax check pipeline", toolName: "bash", args: `{"command":"tail -n +2 app.html | head -n 20 | node --check"}`},
+		{name: "node eval stays opaque", toolName: "bash", args: `{"command":"node -e 'console.log(1)'"}`, want: true},
 		{name: "diff review", toolName: "bash", args: `{"command":"git diff --check"}`},
 		{name: "formatter write", toolName: "bash", args: `{"command":"gofmt -w internal/a.go"}`, want: true},
 		{name: "file redirect", toolName: "bash", args: `{"command":"printf x > generated.txt"}`, want: true},
@@ -572,6 +575,49 @@ func TestToolCallRequiresDeliveryCriteriaForExecutionCommands(t *testing.T) {
 	}
 	if !ToolCallRequiresDeliveryCriteria("bash", json.RawMessage(`{"command":"git diff --check"}`), false) {
 		t.Fatal("git diff --check is a verification command and should require acceptance criteria")
+	}
+	if !ToolCallRequiresDeliveryCriteria("bash", json.RawMessage(`{"command":"node --check app.js"}`), false) {
+		t.Fatal("node --check is a verification command and should require acceptance criteria")
+	}
+}
+
+func TestLedgerDeliverySignoffAcceptsNodeSyntaxCheckAfterMutation(t *testing.T) {
+	ledger := NewLedger()
+	ledger.Record(ReceiptFromToolCall("edit_file", json.RawMessage(`{"path":"app.js"}`), true, false))
+	mutation, ok := ledger.LatestSuccessfulMutationIndex()
+	if !ok {
+		t.Fatal("expected mutation receipt")
+	}
+	ledger.Record(ReceiptFromToolCall("read_file", json.RawMessage(`{"path":"app.js"}`), true, true))
+	command := "node --check app.js"
+	ledger.Record(ReceiptFromToolCall("bash", json.RawMessage(`{"command":"node --check app.js"}`), true, false))
+	ledger.Record(ReceiptFromToolCall("complete_step", json.RawMessage(`{
+		"step":"Check JavaScript",
+		"result":"syntax valid",
+		"evidence":[{"kind":"verification","summary":"syntax valid","command":"node --check app.js"}]
+	}`), true, true))
+
+	if !IsDeliveryVerificationCommand(command) {
+		t.Fatal("node --check should be recognized as a delivery verification")
+	}
+	if latest, ok := ledger.LatestSuccessfulMutationIndex(); !ok || latest != mutation {
+		t.Fatalf("node --check moved latest mutation from %d to %d (ok=%v)", mutation, latest, ok)
+	}
+	if !ledger.HasSuccessfulReviewAfter(mutation) {
+		t.Fatal("expected post-mutation read to satisfy review")
+	}
+	if !ledger.HasSuccessfulDeliverySignoffAfter(mutation) {
+		t.Fatal("expected node --check to satisfy delivery sign-off")
+	}
+}
+
+func TestNodeEvalCannotMasqueradeAsDeliveryVerification(t *testing.T) {
+	command := `node -e 'require("fs").readFileSync("app.js")'`
+	if IsDeliveryVerificationCommand(command) {
+		t.Fatal("arbitrary node eval must not be recognized as delivery verification")
+	}
+	if !ToolCallMutates("bash", json.RawMessage(`{"command":"node -e 'require(\"fs\").readFileSync(\"app.js\")'"}`), false) {
+		t.Fatal("arbitrary node eval must remain an opaque mutation")
 	}
 }
 
