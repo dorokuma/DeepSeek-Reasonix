@@ -7,8 +7,6 @@ import (
 	"log/slog"
 	"strings"
 	"time"
-
-	"reasonix/internal/i18n"
 )
 
 func (c *Controller) Submit(input string) {
@@ -26,7 +24,7 @@ func (c *Controller) Submit(input string) {
 		running := c.running
 		c.mu.Unlock()
 		if running {
-			c.notice("⏳ 正在回复时无法压缩，请先等本轮结束或 /stop")
+			c.notice("cannot compact while a turn is running")
 			return
 		}
 		focus := strings.TrimSpace(strings.TrimPrefix(trimmed, "/compact"))
@@ -42,7 +40,7 @@ func (c *Controller) Submit(input string) {
 				}
 				return fmt.Errorf("compaction failed: %w", err)
 			}
-			c.notice(i18n.M.SlashCompactDone)
+			c.notice("compacted")
 			if err := c.Snapshot(); err != nil {
 				slog.Warn("controller: snapshot after compact", "err", err)
 			}
@@ -59,11 +57,9 @@ func (c *Controller) Submit(input string) {
 				if errors.Is(err, context.Canceled) {
 					return nil
 				}
-				return fmt.Errorf("%s: %w", i18n.M.SlashNewFailed, err)
+				return fmt.Errorf("new session failed: %w", err)
 			}
-			// Bridge 与 TUI 共用；Telegram 用户要求提示全中文，这里写死中文文案，
-			// 不依赖启动时是否已 DetectLanguage（缺省 M 是英文）。
-			c.notice("🆕 已开始新对话")
+			c.notice("new session")
 			return nil
 		})
 	case strings.HasPrefix(trimmed, "/mcp_"):
@@ -73,7 +69,7 @@ func (c *Controller) Submit(input string) {
 				return err
 			}
 			if !found {
-				c.notice("❓ 未知命令：" + trimmed)
+				c.notice("unknown command: " + trimmed)
 				return nil
 			}
 			return c.runTurnWithRaw(ctx, sent, sent)
@@ -115,7 +111,7 @@ func (c *Controller) Submit(input string) {
 			args := strings.TrimSpace(strings.TrimPrefix(trimmed, fields[0]))
 			turn, scope, err := parseRewind(args, c.Checkpoints())
 			if err != nil {
-				c.notice("📌 用法：/rewind [轮次] [code|conversation|both]")
+				c.notice("usage: /rewind [turn] [code|conversation|both]")
 				return
 			}
 			if err := c.Rewind(turn, scope); err != nil {
@@ -140,7 +136,7 @@ func (c *Controller) Submit(input string) {
 			})
 			return
 		}
-		c.notice("❓ 未知命令：" + trimmed)
+		c.notice("unknown command: " + trimmed)
 	default:
 		c.runRefTurn(input)
 	}

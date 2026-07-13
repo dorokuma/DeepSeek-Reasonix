@@ -714,7 +714,7 @@ func Default() *Config {
 			SoftCompactRatio:  0.5,
 			CompactRatio:      0.8,
 			CompactForceRatio: 0.9,
-			EncryptSessions:   false, // plain JSONL for debug; set true only if you need at-rest encrypt
+			EncryptSessions:   true,
 		},
 		// Mode "ask" with no rules keeps `reasonix run` autonomous (no TTY → ask
 		// resolves to allow) while `reasonix chat` prompts before writers. Users add

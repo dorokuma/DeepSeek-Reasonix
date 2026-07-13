@@ -64,71 +64,14 @@ func finalReadinessCheckSource(check instruction.VerifyCheck) string {
 }
 
 func finalReadinessRetryMessage(reason string) string {
-	return "Readiness failed: " + reason + ". Use tools, then answer."
+	return "Host final-answer readiness check failed. Before giving a final answer, address the missing host-observable receipts: " + reason + ". Run the required tool calls, then answer when readiness is satisfied."
 }
 
 func executorHandoffRetryMessage() string {
-	return `Executor phase: use tools now. If blocked, state the blocker and ask approval.`
-}
+	return `You are already in the executor phase. The planner's read-only limitations do not apply to you.
 
-// orchestratorIdleRetryMessage is injected when the root agent (main_agent_allowed
-// whitelist) returns a final answer without any tool call and without a clear
-// confirm/clarify question. Mechanism enforces "orchestrator must act", not prompt ban-lists.
-func orchestratorIdleRetryMessage() string {
-	return `Root: ask/对吗 if unclear; else spawn_agent then wait_agent. run_skill alone ≠ done. Do not refuse.`
-}
-
-// looksLikeCapabilityRefuse: model claims it cannot act (not a real confirm).
-// Mechanism: such finals never count as legitimate no-tool exits for the root.
-func looksLikeCapabilityRefuse(text string) bool {
-	t := strings.TrimSpace(text)
-	if t == "" {
-		return false
-	}
-	lower := strings.ToLower(t)
-	// Chinese capability / tool excuses
-	for _, p := range []string{"无法", "不能", "没有可用", "没有工具", "不具备", "做不到", "没法"} {
-		if strings.Contains(t, p) {
-			return true
-		}
-	}
-	for _, p := range []string{"cannot", "can't", "unable to", "no access", "don't have", "do not have", "i have no", "no tool"} {
-		if strings.Contains(lower, p) {
-			return true
-		}
-	}
-	return false
-}
-
-// isOrchestratorActionTool: tools that count as "actually did orchestrator work".
-// run_skill / recall / note alone do not — they only load text or notes.
-func isOrchestratorActionTool(name string) bool {
-	switch name {
-	case "spawn_agent", "wait_agent", "ask", "followup_task", "send_message", "interrupt_agent":
-		return true
-	default:
-		return false
-	}
-}
-
-// looksLikeConfirmOrClarify reports user-facing confirm/clarify replies that
-// legitimately use no tools (orchestrator step 3.1).
-func looksLikeConfirmOrClarify(text string) bool {
-	t := strings.TrimSpace(text)
-	if t == "" {
-		return false
-	}
-	if looksLikeCapabilityRefuse(t) {
-		return false
-	}
-	if strings.Contains(t, "对吗") || strings.Contains(t, "对不对") || strings.Contains(t, "是否") {
-		return true
-	}
-	runes := []rune(t)
-	if len(runes) > 240 {
-		return false
-	}
-	return strings.HasSuffix(t, "？") || strings.HasSuffix(t, "?")
+Do not answer as the planner and do not ask how to trigger the executor.
+Use your available tools now to carry out the task. If a write or command is blocked by permissions or workspace boundaries, state that specific blocker and ask for the needed approval/path.`
 }
 
 func hasVisibleFinalAnswer(text, reasoning string) bool {
@@ -136,17 +79,17 @@ func hasVisibleFinalAnswer(text, reasoning string) bool {
 }
 
 func emptyFinalRetryMessage() string {
-	return "No visible answer. Continue and give a short user-facing reply."
+	return "The previous assistant response finished without any visible answer text. Continue the same task now and provide a concise visible answer to the user. Do not send reasoning only."
 }
 
 func streamRecoveryMessage(hasPartialText, hadPartialTool bool) string {
 	switch {
 	case hadPartialTool:
-		return "Stream cut mid-tool. Retry a full tool call if still needed."
+		return "The previous assistant response was interrupted while a tool call was streaming. Continue the same task now. If a tool is still needed, issue a fresh complete tool call from scratch; do not rely on any partial tool-call arguments from the interrupted stream."
 	case hasPartialText:
-		return "Stream cut. Continue after partial text; do not repeat it."
+		return "The previous assistant response was interrupted during streaming. Continue the same task from immediately after the partial assistant message above. Do not repeat text that is already visible."
 	default:
-		return "Stream cut before answer. Continue the task."
+		return "The previous assistant response was interrupted during streaming before visible answer text was completed. Continue the same task now and provide the next useful response."
 	}
 }
 

@@ -252,9 +252,7 @@ func matchAny(rules []Rule, toolName, subject string) bool {
 // call's "subject" — the thing a Subject glob matches against. Generic so tools
 // need not implement a permission-specific method: bash exposes command, the
 // file tools expose path / file_path, grep & glob expose pattern.
-// task_name/message cover spawn_agent (and similar) so approval UIs get a
-// readable subject instead of an empty string.
-var subjectKeys = []string{"source_path", "command", "file_path", "path", "pattern", "task_name", "message"}
+var subjectKeys = []string{"source_path", "command", "file_path", "path", "pattern"}
 
 // Subject extracts the matchable subject string from a call's raw JSON args,
 // returning "" when none of the known keys is present (such a call only matches

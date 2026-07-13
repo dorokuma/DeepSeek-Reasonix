@@ -290,12 +290,6 @@ type Usage struct {
 	CacheWriteTokens int    // cache creation/写入 token（Anthropic cache_creation_input_tokens，计费 1.25× input）
 	ReasoningTokens  int    // subset of CompletionTokens spent on chain-of-thought
 	FinishReason     string // "stop", "tool_calls", "length", "content_filter", "repetition_truncation", …
-	// ReportedCost is the gateway-authoritative spend when provided (e.g. OpenCode
-	// x-opencode-type=inference-cost). When > 0, Pricing.Cost prefers it over local rates.
-	ReportedCost     float64
-	ReportedCurrency string // optional; empty → fall back to Pricing.Symbol()
-	// CacheBreakdownKnown is true when hit/miss came from the provider (not guessed).
-	CacheBreakdownKnown bool
 }
 
 // Pricing is a provider's per-1M-token rates, used to estimate spend. Currency
@@ -308,58 +302,19 @@ type Pricing struct {
 	Currency   string  `toml:"currency"`
 }
 
-// NormalizeCache only derives missing miss from a known hit (prompt - hit).
-// It never invents "100% miss" when both hit and miss are zero — that over-bills
-// and lies about cache rate. Prefer provider fields / OpenCode normalizedUsage.
-func (u *Usage) NormalizeCache() {
-	if u == nil || u.PromptTokens <= 0 {
-		return
-	}
-	hit, miss := u.CacheHitTokens, u.CacheMissTokens
-	if hit > 0 && miss == 0 && u.PromptTokens > hit {
-		u.CacheMissTokens = u.PromptTokens - hit
-		u.CacheBreakdownKnown = true
-	}
-	if hit+miss > 0 {
-		u.CacheBreakdownKnown = true
-	}
-}
-
-// Cost returns spend for a usage record.
-// Priority: gateway ReportedCost (authoritative) → local rates on real hit/miss
-// → if no cache breakdown, prompt×Input + completion×Output (local rate table only).
+// Cost estimates the spend for a usage record.
 func (p *Pricing) Cost(u *Usage) float64 {
 	if p == nil || u == nil {
 		return 0
 	}
-	if u.ReportedCost > 0 {
-		return u.ReportedCost
-	}
-	hit, miss := u.CacheHitTokens, u.CacheMissTokens
-	if hit > 0 && miss == 0 && u.PromptTokens > hit {
-		miss = u.PromptTokens - hit
-	}
-	// No breakdown at all: bill full prompt at Input (local rate estimate).
-	// Do not write this into CacheMissTokens — that would fake hit-rate.
-	if hit+miss == 0 && u.PromptTokens > 0 {
-		miss = u.PromptTokens
-	}
 	cwPrice := p.CacheWrite
 	if cwPrice == 0 {
-		cwPrice = p.Input
+		cwPrice = p.Input // 未配置时回退到 Input 价格
 	}
-	return (float64(hit)*p.CacheHit +
-		float64(miss)*p.Input +
+	return (float64(u.CacheHitTokens)*p.CacheHit +
+		float64(u.CacheMissTokens)*p.Input +
 		float64(u.CacheWriteTokens)*cwPrice +
 		float64(u.CompletionTokens)*p.Output) / 1e6
-}
-
-// CostCurrency is the symbol to display for Cost(u).
-func (p *Pricing) CostCurrency(u *Usage) string {
-	if u != nil && u.ReportedCost > 0 && u.ReportedCurrency != "" {
-		return u.ReportedCurrency
-	}
-	return p.Symbol()
 }
 
 // Symbol returns the currency display symbol, defaulting to "¥".

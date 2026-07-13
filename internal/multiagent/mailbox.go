@@ -5,7 +5,7 @@ import (
 	"sync"
 )
 
-// Activity is what wait_agent subscribes to.
+// Activity is what wait_agent subscribes to (Codex InputQueueActivity).
 type Activity int
 
 const (
@@ -13,7 +13,7 @@ const (
 	ActivitySteer
 )
 
-// Mail is one inter-agent message.
+// Mail is one InterAgentCommunication (Codex).
 type Mail struct {
 	From        string `json:"from"`
 	To          string `json:"to"`
@@ -21,27 +21,19 @@ type Mail struct {
 	TriggerTurn bool   `json:"trigger_turn"`
 }
 
-// waiter is one wait_agent subscription. recipient filters mailbox wakes:
-// empty recipient = any mail; otherwise only mail To matching recipient.
-// Steer always wakes every waiter.
-type waiter struct {
-	ch        chan Activity
-	recipient string
-}
-
 // Mailbox is session-scoped pending inter-agent mail + activity fan-out.
 type Mailbox struct {
-	mu      sync.Mutex
-	pending []Mail
-	waiters []waiter
-	closed  bool
+	mu       sync.Mutex
+	pending  []Mail
+	waiters  []chan Activity
+	closed   bool
 }
 
 func NewMailbox() *Mailbox {
 	return &Mailbox{}
 }
 
-// Enqueue appends mail and notifies matching waiters.
+// Enqueue appends mail and notifies waiters (Codex enqueue_mailbox_communication).
 func (m *Mailbox) Enqueue(mail Mail) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -49,70 +41,46 @@ func (m *Mailbox) Enqueue(mail Mail) {
 		return
 	}
 	m.pending = append(m.pending, mail)
-	m.broadcastLocked(ActivityMailbox, mail.To)
+	m.broadcastLocked(ActivityMailbox)
 }
 
-// NotifySteer wakes wait_agent with steered user input.
+// NotifySteer wakes wait_agent with Steered (user input).
 func (m *Mailbox) NotifySteer() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.closed {
 		return
 	}
-	m.broadcastLocked(ActivitySteer, "")
+	m.broadcastLocked(ActivitySteer)
 }
 
-// broadcastLocked wakes matching waiters. Buffer is 1 with coalesce so the
-// latest signal is never permanently dropped while a waiter is blocked.
-func (m *Mailbox) broadcastLocked(a Activity, mailTo string) {
-	for _, w := range m.waiters {
-		if a != ActivitySteer && w.recipient != "" && !mailMatchesRecipient(mailTo, w.recipient) {
-			continue
-		}
-		// Coalesce: drop stale signal, then push latest.
+func (m *Mailbox) broadcastLocked(a Activity) {
+	for _, ch := range m.waiters {
 		select {
-		case <-w.ch:
+		case ch <- a:
 		default:
-		}
-		select {
-		case w.ch <- a:
-		default:
+			// non-blocking: waiter will re-check pending
 		}
 	}
 }
 
-// Subscribe is SubscribeFor("") — wake on any session mail.
+// Subscribe returns a channel of activity; caller must Unsubscribe.
+// pending is set if mail or... we only signal mailbox pending at subscribe time.
 func (m *Mailbox) Subscribe() (ch <-chan Activity, pending *Activity, unsub func()) {
-	return m.SubscribeFor("")
-}
-
-// SubscribeFor returns a channel of activity filtered by recipient path.
-// pending is set when matching mail is already queued (or any mail when recipient is empty).
-// Steer always wakes. Caller must unsub.
-func (m *Mailbox) SubscribeFor(recipient string) (ch <-chan Activity, pending *Activity, unsub func()) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	c := make(chan Activity, 1)
-	w := waiter{ch: c, recipient: normalizeRecipient(recipient)}
-	if strings.TrimSpace(recipient) == "" {
-		w.recipient = ""
-	}
-	m.waiters = append(m.waiters, w)
+	c := make(chan Activity, 4)
+	m.waiters = append(m.waiters, c)
 	var p *Activity
-	if w.recipient == "" {
-		if len(m.pending) > 0 {
-			a := ActivityMailbox
-			p = &a
-		}
-	} else if len(filterPending(m.pending, w.recipient)) > 0 {
+	if len(m.pending) > 0 {
 		a := ActivityMailbox
 		p = &a
 	}
 	unsub = func() {
 		m.mu.Lock()
 		defer m.mu.Unlock()
-		for i, cur := range m.waiters {
-			if cur.ch == c {
+		for i, w := range m.waiters {
+			if w == c {
 				m.waiters = append(m.waiters[:i], m.waiters[i+1:]...)
 				break
 			}
@@ -129,6 +97,7 @@ func (m *Mailbox) HasPending() bool {
 }
 
 // HasPendingFor reports whether mail is queued for a recipient path.
+// Empty recipient or RootPath matches RootPath and legacy empty To.
 func (m *Mailbox) HasPendingFor(recipient string) bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -156,13 +125,22 @@ func (m *Mailbox) Drain() []Mail {
 	return out
 }
 
-// DrainFor removes and returns mail addressed to recipient.
+// DrainFor removes and returns mail addressed to recipient (Codex per-agent drain).
 // Other recipients stay queued so nested agents do not steal parent mail.
 func (m *Mailbox) DrainFor(recipient string) []Mail {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	keep, out := splitPending(m.pending, recipient)
 	m.pending = keep
+	return out
+}
+
+// Peek copies pending without draining.
+func (m *Mailbox) Peek() []Mail {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]Mail, len(m.pending))
+	copy(out, m.pending)
 	return out
 }
 
@@ -178,6 +156,7 @@ func mailMatchesRecipient(to, recipient string) bool {
 	recipient = normalizeRecipient(recipient)
 	to = strings.TrimSpace(to)
 	if to == "" {
+		// Legacy / root-bound completions without explicit To.
 		return recipient == RootPath
 	}
 	to = strings.TrimSuffix(to, "/")
