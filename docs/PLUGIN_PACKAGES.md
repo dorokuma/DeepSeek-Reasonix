@@ -246,11 +246,13 @@ capabilities Reasonix does not map yet (`agents/`,
 silently dropped. GitHub-hosted multi-plugin marketplaces with a
 `.claude-plugin/marketplace.json` can be installed from the repository root
 when their plugin entries use relative string sources such as
-`./plugins/example`; preview shows one action per plugin before anything is
-written. Set the optional install name to a marketplace plugin name to select
-only that entry. External/object, npm, `strict: false`, and other advanced
-marketplace source protocols are not implemented yet. For packages such as
-Superpowers and Claude-style skill packs, Reasonix maps:
+`./plugins/example` or `plugins/example`; preview shows one action per plugin
+before anything is written. Set the optional install name to a marketplace
+plugin name to select only that entry. External/object, npm, `strict: false`,
+and other advanced marketplace source protocols are not implemented yet:
+those entries are skipped with a warning during a full-marketplace install,
+and reported as an error when one of them is selected by name. For packages
+such as Superpowers and Claude-style skill packs, Reasonix maps:
 
 - `skills` to Reasonix skill roots. A Claude manifest that declares no
   `skills` field falls back to the conventional `skills/` (or `.claude/skills/`)

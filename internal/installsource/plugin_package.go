@@ -125,14 +125,36 @@ func (t *installSourceTool) planClaudeMarketplace(ctx context.Context, req reque
 			warnings = append(warnings, "skipped Claude marketplace entry with an empty name")
 			continue
 		}
+		// Validate the name at plan time so a broken entry surfaces in the
+		// preview instead of failing its action mid-apply.
+		if !pluginpkg.IsValidName(entryName) {
+			if selected != "" {
+				return nil, warnings, fmt.Errorf("marketplace plugin %q is not a valid plugin name", entryName)
+			}
+			warnings = append(warnings, fmt.Sprintf("skipped Claude marketplace plugin %q: not a valid plugin name", entryName))
+			continue
+		}
 		if seen[entryName] {
 			return nil, warnings, fmt.Errorf("%s contains duplicate plugin name %q", claudeMarketplaceManifest, entryName)
 		}
 		seen[entryName] = true
 
+		// Unsupported source shapes (object sources, external URLs) skip the
+		// entry with a warning in a bulk install, but fail loudly when the
+		// user selected exactly that plugin by name.
 		var source string
 		if err := json.Unmarshal(entry.Source, &source); err != nil {
+			if selected != "" {
+				return nil, warnings, fmt.Errorf("marketplace plugin %q: only relative string sources are supported", entryName)
+			}
 			warnings = append(warnings, fmt.Sprintf("skipped Claude marketplace plugin %q: only relative string sources are supported", entryName))
+			continue
+		}
+		if marketplaceSourceIsExternal(source) {
+			if selected != "" {
+				return nil, warnings, fmt.Errorf("marketplace plugin %q: external source %q is not supported yet", entryName, source)
+			}
+			warnings = append(warnings, fmt.Sprintf("skipped Claude marketplace plugin %q: external source %q is not supported yet", entryName, source))
 			continue
 		}
 		rel, err := claudeMarketplaceRelativePath(marketplace.Metadata.PluginRoot, source)
@@ -176,25 +198,44 @@ func claudeMarketplaceRelativePath(pluginRoot, source string) (string, error) {
 	if pluginRoot == "" {
 		pluginRoot = "."
 	}
-	fields := []struct {
-		label string
-		value string
-	}{
-		{label: "metadata.pluginRoot", value: pluginRoot},
-		{label: "source", value: strings.TrimSpace(source)},
+	cleanRoot, err := cleanMarketplaceRelPath("metadata.pluginRoot", pluginRoot)
+	if err != nil {
+		return "", err
 	}
-	for _, field := range fields {
-		if field.value != "." && field.value != "./" && !strings.HasPrefix(field.value, "./") {
-			return "", fmt.Errorf("%s %q must be a relative path beginning with ./", field.label, field.value)
-		}
+	cleanSource, err := cleanMarketplaceRelPath("source", source)
+	if err != nil {
+		return "", err
 	}
-	cleanRoot := filepath.Clean(filepath.FromSlash(strings.TrimPrefix(pluginRoot, "./")))
-	cleanSource := filepath.Clean(filepath.FromSlash(strings.TrimPrefix(strings.TrimSpace(source), "./")))
 	rel := filepath.Clean(filepath.Join(cleanRoot, cleanSource))
-	if rel == "." || filepath.IsAbs(rel) || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+	if rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 		return "", fmt.Errorf("source %q escapes or does not identify a plugin subdirectory", source)
 	}
 	return filepath.ToSlash(rel), nil
+}
+
+// cleanMarketplaceRelPath normalizes one relative-path field of a marketplace
+// entry. Real marketplaces spell paths both as "./plugins/example" and as the
+// bare "plugins/example", so both are accepted; absolute and drive-qualified
+// paths are rejected before the join so they can never re-anchor the lookup
+// outside the clone.
+func cleanMarketplaceRelPath(label, value string) (string, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "", fmt.Errorf("%s is empty", label)
+	}
+	cleaned := filepath.Clean(filepath.FromSlash(strings.TrimPrefix(value, "./")))
+	if filepath.IsAbs(cleaned) || filepath.VolumeName(cleaned) != "" {
+		return "", fmt.Errorf("%s %q must be a relative path inside the marketplace repository", label, value)
+	}
+	return cleaned, nil
+}
+
+// marketplaceSourceIsExternal reports whether a string source points outside
+// the marketplace repository (a URL or scp-like git address) rather than at a
+// relative path inside it.
+func marketplaceSourceIsExternal(source string) bool {
+	source = strings.TrimSpace(source)
+	return strings.Contains(source, "://") || strings.HasPrefix(source, "git@")
 }
 
 func currentPluginGitBranch(ctx context.Context, root string) string {

@@ -221,10 +221,12 @@ Reasonix 原生插件在根目录声明 `reasonix-plugin.json`：
 Reasonix 也会读取 `.codex-plugin/plugin.json` 和 `.claude-plugin/plugin.json`。
 Reasonix 尚未映射的 Claude 插件能力（`agents/`、`hooks/hooks.json`、
 `.mcp.json`）会以安装警告的形式提示，而不是被静默丢弃。GitHub 仓库若在
-`.claude-plugin/marketplace.json` 中通过 `./plugins/example` 这类相对字符串
-列出多个插件，可以直接从仓库根目录安装；预检会在写入前逐项展示安装动作。
-填写可选安装名称时，可只选择 marketplace 中的同名插件。外部/object 来源、
-npm、`strict: false` 以及其他高级 marketplace 来源协议暂未实现。
+`.claude-plugin/marketplace.json` 中通过 `./plugins/example` 或
+`plugins/example` 这类相对字符串列出多个插件，可以直接从仓库根目录安装；
+预检会在写入前逐项展示安装动作。填写可选安装名称时，可只选择 marketplace
+中的同名插件。外部/object 来源、npm、`strict: false` 以及其他高级
+marketplace 来源协议暂未实现：整库安装时这类条目会跳过并给出警告，
+按名称选中这类条目时则直接报错。
 对于 Superpowers 和 Claude 风格 skill 包，Reasonix 会映射：
 
 - `skills` 到 Reasonix skill root。Claude 清单若未声明 `skills` 字段，会回退到
