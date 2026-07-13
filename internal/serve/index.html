@@ -948,7 +948,9 @@ function post(path, body) {
 }
 // Follow streaming output only while the user is pinned to the bottom of the
 // transcript; scrolling up detaches so history stays readable mid-stream.
-// force re-pins (own message sent, session loaded). Scrolls are instant: a
+// force re-pins (own message sent, session loaded, blocking action prompts
+// such as approval/ask — they require user action and their key handler is
+// document-level, so they must never sit off-screen). Scrolls are instant: a
 // smooth animation lags behind rapid chunks, and its intermediate positions
 // would read as "not at bottom" and break pin detection.
 let pinnedToBottom=true;
@@ -1165,7 +1167,7 @@ function showApproval(a) {
   }
   actions.push('<button class="approval__btn approval__btn--deny" data-allow="false"><span class="approval__key">N</span> '+__('deny')+'</button>');
   d.innerHTML='<div class="approval__header"><svg class="approval__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg><span class="approval__title">'+__('approval_title')+'</span></div><div class="approval__subject">'+escHtml(a.tool)+(a.subject?' — '+escHtml(a.subject):'')+'</div><div class="approval__actions">'+actions.join('')+'</div>';
-  log.appendChild(d);scrollDown();
+  log.appendChild(d);scrollDown(true);
   const resolve=payload=>{post('/approve',Object.assign({id:a.id},payload));d.remove();document.removeEventListener('keydown',onkey);};
   d.querySelectorAll('.approval__btn').forEach(btn=>{btn.onclick=()=>resolve({allow:btn.dataset.allow==='true',session:btn.dataset.session==='true',persist:btn.dataset.persist==='true',scope:btn.dataset.scope||''});});
   const onkey=e=>{const k=e.key.toLowerCase();if(k==='y'||k==='1'){resolve({allow:true,session:false});}else if(k==='a'||k==='2'){resolve({allow:true,session:true});}else if(hasPrefix&&k==='3'){resolve({allow:true,session:true,scope:'prefix'});}else if(k==='p'||(!hasPrefix&&k==='3')||(hasPrefix&&k==='4')){resolve({allow:true,session:true,persist:true,scope:hasPrefix?'prefix':''});}else if(k==='n'||k==='escape'||(!hasPrefix&&k==='4')||(hasPrefix&&k==='5')){resolve({allow:false,session:false});}};
@@ -1189,7 +1191,7 @@ function showAsk(ask) {
     submit.onclick=()=>{const answers=ask.questions.map(qq=>({questionId:qq.id,selected:Array.from(selected).map(i=>qq.options[i].label)}));post('/answer',{id:ask.id,answers});d.remove();};
     qDiv.appendChild(submit); d.appendChild(qDiv);
   });
-  log.appendChild(d);scrollDown();
+  log.appendChild(d);scrollDown(true);
 }
 
 // ── compaction ──
