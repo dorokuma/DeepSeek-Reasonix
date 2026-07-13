@@ -39,14 +39,13 @@ func (spawnAgent) ReadOnly() bool   { return false }
 func (spawnAgent) Concurrent() bool { return true }
 
 func (spawnAgent) Description() string {
-	return `Spawns an agent to work on the specified task. If your current task is ` + "`/root/task1`" + ` and you spawn_agent with task_name "task_3" the agent will have canonical task name ` + "`/root/task1/task_3`" + `.
-You are then able to refer to this agent as ` + "`task_3`" + ` or ` + "`/root/task1/task_3`" + ` interchangeably.
-The spawned agent will have the same tools as you and the ability to spawn its own subagents.
-Only call this tool for a concrete, bounded subtask that can run independently alongside useful local work; otherwise continue locally.
-It will be able to send you and other running agents messages, and its final answer will be provided to you when it finishes (via mailbox; use wait_agent / list_agents).
-The new agent's canonical task name will be provided to it along with the message.
-Returns JSON: task_name (canonical path) and nickname.
-Use list_agents to see live agents and agent_status while they run (mailbox stays empty until completion).`
+	return `Delegate a concrete subtask to a background agent. Root orchestrators should use this for real work (fetch, shell, multi-step investigation) instead of answering "I cannot".
+
+Path: if you are at /root/task1 and task_name is task_3, the child path is /root/task1/task_3; you may refer to it as task_3 or the full path.
+
+Message must be self-contained (child starts clean). After spawn, call wait_agent to collect results — do not re-spawn the same goal under a new task_name (the runtime rejects duplicate goals).
+
+Returns JSON: task_name (canonical path) and nickname. Use list_agents for live status while running.`
 }
 
 func (spawnAgent) Schema() json.RawMessage {
@@ -98,15 +97,15 @@ func (waitAgent) ReadOnly() bool   { return true }
 func (waitAgent) Concurrent() bool { return false }
 
 func (waitAgent) Description() string {
-	return `Wait for a mailbox update from any live agent, including queued messages and final-status notifications. The wait also ends early when new user input is steered into the active turn. Does not return the content; returns either a summary of which agents have updates (if any), an interruption summary for steered input, or a timeout summary if no activity arrives before the deadline. While agents are still running, mailbox may be empty — use list_agents for live agent_status.`
+	return `Block until every live sub-agent under this session has finished, or until the user steers new input. No wall-clock timeout (stuck waits cost no model tokens).
+
+Returns JSON WaitResult: message, interrupted, results (completion texts), mail_count, live_agents, next. After spawn_agent, call wait_agent once to collect results; do not re-spawn the same work. While agents run, list_agents shows live status (mailbox stays empty until completion).`
 }
 
 func (waitAgent) Schema() json.RawMessage {
 	return json.RawMessage(`{
   "type":"object",
-  "properties":{
-    "timeout_ms":{"type":"integer","description":"Max wait milliseconds. Defaults to 600000. Clamped to [1000, 3600000]."}
-  }
+  "properties":{}
 }`)
 }
 
@@ -115,21 +114,13 @@ func (waitAgent) Execute(ctx context.Context, args json.RawMessage) (string, err
 	if err != nil {
 		return "", err
 	}
-	var p struct {
-		TimeoutMs *int64 `json:"timeout_ms"`
+	// args ignored: wait blocks until batch done / steer / cancel (no timeout field).
+	_ = args
+	res := c.Wait(ctx)
+	out, err := json.Marshal(res)
+	if err != nil {
+		return "", err
 	}
-	if len(args) > 0 && string(args) != "null" {
-		_ = json.Unmarshal(args, &p)
-	}
-	var ms int64 = DefaultWaitTimeoutMs
-	if p.TimeoutMs != nil {
-		ms = *p.TimeoutMs
-	}
-	msg, timedOut := c.Wait(ctx, ms)
-	out, _ := json.Marshal(map[string]any{
-		"message":   msg,
-		"timed_out": timedOut,
-	})
 	return string(out), nil
 }
 

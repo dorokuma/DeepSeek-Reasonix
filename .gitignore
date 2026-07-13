@@ -45,3 +45,51 @@ Thumbs.db
 /tmp/
 /.codex/
 *.bak.peek
+
+
+# --- secrets / runtime (never push) ---
+# Local env & credentials (any depth)
+.env
+.env.*
+!.env.example
+!**/.env.example
+**/credentials
+**/credentials.*
+*.pem
+*.key
+id_rsa
+id_rsa.pub
+*.p12
+*.pfx
+
+# Built binaries (repo root or accidental drops)
+/bridge
+/reasonix
+/reasonix.exe
+/reasonix-telegram
+**/reasonix-telegram
+*.exe
+
+# Session / state / cache
+**/*.jsonl
+**/*.jsonl.enc
+**/state.json
+**/restart_notify.json
+.chat-wd/
+chat-wd/
+
+# Local investigation / audit notes (host paths, ops detail)
+*.audit*
+.audit*
+multiagent-investigation.md
+**/.audit-notes.md
+**/.audit-report.md
+
+# One-off local tools (session decrypt etc.)
+/cmd/dec_sess/
+
+# Backups
+*.bak
+*.bak.*
+*~
+

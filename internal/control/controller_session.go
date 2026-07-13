@@ -583,7 +583,8 @@ func (c *Controller) LastUsage() *provider.Usage {
 
 // SessionCache returns cumulative cache hit/miss prompt tokens for the session,
 // so a frontend can render the aggregate (session-wide) cache-hit rate — steadier
-// than the single-turn rate and unaffected by compaction.
+// than the single-turn rate and unaffected by compaction. Includes sub-agent
+// rollups via Agent.AddSessionUsage (same口径 as TUI).
 func (c *Controller) SessionCache() (hit, miss int) {
 	if c.executor == nil {
 		return 0, 0
@@ -591,7 +592,17 @@ func (c *Controller) SessionCache() (hit, miss int) {
 	return c.executor.SessionCache()
 }
 
+// SessionTokens returns cumulative prompt and total tokens for the session
+// (main + sub-agent rollups). Used by bridge /status and session sidecars.
+func (c *Controller) SessionTokens() (prompt, total int64) {
+	if c.executor == nil {
+		return 0, 0
+	}
+	return c.executor.SessionTokens()
+}
+
 // SessionCost returns the cumulative conversation cost and its currency.
+// Includes main agent + sub-agent rollups (same口径 as TUI status).
 func (c *Controller) SessionCost() (cost float64, currency string) {
 	if c.executor == nil {
 		return 0, ""

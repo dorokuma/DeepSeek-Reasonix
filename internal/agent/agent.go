@@ -31,6 +31,9 @@ const maxFinalReadinessBlocks = 3
 const maxEmptyFinalBlocks = 3
 const maxStreamRecoveries = 1
 const maxExecutorHandoffNudges = 1
+// maxOrchestratorIdleNudges: root whitelist agent returns text without any
+// dispatch tool (spawn/wait/ask/…) — mechanism re-prompts then hard-stops.
+const maxOrchestratorIdleNudges = 2
 
 // Agent is the core task loop. It drives a single model — a Provider plus a tool
 type Agent struct {
@@ -566,7 +569,9 @@ func (a *Agent) Run(ctx context.Context, input string) error {
 	finalReadinessBlocks := 0
 	emptyFinalBlocks := 0
 	handoffNudges := 0
+	orchestratorIdleNudges := 0
 	usedAnyTool := false
+	usedOrchestratorAction := false // spawn/wait/ask/… not run_skill-only
 	streamRecoveries := 0
 	executorHandoff := a.executorHandoffGuard && strings.Contains(input, executorHandoffMarker)
 	for step := 0; a.maxSteps <= 0 || step < a.maxSteps; step++ {
@@ -660,11 +665,16 @@ func (a *Agent) Run(ctx context.Context, input string) error {
 		if len(calls) == 0 {
 			// text = a.surfaceBackgroundHandoffIfNeeded(wakeForBackground, text)  // removed by owner
 			if text == "" {
-				if reasoning == "" {
-					emptyFinalBlocks++
-				}
+				// Always count: reasoning-only used to skip the counter and infinite-loop
+				// (sub-agents never complete → parent wait_agent hangs forever).
+				emptyFinalBlocks++
 				if emptyFinalBlocks >= maxEmptyFinalBlocks {
-					return fmt.Errorf("model finished without a visible final answer %d times", emptyFinalBlocks)
+					// Do NOT dump raw reasoning as the user-visible answer (reads as broken mid-sentence).
+					// Emit a short, complete message so multiagent parent wait can unblock with mail.
+					msg := "没答全，换说法再试。"
+					a.sink.Emit(event.Event{Kind: event.Message, Text: msg, Reasoning: reasoning})
+					a.session.Add(provider.Message{Role: provider.RoleAssistant, Content: msg, ReasoningContent: reasoning, ReasoningSignature: signature})
+					return nil
 				}
 				// a.sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelWarn, Text: "empty final answer blocked: model returned no visible answer text; retrying"})
 				// 在重试前，先将已生成的 assistant 消息（包含已生成的 reasoning 思考过程和 signature 等）添加进会话 session。
@@ -673,6 +683,8 @@ func (a *Agent) Run(ctx context.Context, input string) error {
 				if reasoning != "" {
 					a.session.Add(assistantMsg)
 					a.session.Add(provider.Message{Role: provider.RoleUser, Content: emptyFinalRetryMessage()})
+				} else {
+					a.session.AddUserNudge(emptyFinalRetryMessage())
 				}
 				a.maybeCompact(ctx, usage)
 				continue
@@ -683,6 +695,23 @@ func (a *Agent) Run(ctx context.Context, input string) error {
 				a.session.Add(provider.Message{Role: provider.RoleUser, Content: executorHandoffRetryMessage()})
 				a.maybeCompact(ctx, usage)
 				continue
+			}
+			// Root orchestrator: must confirm/ask or dispatch. run_skill-only does not count.
+			if a.mainAgentAllowed != nil && !usedOrchestratorAction && !looksLikeConfirmOrClarify(text) {
+				if orchestratorIdleNudges < maxOrchestratorIdleNudges {
+					orchestratorIdleNudges++
+					a.sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelWarn, Text: "orchestrator idle: no dispatch/confirm — nudging"})
+					a.session.Add(assistantMsg)
+					a.session.Add(provider.Message{Role: provider.RoleUser, Content: orchestratorIdleRetryMessage()})
+					a.maybeCompact(ctx, usage)
+					continue
+				}
+				// Exhausted: do not surface model refuse / empty-plan as the user answer.
+				msg := "没动手。再说一次或换说法。"
+				a.sink.Emit(event.Event{Kind: event.Message, Text: msg})
+				a.session.Add(assistantMsg)
+				a.session.Add(provider.Message{Role: provider.RoleAssistant, Content: msg})
+				return nil
 			}
 			readiness := a.finalReadinessCheck()
 			if readiness.applies {
@@ -695,6 +724,12 @@ func (a *Agent) Run(ctx context.Context, input string) error {
 		a.session.Add(assistantMsg)
 		emptyFinalBlocks = 0
 		usedAnyTool = true
+		for _, call := range calls {
+			if isOrchestratorActionTool(call.Name) {
+				usedOrchestratorAction = true
+				break
+			}
+		}
 
 		results := a.executeBatch(ctx, calls)
 		for i, call := range calls {
@@ -876,14 +911,32 @@ func (a *Agent) stream(ctx context.Context, turn int) (string, string, string, [
 			partialToolStarted = true
 			calls = append(calls, *chunk.ToolCall)
 		case provider.ChunkUsage:
+			if chunk.Usage != nil {
+				chunk.Usage.NormalizeCache()
+			}
 			usage = chunk.Usage
 			a.lastUsage.Store(chunk.Usage)
-			a.sessCacheHit.Add(int64(chunk.Usage.CacheHitTokens))
-			a.sessCacheMiss.Add(int64(chunk.Usage.CacheMissTokens))
-			a.sessPromptTokens.Add(int64(chunk.Usage.PromptTokens))
-			a.sessTotalTokens.Add(int64(chunk.Usage.TotalTokens))
-			if a.pricing != nil {
-				a.addSessionCost(a.pricing.Cost(chunk.Usage), a.pricing.Symbol())
+			if chunk.Usage != nil {
+				// Only accumulate hit/miss when provider gave a real breakdown
+				// (or soft-derived miss from known hit). Never invent 100% miss.
+				if chunk.Usage.CacheBreakdownKnown || chunk.Usage.CacheHitTokens+chunk.Usage.CacheMissTokens > 0 {
+					a.sessCacheHit.Add(int64(chunk.Usage.CacheHitTokens))
+					a.sessCacheMiss.Add(int64(chunk.Usage.CacheMissTokens))
+				}
+				a.sessPromptTokens.Add(int64(chunk.Usage.PromptTokens))
+				a.sessTotalTokens.Add(int64(chunk.Usage.TotalTokens))
+				if chunk.Usage.ReportedCost > 0 {
+					cur := chunk.Usage.ReportedCurrency
+					if cur == "" && a.pricing != nil {
+						cur = a.pricing.Symbol()
+					}
+					if cur == "" {
+						cur = "$"
+					}
+					a.addSessionCost(chunk.Usage.ReportedCost, cur)
+				} else if a.pricing != nil {
+					a.addSessionCost(a.pricing.Cost(chunk.Usage), a.pricing.CostCurrency(chunk.Usage))
+				}
 			}
 		case provider.ChunkError:
 			if provider.IsStreamInterrupted(chunk.Err) {

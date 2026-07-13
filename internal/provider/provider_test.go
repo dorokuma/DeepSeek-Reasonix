@@ -148,6 +148,42 @@ func TestPricingCostZeroTokens(t *testing.T) {
 	}
 }
 
+// No cache breakdown: Cost still bills prompt at Input (local rate table) but
+// must NOT mutate Usage into fake 100% miss for hit-rate.
+func TestPricingCostPromptOnlyNoCacheFields(t *testing.T) {
+	p := &Pricing{CacheHit: 0.025, Input: 3.0, Output: 6.0, Currency: "¥"}
+	u := &Usage{PromptTokens: 10_000, CompletionTokens: 100, TotalTokens: 10_100}
+	// (10000*3 + 100*6) / 1e6 = 0.0306
+	got := p.Cost(u)
+	want := 0.0306
+	if got < want-1e-9 || got > want+1e-9 {
+		t.Errorf("Cost = %f, want %f", got, want)
+	}
+	u.NormalizeCache()
+	if u.CacheMissTokens != 0 || u.CacheHitTokens != 0 {
+		t.Errorf("NormalizeCache must not invent hit/miss when both zero; got %d/%d", u.CacheHitTokens, u.CacheMissTokens)
+	}
+}
+
+func TestPricingCostPrefersReportedCost(t *testing.T) {
+	p := &Pricing{Input: 3.0, Output: 6.0, Currency: "¥"}
+	u := &Usage{PromptTokens: 10_000, CompletionTokens: 100, ReportedCost: 0.12, ReportedCurrency: "$"}
+	if got := p.Cost(u); got != 0.12 {
+		t.Errorf("Cost = %f, want gateway ReportedCost 0.12", got)
+	}
+	if p.CostCurrency(u) != "$" {
+		t.Errorf("CostCurrency = %q, want $", p.CostCurrency(u))
+	}
+}
+
+func TestNormalizeCachePartialBreakdown(t *testing.T) {
+	u := &Usage{PromptTokens: 1000, CacheHitTokens: 600, CacheMissTokens: 0}
+	u.NormalizeCache()
+	if u.CacheHitTokens != 600 || u.CacheMissTokens != 400 {
+		t.Errorf("got hit/miss %d/%d, want 600/400", u.CacheHitTokens, u.CacheMissTokens)
+	}
+}
+
 // --- Pricing.Symbol ---
 
 func TestPricingSymbolDefault(t *testing.T) {
