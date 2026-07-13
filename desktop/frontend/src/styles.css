@@ -29151,9 +29151,12 @@ body > .mermaid-diagram--fullscreen {
 }
 
 /* Creation: hide native chat scrollbar and use a controllable custom rail.
-   Native WebView2 thumb hover-size is unreliable; custom thumb can snap thick/thin. */
+   Native WebView2 thumb hover-size is unreliable; custom thumb can snap thick/thin.
+   Keep this scrolling layer opaque too: transparent transcript backgrounds can
+   leave stale turn-action pixels behind when message nodes are removed (#6359). */
 .app--creation .transcript.transcript--creation-scrollbar,
 :root[data-theme-style] .app--creation .transcript.transcript--creation-scrollbar {
+  background-color: var(--bg);
   scrollbar-width: none;
   scrollbar-color: transparent transparent;
 }
