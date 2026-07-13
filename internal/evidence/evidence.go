@@ -1104,6 +1104,8 @@ var writeOutputFlags = map[string]bool{
 	"memprofile":      true, // go test
 	"blockprofile":    true, // go test
 	"mutexprofile":    true, // go test
+	"testlogfile":     true, // go test binary
+	"gocoverdir":      true, // go test binary
 }
 
 func hasWriteOutputFlag(args []string) bool {
@@ -1115,7 +1117,10 @@ func hasWriteOutputFlag(args []string) bool {
 		if i := strings.IndexByte(name, '='); i >= 0 {
 			name = name[:i]
 		}
-		if writeOutputFlags[strings.ToLower(name)] {
+		// go test flags accept an optional test. prefix (-test.coverprofile)
+		// that the go tool passes through to the test binary.
+		name = strings.TrimPrefix(strings.ToLower(name), "test.")
+		if writeOutputFlags[name] {
 			return true
 		}
 	}
@@ -1123,17 +1128,26 @@ func hasWriteOutputFlag(args []string) bool {
 }
 
 // goTestFlagWritesFile reports whether a go test flag writes a workspace
-// artifact: -c/-o emit the test binary and -trace writes an execution trace.
-// These stay out of writeOutputFlags because the dash-stripped global match
-// would also hit node -c (a syntax-only check) and pytest --trace (a
-// read-only debugger flag). Go flags accept single- and double-dash forms.
+// artifact: -c/-o emit the test binary, -trace and the profile flags write
+// profiles, and -artifacts/-testlogfile/-gocoverdir write test outputs. The
+// short and ambiguous names stay out of writeOutputFlags because the
+// dash-stripped global match would also hit node -c (a syntax-only check)
+// and pytest --trace (a read-only debugger flag). go test flags accept
+// single- and double-dash forms and an optional test. prefix that the go
+// tool passes through to the test binary.
 func goTestFlagWritesFile(arg string) bool {
 	name := strings.ToLower(arg)
 	if i := strings.IndexByte(name, '='); i >= 0 {
 		name = name[:i]
 	}
-	switch name {
-	case "-c", "--c", "-o", "--o", "-trace", "--trace":
+	trimmed := strings.TrimLeft(name, "-")
+	if len(trimmed) == len(name) || trimmed == "" {
+		return false // not a flag
+	}
+	trimmed = strings.TrimPrefix(trimmed, "test.")
+	switch trimmed {
+	case "c", "o", "trace", "artifacts", "testlogfile", "gocoverdir",
+		"coverprofile", "cpuprofile", "memprofile", "blockprofile", "mutexprofile":
 		return true
 	default:
 		return false

@@ -560,6 +560,8 @@ func TestToolCallMutatesForDeliveryProfile(t *testing.T) {
 		{name: "go test blockprofile stays opaque", toolName: "bash", args: `{"command":"go test -blockprofile=block.out ./..."}`, want: true},
 		{name: "go test trace stays opaque", toolName: "bash", args: `{"command":"go test -trace trace.out ./..."}`, want: true},
 		{name: "go test compile binary stays opaque", toolName: "bash", args: `{"command":"go test -c ./internal/evidence"}`, want: true},
+		{name: "go test dotted cpuprofile stays opaque", toolName: "bash", args: `{"command":"go test ./internal/evidence -test.cpuprofile=cpu.out -count=1"}`, want: true},
+		{name: "go test artifacts stays opaque", toolName: "bash", args: `{"command":"go test -artifacts ./..."}`, want: true},
 		{name: "plain pytest", toolName: "bash", args: `{"command":"pytest"}`},
 	}
 	for _, tt := range tests {
@@ -587,6 +589,12 @@ func TestRunnerWriteOutputFlagsCannotMasqueradeAsVerification(t *testing.T) {
 		"go test -trace trace.out ./...",
 		"go test -c ./internal/evidence",
 		"go test -o evidence.test -c ./internal/evidence",
+		"go test ./internal/evidence -test.cpuprofile=cpu.out -count=1",
+		"go test -test.trace trace.out ./...",
+		"go test -artifacts ./...",
+		"go test ./... -args -test.testlogfile=log.txt",
+		"go test -test.gocoverdir=covdir ./...",
+		"gotestsum -- -test.coverprofile=cover.out ./...",
 		"npm test -- --updateSnapshot",
 	} {
 		if bashCommandIsVerification(command) {
@@ -601,6 +609,7 @@ func TestRunnerWriteOutputFlagsCannotMasqueradeAsVerification(t *testing.T) {
 		"gotestsum ./...",
 		"go test -cover ./...",
 		"go test -count=1 ./...",
+		"go test -test.v -test.run TestFoo ./...",
 		"pytest --trace",
 		"mypy src/",
 	} {
