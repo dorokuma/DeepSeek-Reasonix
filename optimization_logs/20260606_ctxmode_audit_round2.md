@@ -36,7 +36,6 @@
 建议：周期性清理无对应活跃 session 的 orphan 目录（可选 cron）；测试已 defer store.Remove。
 
 ### AUDIT-009 P2 — bridge .env 未设 REASONIX_CTX_LOG
-`.env` 有 `REASONIX_RTK_LOG=all`，无 `REASONIX_CTX_LOG`。默认 off，sandbox miss/hit 不可观测。  
 建议：调试期设 `REASONIX_CTX_LOG=miss`，稳定后 off。
 
 ### AUDIT-010 P3 — journal Record 写库错误静默
