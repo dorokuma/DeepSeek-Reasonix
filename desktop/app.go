@@ -7580,6 +7580,12 @@ func (a *App) SetModelForTab(tabID, name string) error {
 	applyTabModeToController(newCtrl, snap.mode)
 	applyTabToolApprovalModeToController(newCtrl, snap.toolApprovalMode)
 	newCtrl.SetGoal(snap.goal)
+	// A rebuild must not force the user to re-approve tools already granted
+	// this session, or re-trust Plan-mode read-only commands already trusted
+	// this session.
+	if prev, ok := oldCtrl.(*control.Controller); ok {
+		newCtrl.RestoreSessionAuthorizations(prev.SessionAuthorizations())
+	}
 
 	path := agent.ContinueSessionPath(prevPath, newCtrl.SessionDir(), newCtrl.Label())
 	if err := a.ensureTabSessionLeaseForRebuild(tab, path, "model"); err != nil {
@@ -7736,6 +7742,12 @@ func (a *App) SetEffortForTab(tabID, level string) error {
 	applyTabModeToController(newCtrl, snap.mode)
 	applyTabToolApprovalModeToController(newCtrl, snap.toolApprovalMode)
 	newCtrl.SetGoal(snap.goal)
+	// A rebuild must not force the user to re-approve tools already granted
+	// this session, or re-trust Plan-mode read-only commands already trusted
+	// this session.
+	if prev, ok := oldCtrl.(*control.Controller); ok {
+		newCtrl.RestoreSessionAuthorizations(prev.SessionAuthorizations())
+	}
 	path := agent.ContinueSessionPath(prevPath, newCtrl.SessionDir(), newCtrl.Label())
 	if err := a.ensureTabSessionLeaseForRebuild(tab, path, "effort"); err != nil {
 		newCtrl.Close()
@@ -7864,6 +7876,12 @@ func (a *App) SetTokenModeForTab(tabID, mode string) error {
 	applyTabModeToController(newCtrl, snap.mode)
 	applyTabToolApprovalModeToController(newCtrl, snap.toolApprovalMode)
 	newCtrl.SetGoal(snap.goal)
+	// A rebuild must not force the user to re-approve tools already granted
+	// this session, or re-trust Plan-mode read-only commands already trusted
+	// this session.
+	if prev, ok := oldCtrl.(*control.Controller); ok {
+		newCtrl.RestoreSessionAuthorizations(prev.SessionAuthorizations())
+	}
 	path := agent.ContinueSessionPath(prevPath, newCtrl.SessionDir(), newCtrl.Label())
 	if err := a.ensureTabSessionLeaseForRebuild(tab, path, "token mode"); err != nil {
 		newCtrl.Close()

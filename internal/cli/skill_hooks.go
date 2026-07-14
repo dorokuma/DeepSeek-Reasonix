@@ -230,7 +230,7 @@ func (m *chatTUI) scheduleSkillSessionRefresh(reason, notice string) bool {
 			RuntimeProfile:   m.runtimeProfile,
 			ToolApprovalMode: oldCtrl.ToolApprovalMode(),
 			PlanMode:         oldCtrl.PlanMode(),
-		}, carried, prevPath)
+		}, carried, prevPath, oldCtrl)
 		if err != nil {
 			return modelSwitchMsg{ref: ref, err: err}
 		}
