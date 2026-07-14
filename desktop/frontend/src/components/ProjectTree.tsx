@@ -127,10 +127,10 @@ function topicIsActive(node: ProjectNode, activeScope?: string, activeWorkspaceR
   );
 }
 
-export function projectTreeTopicMetaLine(node: ProjectNode, t: Translator, compact = false, timeOnly = false): string {
+export function projectTreeTopicMetaLine(node: ProjectNode, t: Translator, compact = false): string {
   const parts: string[] = [];
   const turns = node.turns ?? 0;
-  if (!timeOnly && turns > 0) parts.push(t(turns === 1 ? "history.turnOne" : "history.turnOther", { n: turns }));
+  if (turns > 0) parts.push(t(turns === 1 ? "history.turnOne" : "history.turnOther", { n: turns }));
   const activityAt = node.lastActivityAt || node.createdAt || 0;
   if (activityAt) parts.push(topicActivityLabel(activityAt, t, compact));
   if (parts.length === 0) parts.push(t("projectTree.previously"));
@@ -1255,13 +1255,13 @@ export function ProjectTree({
       const label = (node.label || node.topicId || "Untitled").replace(/^●\s*/, "");
       const conflictCopyLabel = isSessionNode && node.recovered ? t("recovery.badge") : "";
       const activityAt = node.lastActivityAt || node.createdAt || 0;
-      const sideTimeVisible = compactTopics || creationTopics;
-      const timeLabel = sideTimeVisible ? (activityAt ? topicActivityLabel(activityAt, t, true) : topicUnknownTimeLabel(node, t)) : "";
+      // Every variant is a single-line row with the activity time on the right;
+      // classic moved there too so turns and the exact date live in the hover
+      // preview card and the accessible label instead of a second meta line.
+      const sideTimeVisible = true;
+      const timeLabel = activityAt ? topicActivityLabel(activityAt, t, true) : topicUnknownTimeLabel(node, t);
       const exactTimeLabel = activityAt ? topicActivityDateLabel(activityAt) : "";
       const metaFull = projectTreeTopicMetaLine(node, t, compactTopics);
-      // Classic rows keep only the activity time inline; turns and the exact
-      // date live in the hover preview card and the accessible label.
-      const meta = classicTopics ? projectTreeTopicMetaLine(node, t, false, true) : metaFull;
       const status = topicStatus(node);
       const statusLabel = topicStatusLabel(node, t);
       const waitingConfirmation = status === "waiting_confirmation";
@@ -1293,16 +1293,12 @@ export function ProjectTree({
         setConfirmAction(null);
       };
       const topicMenuItems: ContextMenuItem[] = [
-        ...(compactTopics
-          ? [
-              {
-                key: pinned ? "unpin" : "pin",
-                icon: <Pin size={13} />,
-                label: pinLabel,
-                onSelect: () => void setTopicPinned(topicId, !pinned),
-              },
-            ]
-          : []),
+        {
+          key: pinned ? "unpin" : "pin",
+          icon: <Pin size={13} />,
+          label: pinLabel,
+          onSelect: () => void setTopicPinned(topicId, !pinned),
+        },
         {
           key: "rename",
           icon: <Pencil size={13} />,
@@ -1324,7 +1320,7 @@ export function ProjectTree({
         return (
           <div
             key={key}
-            className={`project-tree__topic project-tree__topic--editing${active ? " project-tree__topic--active" : ""}${imSource ? " project-tree__topic--im-source" : ""}${meta ? " project-tree__topic--has-meta" : ""}`}
+            className={`project-tree__topic project-tree__topic--editing${active ? " project-tree__topic--active" : ""}${imSource ? " project-tree__topic--im-source" : ""}${!classicTopics && metaFull ? " project-tree__topic--has-meta" : ""}`}
             style={{ paddingLeft: 14 + depth * 16 }}
           >
             <input
@@ -1355,7 +1351,7 @@ export function ProjectTree({
       }
       const row = (
         <div
-          className={`project-tree__topic${scopeClass}${isSessionNode ? " project-tree__topic--session" : ""}${active ? " project-tree__topic--active" : ""}${node.running ? " project-tree__topic--running" : ""}${status ? ` project-tree__topic--status-${status}` : ""}${unread ? " project-tree__topic--unread" : ""}${!isSessionNode && pinned ? " project-tree__topic--pinned" : ""}${topicMenuOpen ? " project-tree__topic--menu-open" : ""}${sideTimeVisible && (timeLabel || showStatusInSide || showWaitingPill) ? " project-tree__topic--with-side" : meta ? " project-tree__topic--has-meta" : ""}${imSource ? " project-tree__topic--im-source" : ""}${shortcutIndex > 0 ? " project-tree__topic--show-shortcut" : ""}`}
+          className={`project-tree__topic${scopeClass}${isSessionNode ? " project-tree__topic--session" : ""}${active ? " project-tree__topic--active" : ""}${node.running ? " project-tree__topic--running" : ""}${status ? ` project-tree__topic--status-${status}` : ""}${unread ? " project-tree__topic--unread" : ""}${!isSessionNode && pinned ? " project-tree__topic--pinned" : ""}${topicMenuOpen ? " project-tree__topic--menu-open" : ""}${sideTimeVisible && (timeLabel || showStatusInSide || showWaitingPill) ? " project-tree__topic--with-side" : metaFull ? " project-tree__topic--has-meta" : ""}${imSource ? " project-tree__topic--im-source" : ""}${shortcutIndex > 0 ? " project-tree__topic--show-shortcut" : ""}`}
           style={accentStyle}
           onContextMenu={isSessionNode ? undefined : openTopicMenu}
           onMouseEnter={classicTopics ? (event) => scheduleHoverCard(event.currentTarget, key, node) : undefined}
@@ -1412,13 +1408,10 @@ export function ProjectTree({
                     <span>{imSourceLabel}</span>
                   </span>
                 )}
-                {!compactTopics && statusLabel && <span className={`project-tree__topic-status project-tree__topic-status--${status}`}>{statusLabel}</span>}
+                {!compactTopics && statusLabel && (!classicTopics || status === "paused" || status === "error") && (
+                  <span className={`project-tree__topic-status project-tree__topic-status--${status}`}>{statusLabel}</span>
+                )}
               </span>
-              {!compactTopics && !creationTopics && meta && (
-                <span className="project-tree__topic-meta">
-                  <span className="project-tree__topic-meta-text">{meta}</span>
-                </span>
-              )}
             </span>
             {sideTimeVisible && (
               <span className={`project-tree__topic-side${!timeLabel && !showStatusInSide && !showWaitingPill ? " project-tree__topic-side--empty" : ""}`}>
@@ -1450,9 +1443,9 @@ export function ProjectTree({
                 {statusLabel}
               </span>
             )}
-            {compactTopics && meta && (
+            {compactTopics && metaFull && (
               <span className="sr-only">
-                {meta}
+                {metaFull}
               </span>
             )}
           </button>

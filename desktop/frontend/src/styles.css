@@ -21716,6 +21716,73 @@ body > .mermaid-diagram--fullscreen {
   outline-offset: -2px;
 }
 
+/* Classic single-line rows: the activity time sits right-aligned on the title
+   line (turns and the exact date live in the hover preview card). Mirrors the
+   workbench side recipe, including the swap with the shortcut badge. */
+.app--classic .project-tree__topic-side {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 5px;
+  margin-left: 6px;
+  color: var(--fg-faint);
+  font-size: 11px;
+  line-height: 1;
+  white-space: nowrap;
+  transition: opacity var(--dur-fast);
+}
+
+.app--classic .project-tree__topic-side--empty {
+  visibility: hidden;
+}
+
+.app--classic .project-tree__topic-time {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.app--classic .project-tree__topic-state {
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  background: currentColor;
+  opacity: 0.78;
+}
+
+.app--classic .project-tree__topic-state--thinking,
+.app--classic .project-tree__topic-state--streaming {
+  border: 2px solid color-mix(in srgb, currentColor 26%, transparent);
+  border-top-color: currentColor;
+  background: transparent;
+  animation: project-tree-spin 0.9s linear infinite;
+}
+
+.app--classic .project-tree__topic-state--waiting_confirmation {
+  background: var(--warn);
+  animation: none;
+}
+
+.app--classic .project-tree__topic-state--paused {
+  background: var(--fg-faint);
+}
+
+.app--classic .project-tree__topic-state--error {
+  background: var(--err);
+}
+
+.app--classic .project-tree__topic--show-shortcut .project-tree__topic-side {
+  opacity: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .app--classic .project-tree__topic-state--thinking,
+  .app--classic .project-tree__topic-state--streaming {
+    animation: none;
+  }
+}
+
 .project-tree__topic--editing {
   padding-right: 8px;
 }

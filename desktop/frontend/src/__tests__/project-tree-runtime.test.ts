@@ -366,17 +366,6 @@ eq(
 );
 
 eq(
-  projectTreeTopicMetaLine(
-    { key: "topic_t", kind: "topic", label: "T", root: "/repo", topicId: "t", turns: 12, createdAt: Date.now() },
-    testT,
-    false,
-    true,
-  ),
-  "projectTree.justNow",
-  "time-only meta line drops the turn count for classic rows",
-);
-
-eq(
   projectTreeTopicHoverCardModel(
     { key: "topic_t", kind: "topic", label: "● Busy topic", root: "/repo", topicId: "t", turns: 3, status: "streaming" },
     testT,
