@@ -1,6 +1,7 @@
 package repair
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -234,5 +235,95 @@ func TestRestoreConfigSnapshotPreservesSymlinkThroughUndo(t *testing.T) {
 	}
 	if got, _ := os.ReadFile(dest); string(got) != "default_model = \"drifted\"\n" {
 		t.Fatalf("config through restored link = %q", got)
+	}
+}
+
+// TestRestoreConfigSnapshotCrossDeviceCleanupKeepsPlainConfig pins the
+// fail-safe contract when the state dir sits on another filesystem: the
+// backup is a byte copy (rename fails), and when the transaction save fails
+// the cleanup must restore dest without a window where it is missing — a
+// bare cross-device rename would fail and silently drop config.toml.
+func TestRestoreConfigSnapshotCrossDeviceCleanupKeepsPlainConfig(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("REASONIX_HOME", home)
+	dest := config.UserConfigPath()
+	original := []byte("default_model = \"original\"\n")
+	if err := os.WriteFile(dest, original, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := RecordHealthyConfig("v1"); err != nil {
+		t.Fatal(err)
+	}
+	snapshots, err := ListConfigSnapshots()
+	if err != nil || len(snapshots) != 1 {
+		t.Fatalf("snapshots = %+v, err = %v", snapshots, err)
+	}
+
+	originalRename := snapshotRename
+	snapshotRename = func(string, string) error { return errors.New("injected cross-device rename") }
+	t.Cleanup(func() { snapshotRename = originalRename })
+	// Make saveRepairTransaction fail: its atomic write cannot replace a
+	// directory squatting on the transaction path.
+	if err := os.MkdirAll(repairTransactionPath(), 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := RestoreConfigSnapshot(snapshots[0].ID); err == nil {
+		t.Fatal("restore with failing transaction save should error")
+	}
+	got, err := os.ReadFile(dest)
+	if err != nil {
+		t.Fatalf("config.toml must survive the failed restore: %v", err)
+	}
+	if string(got) != string(original) {
+		t.Fatalf("config after cleanup = %q, want %q", got, original)
+	}
+}
+
+// TestRestoreConfigSnapshotCrossDeviceCleanupRestoresSymlink is the symlink
+// variant: the cross-device backup keeps only a recreated link node, and the
+// failure cleanup must rebuild that link at dest instead of retrying the
+// impossible rename and leaving dest as the half-restored plain file.
+func TestRestoreConfigSnapshotCrossDeviceCleanupRestoresSymlink(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("REASONIX_HOME", home)
+	dest := config.UserConfigPath()
+	dotfiles := filepath.Join(t.TempDir(), "dotfiles-config.toml")
+	if err := os.WriteFile(dotfiles, []byte("default_model = \"linked\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(dotfiles, dest); err != nil {
+		t.Fatal(err)
+	}
+	if err := RecordHealthyConfig("v1"); err != nil {
+		t.Fatal(err)
+	}
+	snapshots, err := ListConfigSnapshots()
+	if err != nil || len(snapshots) != 1 {
+		t.Fatalf("snapshots = %+v, err = %v", snapshots, err)
+	}
+
+	originalRename := snapshotRename
+	snapshotRename = func(string, string) error { return errors.New("injected cross-device rename") }
+	t.Cleanup(func() { snapshotRename = originalRename })
+	if err := os.MkdirAll(repairTransactionPath(), 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := RestoreConfigSnapshot(snapshots[0].ID); err == nil {
+		t.Fatal("restore with failing transaction save should error")
+	}
+	info, err := os.Lstat(dest)
+	if err != nil {
+		t.Fatalf("config.toml must survive the failed restore: %v", err)
+	}
+	if info.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("cleanup materialized a regular file, want symlink (mode %v)", info.Mode())
+	}
+	if got, err := os.Readlink(dest); err != nil || got != dotfiles {
+		t.Fatalf("restored link target = %q (%v), want %q", got, err, dotfiles)
+	}
+	if got, _ := os.ReadFile(dotfiles); string(got) != "default_model = \"linked\"\n" {
+		t.Fatalf("dotfiles content = %q, must be untouched", got)
 	}
 }

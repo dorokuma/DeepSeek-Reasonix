@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -126,7 +127,7 @@ func RestoreConfigSnapshot(id string) (*RepairTransaction, error) {
 		if err := os.MkdirAll(filepath.Dir(backup), 0o700); err != nil {
 			return nil, err
 		}
-		if renameErr := os.Rename(dest, backup); renameErr == nil {
+		if renameErr := snapshotRename(dest, backup); renameErr == nil {
 			moved = true
 		} else if info.Mode()&os.ModeSymlink != 0 {
 			// Cross-device fallback: recreate the link node at the backup path
@@ -161,27 +162,77 @@ func RestoreConfigSnapshot(id string) (*RepairTransaction, error) {
 	b, err := os.ReadFile(selected.Path)
 	if err != nil {
 		if moved {
-			_ = os.Rename(backup, dest)
+			err = joinRestoreCleanupError(err, backup, restoreBackupNode(backup, dest))
 		}
 		return nil, err
 	}
 	if err := fileutil.AtomicWriteFile(dest, b, 0o600); err != nil {
 		if moved {
-			_ = os.Remove(dest)
-			_ = os.Rename(backup, dest)
+			err = joinRestoreCleanupError(err, backup, restoreBackupNode(backup, dest))
 		}
 		return nil, err
 	}
 	if err := saveRepairTransaction(tx); err != nil {
 		if tx.Changes[0].RemoveOnUndo {
 			_ = os.Remove(dest)
-		} else {
-			_ = os.Remove(dest)
-			_ = os.Rename(backup, dest)
+			return nil, err
 		}
-		return nil, err
+		return nil, joinRestoreCleanupError(err, backup, restoreBackupNode(backup, dest))
 	}
 	return tx, nil
+}
+
+// restoreBackupNode puts the backup node back at dest, replacing whatever sits
+// there, without a window where dest is missing. Rename is tried first; when it
+// fails (notably across filesystems, where the backup lives in the state dir),
+// the node is recreated by type — a symlink is rebuilt beside dest and renamed
+// into place, a regular file is rewritten atomically. The backup is consumed
+// only after dest holds the restored node, so a failure never loses the config.
+func restoreBackupNode(backup, dest string) error {
+	if snapshotRename(backup, dest) == nil {
+		return nil
+	}
+	info, err := os.Lstat(backup)
+	if err != nil {
+		return err
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		target, err := os.Readlink(backup)
+		if err != nil {
+			return err
+		}
+		tmp := dest + ".reasonix-restore-tmp"
+		_ = os.Remove(tmp)
+		if err := os.Symlink(target, tmp); err != nil {
+			return err
+		}
+		if err := os.Rename(tmp, dest); err != nil {
+			_ = os.Remove(tmp)
+			return err
+		}
+		_ = os.Remove(backup)
+		return nil
+	}
+	b, err := os.ReadFile(backup)
+	if err != nil {
+		return err
+	}
+	if err := fileutil.AtomicWriteFile(dest, b, info.Mode().Perm()); err != nil {
+		return err
+	}
+	_ = os.Remove(backup)
+	return nil
+}
+
+// snapshotRename is an indirection over os.Rename so tests can force the
+// cross-device fallback paths.
+var snapshotRename = os.Rename
+
+func joinRestoreCleanupError(err error, backup string, cleanupErr error) error {
+	if cleanupErr == nil {
+		return err
+	}
+	return errors.Join(err, fmt.Errorf("restore original config from %s: %w", backup, cleanupErr))
 }
 
 func validateConfigSnapshot(dir string, snap *ConfigSnapshot) error {
