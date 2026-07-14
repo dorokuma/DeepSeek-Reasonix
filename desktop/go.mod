@@ -72,3 +72,7 @@ require (
 )
 
 replace reasonix => ../
+
+// Wails v2 disables WebView2 monitor-scale detection, which leaves frameless
+// windows mis-scaled after minimise/restore on mixed-DPI displays (#5862).
+replace github.com/wailsapp/go-webview2 => ./third_party/go-webview2
