@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"reasonix/internal/capability"
 	"reasonix/internal/event"
 	"reasonix/internal/evidence"
 	"reasonix/internal/provider"
@@ -145,6 +146,36 @@ func TestDeliveryPlanModeReturnsProposalBeforeExecutionReadiness(t *testing.T) {
 	a.SetPlanMode(false)
 	if got := a.finalReadinessFailure(); !strings.Contains(got, "state change") {
 		t.Fatalf("execution readiness did not resume after plan mode: %q", got)
+	}
+}
+
+// TestPlanModeCapabilityGateHonorsLoopGuardPass covers the case where a
+// required capability is itself blocked by plan mode (for example a writer
+// skill): the capability gate keeps applying in plan mode, but once a loop
+// guard fires with no host-observable progress since, readiness must stand
+// down so the model can report the blocker instead of ending in readiness
+// exhaustion.
+func TestPlanModeCapabilityGateHonorsLoopGuardPass(t *testing.T) {
+	reg := tool.NewRegistry()
+	a := New(&scriptedProvider{name: "p"}, reg, NewSession("sys"),
+		Options{DeliveryProfile: true, CapabilityLedger: capability.NewLedger()}, event.Discard)
+	a.SetPlanMode(true)
+	a.SeedCapabilityRoute(capability.RouteDecision{Candidates: []capability.RouteCandidate{
+		{Entry: capability.Entry{ID: "skill:deploy"}, Policy: capability.AutoUseRequire},
+	}})
+
+	if got := a.finalReadinessCheck(); !strings.Contains(got.reason, "required capabilities") {
+		t.Fatalf("expected require miss to apply in plan mode, reason=%q", got.reason)
+	}
+
+	a.armLoopGuardPass(a.evidence.Len())
+
+	got := a.finalReadinessCheck()
+	if !got.applies {
+		t.Fatal("finalReadinessCheck() applies = false, want true audit after loop guard")
+	}
+	if got.reason != "" {
+		t.Fatalf("finalReadinessCheck() reason = %q, want loop guard to allow final blocker report in plan mode", got.reason)
 	}
 }
 

@@ -1612,11 +1612,17 @@ func (a *Agent) finalReadinessCheck() finalReadinessCheck {
 	// delivery execution requirements here would demand mutations that plan mode
 	// itself blocks, preventing the proposal from ever reaching that approval.
 	// Explicit capability requirements still apply because read-only skills and
-	// tools may be required to produce the plan itself.
+	// tools may be required to produce the plan itself. The loop-guard pass
+	// applies here as in execution: a required capability that plan mode itself
+	// blocks can never succeed, so once a loop guard fires the model must be
+	// free to report the blocker instead of exhausting readiness retries.
 	if a.planMode.Load() {
 		if a.deliveryProfile {
 			if msg := a.capabilityGateFailure(); msg != "" {
 				out.applies = true
+				if a.loopGuardAllowsFinal() {
+					return out
+				}
 				out.reason = msg
 			}
 		}
