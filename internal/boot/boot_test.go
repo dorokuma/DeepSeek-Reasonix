@@ -979,6 +979,179 @@ func (p *headlessTaskTestProvider) Stream(context.Context, provider.Request) (<-
 	return ch, nil
 }
 
+// TestBuildHeadlessApprovalModePropagatesToTaskSubagentGate pins boot.Build's
+// actual wiring for the fix: a `task` sub-agent spawned from a headless run
+// must honor the same --permission-mode contract as the parent executor
+// instead of the mode-unaware default gate (ask resolves to allow) that boot
+// used to build unconditionally. Auto must fail closed on write_file's
+// explicit ask rule even inside the sub-agent; only yolo may bypass it.
+func TestBuildHeadlessApprovalModePropagatesToTaskSubagentGate(t *testing.T) {
+	runTaskWriteOnce := func(t *testing.T, mode string) bool {
+		t.Helper()
+		isolateConfigHome(t)
+		dir := robustTempDir(t)
+		t.Chdir(dir)
+
+		registerHeadlessTaskWriteTestProvider()
+		prov := &headlessTaskWriteTestProvider{}
+		setHeadlessTaskWriteTestProvider(t, prov)
+		writeFile(t, dir, "reasonix.toml", `
+default_model = "test-model"
+
+[agent]
+system_prompt = "BASE"
+
+[permissions]
+mode = "ask"
+ask = ["write_file"]
+
+[[providers]]
+name = "test-model"
+kind = "boot-headless-write-test"
+model = "x"
+`)
+
+		ctrl, err := Build(context.Background(), Options{Sink: event.Discard, HeadlessApprovalMode: mode})
+		if err != nil {
+			t.Fatalf("Build: %v", err)
+		}
+		defer ctrl.Close()
+
+		if err := ctrl.Run(context.Background(), "use a task subagent to write a file"); err != nil {
+			t.Fatalf("Run: %v", err)
+		}
+		_, statErr := os.Stat(filepath.Join(dir, "sub.txt"))
+		return statErr == nil
+	}
+
+	if written := runTaskWriteOnce(t, "auto"); written {
+		t.Fatalf("auto: task sub-agent wrote sub.txt despite the explicit ask rule on write_file")
+	}
+	if written := runTaskWriteOnce(t, "yolo"); !written {
+		t.Fatal("yolo: task sub-agent did not write sub.txt, want the ask rule bypassed")
+	}
+}
+
+// TestBuildInteractiveApprovalModeSwitchPropagatesToTaskSubagentGate pins the
+// interactive counterpart of TestBuildHeadlessApprovalModePropagatesToTaskSubagentGate:
+// boot.Build with no HeadlessApprovalMode — the interactive REPL's boot path,
+// which always starts a session at the default Ask posture and switches modes
+// later at runtime via Shift+Tab (Controller.SetToolApprovalMode) — followed
+// by a runtime switch to auto must also reach the task sub-agent's gate.
+// Before this fix, the sub-agent gate was captured once at boot with the
+// mode-unaware default (ask resolves to allow) and had no rebuild hook, so a
+// later SetToolApprovalMode(auto) call updated only the parent executor.
+func TestBuildInteractiveApprovalModeSwitchPropagatesToTaskSubagentGate(t *testing.T) {
+	isolateConfigHome(t)
+	dir := robustTempDir(t)
+	t.Chdir(dir)
+
+	registerHeadlessTaskWriteTestProvider()
+	prov := &headlessTaskWriteTestProvider{}
+	setHeadlessTaskWriteTestProvider(t, prov)
+	writeFile(t, dir, "reasonix.toml", `
+default_model = "test-model"
+
+[agent]
+system_prompt = "BASE"
+
+[permissions]
+mode = "ask"
+ask = ["write_file"]
+
+[[providers]]
+name = "test-model"
+kind = "boot-headless-write-test"
+model = "x"
+`)
+
+	ctrl, err := Build(context.Background(), Options{Sink: event.Discard})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	defer ctrl.Close()
+
+	ctrl.SetToolApprovalMode("auto")
+
+	if err := ctrl.Run(context.Background(), "use a task subagent to write a file"); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(dir, "sub.txt")); statErr == nil {
+		t.Fatal("auto (interactive mode switch): task sub-agent wrote sub.txt despite the explicit ask rule on write_file")
+	}
+}
+
+const headlessTaskWriteTestProviderKind = "boot-headless-write-test"
+
+var (
+	headlessTaskWriteTestProviderOnce    sync.Once
+	headlessTaskWriteTestProviderCurrent *headlessTaskWriteTestProvider
+	headlessTaskWriteTestProviderMu      sync.Mutex
+)
+
+func registerHeadlessTaskWriteTestProvider() {
+	headlessTaskWriteTestProviderOnce.Do(func() {
+		provider.Register(headlessTaskWriteTestProviderKind, func(provider.Config) (provider.Provider, error) {
+			headlessTaskWriteTestProviderMu.Lock()
+			defer headlessTaskWriteTestProviderMu.Unlock()
+			if headlessTaskWriteTestProviderCurrent == nil {
+				return nil, errors.New("headless task write test provider is not installed")
+			}
+			return headlessTaskWriteTestProviderCurrent, nil
+		})
+	})
+}
+
+func setHeadlessTaskWriteTestProvider(t *testing.T, p *headlessTaskWriteTestProvider) {
+	t.Helper()
+	headlessTaskWriteTestProviderMu.Lock()
+	headlessTaskWriteTestProviderCurrent = p
+	headlessTaskWriteTestProviderMu.Unlock()
+	t.Cleanup(func() {
+		headlessTaskWriteTestProviderMu.Lock()
+		if headlessTaskWriteTestProviderCurrent == p {
+			headlessTaskWriteTestProviderCurrent = nil
+		}
+		headlessTaskWriteTestProviderMu.Unlock()
+	})
+}
+
+// headlessTaskWriteTestProvider scripts a parent turn that spawns a `task`
+// sub-agent, which itself calls write_file before answering — reproducing the
+// exact call shape TaskTool.runSubSession drives so the boot-level gate wiring
+// is exercised end to end, not just the gate object in isolation.
+type headlessTaskWriteTestProvider struct {
+	mu    sync.Mutex
+	calls int
+}
+
+func (p *headlessTaskWriteTestProvider) Name() string { return "boot-headless-write-test" }
+
+func (p *headlessTaskWriteTestProvider) Stream(context.Context, provider.Request) (<-chan provider.Chunk, error) {
+	p.mu.Lock()
+	call := p.calls
+	p.calls++
+	p.mu.Unlock()
+
+	var chunks []provider.Chunk
+	switch call {
+	case 0:
+		chunks = []provider.Chunk{{Type: provider.ChunkToolCall, ToolCall: &provider.ToolCall{ID: "task-1", Name: "task", Arguments: `{"prompt":"write a file"}`}}}
+	case 1:
+		chunks = []provider.Chunk{{Type: provider.ChunkToolCall, ToolCall: &provider.ToolCall{ID: "write-1", Name: "write_file", Arguments: `{"path":"sub.txt","content":"hi"}`}}}
+	case 2:
+		chunks = []provider.Chunk{{Type: provider.ChunkText, Text: "subagent answer"}, {Type: provider.ChunkDone}}
+	default:
+		chunks = []provider.Chunk{{Type: provider.ChunkText, Text: "parent done"}, {Type: provider.ChunkDone}}
+	}
+	ch := make(chan provider.Chunk, len(chunks))
+	for _, chunk := range chunks {
+		ch <- chunk
+	}
+	close(ch)
+	return ch, nil
+}
+
 func TestNewProviderAppliesConfiguredDefaultEffort(t *testing.T) {
 	var gotReq map[string]any
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -3442,6 +3615,171 @@ api_key_env = "REASONIX_TEST_KEY_UNSET"
 		t.Fatalf("Build should load config from nearest git root: %v", err)
 	}
 	defer ctrl.Close()
+}
+
+func TestNormalizeAdditionalDirs(t *testing.T) {
+	root := t.TempDir()
+	extra := filepath.Join(root, "extra")
+	if err := os.Mkdir(extra, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(root, "extra-link")
+	if err := os.Symlink(extra, link); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+
+	got, err := normalizeAdditionalDirs(root, []string{"extra", link, "", " extra "})
+	if err != nil {
+		t.Fatalf("normalizeAdditionalDirs: %v", err)
+	}
+	real, err := filepath.EvalSymlinks(extra)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got, []string{real}) {
+		t.Fatalf("normalized dirs = %v, want [%s]", got, real)
+	}
+}
+
+func TestAppendUniquePathsDeduplicatesSymlinkEquivalentRoots(t *testing.T) {
+	real := t.TempDir()
+	link := filepath.Join(t.TempDir(), "root-link")
+	if err := os.Symlink(real, link); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	got := appendUniquePaths([]string{link}, real)
+	if !reflect.DeepEqual(got, []string{link}) {
+		t.Fatalf("roots = %v, want only original symlink root", got)
+	}
+}
+
+func TestNormalizeAdditionalDirsRejectsInvalidPaths(t *testing.T) {
+	root := t.TempDir()
+	file := filepath.Join(root, "file.txt")
+	if err := os.WriteFile(file, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{"missing", file} {
+		t.Run(filepath.Base(path), func(t *testing.T) {
+			if _, err := normalizeAdditionalDirs(root, []string{path}); err == nil {
+				t.Fatalf("normalizeAdditionalDirs(%q) unexpectedly succeeded", path)
+			}
+		})
+	}
+}
+
+func TestBuildAdditionalDirsAllowWriterAndPreserveToolSchemas(t *testing.T) {
+	isolateConfigHome(t)
+	root := robustTempDir(t)
+	extra := t.TempDir()
+	t.Chdir(root)
+	writeFile(t, root, "reasonix.toml", `
+default_model = "test-model"
+
+[agent]
+system_prompt = "BASE"
+
+[[providers]]
+name = "test-model"
+kind = "boot-token-profile-test"
+model = "x"
+`)
+	registerBootTokenProfileTestProvider()
+
+	captureSchemas := func(opts Options) []byte {
+		t.Helper()
+		prov := testutil.NewMock("additional-dir-schema", testutil.Turn{Text: "done"})
+		setBootTokenProfileTestProvider(t, prov)
+		opts.Sink = event.Discard
+		ctrl, err := Build(context.Background(), opts)
+		if err != nil {
+			t.Fatalf("Build: %v", err)
+		}
+		if err := ctrl.Run(context.Background(), "capture schemas"); err != nil {
+			ctrl.Close()
+			t.Fatalf("Run: %v", err)
+		}
+		ctrl.Close()
+		reqs := prov.Requests()
+		if len(reqs) != 1 {
+			t.Fatalf("requests = %d, want 1", len(reqs))
+		}
+		encoded, err := json.Marshal(reqs[0].Tools)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return encoded
+	}
+
+	baseline := captureSchemas(Options{})
+	withOverrides := captureSchemas(Options{
+		AdditionalDirs:  []string{extra},
+		PermissionAllow: []string{"Bash(git *)", "Edit"},
+	})
+	if !bytes.Equal(baseline, withOverrides) {
+		t.Fatalf("session access overrides changed provider-visible tool schemas\nbaseline=%s\nwith=%s", baseline, withOverrides)
+	}
+
+	target := filepath.Join(extra, "written.txt")
+	prov := testutil.NewMock("additional-dir-write",
+		testutil.Turn{ToolCalls: []provider.ToolCall{{ID: "write-1", Name: "write_file", Arguments: fmt.Sprintf(`{"path":%q,"content":"ok"}`, target)}}},
+		testutil.Turn{Text: "done"},
+	)
+	setBootTokenProfileTestProvider(t, prov)
+	ctrl, err := Build(context.Background(), Options{Sink: event.Discard, AdditionalDirs: []string{extra}})
+	if err != nil {
+		t.Fatalf("Build writer: %v", err)
+	}
+	defer ctrl.Close()
+	if err := ctrl.Run(context.Background(), "write into the additional directory"); err != nil {
+		t.Fatalf("Run writer: %v", err)
+	}
+	if got, err := os.ReadFile(target); err != nil || string(got) != "ok" {
+		t.Fatalf("additional-dir file = %q, err=%v", got, err)
+	}
+}
+
+func TestBuildAdditionalDirsReachSandboxedBashWriteRoots(t *testing.T) {
+	if runtime.GOOS == "windows" || !sandbox.Available() {
+		t.Skip("requires a Unix sandbox backend")
+	}
+	isolateConfigHome(t)
+	root := robustTempDir(t)
+	extra := t.TempDir()
+	t.Chdir(root)
+	writeFile(t, root, "reasonix.toml", `
+default_model = "test-model"
+
+[agent]
+system_prompt = "BASE"
+
+[sandbox]
+bash = "enforce"
+
+[[providers]]
+name = "test-model"
+kind = "boot-token-profile-test"
+model = "x"
+`)
+	registerBootTokenProfileTestProvider()
+	target := filepath.Join(extra, "sandboxed.txt")
+	command := "printf ok > " + strconv.Quote(target)
+	prov := testutil.NewMock("additional-dir-bash",
+		testutil.Turn{ToolCalls: []provider.ToolCall{{ID: "bash-1", Name: "bash", Arguments: fmt.Sprintf(`{"command":%q}`, command)}}},
+		testutil.Turn{Text: "done"},
+	)
+	setBootTokenProfileTestProvider(t, prov)
+	ctrl, err := Build(context.Background(), Options{Sink: event.Discard, AdditionalDirs: []string{extra}})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	defer ctrl.Close()
+	if err := ctrl.Run(context.Background(), "write from sandboxed bash"); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if got, err := os.ReadFile(target); err != nil || string(got) != "ok" {
+		t.Fatalf("sandboxed file = %q, err=%v", got, err)
+	}
 }
 
 func TestBuildMigratesLegacyEagerBeforeStatsDemotion(t *testing.T) {

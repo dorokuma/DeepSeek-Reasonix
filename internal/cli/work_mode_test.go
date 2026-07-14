@@ -258,6 +258,12 @@ func TestRuntimeRebuildCommandsCarryCurrentWorkMode(t *testing.T) {
 	if len(specs) != 3 {
 		t.Fatalf("runtime rebuild count = %d, want 3", len(specs))
 	}
+	if specs[0].EffortOverride == nil || *specs[0].EffortOverride != "max" {
+		t.Fatalf("effort rebuild override = %v, want max", specs[0].EffortOverride)
+	}
+	if specs[1].EffortOverride != nil || specs[2].EffortOverride != nil {
+		t.Fatalf("non-effort rebuilds unexpectedly replaced effort override: %+v", specs)
+	}
 	for i, spec := range specs {
 		if spec.RuntimeProfile != boot.TokenModeDelivery {
 			t.Errorf("rebuild %d lost delivery profile: %+v", i, spec)

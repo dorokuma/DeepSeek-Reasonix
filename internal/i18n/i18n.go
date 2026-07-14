@@ -208,6 +208,7 @@ type Messages struct {
 	CmdResume           string // /resume
 	CmdRename           string // /rename
 	CmdModel            string // /model
+	CmdStatus           string // /status
 	CmdWorkMode         string // /work-mode
 	CmdMemory           string // /memory
 	CmdMigrate          string // /migrate

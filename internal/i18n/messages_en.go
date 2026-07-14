@@ -50,7 +50,7 @@ var English = Messages{
 	ChatStatusCancellingFmt:                "%s stopping… (%ds · Ctrl+C exits)",
 	ChatStatusIdle:                         "ready",
 	ChatStatusYoloIdle:                     "tool approvals skipped",
-	ChatStatusCycleHint:                    "shift+tab toggles plan · ctrl+y yolo",
+	ChatStatusCycleHint:                    "shift+tab ask/auto/plan · ctrl+y yolo",
 	ChatStatusCacheNowFmt:                  "turn hit %s",
 	ChatStatusCacheAvgFmt:                  "avg %s",
 	ChatStatusPlanApproval:                 "Enter/y approves & executes · n/Esc keeps planning · PgUp/PgDn/Ctrl+Home/End scrolls",
@@ -219,6 +219,7 @@ var English = Messages{
 	CmdResume:           "resume a saved session",
 	CmdRename:           "rename a session",
 	CmdModel:            "switch model",
+	CmdStatus:           "show session status",
 	CmdWorkMode:         "switch work mode",
 	CmdMemory:           "show memory files",
 	CmdMigrate:          "retry legacy data migration",
@@ -422,7 +423,7 @@ var English = Messages{
 	AnthropicSelectModelsLabel:     "Select models to enable for %s",
 
 	UnknownCommandFmt:         "unknown command %q",
-	UsageRunHint:              "usage: reasonix run [--model NAME] <task>",
+	UsageRunHint:              "usage: reasonix -p [--model NAME] <task>",
 	ErrorPrefix:               "error:",
 	ReconfigureOnUnknownModel: "Configured model is no longer available — re-running setup.",
 	WriteConfigErr:            "write config:",
@@ -474,8 +475,9 @@ var English = Messages{
 	UsageBody: `reasonix — a config- and plugin-driven coding agent (multi-model)
 
 Usage:
-  reasonix [--model NAME] [-c|--continue] [--resume] [--copy] [--yolo] [--dir PATH]   interactive session (multi-turn; -c resumes the latest, --resume picks one, --copy continues in a duplicate)
-  reasonix run  [--model NAME] [--max-steps N] [-c|--continue] [--resume PATH] [--copy] <task>   run one task and exit
+  reasonix [--model NAME] [-c|--continue] [-r|--resume [QUERY]] [--permission-mode MODE] [--effort LEVEL] [--add-dir PATH]   interactive session
+  reasonix -p|--print [--model NAME] [--output-format text|json|stream-json] [--allowed-tools RULES] [--add-dir PATH] <task>
+  reasonix run [--model NAME] [--max-steps N] [-c|--continue] [--resume PATH] [--copy] [--output-format FORMAT] <task>
   reasonix review [--base BRANCH] [--commit SHA] [--model NAME]  AI-powered code review on local diffs
   reasonix serve [--model NAME] [--addr HOST:PORT] [--auth none|token|password] [--token STR] [--password STR] [--hash-password]  serve over HTTP+SSE (with optional auth)
   reasonix acp [--model NAME]                           serve Agent Client Protocol over stdio (also: reasonix --acp)
@@ -496,8 +498,10 @@ Usage:
 Examples:
   reasonix
   reasonix --continue
+  reasonix --resume provider-config
   reasonix run "implement the TODOs in main.go"
   reasonix run --model mimo-pro "add unit tests for this function"
+  reasonix -p "summarize this repository" --output-format json
   reasonix subagent run review "review the current changes"
   echo "explain this code" | reasonix run
 

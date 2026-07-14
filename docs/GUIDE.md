@@ -12,6 +12,7 @@
 ## Contents
 
 - [Configuration](#configuration)
+- [CLI reference](./CLI.md)
 - [Environment variables](#environment-variables)
 - [Serve web frontend](#serve-web-frontend)
 - [Configuration paths](./CONFIG_PATHS.md)
@@ -345,9 +346,9 @@ trust model are documented in [the Chinese desktop hooks guide](./DESKTOP_HOOKS.
 ## Keyboard shortcuts
 
 Shortcuts are documented by client because users usually look for the keys that
-work in the surface they are using. The small mode rule is: `Shift+Tab` only
-controls Plan, `Ctrl/Cmd+Y` only controls YOLO, and paste stays on the platform
-paste key.
+work in the surface they are using. Desktop keeps its Plan toggle, while the CLI
+cycles Ask, Auto, and Plan with `Shift+Tab`. `Ctrl/Cmd+Y` controls YOLO, and
+paste stays on the platform paste key.
 
 `[ui].shortcut_layout` is still accepted for old configs, but the shortcut
 behavior below is unified across layouts.
@@ -430,13 +431,12 @@ Mode and display shortcuts:
 
 | Key or command | What it does | Notes |
 | --- | --- | --- |
-| `Shift+Tab` | Toggles Plan on/off | Plan is read-only planning and does not cycle Ask/Auto/YOLO. |
+| `Shift+Tab` | Cycles Ask → Auto → Plan → Ask | YOLO remains outside this safe-mode cycle; the footer shows the active mode. |
 | `Ctrl+Y` | Toggles YOLO on/off | Turning YOLO off restores the previous Ask/Auto base when known. Terminals that forward Command/Super may also send `Cmd+Y`, but `Ctrl+Y` is the reliable terminal shortcut. |
 | `--yolo`, `--dangerously-skip-permissions` | Starts chat in YOLO | Same runtime mode as `Ctrl+Y`. |
 | `/work-mode [economy|balanced|delivery]` | Shows or switches the current session's work mode | `/profile` is a compatibility alias. Switching rebuilds the runtime atomically, preserves the conversation and approval posture, and is blocked while work is active. |
 | `Ctrl+O` | Toggles verbose reasoning display | Also available through `/verbose`. |
 | `Ctrl+B` | Expands or collapses long shell output | Long shell-output hint lines can also be clicked in the transcript; text selection is handled in-app while the full-screen TUI has mouse reporting enabled. |
-| Ask / Auto | No keyboard cycle | Ask is the default interactive base. Auto is not entered through `Shift+Tab`; use clients or APIs that expose the tool approval posture directly. |
 | `/goal <objective>`, `/goal --research <objective>`, `/goal --simple <objective>`, `/goal status`, `/goal clear` | Starts, checks, or clears Goal | Goal is not in any keyboard cycle; clearly long-horizon goals automatically enable AutoResearch. Ordinary prompts with strong AutoResearch signals are also upgraded into Goal. |
 | `/migrate`, `/migrate --from <legacy-dir>` | Retries legacy migration or imports sessions from a chosen v0.x source | Use `--from` for custom Windows v0.52 install/data directories; it imports sessions only. See [Configuration paths](./CONFIG_PATHS.md). |
 
@@ -444,11 +444,11 @@ Picker and approval shortcuts:
 
 | Context | Keys | What they do |
 | --- | --- | --- |
-| Slash or `@` completion | `Up` / `Down`, `Tab` / `Enter`, `Esc` | Move, accept, or close the completion menu. |
+| Slash or `@` completion | `Up` / `Down`, `Ctrl+P` / `Ctrl+N`, `Tab` / `Enter`, `Esc` | Move, accept, or close the completion menu. |
 | Tool approval prompt | `y`/`1`, `a`/`2`, `p`/`3`, `n`/`4`, `Enter`, `Esc`, `Ctrl+C` | Allow once, allow for session, persist allow, deny, accept default allow once, deny, or cancel the turn. |
 | Ask question card | `Up`/`Down` or `j`/`k`, `Left`/`Right` or `h`/`l`, `Space`, `Enter`, `1`-`9`, `Esc`, `Ctrl+C` | Navigate answers/tabs, toggle multi-select answers, submit/activate, pick numbered options, dismiss, or cancel the turn. |
 | Rewind picker | `Up`/`Down` or `j`/`k`, `Enter`, `b`, `c`, `d`, `f`, `s`, `u`, `Esc` | Choose a turn, apply both/conversation/code/fork/summarize actions, or go back/close. |
-| Resume picker | `Up`/`Down` or `j`/`k`, `Enter`, `Esc` | Choose a saved session or close the picker. |
+| Model, provider, or resume picker | `Up`/`Down` or `Ctrl+P`/`Ctrl+N`; `j`/`k` while search is empty; type to filter; `Enter`; `Esc` | Search, select an item, or close the picker. Once search input starts, `j`/`k` become query text. `/provider` opens that provider's model list. |
 | MCP import picker | `Up`/`Down` or `j`/`k`, `Space`, `Enter`, `Esc` / `Ctrl+C` | Move, select servers, import selected servers, or cancel. |
 | MCP manager | `Up`/`Down` or `j`/`k`, `Enter`, `Left`/`Right` or `h`/`l`, `r`, number keys, `q` / `Ctrl+C` | Navigate server lists/details, refresh, choose actions, or close. |
 | `/clear` confirmation | Arrow keys or `j`/`k` / `Tab`, `Enter`, `y`, `n`, `Esc` / `Ctrl+C` | Toggle Clear/Cancel, confirm clear, or cancel. |
@@ -846,10 +846,11 @@ time, descend into folders) plus MCP resources.
 
 ## Two-model collaboration
 
-`reasonix setup` keeps first-run minimal: pick provider → keys (every SKU of a
-chosen provider is enabled). Running two models together (executor + planner,
-separate cache-stable sessions) is a one-line edit afterwards — set
-`planner_model` to any other enabled provider:
+`reasonix setup` manages providers, model lists, credentials, connection tests,
+and the default model. It stages changes until Save and exit, and synchronizes
+provider access with the desktop app. See the [CLI reference](./CLI.md#configure-providers).
+Running two models together (executor + planner, separate cache-stable sessions)
+is a one-line edit afterwards — set `planner_model` to any other enabled provider:
 
 ```toml
 [agent]

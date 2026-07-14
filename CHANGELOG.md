@@ -6,8 +6,27 @@ branch.
 
 ## Unreleased
 
+### Added
+
+- Added Claude Code-style searchable CLI pickers for models, providers, and
+  sessions, with arrow, Vim, and `Ctrl+P` / `Ctrl+N` navigation.
+- Added `-p` / `--print`, `text`, `json`, and `stream-json` output modes for
+  one-shot use and automation.
+- Added session-scoped `--allowed-tools`, repeatable `--add-dir`, Claude-compatible
+  permission modes, flexible `--resume [QUERY]`, and the `--copy` resume escape
+  hatch.
+- Added `/status` details for the active model, effort, cache, Git state,
+  background jobs, work profile, and provider balance where available.
+
 ### Changed
 
+- `Shift+Tab` now cycles CLI safe modes from Ask to Auto to Plan, while YOLO
+  remains an independent `Ctrl+Y` toggle.
+- Model, provider, resume, and approval menus now use consistent row selection;
+  slash completion, help, aliases, and dispatch share one command registry.
+- Runtime rebuilds after model, effort, or work-mode changes now preserve the
+  conversation, session permission overrides, additional directories, and
+  session lease ownership.
 - Agent runtime defaults now leave both executor and dedicated planner tool-call
   rounds unlimited (`max_steps = 0`, `planner_max_steps = 0`). Step limits now
   come from the user/global config only; project `reasonix.toml` does not

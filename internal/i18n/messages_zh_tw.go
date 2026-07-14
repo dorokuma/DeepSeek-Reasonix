@@ -47,7 +47,7 @@ var ChineseTraditional = Messages{
 	ChatStatusCancellingFmt:                "%s 正在停止… (%d 秒 · Ctrl+C 退出)",
 	ChatStatusIdle:                         "就緒",
 	ChatStatusYoloIdle:                     "已跳過核准",
-	ChatStatusCycleHint:                    "shift+tab 循環切換",
+	ChatStatusCycleHint:                    "shift+tab 循環詢問/自動/計畫 · ctrl+y yolo",
 	ChatStatusCacheNowFmt:                  "本次命中 %s",
 	ChatStatusCacheAvgFmt:                  "平均 %s",
 	ChatStatusPlanApproval:                 "Enter/y 核准並執行 · n/Esc 繼續規劃 · PgUp/PgDn 捲動",
@@ -208,6 +208,7 @@ var ChineseTraditional = Messages{
 	CmdSwitchBranch:     "切換對話分支",
 	CmdResume:           "恢復已儲存的會話",
 	CmdModel:            "切換模型",
+	CmdStatus:           "顯示工作階段狀態",
 	CmdWorkMode:         "切換工作模式",
 	CmdMemory:           "檢視記憶檔案",
 	CmdMigrate:          "重試舊資料遷移",
@@ -403,7 +404,7 @@ var ChineseTraditional = Messages{
 	AnthropicSelectModelsLabel:     "選擇要啟用的 %s 模型",
 
 	UnknownCommandFmt:         "未知命令 %q",
-	UsageRunHint:              "用法：reasonix run [--model NAME] <task>",
+	UsageRunHint:              "用法：reasonix -p [--model NAME] <task>",
 	ErrorPrefix:               "錯誤：",
 	ReconfigureOnUnknownModel: "設定的模型已不可用 —— 重新執行引導設定。",
 	WriteConfigErr:            "寫入設定失敗：",
@@ -423,8 +424,9 @@ var ChineseTraditional = Messages{
 	UsageBody: `reasonix — 由設定和插件驅動的 coding agent（多模型）
 
 用法：
-  reasonix [--model NAME] [-c|--continue] [--resume] [--yolo] [--dir PATH]   互動式會話（多輪；-c 恢復最近一次，--resume 選擇一個）
-  reasonix run  [--model NAME] [--max-steps N] [-c|--continue] [--resume PATH] <task>   執行單次任務後退出
+  reasonix [--model NAME] [-c|--continue] [-r|--resume [QUERY]] [--permission-mode MODE] [--effort LEVEL] [--add-dir PATH]   互動式會話
+  reasonix -p|--print [--model NAME] [--output-format text|json|stream-json] [--allowed-tools RULES] [--add-dir PATH] <task>
+  reasonix run [--model NAME] [--max-steps N] [-c|--continue] [--resume PATH] [--copy] [--output-format FORMAT] <task>
   reasonix review [--base BRANCH] [--commit SHA] [--model NAME]  AI 程式碼審查（基於本機 diff）
   reasonix serve [--model NAME] [--addr HOST:PORT] [--auth none|token|password] [--token STR] [--password STR] [--hash-password]  透過 HTTP+SSE 提供服務（支援可選認證）
   reasonix acp [--model NAME]                           透過 stdio 提供 Agent Client Protocol（也可用：reasonix --acp）
@@ -445,8 +447,10 @@ var ChineseTraditional = Messages{
 範例：
   reasonix
   reasonix --continue
+  reasonix --resume provider-config
   reasonix run "把 main.go 裡的 TODO 實現掉"
   reasonix run --model mimo-pro "給這個函式補單元測試"
+  reasonix -p "總結這個倉庫" --output-format json
   reasonix subagent run review "審查目前變更"
   echo "解釋這段程式碼" | reasonix run
 
