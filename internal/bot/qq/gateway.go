@@ -222,15 +222,7 @@ func (a *adapter) connectGateway(ctx context.Context, token string) error {
 	if parsed, parseErr := url.Parse(gatewayURL); parseErr == nil {
 		a.logger.Info("qq gateway endpoint resolved", "host", parsed.Hostname(), "sandbox", a.cfg.Sandbox)
 	}
-	cfg, err := websocket.NewConfig(gatewayURL, gatewayURL)
-	if err != nil {
-		return err
-	}
-	cfg.Header = http.Header{}
-	cfg.Header.Set("Authorization", "QQBot "+token)
-	cfg.Header.Set("X-Union-Appid", a.appID())
-
-	conn, err := websocket.DialConfig(cfg)
+	conn, err := a.dialGateway(ctx, gatewayURL, token)
 	if err != nil {
 		return fmt.Errorf("dial gateway: %w", err)
 	}
@@ -353,6 +345,22 @@ func (a *adapter) connectGateway(ctx context.Context, token string) error {
 			return nil
 		}
 	}
+}
+
+// dialGateway dials the QQ gateway honoring ctx. The conn only becomes
+// trackable after the dial returns, so Stop can interrupt a stalled TCP dial
+// or WebSocket/TLS handshake only through ctx cancellation —
+// websocket.DialConfig would dial with context.Background() and leave Stop's
+// loopWG.Wait blocked with nothing to close.
+func (a *adapter) dialGateway(ctx context.Context, gatewayURL, token string) (*websocket.Conn, error) {
+	cfg, err := websocket.NewConfig(gatewayURL, gatewayURL)
+	if err != nil {
+		return nil, err
+	}
+	cfg.Header = http.Header{}
+	cfg.Header.Set("Authorization", "QQBot "+token)
+	cfg.Header.Set("X-Union-Appid", a.appID())
+	return cfg.DialContext(ctx)
 }
 
 // trackConn publishes the live gateway connection so Stop can close it and

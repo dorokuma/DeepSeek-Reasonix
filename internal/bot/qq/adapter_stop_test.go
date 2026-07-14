@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"io"
 	"log/slog"
+	"net"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -65,6 +66,76 @@ func TestStopClosesTrackedConnAndWaitsForLoop(t *testing.T) {
 	case <-decodeReturned:
 	case <-time.After(time.Second):
 		t.Fatal("Stop returned before the blocking gateway read exited")
+	}
+}
+
+// Guards the dial-phase Stop contract: until the dial returns, the conn is
+// not tracked and closeConn has nothing to close, so cancelling the adapter
+// context must abort a stalled TCP dial or WebSocket handshake. This locks in
+// cfg.DialContext(ctx) over websocket.DialConfig, which dials with
+// context.Background() and would leave Stop blocked on loopWG.Wait.
+func TestStopUnblocksStalledHandshakeDial(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer ln.Close()
+
+	accepted := make(chan net.Conn, 1)
+	go func() {
+		conn, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		accepted <- conn // hold the conn open, never answer the handshake
+	}()
+	defer func() {
+		select {
+		case conn := <-accepted:
+			conn.Close()
+		default:
+		}
+	}()
+
+	a := &adapter{logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	ctx, cancel := context.WithCancel(context.Background())
+	a.cancel = cancel
+	dialErr := make(chan error, 1)
+	a.loopWG.Add(1)
+	go func() {
+		defer a.loopWG.Done()
+		conn, err := a.dialGateway(ctx, "ws://"+ln.Addr().String(), "test-token")
+		if err == nil {
+			conn.Close()
+		}
+		dialErr <- err
+	}()
+
+	var srvConn net.Conn
+	select {
+	case srvConn = <-accepted:
+		defer srvConn.Close()
+	case <-time.After(time.Second):
+		t.Fatal("dial never reached the stalled server")
+	}
+
+	done := make(chan struct{})
+	go func() {
+		_ = a.Stop()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Stop blocked on a stalled gateway handshake")
+	}
+	select {
+	case err := <-dialErr:
+		if err == nil {
+			t.Fatal("stalled handshake dial unexpectedly succeeded")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("dial did not return after Stop cancelled the context")
 	}
 }
 
