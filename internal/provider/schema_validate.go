@@ -47,6 +47,11 @@ func ValidateToolSchema(raw json.RawMessage) error {
 	}
 
 	compiler := jsonschema.NewCompiler()
+	// The default loader resolves file:// refs from local disk. Externally
+	// supplied MCP schemas must never reach the filesystem or network, so
+	// drop the loader entirely: registered resources and the embedded
+	// metaschemas still resolve, every other URL fails compilation.
+	compiler.UseLoader(nil)
 	compiler.DefaultDraft(jsonschema.Draft7)
 	if err := compiler.AddResource(toolSchemaResource, doc); err != nil {
 		return fmt.Errorf("load schema: %w", err)

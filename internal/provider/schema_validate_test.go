@@ -2,6 +2,8 @@ package provider
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -55,6 +57,20 @@ func TestValidateToolSchemaRejectsNonObjectRootType(t *testing.T) {
 				t.Fatalf("error does not name the object requirement: %v", err)
 			}
 		})
+	}
+}
+
+func TestValidateToolSchemaRejectsFileRefsEvenWhenResolvable(t *testing.T) {
+	// A resolvable local file proves rejection comes from the disabled loader,
+	// not from the file happening to be missing or malformed.
+	path := filepath.Join(t.TempDir(), "args.json")
+	if err := os.WriteFile(path, []byte(`{"type":"string"}`), 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	fileURL := "file:///" + strings.TrimPrefix(filepath.ToSlash(path), "/")
+	raw := json.RawMessage(`{"type":"object","properties":{"x":{"$ref":"` + fileURL + `"}}}`)
+	if err := ValidateToolSchema(raw); err == nil {
+		t.Fatalf("ValidateToolSchema resolved local file ref %s", fileURL)
 	}
 }
 
