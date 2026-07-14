@@ -104,6 +104,50 @@ func BuildHeadlessApprovalGate(policy permission.Policy, mode string) *freshHuma
 	}
 }
 
+// SharedHeadlessGate is a mutable, concurrency-safe holder for the
+// non-interactive gate that every headless-only sub-agent surface shares —
+// `task`/`read_only_task`, writer-capable skill sub-agents, and the planner
+// runner. Those surfaces capture their gate once at construction with no
+// rebuild hook of their own, unlike the parent executor's gate (rebuilt in
+// place via Agent.SetGate on every SetToolApprovalMode/
+// ApplyHeadlessApprovalMode call). Every consumer holds this same pointer and
+// reads through Check, so a runtime approval-mode switch (interactive
+// Shift+Tab, or a headless --permission-mode passed at boot) only needs to
+// call Update here to keep sub-agents on the same contract as the parent
+// instead of silently pinning them to whatever mode was active when they were
+// first constructed.
+type SharedHeadlessGate struct {
+	mu     sync.RWMutex
+	policy permission.Policy
+	gate   *freshHumanHeadlessGate
+}
+
+// NewSharedHeadlessGate builds a shared gate holder from the base policy and
+// the initial approval mode (see BuildHeadlessApprovalGate for the mode
+// contract).
+func NewSharedHeadlessGate(policy permission.Policy, mode string) *SharedHeadlessGate {
+	g := &SharedHeadlessGate{policy: policy}
+	g.Update(mode)
+	return g
+}
+
+// Update rebuilds the held gate for a new approval mode. Safe to call
+// concurrently with Check (a turn may be mid-flight on another goroutine when
+// the user switches modes).
+func (g *SharedHeadlessGate) Update(mode string) {
+	next := BuildHeadlessApprovalGate(g.policy, mode)
+	g.mu.Lock()
+	g.gate = next
+	g.mu.Unlock()
+}
+
+func (g *SharedHeadlessGate) Check(ctx context.Context, toolName string, args json.RawMessage, readOnly bool) (bool, string, error) {
+	g.mu.RLock()
+	gate := g.gate
+	g.mu.RUnlock()
+	return gate.Check(ctx, toolName, args, readOnly)
+}
+
 type freshHumanHeadlessGate struct {
 	gate *permission.Gate
 }

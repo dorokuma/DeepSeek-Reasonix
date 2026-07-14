@@ -83,6 +83,10 @@ type Controller struct {
 	guardianPath string            // persisted guardian session file ("" when disabled)
 	sink         event.Sink
 	policy       permission.Policy
+	// subagentGate is the shared gate every headless-only sub-agent surface
+	// reads from (see Options.SubagentGate). Nil when the caller didn't build
+	// one — sub-agents then keep whatever gate they were constructed with.
+	subagentGate *SharedHeadlessGate
 
 	label        string
 	modelRef     string
@@ -348,11 +352,18 @@ type externalFolderToolRefs interface {
 // lets the controller mint and rotate session files; Host/Commands are surfaced
 // to frontends that resolve MCP prompts and slash commands.
 type Options struct {
-	Runner        agent.Runner
-	Executor      *agent.Agent
-	Guardian      *guardian.Session
-	Sink          event.Sink
-	Policy        permission.Policy
+	Runner   agent.Runner
+	Executor *agent.Agent
+	Guardian *guardian.Session
+	Sink     event.Sink
+	Policy   permission.Policy
+	// SubagentGate is the shared, mutable gate every headless-only sub-agent
+	// surface (task, writer-capable skill sub-agents, planner) reads from. Nil
+	// disables gating for those surfaces same as before this field existed.
+	// SetToolApprovalMode and ApplyHeadlessApprovalMode call Update on it so a
+	// runtime approval-mode switch reaches sub-agents, not just the parent
+	// executor's own gate.
+	SubagentGate  *SharedHeadlessGate
 	Label         string
 	ModelRef      string
 	SystemPrompt  string
@@ -462,6 +473,7 @@ func New(opts Options) *Controller {
 		guardianPath:                      guardian.PathFor(opts.SessionPath),
 		sink:                              sink,
 		policy:                            opts.Policy,
+		subagentGate:                      opts.SubagentGate,
 		label:                             opts.Label,
 		modelRef:                          opts.ModelRef,
 		systemPrompt:                      opts.SystemPrompt,
@@ -1968,6 +1980,9 @@ func rulesWithoutFreshHumanApproval(rules []permission.Rule) []permission.Rule {
 func (c *Controller) ApplyHeadlessApprovalMode(mode string) {
 	mode = normalizeToolApprovalMode(mode)
 	c.approval.setMode(mode)
+	if c.subagentGate != nil {
+		c.subagentGate.Update(mode)
+	}
 	if c.executor == nil {
 		return
 	}
@@ -4468,9 +4483,18 @@ func (c *Controller) Jobs() []jobs.View {
 }
 
 // SetToolApprovalMode changes the runtime approval posture for permission-gated
-// tools. It does not answer business asks or plan approval.
+// tools. It does not answer business asks or plan approval. Sub-agents (task,
+// writer-capable skill sub-agents, the planner) have no UI to prompt through,
+// so this also pushes the mode to the shared headless gate they read from —
+// without it, a mode switch (Shift+Tab) would only rebuild the parent
+// executor's gate and leave sub-agents pinned to whatever mode was active
+// when the session booted.
 func (c *Controller) SetToolApprovalMode(mode string) {
-	pending := c.approval.setMode(normalizeToolApprovalMode(mode))
+	mode = normalizeToolApprovalMode(mode)
+	pending := c.approval.setMode(mode)
+	if c.subagentGate != nil {
+		c.subagentGate.Update(mode)
+	}
 	c.refreshInteractiveGate()
 	for _, reply := range pending {
 		reply <- approvalReply{allow: true}

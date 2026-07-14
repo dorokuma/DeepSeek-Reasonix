@@ -1032,6 +1032,55 @@ model = "x"
 	}
 }
 
+// TestBuildInteractiveApprovalModeSwitchPropagatesToTaskSubagentGate pins the
+// interactive counterpart of TestBuildHeadlessApprovalModePropagatesToTaskSubagentGate:
+// boot.Build with no HeadlessApprovalMode — the interactive REPL's boot path,
+// which always starts a session at the default Ask posture and switches modes
+// later at runtime via Shift+Tab (Controller.SetToolApprovalMode) — followed
+// by a runtime switch to auto must also reach the task sub-agent's gate.
+// Before this fix, the sub-agent gate was captured once at boot with the
+// mode-unaware default (ask resolves to allow) and had no rebuild hook, so a
+// later SetToolApprovalMode(auto) call updated only the parent executor.
+func TestBuildInteractiveApprovalModeSwitchPropagatesToTaskSubagentGate(t *testing.T) {
+	isolateConfigHome(t)
+	dir := robustTempDir(t)
+	t.Chdir(dir)
+
+	registerHeadlessTaskWriteTestProvider()
+	prov := &headlessTaskWriteTestProvider{}
+	setHeadlessTaskWriteTestProvider(t, prov)
+	writeFile(t, dir, "reasonix.toml", `
+default_model = "test-model"
+
+[agent]
+system_prompt = "BASE"
+
+[permissions]
+mode = "ask"
+ask = ["write_file"]
+
+[[providers]]
+name = "test-model"
+kind = "boot-headless-write-test"
+model = "x"
+`)
+
+	ctrl, err := Build(context.Background(), Options{Sink: event.Discard})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	defer ctrl.Close()
+
+	ctrl.SetToolApprovalMode("auto")
+
+	if err := ctrl.Run(context.Background(), "use a task subagent to write a file"); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(dir, "sub.txt")); statErr == nil {
+		t.Fatal("auto (interactive mode switch): task sub-agent wrote sub.txt despite the explicit ask rule on write_file")
+	}
+}
+
 const headlessTaskWriteTestProviderKind = "boot-headless-write-test"
 
 var (

@@ -190,6 +190,63 @@ func TestBuildHeadlessApprovalGateMatchesParentExecutorContract(t *testing.T) {
 	}
 }
 
+// TestSetToolApprovalModePropagatesToSubagentGate pins the interactive
+// counterpart of the boot.Build sub-agent gate fix: a runtime mode switch
+// (Shift+Tab -> SetToolApprovalMode) must reach sub-agents too, not just
+// refreshInteractiveGate's parent executor gate. Before this fix, boot
+// captured the sub-agent gate once at construction (mode-unaware default:
+// ask resolves to allow) and SetToolApprovalMode never touched it, so a task
+// sub-agent stayed on the boot-time default even after the user switched to
+// auto. subagentGate here stands in for what a task/skill/planner sub-agent
+// actually reads (boot wires the same *SharedHeadlessGate into all of them).
+func TestSetToolApprovalModePropagatesToSubagentGate(t *testing.T) {
+	policy := permission.New("ask", nil, []string{"write_file"}, nil)
+	subagentGate := NewSharedHeadlessGate(policy, ToolApprovalAsk)
+	c := New(Options{Policy: policy, SubagentGate: subagentGate})
+
+	runSubagentWriteOnce := func(t *testing.T) []string {
+		t.Helper()
+		writer := &recordingWriter{}
+		reg := tool.NewRegistry()
+		reg.Add(writer)
+		prov := &scriptedTurns{turns: [][]provider.Chunk{
+			toolCallTurn("c1", "write_file", `{"path":"a.txt"}`),
+			textTurn("Done."),
+		}}
+		ag := agent.New(prov, reg, agent.NewSession(""), agent.Options{Gate: subagentGate}, event.Discard)
+		done := make(chan error, 1)
+		go func() { done <- ag.Run(context.Background(), "edit") }()
+		select {
+		case err := <-done:
+			if err != nil {
+				t.Fatalf("Run: %v", err)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatal("sub-agent gate must not block")
+		}
+		writer.mu.Lock()
+		defer writer.mu.Unlock()
+		return append([]string(nil), writer.paths...)
+	}
+
+	// Fresh sub-agent gate at the default Ask posture: no UI to prompt
+	// through, so the explicit ask rule resolves to allow — the existing,
+	// intentional headless contract for a never-switched session.
+	if got := runSubagentWriteOnce(t); len(got) != 1 || got[0] != "a.txt" {
+		t.Fatalf("ask (initial): executed writes = %v, want [a.txt]", got)
+	}
+
+	c.SetToolApprovalMode(ToolApprovalAuto)
+	if got := runSubagentWriteOnce(t); len(got) != 0 {
+		t.Fatalf("auto: executed writes = %v, want none (sub-agent gate must follow the mode switch and fail closed on the ask rule)", got)
+	}
+
+	c.SetToolApprovalMode(ToolApprovalYolo)
+	if got := runSubagentWriteOnce(t); len(got) != 1 || got[0] != "a.txt" {
+		t.Fatalf("yolo: executed writes = %v, want [a.txt] (bypass runs even explicit ask rules)", got)
+	}
+}
+
 // TestInteractiveGateIgnoresSessionAllowForFreshHumanTools guards the memory
 // contract: --allowed-tools (SessionAllow) must never satisfy a tool that
 // requires fresh human approval every call, even though SessionAllow outranks Ask

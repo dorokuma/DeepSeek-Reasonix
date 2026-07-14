@@ -616,7 +616,7 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	// inherit this same gate.
 	policy := permission.New(cfg.Permissions.Mode, cfg.Permissions.Allow, cfg.Permissions.Ask, cfg.Permissions.Deny).
 		WithSessionAllow(opts.PermissionAllow)
-	headlessGate := control.BuildHeadlessApprovalGate(policy, opts.HeadlessApprovalMode)
+	headlessGate := control.NewSharedHeadlessGate(policy, opts.HeadlessApprovalMode)
 
 	// Hooks: load the global settings.json plus the project's (only when trusted —
 	// project hooks run arbitrary shell commands, so cloning a repo must not
@@ -1284,6 +1284,7 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 		Executor:               executor,
 		Sink:                   sink,
 		Policy:                 policy,
+		SubagentGate:           headlessGate,
 		Label:                  label,
 		ModelRef:               modelRef,
 		SystemPrompt:           sysPrompt,
