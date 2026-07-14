@@ -51,9 +51,7 @@ func RebuildDerivedState(target string) ([]string, error) {
 		}
 	}
 	if len(tx.Changes) > 0 {
-		if err := appendRepairLog(tx); err != nil {
-			return applied, err
-		}
+		appendRepairLogBestEffort(tx)
 	}
 	return applied, nil
 }

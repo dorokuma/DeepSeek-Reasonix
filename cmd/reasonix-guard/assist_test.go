@@ -14,6 +14,7 @@ import (
 // quote config lines, MCP command lines, permission rules, URLs with
 // credentials, emails, tokens, or absolute paths.
 func TestProviderSafeReportDropsUserControlledContent(t *testing.T) {
+	const metadataSecret = "snapshot-metadata-secret"
 	secrets := []string{
 		"/Users/someone/dotfiles",
 		"someone@example.com",
@@ -22,13 +23,19 @@ func TestProviderSafeReportDropsUserControlledContent(t *testing.T) {
 		"bash(rm -rf *)",
 		"corp-internal-llm",
 		"https://user:pass@proxy.internal:8080",
+		metadataSecret,
+		"secret.finding.code",
+		"secret-severity",
 	}
 	report := repair.DiagnosticReport{
-		Root:    "/Users/someone/dotfiles",
-		Network: true,
+		GeneratedAt: metadataSecret,
+		Root:        "/Users/someone/dotfiles",
+		Network:     true,
 		Snapshots: []repair.DiagnosticSnapshot{
-			{ID: "20260715T000000.000000000Z-abcdef123456", RecordedAt: "2026-07-15T00:00:00Z", Version: "v1"},
+			{ID: "20260715T000000.000000000Z-abcdef123456", RecordedAt: metadataSecret, Version: metadataSecret},
+			{ID: metadataSecret, RecordedAt: metadataSecret, Version: metadataSecret},
 		},
+		PendingUpdate: &repair.DiagnosticUpdate{FromVersion: metadataSecret, ToVersion: metadataSecret},
 		Findings: []repair.DiagnosticFinding{
 			{Severity: "error", Code: "config.invalid_toml", Scope: "global",
 				Message: "Configuration cannot be parsed: line 3: api_key = \"sk-live-Abc123Secret\" contact someone@example.com"},
@@ -42,6 +49,8 @@ func TestProviderSafeReportDropsUserControlledContent(t *testing.T) {
 				Message: "The configured API key is missing."},
 			{Severity: "warning", Code: "derived.invalid_json", Scope: "derived:tabs",
 				Message: "Derived desktop state desktop-tabs.json is malformed."},
+			{Severity: "secret-severity", Code: "secret.finding.code", Scope: metadataSecret,
+				Message: metadataSecret, Remediation: metadataSecret},
 		},
 	}
 
@@ -62,9 +71,33 @@ func TestProviderSafeReportDropsUserControlledContent(t *testing.T) {
 		`"scope":"plugin"`,
 		`"scope":"derived:tabs"`,
 		`"id":"20260715T000000.000000000Z-abcdef123456"`,
+		`"pendingUpdate":true`,
+		`"severity":"unknown"`,
+		`"code":"unknown"`,
+		`"scope":"other"`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("outbound payload missing %s:\n%s", want, body)
+		}
+	}
+	for _, forbiddenField := range []string{"generatedAt", "recordedAt", "version", "fromVersion", "toVersion"} {
+		if strings.Contains(body, `"`+forbiddenField+`"`) {
+			t.Fatalf("outbound payload retained free-form field %q:\n%s", forbiddenField, body)
+		}
+	}
+}
+
+func TestProviderSafeSnapshotID(t *testing.T) {
+	cases := map[string]bool{
+		"20260715T000000.000000000Z-abcdef123456": true,
+		"20260229T000000.000000000Z-abcdef123456": false,
+		"20260715T000000.000000000Z-ABCDEF123456": false,
+		"20260715T000000.000000000Z-abcdef12345g": false,
+		"someone@example.com":                     false,
+	}
+	for id, want := range cases {
+		if got := providerSafeSnapshotID(id); got != want {
+			t.Errorf("providerSafeSnapshotID(%q) = %v, want %v", id, got, want)
 		}
 	}
 }

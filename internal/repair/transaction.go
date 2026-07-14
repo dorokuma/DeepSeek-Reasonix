@@ -63,14 +63,15 @@ func saveRepairTransaction(tx *RepairTransaction) error {
 	if err := persistRepairTransaction(tx); err != nil {
 		return err
 	}
-	// The append-only audit log is best-effort: last-repair.json above is the
-	// durable undo state and is already committed once persisted. Failing the
-	// save here would make callers roll back an operation that is live on
-	// disk — snapshot restore would consume the backup its just-persisted
-	// transaction still points to, wedging UndoLastRepair, and undo itself
-	// would report failure after completing.
-	_ = appendRepairLog(tx)
+	appendRepairLogBestEffort(tx)
 	return nil
+}
+
+// The append-only audit log is best-effort. last-repair.json is the durable
+// undo state, so an audit failure must not turn an already committed filesystem
+// change into a reported failure or trigger cleanup that consumes its backup.
+func appendRepairLogBestEffort(tx *RepairTransaction) {
+	_ = appendRepairLog(tx)
 }
 
 func persistRepairTransaction(tx *RepairTransaction) error {

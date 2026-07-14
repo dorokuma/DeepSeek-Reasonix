@@ -127,6 +127,29 @@ func TestUndoRepairRestoresQuarantinedConfig(t *testing.T) {
 	}
 }
 
+func TestConfigRepairCommitsWhenAuditLogFails(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("REASONIX_HOME", home)
+	path := config.UserConfigPath()
+	bad := []byte("[broken\n")
+	if err := os.WriteFile(path, bad, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(repairLogPath(), 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := InspectAndRepairConfig(ConfigOptions{Root: t.TempDir(), Apply: true}); err != nil {
+		t.Fatalf("repair must commit despite a failing audit log: %v", err)
+	}
+	if _, err := UndoLastRepair(); err != nil {
+		t.Fatalf("undo after audit-log failure: %v", err)
+	}
+	if got, err := os.ReadFile(path); err != nil || string(got) != string(bad) {
+		t.Fatalf("undone config = %q (%v), want %q", got, err, bad)
+	}
+}
+
 func TestUndoRejectsTamperedRepairTarget(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("REASONIX_HOME", home)

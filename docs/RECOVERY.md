@@ -38,12 +38,14 @@ deleted. Project `reasonix.toml` is only quarantined when `--project` is given.
 
 Guard retains the five newest healthy global-config snapshots. Each snapshot has
 a SHA-256 digest and must pass both hash and TOML validation before restore.
-Every applied configuration or derived-state repair is recorded in
-`repair-log.jsonl`; `undo` restores the files
-moved aside by the latest repair while retaining the repaired copy as a redo
-candidate. A multi-action `apply-plan` run is recorded as one transaction, so a
-single `undo` reverts the whole plan (or the applied prefix when a plan failed
-partway); an interrupted undo resumes from where it stopped.
+Every applied configuration or derived-state repair is persisted in
+`last-repair.json` for undo and appended to `repair-log.jsonl` on a best-effort
+basis. An audit-log failure never invalidates an otherwise durable repair.
+`undo` restores the files moved aside by the latest repair while retaining the
+repaired copy as a redo candidate. A multi-action `apply-plan` run is recorded
+as one transaction, so a single `undo` reverts the whole plan (or the applied
+prefix when a plan failed partway); an interrupted undo resumes from where it
+stopped.
 
 `diagnose` adds offline semantic checks for model references, provider and MCP
 URLs, credentials, proxy structure, MCP commands, permission conflicts, file

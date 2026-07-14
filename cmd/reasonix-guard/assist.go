@@ -200,6 +200,7 @@ func loadAIProviderConfig(root string) (*config.Config, error) {
 const repairPlanSystemPrompt = `You are a Reasonix recovery planner. Return JSON only, matching exactly:
 {"schemaVersion":1,"summary":"...","actions":[{"type":"...","scope":"","snapshotId":"","target":"","reason":"..."}]}
 The user message is a diagnostic report whose findings carry only a severity, a machine code (e.g. config.invalid_toml, derived.invalid_json, update related codes), and a generic scope; pick actions from those codes.
+Snapshots are ordered newest first; pendingUpdate=true means rollback_update is available.
 Allowed actions only (return an empty actions array when no safe action applies):
 - repair_config with scope global or project
 - restore_snapshot with snapshotId
@@ -208,19 +209,21 @@ Allowed actions only (return an empty actions array when no safe action applies)
 Never request shell commands, credential changes, session-content edits, arbitrary paths, plugin execution, or source-code changes. Prefer the smallest reversible plan supported by the diagnostics. Do not invent snapshot IDs.`
 
 // providerSafeReport is the strict allowlist DTO sent to the AI provider.
-// It deliberately carries no free-form diagnostic strings: finding messages
-// and remediations embed user-controlled content (TOML parse errors quote
-// config lines, URL errors echo the full URL including credentials, MCP
-// findings quote the command line, permission findings quote rules), and
-// raw scopes can name providers and plugins. Only closed-vocabulary fields
-// ever leave the machine — the plan codes below are all the model needs.
+// It deliberately carries no free-form diagnostic strings or state metadata:
+// finding messages can quote config lines, URLs, commands, and permission
+// rules, while snapshot and update metadata can be edited on disk. Only fixed
+// diagnostic vocabulary, booleans, and generated snapshot IDs leave the
+// machine.
 type providerSafeReport struct {
-	GeneratedAt   string                      `json:"generatedAt"`
-	Root          string                      `json:"root"`
-	Network       bool                        `json:"network"`
-	Snapshots     []repair.DiagnosticSnapshot `json:"snapshots"`
-	PendingUpdate *repair.DiagnosticUpdate    `json:"pendingUpdate,omitempty"`
-	Findings      []providerSafeFinding       `json:"findings"`
+	Root          string                 `json:"root"`
+	Network       bool                   `json:"network"`
+	Snapshots     []providerSafeSnapshot `json:"snapshots"`
+	PendingUpdate bool                   `json:"pendingUpdate"`
+	Findings      []providerSafeFinding  `json:"findings"`
+}
+
+type providerSafeSnapshot struct {
+	ID string `json:"id"`
 }
 
 type providerSafeFinding struct {
@@ -231,21 +234,71 @@ type providerSafeFinding struct {
 
 func providerSafeReportFrom(report repair.DiagnosticReport) providerSafeReport {
 	safe := providerSafeReport{
-		GeneratedAt:   report.GeneratedAt,
 		Root:          "<project>",
 		Network:       report.Network,
-		Snapshots:     report.Snapshots,
-		PendingUpdate: report.PendingUpdate,
+		Snapshots:     make([]providerSafeSnapshot, 0, len(report.Snapshots)),
+		PendingUpdate: report.PendingUpdate != nil,
 		Findings:      make([]providerSafeFinding, 0, len(report.Findings)),
+	}
+	for _, snapshot := range report.Snapshots {
+		if providerSafeSnapshotID(snapshot.ID) {
+			safe.Snapshots = append(safe.Snapshots, providerSafeSnapshot{ID: snapshot.ID})
+		}
 	}
 	for _, finding := range report.Findings {
 		safe.Findings = append(safe.Findings, providerSafeFinding{
-			Severity: finding.Severity,
-			Code:     finding.Code,
+			Severity: providerSafeSeverity(finding.Severity),
+			Code:     providerSafeDiagnosticCode(finding.Code),
 			Scope:    providerSafeScope(finding.Scope),
 		})
 	}
 	return safe
+}
+
+func providerSafeSnapshotID(id string) bool {
+	const timestampLayout = "20060102T150405.000000000Z"
+	const hashLength = 12
+	if len(id) != len(timestampLayout)+1+hashLength || id[len(timestampLayout)] != '-' {
+		return false
+	}
+	if _, err := time.Parse(timestampLayout, id[:len(timestampLayout)]); err != nil {
+		return false
+	}
+	for _, ch := range id[len(timestampLayout)+1:] {
+		if !('0' <= ch && ch <= '9') && !('a' <= ch && ch <= 'f') {
+			return false
+		}
+	}
+	return true
+}
+
+func providerSafeSeverity(severity string) string {
+	switch severity {
+	case "error", "warning", "info":
+		return severity
+	default:
+		return "unknown"
+	}
+}
+
+func providerSafeDiagnosticCode(code string) string {
+	switch code {
+	case "config.invalid_toml", "config.load_failed",
+		"provider.missing_name", "provider.duplicate_name", "provider.unsupported_kind",
+		"provider.no_models", "provider.invalid_url", "provider.invalid_models_url",
+		"provider.invalid_key_name", "provider.missing_key",
+		"model.no_default", "model.invalid_default",
+		"plugin.missing_name", "plugin.duplicate_name", "plugin.missing_command",
+		"plugin.command_missing", "plugin.invalid_url", "plugin.invalid_type",
+		"permissions.conflict", "file.permissions",
+		"directory.unavailable", "directory.unreadable", "directory.not_directory", "directory.not_writable",
+		"derived.invalid_json",
+		"network.invalid_proxy", "network.client_failed", "network.unreachable",
+		"network.authentication_failed", "network.ok", "network.unexpected_status":
+		return code
+	default:
+		return "unknown"
+	}
 }
 
 // providerSafeScope generalizes a finding scope to a closed vocabulary.
