@@ -198,6 +198,123 @@ func TestComposerSelectionDoesNotTurnCommandShortcutIntoText(t *testing.T) {
 	}
 }
 
+func TestComposerCtrlVKeepsSelectionUntilClipboardArrives(t *testing.T) {
+	m := newComposerMouseTestTUI(t, 40, 12)
+	m.input.SetValue("alpha beta")
+	x, y, _ := m.composerOrigin()
+	m = updateComposerMouseTestTUI(t, m, tea.MouseClickMsg{X: x + 6, Y: y, Button: tea.MouseLeft})
+	m = updateComposerMouseTestTUI(t, m, tea.MouseMotionMsg{X: x + 10, Y: y, Button: tea.MouseLeft})
+	m = updateComposerMouseTestTUI(t, m, tea.MouseReleaseMsg{X: x + 10, Y: y, Button: tea.MouseLeft})
+
+	// The shortcut resolves the clipboard asynchronously, so the selection
+	// must survive the key press for the result to replace it.
+	next, cmd := m.Update(tea.KeyPressMsg{Code: 'v', Mod: tea.ModCtrl})
+	m = next.(chatTUI)
+	if cmd == nil {
+		t.Fatal("Ctrl+V should issue an async clipboard read")
+	}
+	if got := m.selectedComposerText(); got != "beta" {
+		t.Fatalf("Ctrl+V should keep the selection until the clipboard arrives, got %q", got)
+	}
+
+	m = updateComposerMouseTestTUI(t, m, clipboardPasteMsg{text: "gamma"})
+	if got := m.input.Value(); got != "alpha gamma" {
+		t.Fatalf("clipboard paste over selection produced %q, want %q", got, "alpha gamma")
+	}
+	if m.validComposerSelection() && !m.composerSel.empty() {
+		t.Fatal("clipboard paste should consume the selection")
+	}
+}
+
+func TestComposerArrowKeysCollapseSelection(t *testing.T) {
+	m := newComposerMouseTestTUI(t, 40, 12)
+	m.input.SetValue("alpha beta")
+	x, y, _ := m.composerOrigin()
+	drag := func(m chatTUI, from, to int) chatTUI {
+		m = updateComposerMouseTestTUI(t, m, tea.MouseClickMsg{X: x + from, Y: y, Button: tea.MouseLeft})
+		m = updateComposerMouseTestTUI(t, m, tea.MouseMotionMsg{X: x + to, Y: y, Button: tea.MouseLeft})
+		return updateComposerMouseTestTUI(t, m, tea.MouseReleaseMsg{X: x + to, Y: y, Button: tea.MouseLeft})
+	}
+
+	// Left/Right collapse to the ordered selection start/end without moving
+	// an extra character, for forward and backward drags alike.
+	m = drag(m, 6, 10)
+	m = updateComposerMouseTestTUI(t, m, tea.KeyPressMsg{Code: tea.KeyLeft})
+	if m.composerSel.active {
+		t.Fatal("Left should dismiss the selection")
+	}
+	if got := m.input.Column(); got != 6 {
+		t.Fatalf("Left collapsed cursor to column %d, want 6 (selection start)", got)
+	}
+
+	m = drag(m, 6, 10)
+	m = updateComposerMouseTestTUI(t, m, tea.KeyPressMsg{Code: tea.KeyRight})
+	if got := m.input.Column(); got != 10 {
+		t.Fatalf("Right collapsed cursor to column %d, want 10 (selection end)", got)
+	}
+
+	m = drag(m, 10, 6)
+	m = updateComposerMouseTestTUI(t, m, tea.KeyPressMsg{Code: tea.KeyLeft})
+	if got := m.input.Column(); got != 6 {
+		t.Fatalf("Left after backward drag collapsed to column %d, want 6", got)
+	}
+
+	m = drag(m, 10, 6)
+	m = updateComposerMouseTestTUI(t, m, tea.KeyPressMsg{Code: tea.KeyRight})
+	if got := m.input.Column(); got != 10 {
+		t.Fatalf("Right after backward drag collapsed to column %d, want 10", got)
+	}
+
+	if got := m.input.Value(); got != "alpha beta" {
+		t.Fatalf("arrow keys changed composer value to %q", got)
+	}
+}
+
+func TestComposerNewlineSelectionHighlightsTrailingSpace(t *testing.T) {
+	m := newComposerMouseTestTUI(t, 40, 12)
+	m.input.SetValue("abc\ndef")
+
+	// Selecting only the newline must highlight the caret space after the
+	// line, not the preceding character.
+	m.composerSel = composerSelection{active: true, anchor: 3, head: 4, value: m.input.Value()}
+	highlighted := m.renderComposerInput()
+	if strings.Contains(highlighted, selStyle.Render("c")) {
+		t.Fatalf("newline-only selection must not highlight the previous character: %q", highlighted)
+	}
+	if !strings.Contains(highlighted, "abc"+selStyle.Render(" ")) {
+		t.Fatalf("newline-only selection should highlight the trailing caret space: %q", highlighted)
+	}
+
+	// A selection covering content plus the newline extends one cell past it.
+	m.composerSel = composerSelection{active: true, anchor: 2, head: 4, value: m.input.Value()}
+	highlighted = m.renderComposerInput()
+	if !strings.Contains(highlighted, selStyle.Render("c ")) {
+		t.Fatalf("selecting the last char plus newline should highlight both cells: %q", highlighted)
+	}
+}
+
+func TestClipboardPasteOverWideSelectionRequestsClearScreen(t *testing.T) {
+	prev := clearWideInputChanges
+	clearWideInputChanges = true
+	defer func() { clearWideInputChanges = prev }()
+
+	m := newComposerMouseTestTUI(t, 40, 12)
+	m.input.SetValue("你好abc")
+	x, y, _ := m.composerOrigin()
+	m = updateComposerMouseTestTUI(t, m, tea.MouseClickMsg{X: x, Y: y, Button: tea.MouseLeft})
+	m = updateComposerMouseTestTUI(t, m, tea.MouseMotionMsg{X: x + 4, Y: y, Button: tea.MouseLeft})
+	m = updateComposerMouseTestTUI(t, m, tea.MouseReleaseMsg{X: x + 4, Y: y, Button: tea.MouseLeft})
+
+	next, cmd := m.Update(clipboardPasteMsg{text: "hi"})
+	m = next.(chatTUI)
+	if got := m.input.Value(); got != "hiabc" {
+		t.Fatalf("clipboard paste over wide selection produced %q, want %q", got, "hiabc")
+	}
+	if cmd == nil {
+		t.Fatal("replacing a wide selection should request a full redraw")
+	}
+}
+
 func TestFailedImagePastePreservesComposerSelection(t *testing.T) {
 	m := newComposerMouseTestTUI(t, 40, 12)
 	m.input.SetValue("keep this")

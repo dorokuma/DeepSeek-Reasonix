@@ -965,51 +965,71 @@ func (m chatTUI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.state != tuiRunning && m.attachPastedImages(msg.Content) {
 			return m, finalize(m, cmds)
 		}
+		pasteBefore := m.input.Value()
+		if m.validComposerSelection() && !m.composerSel.empty() {
+			inputBeforeSelection = pasteBefore
+			m.deleteComposerSelection()
+		}
 		if ref, ok := pastedFileRef(msg.Content); ok {
-			if m.validComposerSelection() && !m.composerSel.empty() {
-				inputBeforeSelection = m.input.Value()
-				m.deleteComposerSelection()
-			}
 			m.input.InsertString(ref + " ")
 			m.growInputToFit()
 			m.updateCompletion()
+			if shouldClearWideInputChange(pasteBefore, m.input.Value()) {
+				cmds = append(cmds, tea.ClearScreen)
+			}
 			return m, finalize(m, cmds)
-		}
-		if m.validComposerSelection() && !m.composerSel.empty() {
-			inputBeforeSelection = m.input.Value()
-			m.deleteComposerSelection()
 		}
 		if !m.chooserTyping() && m.pendingApproval == nil && m.rewind == nil && m.resumePick == nil && m.mcp == nil && m.clearConfirm == nil && m.mcpImport == nil && m.skillPick == nil && m.shouldFoldPaste(msg.Content) {
 			m.insertFoldedPaste(msg.Content)
 			m.growInputToFit()
 			m.updateCompletion()
+			if shouldClearWideInputChange(pasteBefore, m.input.Value()) {
+				cmds = append(cmds, tea.ClearScreen)
+			}
 			return m, finalize(m, cmds)
 		}
 
 	case tea.KeyPressMsg:
 		// Any keystroke dismisses a finished selection (copy is a right-click),
-		// except Ctrl+C/Super+C/Meta+C which may copy the selection to clipboard.
+		// with a few exceptions: Ctrl/Super/Meta+C copies the selection, the
+		// paste shortcuts keep it so the async clipboard result can replace
+		// it, and Left/Right collapse it to its ordered start/end.
 		sel := m.sel
 		m.sel = selection{}
 		if m.validComposerSelection() && !m.composerSel.empty() {
-			if msg.String() == "ctrl+c" || msg.String() == "super+c" || msg.String() == "meta+c" {
+			switch msg.String() {
+			case "ctrl+c", "super+c", "meta+c":
 				cmds = append(cmds, m.copySelectionWithNotice(m.selectedComposerText()))
 				return m, finalize(m, cmds)
-			}
-			inputBeforeSelection = m.input.Value()
-			if composerSelectionDeletes(msg, m.input.KeyMap) {
-				m.deleteComposerSelection()
-				m.growInputToFit()
-				m.updateCompletion()
-				if shouldClearWideInputChange(inputBeforeSelection, m.input.Value()) {
-					cmds = append(cmds, tea.ClearScreen)
-				}
-				return m, finalize(m, cmds)
-			}
-			if composerSelectionReplaces(msg, m.input.KeyMap) {
-				m.deleteComposerSelection()
-			} else {
+			case "ctrl+v", "ctrl+shift+v", "super+v", "meta+v":
+				// Handled by the shortcut switch below; the clipboardPasteMsg
+				// result replaces the still-active selection.
+			case "left":
+				start, _ := m.composerSel.ordered()
 				m.composerSel = composerSelection{}
+				m.setComposerCursor(start)
+				return m, finalize(m, cmds)
+			case "right":
+				_, end := m.composerSel.ordered()
+				m.composerSel = composerSelection{}
+				m.setComposerCursor(end)
+				return m, finalize(m, cmds)
+			default:
+				inputBeforeSelection = m.input.Value()
+				if composerSelectionDeletes(msg, m.input.KeyMap) {
+					m.deleteComposerSelection()
+					m.growInputToFit()
+					m.updateCompletion()
+					if shouldClearWideInputChange(inputBeforeSelection, m.input.Value()) {
+						cmds = append(cmds, tea.ClearScreen)
+					}
+					return m, finalize(m, cmds)
+				}
+				if composerSelectionReplaces(msg, m.input.KeyMap) {
+					m.deleteComposerSelection()
+				} else {
+					m.composerSel = composerSelection{}
+				}
 			}
 		}
 		// Transcript scroll keys work in any state (PgUp/PgDn are never text).
@@ -1569,23 +1589,20 @@ func (m chatTUI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.attachPastedImages(msg.text) {
 				return m, finalize(m, cmds)
 			}
+			before := m.input.Value()
+			m.deleteComposerSelection()
 			if ref, ok := pastedFileRef(msg.text); ok {
-				if m.validComposerSelection() && !m.composerSel.empty() {
-					inputBeforeSelection = m.input.Value()
-					m.deleteComposerSelection()
-				}
 				m.input.InsertString(ref + " ")
 			} else if m.shouldFoldPaste(msg.text) {
 				m.insertFoldedPaste(msg.text)
 			} else {
-				if m.validComposerSelection() && !m.composerSel.empty() {
-					inputBeforeSelection = m.input.Value()
-					m.deleteComposerSelection()
-				}
 				m.input.InsertString(msg.text)
 			}
 			m.growInputToFit()
 			m.updateCompletion()
+			if shouldClearWideInputChange(before, m.input.Value()) {
+				cmds = append(cmds, tea.ClearScreen)
+			}
 			return m, finalize(m, cmds)
 		}
 

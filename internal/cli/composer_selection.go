@@ -373,13 +373,15 @@ func composerRowSelectionSpan(row composerVisualRow, start, end int) (lo, hi int
 		}
 		visualCol = cluster.endVisualCol
 	}
-	// Make an explicitly selected newline visible, including on blank lines.
+	// Make an explicitly selected newline visible, including on blank lines:
+	// it occupies the textarea's trailing caret space, one cell past the row
+	// content (after the loop visualCol is the row's full content width).
 	if end > row.logicalEnd && start <= row.logicalEnd && row.endOffset == row.logicalEnd {
 		if !ok {
-			lo = max(0, visualCol-1) // the textarea's trailing caret space
+			lo = visualCol
 			ok = true
 		}
-		hi = max(hi, lo+1)
+		hi = max(hi, visualCol+1)
 	}
 	return lo, hi, ok
 }
