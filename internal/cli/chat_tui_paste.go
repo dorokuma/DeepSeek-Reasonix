@@ -347,28 +347,21 @@ func hasUnescapedPathWhitespace(s string) bool {
 	return false
 }
 
+// unescapeShellPath applies POSIX backslash semantics to an unquoted pasted
+// path: a backslash makes the next byte literal, whatever it is — zsh and
+// bash escape any byte they consider special that way (space, parens, ^,
+// comma, $, ...), so a whitelist would always lag behind. A trailing
+// backslash stays literal. Quoted paths and Windows paths never reach here.
 func unescapeShellPath(s string) string {
 	var b strings.Builder
 	b.Grow(len(s))
 	for i := 0; i < len(s); i++ {
-		ch := s[i]
-		if ch == '\\' && i+1 < len(s) && shellEscapedPathByte(s[i+1]) {
-			b.WriteByte(s[i+1])
+		if s[i] == '\\' && i+1 < len(s) {
 			i++
-			continue
 		}
-		b.WriteByte(ch)
+		b.WriteByte(s[i])
 	}
 	return b.String()
-}
-
-func shellEscapedPathByte(ch byte) bool {
-	switch ch {
-	case ' ', '\t', '\r', '\n', '\\', '\'', '"', '(', ')', '[', ']', '{', '}', '&', ';', '!', '$', '`', '*', '?', '|', '<', '>', '#':
-		return true
-	default:
-		return false
-	}
 }
 
 // pastedFileRef turns a dragged/pasted non-image file path into an @reference so

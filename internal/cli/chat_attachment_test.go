@@ -180,7 +180,7 @@ func TestPasteShellEscapedImagePathInsertsImageToken(t *testing.T) {
 func TestPasteShellEscapedImagePathWithoutWhitespaceInsertsImageToken(t *testing.T) {
 	root := t.TempDir()
 	t.Chdir(root)
-	path := filepath.Join(root, "capture(1).png")
+	path := filepath.Join(root, "capture^(1),x.png")
 	raw, err := base64.StdEncoding.DecodeString(tinyPNGBase64)
 	if err != nil {
 		t.Fatal(err)
@@ -188,7 +188,7 @@ func TestPasteShellEscapedImagePathWithoutWhitespaceInsertsImageToken(t *testing
 	if err := os.WriteFile(path, raw, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	escaped := strings.NewReplacer("(", `\(`, ")", `\)`).Replace(path)
+	escaped := strings.NewReplacer("(", `\(`, ")", `\)`, "^", `\^`, ",", `\,`).Replace(path)
 
 	m := newTestChatTUI()
 	next, _ := m.Update(tea.PasteMsg{Content: escaped})
@@ -250,6 +250,20 @@ func TestPastedImagePathShellUnescape(t *testing.T) {
 			src:  `/tmp/first\ image.png`,
 			goos: "linux",
 			want: "/tmp/first image.png",
+			ok:   true,
+		},
+		{
+			name: "posix escaped caret and comma",
+			src:  `/tmp/capture\^1\,a.png`,
+			goos: "linux",
+			want: "/tmp/capture^1,a.png",
+			ok:   true,
+		},
+		{
+			name: "posix escaped literal backslash",
+			src:  `/tmp/a\\b.png`,
+			goos: "linux",
+			want: `/tmp/a\b.png`,
 			ok:   true,
 		},
 		{
