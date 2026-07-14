@@ -19,13 +19,21 @@ import (
 const DefaultTaskSystemPrompt = `You are a sub-agent invoked by a parent coding agent to carry out one focused task.
 Use the provided tools to investigate or act. Return a single final answer that is concise
 and self-contained — the parent will see only that answer, not your tool calls or reasoning.
-If you need to ask for clarification, fail with a precise question instead of guessing.`
+If you need to ask for clarification, fail with a precise question instead of guessing.
+You do NOT have spawn_agent, wait_agent, or any multi-agent tools. You cannot create sub-agents.
+Complete the task yourself using the tools you have. Never attempt to delegate to other agents.`
 
-// Meta tools children must not inherit (Codex still allows spawn_agent on children).
+// Meta tools children must not inherit — these allow spawning or managing agents.
 var subagentMetaTools = []string{
 	"run_skill",
 	"install_skill",
 	"install_source",
+	"spawn_agent",
+	"wait_agent",
+	"list_agents",
+	"send_message",
+	"followup_task",
+	"interrupt_agent",
 }
 
 // SubagentMetaTools returns the tool names that spawned agents should not inherit

@@ -39,7 +39,7 @@ func (spawnAgent) ReadOnly() bool   { return false }
 func (spawnAgent) Concurrent() bool { return true }
 
 func (spawnAgent) Description() string {
-	return `spawn_agent is your ONLY way to get anything done. You have NO other tools — no file access, no shell, no search. Every single task, no matter how small, MUST be delegated to a sub-agent through this tool. There are no exceptions. Saying "I cannot" or "I don't know how" is not allowed — you delegate. Incoming request → break it down → spawn immediately. Do not explain first, do not confirm first, just spawn.
+	return `Delegate a task to a background sub-agent. Available only to the top-level agent — sub-agents do not have this tool and cannot create further agents.
 
 A sub-agent has full access to all tools (read, write, shell, search, LSP, MCP plugins). You give it a self-contained message and it does the work. After spawning, use wait_agent to collect results.
 
