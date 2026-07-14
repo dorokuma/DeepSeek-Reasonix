@@ -191,10 +191,12 @@ func TestFlushPendingCrashDevGuard(t *testing.T) {
 }
 
 func TestFlushPendingCrashRetainsInSafeMode(t *testing.T) {
-	t.Setenv("REASONIX_HOME", t.TempDir())
 	t.Setenv("REASONIX_SAFE_MODE", "1")
 	oldVersion := version
-	t.Cleanup(func() { version = oldVersion })
+	t.Cleanup(func() {
+		version = oldVersion
+		os.Remove(pendingCrashPath())
+	})
 	version = "v9.9.9"
 
 	writePendingCrash("safe", "boom", []byte("stack"))
