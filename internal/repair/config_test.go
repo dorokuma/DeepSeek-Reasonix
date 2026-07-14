@@ -327,3 +327,48 @@ func TestRestoreConfigSnapshotCrossDeviceCleanupRestoresSymlink(t *testing.T) {
 		t.Fatalf("dotfiles content = %q, must be untouched", got)
 	}
 }
+
+// TestRestoreConfigSnapshotCommitsWhenAuditLogFails pins the commit boundary:
+// last-repair.json is the durable undo state; the append-only audit log is
+// best-effort. A failing audit append must not roll the restore back — that
+// would consume the backup the just-persisted transaction points to, wedging
+// every later UndoLastRepair — and undo itself must still succeed while the
+// log stays unwritable.
+func TestRestoreConfigSnapshotCommitsWhenAuditLogFails(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("REASONIX_HOME", home)
+	dest := config.UserConfigPath()
+	original := []byte("default_model = \"original\"\n")
+	if err := os.WriteFile(dest, original, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := RecordHealthyConfig("v1"); err != nil {
+		t.Fatal(err)
+	}
+	snapshots, err := ListConfigSnapshots()
+	if err != nil || len(snapshots) != 1 {
+		t.Fatalf("snapshots = %+v, err = %v", snapshots, err)
+	}
+	current := []byte("default_model = \"current\"\n")
+	if err := os.WriteFile(dest, current, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// Wedge the append-only audit log: a directory squatting on its path makes
+	// appendRepairLog fail while last-repair.json still persists fine.
+	if err := os.MkdirAll(repairLogPath(), 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := RestoreConfigSnapshot(snapshots[0].ID); err != nil {
+		t.Fatalf("restore must commit despite a failing audit log: %v", err)
+	}
+	if got, _ := os.ReadFile(dest); string(got) != string(original) {
+		t.Fatalf("restored config = %q, want %q", got, original)
+	}
+	if _, err := UndoLastRepair(); err != nil {
+		t.Fatalf("undo after audit-log failure: %v", err)
+	}
+	if got, _ := os.ReadFile(dest); string(got) != string(current) {
+		t.Fatalf("undone config = %q, want %q", got, current)
+	}
+}
