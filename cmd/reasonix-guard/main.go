@@ -242,6 +242,10 @@ func runLaunch(args []string) int {
 	// previous release unit immediately instead of waiting for a crash loop.
 	if result, failure, err := repair.RecoverFailedInstall(); err != nil {
 		fmt.Fprintln(os.Stderr, "update rollback after failed install failed:", err)
+		if result.MixedInstall {
+			fmt.Fprintln(os.Stderr, "error: the installation now mixes two releases; refusing to start. Re-run reasonix-guard to retry the rollback, or reinstall Reasonix.")
+			return 1
+		}
 	} else if failure != nil && result.RolledBack {
 		fmt.Fprintf(os.Stderr, "Reasonix Guard restored %s after the %s installer failed.\n", result.ToVersion, result.FromVersion)
 	}
@@ -250,6 +254,13 @@ func runLaunch(args []string) int {
 	if !*safeMode && tracker.SafeModeRecommended() {
 		if result, err := repair.RollbackPendingUpdate(); err != nil {
 			fmt.Fprintln(os.Stderr, "update rollback failed:", err)
+			if result.MixedInstall {
+				fmt.Fprintln(os.Stderr, "error: the installation now mixes two releases; refusing to start. Re-run reasonix-guard to retry the rollback, or reinstall Reasonix.")
+				return 1
+			}
+			// The compensated install is still a coherent (new-version) release
+			// unit, so a Safe Mode boot is a sound fallback while the pending
+			// transaction stays on disk for the next rollback attempt.
 			useSafeMode = true
 		} else if result.RolledBack {
 			fmt.Fprintf(os.Stderr, "Reasonix Guard restored %s after %s failed to start.\n", result.ToVersion, result.FromVersion)

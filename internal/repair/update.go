@@ -49,6 +49,10 @@ type UpdateRollbackResult struct {
 	FromVersion string `json:"fromVersion,omitempty"`
 	ToVersion   string `json:"toVersion,omitempty"`
 	TargetPath  string `json:"targetPath,omitempty"`
+	// MixedInstall reports that a failed rollback could not be compensated:
+	// the install now mixes binaries from two releases. Launchers must not
+	// start the desktop in this state.
+	MixedInstall bool `json:"mixedInstall,omitempty"`
 }
 
 func PendingUpdatePath() string {
@@ -268,10 +272,10 @@ func RollbackPendingUpdate() (UpdateRollbackResult, error) {
 				return result, fmt.Errorf("rollback update: backup hash mismatch for %s", filepath.Base(f.TargetPath))
 			}
 		}
-		for _, f := range files {
-			if err := restoreUpdateFile(f.BackupPath, f.TargetPath); err != nil {
-				return result, fmt.Errorf("rollback update: restore %s: %w", filepath.Base(f.TargetPath), err)
-			}
+		mixed, restoreErr := restoreReleaseUnit(files)
+		if restoreErr != nil {
+			result.MixedInstall = mixed
+			return result, fmt.Errorf("rollback update: %w", restoreErr)
 		}
 	case "app-bundle":
 		if _, err := os.Stat(tx.BackupPath); err != nil {
@@ -293,35 +297,99 @@ func RollbackPendingUpdate() (UpdateRollbackResult, error) {
 	return result, nil
 }
 
-// restoreUpdateFile copies backup over target. When target is the executable
-// of the process performing the rollback (Guard restoring its own binary),
-// Windows blocks replacing the running image, so the live file is renamed
-// aside first — renaming a running executable is allowed where overwriting is
-// not. The aside copy is removed best-effort; on Windows it lingers until the
-// process exits, which is harmless.
-func restoreUpdateFile(backup, target string) error {
-	mode := os.FileMode(0o700)
-	if st, err := os.Stat(target); err == nil {
-		mode = st.Mode().Perm()
-	}
-	if self, err := repairExecutable(); err == nil {
-		if resolved, resolveErr := filepath.EvalSymlinks(self); resolveErr == nil {
-			self = resolved
-		}
-		if filepath.Clean(self) == filepath.Clean(target) {
-			aside := target + ".reasonix-failed-" + time.Now().UTC().Format("20060102T150405Z")
-			if err := os.Rename(target, aside); err == nil {
-				if _, copyErr := copyFileWithHash(backup, target, mode); copyErr != nil {
-					_ = os.Rename(aside, target)
-					return copyErr
-				}
-				_ = os.Remove(aside)
-				return nil
+// Rename/copy indirection so tests can inject mid-unit failures.
+var (
+	rollbackStageCopy  = copyFileWithHash
+	rollbackSwapRename = os.Rename
+)
+
+// restoreReleaseUnit swaps every backup into place with compensation, so a
+// failed rollback never leaves a mixed old/new install. Phase 1 stages each
+// backup next to its target — a copy can fail halfway (disk full, unreadable
+// backup) and staging keeps the live binaries untouched until every byte is
+// on the target filesystem. Phase 2 swaps via renames only: each target moves
+// aside first (renaming works even for the running executable, where
+// overwriting does not), so a failure renames the asides back and the unit
+// stays coherent on the new version for a retried rollback. Only when that
+// unwinding itself fails is the install reported as mixed.
+func restoreReleaseUnit(files []UpdateTransactionFile) (mixed bool, err error) {
+	stages := make([]string, len(files))
+	defer func() {
+		for _, stage := range stages {
+			if stage != "" {
+				_ = os.Remove(stage)
 			}
 		}
+	}()
+	for i, f := range files {
+		mode := os.FileMode(0o700)
+		if st, statErr := os.Stat(f.TargetPath); statErr == nil {
+			mode = st.Mode().Perm()
+		}
+		stage := f.TargetPath + ".reasonix-rollback-stage"
+		if _, copyErr := rollbackStageCopy(f.BackupPath, stage, mode); copyErr != nil {
+			return false, fmt.Errorf("stage %s: %w", filepath.Base(f.TargetPath), copyErr)
+		}
+		stages[i] = stage
 	}
-	_, err := copyFileWithHash(backup, target, mode)
-	return err
+	asides := make([]string, len(files))
+	swapped := 0
+	var swapErr error
+	for i, f := range files {
+		aside := f.TargetPath + ".reasonix-rollback-aside"
+		if renameErr := rollbackSwapRename(f.TargetPath, aside); renameErr != nil {
+			if os.IsNotExist(renameErr) {
+				// A rollback interrupted between renames may have consumed
+				// this target; placing the staged copy resumes that swap.
+				aside = ""
+			} else {
+				swapErr = fmt.Errorf("retain %s: %w", filepath.Base(f.TargetPath), renameErr)
+				break
+			}
+		}
+		asides[i] = aside
+		if renameErr := rollbackSwapRename(stages[i], f.TargetPath); renameErr != nil {
+			swapErr = fmt.Errorf("restore %s: %w", filepath.Base(f.TargetPath), renameErr)
+			break
+		}
+		stages[i] = ""
+		swapped = i + 1
+	}
+	if swapErr == nil {
+		for _, aside := range asides {
+			if aside != "" {
+				// Best-effort: on Windows the running executable's aside
+				// lingers until the process exits, which is harmless.
+				_ = os.Remove(aside)
+			}
+		}
+		return false, nil
+	}
+	// Compensate: rename the new-version binaries back over the restored old
+	// ones. swapped == the failed index, whose target either still holds the
+	// new binary (retain failed) or sits aside untouched (restore failed).
+	for j := 0; j <= swapped && j < len(files); j++ {
+		if j == swapped {
+			if asides[j] != "" {
+				if _, statErr := os.Lstat(files[j].TargetPath); statErr == nil {
+					_ = os.Remove(asides[j])
+				} else if os.Rename(asides[j], files[j].TargetPath) != nil {
+					mixed = true
+				}
+			} else if _, statErr := os.Lstat(files[j].TargetPath); statErr != nil {
+				// An interrupted-rollback resume failed to place the staged
+				// copy and no aside exists: the unit is missing this binary.
+				mixed = true
+			}
+			continue
+		}
+		if asides[j] == "" || os.Rename(asides[j], files[j].TargetPath) != nil {
+			// No new-version copy exists to put back (an interrupted rollback
+			// consumed it) or the rename failed; the unit mixes releases.
+			mixed = true
+		}
+	}
+	return mixed, swapErr
 }
 
 // allowedUpdateTargetBase whitelists the packaged binaries an update

@@ -1,6 +1,7 @@
 package repair
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -225,5 +226,150 @@ func TestHealthyUpdateRemovesBackup(t *testing.T) {
 	}
 	if _, err := os.Stat(tx.BackupPath); !os.IsNotExist(err) {
 		t.Fatalf("backup still exists: %v", err)
+	}
+}
+
+// TestFileUpdateRollbackCompensatesOnPartialFailure pins the release-unit
+// contract: when restoring a later binary fails, the already-restored ones are
+// renamed back so the install stays a coherent new-version unit (never mixed),
+// the pending transaction survives, and a later rollback attempt succeeds.
+func TestFileUpdateRollbackCompensatesOnPartialFailure(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("REASONIX_HOME", home)
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(dir, "reasonix-desktop")
+	guard := filepath.Join(dir, "reasonix-guard")
+	originalExecutable := repairExecutable
+	repairExecutable = func() (string, error) { return guard, nil }
+	t.Cleanup(func() { repairExecutable = originalExecutable })
+	for path, content := range map[string]string{target: "old-desktop", guard: "old-guard"} {
+		if err := os.WriteFile(path, []byte(content), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := PrepareFileUpdate("v1", "v2", target, guard); err != nil {
+		t.Fatal(err)
+	}
+	for path, content := range map[string]string{target: "new-desktop", guard: "new-guard"} {
+		if err := os.WriteFile(path, []byte(content), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	originalRename := rollbackSwapRename
+	rollbackSwapRename = func(oldpath, newpath string) error {
+		if newpath == guard {
+			return errors.New("injected rename failure")
+		}
+		return os.Rename(oldpath, newpath)
+	}
+	t.Cleanup(func() { rollbackSwapRename = originalRename })
+
+	result, err := RollbackPendingUpdate()
+	if err == nil {
+		t.Fatal("rollback with injected failure should error")
+	}
+	if result.RolledBack {
+		t.Fatalf("rollback result = %+v", result)
+	}
+	if result.MixedInstall {
+		t.Fatalf("compensated rollback must not report a mixed install: %+v", result)
+	}
+	for path, want := range map[string]string{target: "new-desktop", guard: "new-guard"} {
+		got, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(got) != want {
+			t.Fatalf("compensated %s = %q, want %q", filepath.Base(path), got, want)
+		}
+	}
+	leftovers, err := filepath.Glob(filepath.Join(dir, "*.reasonix-rollback-*"))
+	if err != nil || len(leftovers) != 0 {
+		t.Fatalf("rollback left staging files behind: %v (err=%v)", leftovers, err)
+	}
+	if !HasPendingUpdate() {
+		t.Fatal("pending update must survive a failed rollback for a retry")
+	}
+
+	rollbackSwapRename = originalRename
+	retry, err := RollbackPendingUpdate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !retry.RolledBack {
+		t.Fatalf("retry result = %+v", retry)
+	}
+	for path, want := range map[string]string{target: "old-desktop", guard: "old-guard"} {
+		got, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(got) != want {
+			t.Fatalf("retried %s = %q, want %q", filepath.Base(path), got, want)
+		}
+	}
+}
+
+// TestFileUpdateRollbackStageFailureLeavesInstallUntouched pins that a failure
+// while staging (before any binary is swapped) leaves the live release unit
+// exactly as it was.
+func TestFileUpdateRollbackStageFailureLeavesInstallUntouched(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("REASONIX_HOME", home)
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(dir, "reasonix-desktop")
+	guard := filepath.Join(dir, "reasonix-guard")
+	originalExecutable := repairExecutable
+	repairExecutable = func() (string, error) { return guard, nil }
+	t.Cleanup(func() { repairExecutable = originalExecutable })
+	for path, content := range map[string]string{target: "old-desktop", guard: "old-guard"} {
+		if err := os.WriteFile(path, []byte(content), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := PrepareFileUpdate("v1", "v2", target, guard); err != nil {
+		t.Fatal(err)
+	}
+	for path, content := range map[string]string{target: "new-desktop", guard: "new-guard"} {
+		if err := os.WriteFile(path, []byte(content), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	originalCopy := rollbackStageCopy
+	rollbackStageCopy = func(src, dst string, mode os.FileMode) (string, error) {
+		if dst == guard+".reasonix-rollback-stage" {
+			return "", errors.New("injected copy failure")
+		}
+		return copyFileWithHash(src, dst, mode)
+	}
+	t.Cleanup(func() { rollbackStageCopy = originalCopy })
+
+	result, err := RollbackPendingUpdate()
+	if err == nil {
+		t.Fatal("rollback with injected stage failure should error")
+	}
+	if result.RolledBack || result.MixedInstall {
+		t.Fatalf("rollback result = %+v", result)
+	}
+	for path, want := range map[string]string{target: "new-desktop", guard: "new-guard"} {
+		got, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(got) != want {
+			t.Fatalf("%s = %q, want untouched %q", filepath.Base(path), got, want)
+		}
+	}
+	leftovers, err := filepath.Glob(filepath.Join(dir, "*.reasonix-rollback-*"))
+	if err != nil || len(leftovers) != 0 {
+		t.Fatalf("stage failure left staging files behind: %v (err=%v)", leftovers, err)
 	}
 }
