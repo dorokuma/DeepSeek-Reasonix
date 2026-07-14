@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -62,6 +63,9 @@ func TestPastedFileRef(t *testing.T) {
 }
 
 func TestPastedFileRefShellEscapedSpaces(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX shell-escaped paths are not decoded on Windows")
+	}
 	dir := t.TempDir()
 	path := filepath.Join(dir, "Application Support", "report 2026.pdf")
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
@@ -148,6 +152,9 @@ func TestPastedImageSources(t *testing.T) {
 }
 
 func TestPasteShellEscapedImagePathInsertsImageToken(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX shell-escaped paths are not decoded on Windows")
+	}
 	root := t.TempDir()
 	t.Chdir(root)
 	path := filepath.Join(root, "Library", "Application Support", "CleanShot", "CleanShot 2026-07-06 at 11.33.14@2x.png")
@@ -178,6 +185,9 @@ func TestPasteShellEscapedImagePathInsertsImageToken(t *testing.T) {
 }
 
 func TestPasteShellEscapedImagePathWithoutWhitespaceInsertsImageToken(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX shell-escaped paths are not decoded on Windows")
+	}
 	root := t.TempDir()
 	t.Chdir(root)
 	path := filepath.Join(root, "capture^(1),x.png")
@@ -203,6 +213,9 @@ func TestPasteShellEscapedImagePathWithoutWhitespaceInsertsImageToken(t *testing
 }
 
 func TestPasteMultipleShellEscapedImagePathsInsertsImageTokens(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX shell-escaped paths are not decoded on Windows")
+	}
 	root := t.TempDir()
 	t.Chdir(root)
 	raw, err := base64.StdEncoding.DecodeString(tinyPNGBase64)

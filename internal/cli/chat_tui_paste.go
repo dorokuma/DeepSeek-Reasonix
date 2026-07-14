@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	pathpkg "path"
 	"path/filepath"
 	"regexp"
 	"runtime"
@@ -325,7 +326,10 @@ func pastedImagePathForOS(src, goos string) (string, bool) {
 			src = filepath.Join(home, strings.TrimPrefix(src, "~/"))
 		}
 	}
-	return filepath.Clean(src), true
+	if goos == "windows" {
+		return filepath.Clean(src), true
+	}
+	return pathpkg.Clean(src), true
 }
 
 func hasUnescapedPathWhitespace(s string) bool {
