@@ -292,8 +292,11 @@ type chatTUI struct {
 	// model — the swap happens on the running copy). nil disables runtime
 	// rebuild commands. modelRef is the active "provider/model" ref, marked
 	// current in the picker. runtimeProfile stores boot's normalized token mode:
-	// full (displayed as balanced), economy, or delivery.
-	buildController func(spec controllerBuildSpec, carry []provider.Message, resumePath string) (*control.Controller, error)
+	// full (displayed as balanced), economy, or delivery. oldCtrl is the
+	// outgoing controller, passed through so the replacement can carry forward
+	// same-session tool grants and Plan-mode read-only command trust that
+	// don't travel through carry/resumePath (see Controller.RestoreSessionAuthorizations).
+	buildController func(spec controllerBuildSpec, carry []provider.Message, resumePath string, oldCtrl control.SessionAPI) (*control.Controller, error)
 	modelRef        string
 	runtimeProfile  string
 	effortLevel     string // "" when the current provider/model has no configurable effort

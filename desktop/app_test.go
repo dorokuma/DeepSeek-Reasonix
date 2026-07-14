@@ -2968,6 +2968,144 @@ func TestSetModelForTabRefreshesCarriedSystemPrompt(t *testing.T) {
 	}
 }
 
+// TestSetModelForTabRestoresSessionAuthorizations pins the fix for a model
+// switch dropping same-session "Allow for this session" tool grants and
+// Plan-mode read-only command trust, forcing the user to re-approve
+// something already granted this session after every model/effort/token-mode
+// switch.
+func TestSetModelForTabRestoresSessionAuthorizations(t *testing.T) {
+	isolateDesktopUserDirs(t)
+	setDesktopTestCredential(t, "OLD_MODEL_KEY", "sk-test")
+	setDesktopTestCredential(t, "NEW_MODEL_KEY", "sk-test")
+
+	cfg := config.Default()
+	cfg.DefaultModel = "old/old-model"
+	cfg.Desktop.ProviderAccess = []string{"old", "new"}
+	cfg.Providers = []config.ProviderEntry{
+		{Name: "old", Kind: "openai", BaseURL: "https://example.invalid/v1", Model: "old-model", APIKeyEnv: "OLD_MODEL_KEY"},
+		{Name: "new", Kind: "openai", BaseURL: "https://example.invalid/v1", Model: "new-model", APIKeyEnv: "NEW_MODEL_KEY"},
+	}
+	if err := cfg.SaveTo(config.UserConfigPath()); err != nil {
+		t.Fatalf("save config: %v", err)
+	}
+
+	dir := config.SessionDir()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir session dir: %v", err)
+	}
+	oldExec := agent.New(nil, nil, agent.NewSession("old system prompt"), agent.Options{}, event.Discard)
+	oldPath := filepath.Join(dir, "old.jsonl")
+	oldCtrl := control.New(control.Options{Executor: oldExec, SessionDir: dir, SessionPath: oldPath, Label: "old", Sink: event.Discard})
+	oldCtrl.RestoreSessionAuthorizations(control.SessionAuthorizations{
+		Grants:                   []string{"bash|go test ./..."},
+		PlanModeReadOnlyCommands: []string{"go test ./..."},
+	})
+
+	app := NewApp()
+	app.ctx = context.Background()
+	tab := &WorkspaceTab{
+		ID:          "tab_a",
+		Scope:       "global",
+		Ready:       true,
+		model:       "old/old-model",
+		Ctrl:        oldCtrl,
+		sink:        &tabEventSink{tabID: "tab_a", app: app},
+		disabledMCP: map[string]ServerView{},
+	}
+	app.tabs = map[string]*WorkspaceTab{tab.ID: tab}
+	app.tabOrder = []string{tab.ID}
+	app.activeTabID = tab.ID
+	t.Cleanup(func() {
+		if tab.Ctrl != nil {
+			tab.Ctrl.Close()
+		}
+	})
+
+	if err := app.SetModelForTab(tab.ID, "new/new-model"); err != nil {
+		t.Fatalf("SetModelForTab: %v", err)
+	}
+
+	newCtrl, ok := tab.Ctrl.(*control.Controller)
+	if !ok {
+		t.Fatalf("tab.Ctrl = %T, want *control.Controller", tab.Ctrl)
+	}
+	got := newCtrl.SessionAuthorizations()
+	if len(got.Grants) != 1 || got.Grants[0] != "bash|go test ./..." {
+		t.Fatalf("restored grants = %+v, want [\"bash|go test ./...\"]", got.Grants)
+	}
+	if len(got.PlanModeReadOnlyCommands) != 1 || got.PlanModeReadOnlyCommands[0] != "go test ./..." {
+		t.Fatalf("restored plan-mode read-only commands = %+v, want [\"go test ./...\"]", got.PlanModeReadOnlyCommands)
+	}
+}
+
+// TestRebuildSettingLockedRestoresSessionAuthorizations covers the same
+// dropped-session-authorization bug for the settings-change rebuild path
+// (also used by the deferred-rebuild retry loop), independent from
+// SetModelForTab's own rebuild.
+func TestRebuildSettingLockedRestoresSessionAuthorizations(t *testing.T) {
+	isolateDesktopUserDirs(t)
+	setDesktopTestCredential(t, "OLD_MODEL_KEY", "sk-test")
+
+	cfg := config.Default()
+	cfg.DefaultModel = "old/old-model"
+	cfg.Desktop.ProviderAccess = []string{"old"}
+	cfg.Providers = []config.ProviderEntry{
+		{Name: "old", Kind: "openai", BaseURL: "https://example.invalid/v1", Model: "old-model", APIKeyEnv: "OLD_MODEL_KEY"},
+	}
+	if err := cfg.SaveTo(config.UserConfigPath()); err != nil {
+		t.Fatalf("save config: %v", err)
+	}
+
+	dir := config.SessionDir()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir session dir: %v", err)
+	}
+	oldExec := agent.New(nil, nil, agent.NewSession("old system prompt"), agent.Options{}, event.Discard)
+	oldPath := filepath.Join(dir, "old.jsonl")
+	oldCtrl := control.New(control.Options{Executor: oldExec, SessionDir: dir, SessionPath: oldPath, Label: "old", Sink: event.Discard})
+	oldCtrl.RestoreSessionAuthorizations(control.SessionAuthorizations{
+		Grants:                   []string{"bash|go test ./..."},
+		PlanModeReadOnlyCommands: []string{"go test ./..."},
+	})
+
+	app := NewApp()
+	app.ctx = context.Background()
+	tab := &WorkspaceTab{
+		ID:          "tab_a",
+		Scope:       "global",
+		Ready:       true,
+		model:       "old/old-model",
+		Ctrl:        oldCtrl,
+		sink:        &tabEventSink{tabID: "tab_a", app: app},
+		disabledMCP: map[string]ServerView{},
+	}
+	app.tabs = map[string]*WorkspaceTab{tab.ID: tab}
+	app.tabOrder = []string{tab.ID}
+	app.activeTabID = tab.ID
+	app.readyHook = func() {}
+	t.Cleanup(func() {
+		if tab.Ctrl != nil {
+			tab.Ctrl.Close()
+		}
+	})
+
+	if err := app.rebuildSetting("settings"); err != nil {
+		t.Fatalf("rebuildSetting: %v", err)
+	}
+
+	newCtrl, ok := tab.Ctrl.(*control.Controller)
+	if !ok {
+		t.Fatalf("tab.Ctrl = %T, want *control.Controller", tab.Ctrl)
+	}
+	got := newCtrl.SessionAuthorizations()
+	if len(got.Grants) != 1 || got.Grants[0] != "bash|go test ./..." {
+		t.Fatalf("restored grants = %+v, want [\"bash|go test ./...\"]", got.Grants)
+	}
+	if len(got.PlanModeReadOnlyCommands) != 1 || got.PlanModeReadOnlyCommands[0] != "go test ./..." {
+		t.Fatalf("restored plan-mode read-only commands = %+v, want [\"go test ./...\"]", got.PlanModeReadOnlyCommands)
+	}
+}
+
 func TestSetModelForTabContinuesRecoveryPathAfterSnapshotConflict(t *testing.T) {
 	isolateDesktopUserDirs(t)
 	setDesktopTestCredential(t, "OLD_MODEL_KEY", "sk-test")

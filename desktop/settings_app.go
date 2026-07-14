@@ -1604,6 +1604,12 @@ func (a *App) rebuildSettingLocked(setting string) error {
 	if mode := strings.TrimSpace(snap.toolApprovalMode); mode != "" {
 		applyTabToolApprovalModeToController(ctrl, mode)
 	}
+	// A rebuild must not force the user to re-approve tools already granted
+	// this session, or re-trust Plan-mode read-only commands already trusted
+	// this session.
+	if prev, ok := oldCtrl.(*control.Controller); ok {
+		ctrl.RestoreSessionAuthorizations(prev.SessionAuthorizations())
+	}
 	path := agent.ContinueSessionPath(prevPath, ctrl.SessionDir(), ctrl.Label())
 	if err := a.ensureTabSessionLeaseForRebuild(tab, path, setting); err != nil {
 		ctrl.Close()

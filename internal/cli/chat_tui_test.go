@@ -1387,7 +1387,7 @@ func TestEffortCommandWritesCurrentDeepSeekProvider(t *testing.T) {
 	m := newTestChatTUI()
 	m.ctrl = control.New(control.Options{Label: "deepseek-flash"})
 	m.modelRef = "deepseek-flash/deepseek-v4-flash"
-	m.buildController = func(_ controllerBuildSpec, _ []provider.Message, _ string) (*control.Controller, error) {
+	m.buildController = func(_ controllerBuildSpec, _ []provider.Message, _ string, _ control.SessionAPI) (*control.Controller, error) {
 		return control.New(control.Options{Label: "deepseek-flash"}), nil
 	}
 
@@ -1412,7 +1412,7 @@ func TestEffortCommandRejectsUnsupportedProvider(t *testing.T) {
 	m := newTestChatTUI()
 	m.ctrl = control.New(control.Options{Label: "mimo-pro"})
 	m.modelRef = "mimo-pro/mimo-v2.5-pro"
-	m.buildController = func(_ controllerBuildSpec, _ []provider.Message, _ string) (*control.Controller, error) {
+	m.buildController = func(_ controllerBuildSpec, _ []provider.Message, _ string, _ control.SessionAPI) (*control.Controller, error) {
 		return control.New(control.Options{Label: "mimo-pro"}), nil
 	}
 
@@ -1430,7 +1430,7 @@ func TestEffortCommandAutoClearsProviderEffort(t *testing.T) {
 	m := newTestChatTUI()
 	m.ctrl = control.New(control.Options{Label: "deepseek-flash"})
 	m.modelRef = "deepseek-flash/deepseek-v4-flash"
-	m.buildController = func(_ controllerBuildSpec, _ []provider.Message, _ string) (*control.Controller, error) {
+	m.buildController = func(_ controllerBuildSpec, _ []provider.Message, _ string, _ control.SessionAPI) (*control.Controller, error) {
 		return control.New(control.Options{Label: "deepseek-flash"}), nil
 	}
 

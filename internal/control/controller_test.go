@@ -2797,6 +2797,29 @@ func TestPermissionRequestHookDoesNotFireForSessionGrant(t *testing.T) {
 	assertNoPermissionHook(t, payloads)
 }
 
+// TestSessionAuthorizationsCarryAcrossRebuild pins the fix for a rebuild
+// (model/effort/profile switch) dropping same-session "Allow for this
+// session" tool grants and Plan-mode read-only command trust: only the
+// ask/auto/yolo posture string used to survive a controller swap, so a user
+// who had already granted a tool this session was asked again after any
+// switch.
+func TestSessionAuthorizationsCarryAcrossRebuild(t *testing.T) {
+	old := New(Options{})
+	old.approval.grantSession("bash", "go test ./...")
+	old.approval.grantPlanModeReadOnlyCommand("go test ./...")
+
+	fresh := New(Options{})
+	fresh.RestoreSessionAuthorizations(old.SessionAuthorizations())
+
+	allow, _, err := fresh.requestApproval(context.Background(), "bash", "go test ./...", nil)
+	if err != nil || !allow {
+		t.Fatalf("session-granted approval after restore = (%v,%v), want allowed", allow, err)
+	}
+	if !fresh.approval.planModeReadOnlyCommandTrusted("go test ./...") {
+		t.Fatal("plan-mode read-only command trust did not carry across rebuild")
+	}
+}
+
 func TestPermissionRequestHookDoesNotFireForYolo(t *testing.T) {
 	c, _, payloads := permissionHookController(t, "bash")
 	c.SetToolApprovalMode(ToolApprovalYolo)

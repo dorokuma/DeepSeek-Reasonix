@@ -4439,6 +4439,22 @@ func (c *Controller) InheritLifecycleFrom(prev *Controller) {
 	c.mu.Unlock()
 }
 
+// SessionAuthorizations snapshots this controller's same-session tool
+// grants ("Allow for this session") and Plan-mode read-only command trust,
+// for carrying into a replacement controller across a rebuild — see
+// RestoreSessionAuthorizations.
+func (c *Controller) SessionAuthorizations() SessionAuthorizations {
+	return c.approval.snapshotSessionAuthorizations()
+}
+
+// RestoreSessionAuthorizations re-applies session authorizations captured
+// from a prior controller in the same session (see SessionAuthorizations). A
+// model/effort/profile switch rebuilds the controller, and without this the
+// replacement forgets every grant the user already made this session.
+func (c *Controller) RestoreSessionAuthorizations(auth SessionAuthorizations) {
+	c.approval.restoreSessionAuthorizations(auth)
+}
+
 // ReleaseResources stops plugin subprocesses and releases resources without
 // firing SessionEnd. Use it only when replacing the controller for the same
 // logical session.

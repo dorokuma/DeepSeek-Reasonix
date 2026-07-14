@@ -231,6 +231,41 @@ func (a *approvalManager) grantPlanModeReadOnlyCommand(prefix string) {
 	a.planModeReadOnlyCommands[prefix] = true
 }
 
+// SessionAuthorizations is the same-session tool-grant and Plan-mode
+// read-only command trust state a controller rebuild must carry forward; see
+// Controller.SessionAuthorizations / RestoreSessionAuthorizations.
+type SessionAuthorizations struct {
+	Grants                   []string
+	PlanModeReadOnlyCommands []string
+}
+
+func (a *approvalManager) snapshotSessionAuthorizations() SessionAuthorizations {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	auth := SessionAuthorizations{
+		Grants:                   make([]string, 0, len(a.granted)),
+		PlanModeReadOnlyCommands: make([]string, 0, len(a.planModeReadOnlyCommands)),
+	}
+	for rule := range a.granted {
+		auth.Grants = append(auth.Grants, rule)
+	}
+	for prefix := range a.planModeReadOnlyCommands {
+		auth.PlanModeReadOnlyCommands = append(auth.PlanModeReadOnlyCommands, prefix)
+	}
+	return auth
+}
+
+func (a *approvalManager) restoreSessionAuthorizations(auth SessionAuthorizations) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	for _, rule := range auth.Grants {
+		a.granted[rule] = true
+	}
+	for _, prefix := range auth.PlanModeReadOnlyCommands {
+		a.planModeReadOnlyCommands[prefix] = true
+	}
+}
+
 // cancel drops a pending approval (timeout/abort path).
 func (a *approvalManager) cancel(id string) {
 	a.mu.Lock()
