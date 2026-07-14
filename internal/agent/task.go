@@ -23,9 +23,15 @@ If you need to ask for clarification, fail with a precise question instead of gu
 
 // Meta tools children must not inherit (Codex still allows spawn_agent on children).
 var subagentMetaTools = []string{
-		"run_skill",
+	"run_skill",
 	"install_skill",
 	"install_source",
+	"spawn_agent",
+	"wait_agent",
+	"list_agents",
+	"send_message",
+	"followup_task",
+	"interrupt_agent",
 }
 
 // SubagentMetaTools returns the tool names that spawned agents should not inherit

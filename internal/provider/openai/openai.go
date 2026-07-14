@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"sort"
@@ -381,6 +382,7 @@ func (c *client) readStream(ctx context.Context, resp *http.Response, cr *provid
 				resp.Body.Close()
 				return
 			case <-idle.C:
+				log.Printf("[readStream] idle timeout fired after %v — closing body", idleTimeout)
 				stalled.Store(true)
 				resp.Body.Close()
 				return
@@ -417,13 +419,13 @@ func (c *client) readStream(ctx context.Context, resp *http.Response, cr *provid
 			return
 		default:
 		}
-		select { // ping the idle watchdog; non-blocking so a full buffer is fine
-		case activity <- struct{}{}:
-		default:
-		}
 		line := strings.TrimSpace(scanner.Text())
 		if line == "" || !strings.HasPrefix(line, "data:") {
 			continue
+		}
+		select { // ping the idle watchdog only on valid SSE data
+		case activity <- struct{}{}:
+		default:
 		}
 		data := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
 		diag.LogFull("sse-raw", data)

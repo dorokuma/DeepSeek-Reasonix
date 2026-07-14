@@ -143,7 +143,7 @@ func (s *sinkState) Emit(e event.Event) {
 
 	case event.Message:
 		// §4.9: Message overwrites final answer (includes full reasoning if needed)
-		if s.dialogueUI {
+		if s.dialogueUI && strings.TrimSpace(e.Text) != "" {
 			s.answerText.Reset()
 			s.answerText.WriteString(e.Text)
 			if e.Reasoning != "" {

@@ -2,8 +2,5 @@
 language: go
 
 build:
-  cmd: make build
-  output: reasonix
-
-install:
-  cmd: rm -f /usr/local/bin/reasonix && cp ./reasonix /usr/local/bin/reasonix
+  cmd: sudo go build -ldflags="-s -w" -o /usr/local/bin/reasonix ./cmd/reasonix/
+  output: /usr/local/bin/reasonix
