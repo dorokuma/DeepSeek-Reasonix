@@ -37,6 +37,7 @@ import type {
   DroppedItem,
   EffortInfo,
   FilePreview,
+  ExternalOpenersView,
   HistoryMessage,
   HistoryPage,
   HookConfigView,
@@ -164,6 +165,7 @@ export interface AppBindings {
   SetToolApprovalModeForTab(tabID: string, mode: string): Promise<void>;
   SetGoal(goal: string): Promise<void>;
   SetGoalForTab(tabID: string, goal: string): Promise<void>;
+  ResumeGoalForTab(tabID: string): Promise<boolean>;
   ClearGoal(): Promise<void>;
   ClearGoalForTab(tabID: string): Promise<void>;
   Compact(): Promise<void>;
@@ -273,6 +275,10 @@ export interface AppBindings {
   WorkspaceGitCommitDetail(tabID: string, hash: string, path: string): Promise<GitCommitDetailView>;
   OpenWorkspacePath(rel: string): Promise<void>;
   OpenWorkspacePathForTab(tabID: string, rel: string): Promise<void>;
+  ExternalOpeners(): Promise<ExternalOpenersView>;
+  SetPreferredExternalOpener(id: string): Promise<void>;
+  OpenWorkspaceInExternalOpener(id: string): Promise<void>;
+  OpenWorkspaceInExternalOpenerForTab(tabID: string, id: string): Promise<void>;
   RevealWorkspacePath(rel: string): Promise<void>;
   RevealWorkspacePathForTab(tabID: string, rel: string): Promise<void>;
   RevealPath(path: string): Promise<void>;
@@ -929,6 +935,11 @@ function cloneMockProviderTemplate(id: string, key: string): ProviderView | unde
 
 const mockPreviewImageDataURL =
   "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='120' viewBox='0 0 160 120'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%23f97316'/%3E%3Cstop offset='1' stop-color='%232563eb'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='160' height='120' rx='14' fill='url(%23g)'/%3E%3Ccircle cx='44' cy='38' r='16' fill='%23fff7ed' opacity='.9'/%3E%3Cpath d='M18 96 62 58l24 22 18-16 38 32z' fill='%23ffffff' opacity='.9'/%3E%3C/svg%3E";
+
+function mockExternalOpenerIconDataURL(color: string, label: string): string {
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" rx="14" fill="${color}"/><text x="32" y="40" text-anchor="middle" font-family="system-ui" font-size="25" font-weight="700" fill="white">${label}</text></svg>`;
+  return `data:image/svg+xml,${encodeURIComponent(svg)}`;
+}
 
 function makeMockApp(): AppBindings {
   const scenario = mockScenario();
@@ -2247,6 +2258,15 @@ function makeMockApp(): AppBindings {
               : tab,
           );
         },
+        async ResumeGoalForTab(tabID) {
+          let resumed = false;
+          mockTabs = mockTabs.map((tab) => {
+            if (tab.id !== tabID || !tab.goal || tab.goalStatus === "complete") return tab;
+            resumed = true;
+            return { ...tab, goalStatus: "running", collaborationMode: "goal" };
+          });
+          return resumed;
+        },
         async ClearGoal() {
           await this.SetGoal("");
         },
@@ -3093,6 +3113,22 @@ function makeMockApp(): AppBindings {
     },
     async OpenWorkspacePathForTab(_tabID: string, rel: string) {
       await this.OpenWorkspacePath(rel);
+    },
+    async ExternalOpeners() {
+      return {
+        openers: [
+          { id: "vscode", name: "VS Code", kind: "editor", iconDataUrl: mockExternalOpenerIconDataURL("#1684d6", "V") },
+          { id: "cursor", name: "Cursor", kind: "editor", iconDataUrl: mockExternalOpenerIconDataURL("#25262a", "C") },
+          { id: "finder", name: "Finder", kind: "file-manager", iconDataUrl: mockExternalOpenerIconDataURL("#36aaf4", "F") },
+          { id: "ghostty", name: "Ghostty", kind: "terminal", iconDataUrl: mockExternalOpenerIconDataURL("#264db6", ">") },
+        ],
+        preferred: "vscode",
+      } as ExternalOpenersView;
+    },
+    async SetPreferredExternalOpener(_id: string) {},
+    async OpenWorkspaceInExternalOpener(_id: string) {},
+    async OpenWorkspaceInExternalOpenerForTab(_tabID: string, id: string) {
+      await this.OpenWorkspaceInExternalOpener(id);
     },
     async RevealWorkspacePath(rel: string) {
       console.info("mock RevealWorkspacePath", rel);

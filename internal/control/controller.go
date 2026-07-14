@@ -83,6 +83,10 @@ type Controller struct {
 	guardianPath string            // persisted guardian session file ("" when disabled)
 	sink         event.Sink
 	policy       permission.Policy
+	// subagentGate is the shared gate every headless-only sub-agent surface
+	// reads from (see Options.SubagentGate). Nil when the caller didn't build
+	// one — sub-agents then keep whatever gate they were constructed with.
+	subagentGate *SharedHeadlessGate
 
 	label        string
 	modelRef     string
@@ -285,9 +289,10 @@ type RuntimeStatus struct {
 }
 
 const (
-	ToolApprovalAsk  = "ask"
-	ToolApprovalAuto = "auto"
-	ToolApprovalYolo = "yolo"
+	ToolApprovalAsk     = "ask"
+	ToolApprovalAuto    = "auto"
+	ToolApprovalDontAsk = "dontAsk"
+	ToolApprovalYolo    = "yolo"
 )
 
 const (
@@ -347,11 +352,18 @@ type externalFolderToolRefs interface {
 // lets the controller mint and rotate session files; Host/Commands are surfaced
 // to frontends that resolve MCP prompts and slash commands.
 type Options struct {
-	Runner        agent.Runner
-	Executor      *agent.Agent
-	Guardian      *guardian.Session
-	Sink          event.Sink
-	Policy        permission.Policy
+	Runner   agent.Runner
+	Executor *agent.Agent
+	Guardian *guardian.Session
+	Sink     event.Sink
+	Policy   permission.Policy
+	// SubagentGate is the shared, mutable gate every headless-only sub-agent
+	// surface (task, writer-capable skill sub-agents, planner) reads from. Nil
+	// disables gating for those surfaces same as before this field existed.
+	// SetToolApprovalMode and ApplyHeadlessApprovalMode call Update on it so a
+	// runtime approval-mode switch reaches sub-agents, not just the parent
+	// executor's own gate.
+	SubagentGate  *SharedHeadlessGate
 	Label         string
 	ModelRef      string
 	SystemPrompt  string
@@ -464,6 +476,7 @@ func New(opts Options) *Controller {
 		guardianPath:                      guardian.PathFor(opts.SessionPath),
 		sink:                              sink,
 		policy:                            opts.Policy,
+		subagentGate:                      opts.SubagentGate,
 		label:                             opts.Label,
 		modelRef:                          opts.ModelRef,
 		systemPrompt:                      opts.SystemPrompt,
@@ -1896,20 +1909,91 @@ func (c *Controller) newInteractiveGate() *permission.Gate {
 	switch mode {
 	case ToolApprovalAuto, ToolApprovalYolo:
 		policy.Mode = permission.Allow
+	case ToolApprovalDontAsk:
+		policy.Mode = permission.Deny
 	default:
 		policy.Mode = permission.Ask
 	}
+	// A session allowlist (e.g. --allowed-tools) must never satisfy a tool that
+	// requires fresh human approval on every call — memory remember/forget, plan
+	// approval, sandbox escape, managed config write. SessionAllow is checked
+	// before Ask in Policy.Decide, so leaving those entries in would let
+	// `--allowed-tools remember` write memory with no prompt. Strip them so the
+	// forced Ask rules below stay authoritative.
+	policy.SessionAllow = rulesWithoutFreshHumanApproval(policy.SessionAllow)
 	policy.Ask = append(policy.Ask,
 		permission.Rule{Tool: memoryRememberTool},
 		permission.Rule{Tool: memoryForgetTool},
 	)
-	gate := permission.NewGate(policy, gateApprover{c})
+	var approver permission.Approver = gateApprover{c}
+	if mode == ToolApprovalDontAsk {
+		approver = denyPermissionApprover{}
+	}
+	gate := permission.NewGate(policy, approver)
 	gate.OnRemember = func(rule string) {
 		if c.onRemember != nil {
 			_ = c.onRemember(rule)
 		}
 	}
 	return gate
+}
+
+type denyPermissionApprover struct{}
+
+func (denyPermissionApprover) Approve(context.Context, string, string, json.RawMessage) (bool, bool, error) {
+	return false, false, nil
+}
+
+// rulesWithoutFreshHumanApproval drops any session-allow rule that targets a
+// tool requiring fresh human approval, so an explicit allowlist cannot bypass
+// the always-prompt contract for those tools.
+func rulesWithoutFreshHumanApproval(rules []permission.Rule) []permission.Rule {
+	if len(rules) == 0 {
+		return rules
+	}
+	filtered := make([]permission.Rule, 0, len(rules))
+	for _, r := range rules {
+		if RequiresFreshHumanApprovalTool(r.Tool) {
+			continue
+		}
+		filtered = append(filtered, r)
+	}
+	return filtered
+}
+
+// ApplyHeadlessApprovalMode configures the executor gate for a non-interactive
+// (`reasonix run`) session from an explicit --permission-mode. Unlike
+// EnableInteractiveApproval it installs no blocking approver, asker, or
+// fresh-approval prompt: there is no key loop to answer them, and the default
+// infinite approval timeout would wedge the run forever on an Ask rule, the
+// `ask` tool, or a sandbox/config approval. Modes map straight onto a headless
+// gate, and each preserves the interactive contract as closely as a run with no
+// one to prompt allows:
+//
+//   - auto: auto-approve the writer fallback (Mode=Allow) but PRESERVE explicit
+//     ask rules. Interactive auto prompts on those (it never auto-approves them);
+//     headless can't prompt, so a would-ask decision fails closed (deny) rather
+//     than running silently. Only bypass may run such a command unattended.
+//   - yolo/bypassPermissions: skip every approval-gated decision (nil approver).
+//   - dontAsk: deny anything that would ask, and deny the writer fallback too.
+//
+// deny rules and fresh-human tools (memory, plan, sandbox, config) stay enforced
+// by the gate for every mode. ask/manual/acceptEdits are not routed here — the
+// caller leaves them at ToolApprovalAsk, keeping boot's default headless gate,
+// which resolves ordinary ask decisions to allow for `reasonix run` autonomy.
+func (c *Controller) ApplyHeadlessApprovalMode(mode string) {
+	mode = normalizeToolApprovalMode(mode)
+	c.approval.setMode(mode)
+	if c.subagentGate != nil {
+		c.subagentGate.Update(mode)
+	}
+	if c.executor == nil {
+		return
+	}
+	switch mode {
+	case ToolApprovalYolo, ToolApprovalAuto, ToolApprovalDontAsk:
+		c.executor.SetGate(BuildHeadlessApprovalGate(c.policy, mode))
+	}
 }
 
 func (c *Controller) refreshInteractiveGate() {
@@ -2108,6 +2192,29 @@ func (c *Controller) SetGoalWithResearchMode(goal string, researchMode GoalResea
 		c.persistGoalState(path, data, ok)
 		c.notice("autoresearch resume failed: " + blockReason)
 	}
+}
+
+// ResumeGoal re-enters a recoverable blocked/stopped Goal without resetting its
+// delivery evidence scope or AutoResearch identity.
+func (c *Controller) ResumeGoal() bool {
+	path, data, persist, resumed := c.goals.resume(c.goalTodos())
+	if !resumed {
+		return false
+	}
+	c.persistGoalState(path, data, persist)
+	if c.executor != nil {
+		c.executor.RestoreDeliveryCheckpoint(c.goals.deliveryState())
+	}
+	return true
+}
+
+func (c *Controller) persistGoalDeliveryCheckpoint() {
+	if c.executor == nil {
+		return
+	}
+	checkpoint := c.executor.DeliveryCheckpoint()
+	path, data, ok := c.goals.setDeliveryCheckpoint(checkpoint, c.goalTodos())
+	c.persistGoalState(path, data, ok)
 }
 
 func (c *Controller) ensureAutoResearchTask(goal string, researchMode GoalResearchMode) (string, string) {
@@ -3093,7 +3200,10 @@ func (c *Controller) Resume(s *agent.Session, path string) {
 	c.mu.Unlock()
 	c.setActiveJobSession(path)
 	c.rebindCheckpoints(path)
-	c.goals.restoreRunningFromState(path)
+	c.goals.restoreFromState(path)
+	if c.executor != nil {
+		c.executor.RestoreDeliveryCheckpoint(c.goals.deliveryState())
+	}
 	c.restoreTerminalGoalTodos(path)
 	c.loadGuardianSession()
 	c.snapshotMu.Unlock()
@@ -4406,9 +4516,18 @@ func (c *Controller) Jobs() []jobs.View {
 }
 
 // SetToolApprovalMode changes the runtime approval posture for permission-gated
-// tools. It does not answer business asks or plan approval.
+// tools. It does not answer business asks or plan approval. Sub-agents (task,
+// writer-capable skill sub-agents, the planner) have no UI to prompt through,
+// so this also pushes the mode to the shared headless gate they read from —
+// without it, a mode switch (Shift+Tab) would only rebuild the parent
+// executor's gate and leave sub-agents pinned to whatever mode was active
+// when the session booted.
 func (c *Controller) SetToolApprovalMode(mode string) {
-	pending := c.approval.setMode(normalizeToolApprovalMode(mode))
+	mode = normalizeToolApprovalMode(mode)
+	pending := c.approval.setMode(mode)
+	if c.subagentGate != nil {
+		c.subagentGate.Update(mode)
+	}
 	c.refreshInteractiveGate()
 	for _, reply := range pending {
 		reply <- approvalReply{allow: true}

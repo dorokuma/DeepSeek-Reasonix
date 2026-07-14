@@ -19,8 +19,8 @@ import (
 	"reasonix/internal/skill"
 )
 
-var setupSubagentCommand = func(ctx context.Context, modelName string, maxStepsOverride int, requireKey bool, sink event.Sink) (*control.Controller, error) {
-	return setupProfile(ctx, modelName, maxStepsOverride, requireKey, sink, "")
+var setupSubagentCommand = func(ctx context.Context, modelName string, maxStepsOverride int, requireKey bool, sink event.Sink, workspaceRoot string) (*control.Controller, error) {
+	return setupProfile(ctx, modelName, maxStepsOverride, requireKey, sink, "", workspaceRoot)
 }
 
 const subagentUsageText = `usage:
@@ -329,6 +329,11 @@ func subagentRunCommand(args []string, readOnly bool) int {
 	if rc := chdirTo(*dir); rc != 0 {
 		return rc
 	}
+	workspaceRoot, err := workspaceRootForDir(*dir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "subagent %s: %v\n", verb, err)
+		return 1
+	}
 	task := strings.TrimSpace(strings.Join(fs.Args(), " "))
 	if task == "" {
 		task = readStdin()
@@ -339,7 +344,7 @@ func subagentRunCommand(args []string, readOnly bool) int {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 	defer stop()
-	ctrl, err := setupSubagentCommand(ctx, *model, *maxSteps, true, event.Discard)
+	ctrl, err := setupSubagentCommand(ctx, *model, *maxSteps, true, event.Discard, workspaceRoot)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "subagent %s: %v\n", verb, err)
 		return 1

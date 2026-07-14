@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"reasonix/internal/event"
+	"reasonix/internal/evidence"
 	"reasonix/internal/nilutil"
 	"reasonix/internal/secrets"
 )
@@ -129,6 +130,9 @@ type Job struct {
 	artifactComplete bool
 	artifactErr      string
 	tombstone        bool
+
+	evidence          evidence.ChildEvidenceSummary
+	evidenceCommitted bool
 }
 
 // Manager is the session's background-job table. It is safe for concurrent use.
@@ -148,6 +152,7 @@ type Manager struct {
 	artifactDirs map[string]string
 	loaded       map[string]bool
 	tempRoot     string
+	reservations map[string]int
 
 	stalledWarning time.Duration
 	teardownGrace  time.Duration
@@ -200,6 +205,7 @@ func NewManager(sink event.Sink, opts ...Option) *Manager {
 		jobs:          map[string]*Job{},
 		destroying:    map[string]bool{},
 		artifactDirs:  map[string]string{},
+		reservations:  map[string]int{},
 		loaded:        map[string]bool{},
 		tempRoot:      tempRoot,
 		teardownGrace: DefaultTeardownGrace,
@@ -266,6 +272,8 @@ func (m *Manager) StartForSession(parentSession, kind, label string, run func(ct
 		artifactComplete: artifactErr == "",
 		artifactErr:      artifactErr,
 	}
+	ctx = WithSession(ctx, parentSession)
+	ctx = context.WithValue(ctx, jobCtxKey{}, j)
 	key := jobKey(parentSession, id)
 	m.jobs[key] = j
 	m.order = append(m.order, key)
@@ -401,7 +409,7 @@ func (m *Manager) writeJobMetaLocked(j *Job, st Status) error {
 	if j.artifactMetaPath == "" {
 		return nil
 	}
-	return writeMeta(j.artifactMetaPath, artifactMeta{
+	meta := artifactMeta{
 		ID:               j.ID,
 		Kind:             j.Kind,
 		Label:            j.Label,
@@ -412,7 +420,82 @@ func (m *Manager) writeJobMetaLocked(j *Job, st Status) error {
 		ArtifactComplete: j.artifactComplete && j.artifactErr == "",
 		ArtifactError:    j.artifactErr,
 		LogPath:          filepath.Base(j.artifactPath),
-	})
+	}
+	if j.Kind == "task" {
+		meta.MutationEvidenceVersion = mutationEvidenceVersion
+		meta.MutationEvidence = mutationEvidenceForArtifact(j.evidence)
+	}
+	return writeMeta(j.artifactMetaPath, meta)
+}
+
+func mutationEvidenceForArtifact(summary evidence.ChildEvidenceSummary) *artifactMutationEvidence {
+	firstMutation := -1
+	for i, receipt := range summary.Receipts {
+		if receipt.Success && receipt.Mutation {
+			firstMutation = i
+			break
+		}
+	}
+	if firstMutation < 0 {
+		return nil
+	}
+	return &artifactMutationEvidence{
+		Risk:  string(evidence.ClassifyMutationRisk(summary.Receipts, firstMutation)),
+		Paths: summary.MutationPaths(),
+	}
+}
+
+func mutationEvidenceFromArtifact(meta artifactMeta) evidence.ChildEvidenceSummary {
+	if meta.Kind != "task" {
+		return evidence.ChildEvidenceSummary{}
+	}
+	if meta.MutationEvidenceVersion != mutationEvidenceVersion {
+		// Any version this build cannot parse — a pre-feature artifact
+		// (version 0) or one written by a newer build — is treated as an
+		// opaque mutation. A missing summary only proves the mutation state
+		// was not recorded, not that the task made no changes: a legacy
+		// background writer task collected after upgrade could carry real,
+		// unreviewed edits. Recovering it as opaque RiskHigh forces fresh
+		// inspection and review rather than silently skipping it, and keeps
+		// downgrade coexistence on a shared state directory conservative.
+		return opaqueRecoveredTaskMutation()
+	}
+	if meta.MutationEvidence == nil {
+		// Same-version artifact with no summary: this build DID record the
+		// mutation state and found none, so there is genuinely nothing to
+		// recover.
+		return evidence.ChildEvidenceSummary{}
+	}
+
+	paths := append([]string(nil), meta.MutationEvidence.Paths...)
+	switch evidence.RiskLevel(meta.MutationEvidence.Risk) {
+	case evidence.RiskLow, evidence.RiskMedium:
+		// Known paths preserve the original adaptive risk level while still
+		// requiring fresh inspection and verification after recovery.
+	case evidence.RiskHigh:
+		// The original risk may have come from an opaque or privileged tool,
+		// which the sanitized artifact intentionally does not retain. Recover it
+		// as opaque so restart cannot downgrade the security-review requirement.
+		paths = nil
+	default:
+		return opaqueRecoveredTaskMutation()
+	}
+	return evidence.ChildEvidenceSummary{Receipts: []evidence.Receipt{{
+		ToolName: recoveredBackgroundTaskToolName,
+		Success:  true,
+		Write:    true,
+		Mutation: true,
+		Paths:    paths,
+	}}}
+}
+
+func opaqueRecoveredTaskMutation() evidence.ChildEvidenceSummary {
+	return evidence.ChildEvidenceSummary{Receipts: []evidence.Receipt{{
+		ToolName: recoveredBackgroundTaskToolName,
+		Success:  true,
+		Write:    true,
+		Mutation: true,
+	}}}
 }
 
 func (m *Manager) artifactTargetDirForJob(j *Job) string {
@@ -815,6 +898,50 @@ func (m *Manager) RunningForSession(parentSession string) []View {
 	return out
 }
 
+// ReserveStartForSession atomically reserves capacity for a job start. The
+// caller must release the reservation after StartForSession has registered the
+// job (or when setup fails). Running jobs and in-flight start reservations both
+// count toward limit, so concurrent callers cannot overshoot it.
+func (m *Manager) ReserveStartForSession(parentSession, kind string, limit int) (release func(), running int, ok bool) {
+	if limit <= 0 {
+		return func() {}, 0, true
+	}
+	parentSession = strings.TrimSpace(parentSession)
+	key := jobKey(parentSession, kind)
+	m.mu.Lock()
+	for _, jobKey := range m.order {
+		j := m.jobs[jobKey]
+		if j == nil || !sessionMatches(parentSession, j.SessionID) || j.Kind != kind {
+			continue
+		}
+		select {
+		case <-j.done:
+		default:
+			running++
+		}
+	}
+	running += m.reservations[key]
+	if running >= limit {
+		m.mu.Unlock()
+		return func() {}, running, false
+	}
+	m.reservations[key]++
+	m.mu.Unlock()
+
+	var once sync.Once
+	release = func() {
+		once.Do(func() {
+			m.mu.Lock()
+			m.reservations[key]--
+			if m.reservations[key] == 0 {
+				delete(m.reservations, key)
+			}
+			m.mu.Unlock()
+		})
+	}
+	return release, running, true
+}
+
 // HasUnfinishedForSession reports whether parentSession owns any job whose
 // goroutine has not fully exited yet. Empty parentSession preserves the legacy
 // unscoped behavior.
@@ -1193,6 +1320,7 @@ func (m *Manager) loadSessionArtifacts(parentSession, dir string) {
 			artifactComplete: meta.ArtifactComplete,
 			artifactErr:      meta.ArtifactError,
 			tombstone:        true,
+			evidence:         mutationEvidenceFromArtifact(meta),
 		})
 	}
 	m.mu.Lock()
@@ -1484,6 +1612,7 @@ func jobKey(parentSession, id string) string {
 
 type ctxKey struct{}
 type sessionCtxKey struct{}
+type jobCtxKey struct{}
 
 // WithManager stamps ctx with the job manager so tools can reach it via
 // FromContext. The agent sets this on every tool call's context.
@@ -1509,4 +1638,129 @@ func WithSession(ctx context.Context, parentSession string) context.Context {
 func SessionFromContext(ctx context.Context) string {
 	session, _ := ctx.Value(sessionCtxKey{}).(string)
 	return strings.TrimSpace(session)
+}
+
+// PublishEvidence attaches a background agent's host-observed receipts to its
+// job. The receipts stay independent of the parent turn ledger until the
+// parent collects the terminal result with wait or bash_output.
+func PublishEvidence(ctx context.Context, summary evidence.ChildEvidenceSummary) {
+	j, _ := ctx.Value(jobCtxKey{}).(*Job)
+	if j == nil || len(summary.Receipts) == 0 {
+		return
+	}
+	j.mu.Lock()
+	j.evidence.Receipts = append(j.evidence.Receipts, summary.Receipts...)
+	j.mu.Unlock()
+}
+
+// LeaseEvidenceForSession returns a copy of a terminal job's evidence without
+// consuming it. Collection is only provisional: the receipts merge into the
+// collecting turn's ledger, but that ledger is discarded if the turn is
+// cancelled, errors, or the process exits before the turn commits. Consuming
+// here would then lose the mutation for good — the parent's next turn resets its
+// ledger and this job would report nothing, so a background change would ship
+// unreviewed. The evidence is drained only by CommitEvidenceForSession, which
+// the agent calls after the collecting turn passes its delivery gates. A
+// committed job returns empty so a re-poll after successful delivery does not
+// re-demand review.
+func (m *Manager) LeaseEvidenceForSession(parentSession, id string) evidence.ChildEvidenceSummary {
+	summary, _ := m.tryLeaseEvidenceForSession(parentSession, id)
+	return summary
+}
+
+// TryLeaseEvidenceForSession is LeaseEvidenceForSession plus a ready flag that
+// separates "terminal evidence available" (possibly empty — a committed job or
+// one with no mutations) from "not ready to lease yet": unknown job, still
+// running, or killed but its run goroutine has not yet flushed PublishEvidence
+// and closed done. KillForSession flips status to Killed synchronously, well
+// before the goroutine actually returns, so a bash_output poll that lands in
+// that window must not treat the empty read as final. Callers that record a
+// lease (collectBackgroundEvidence) must gate on ready so they never note a
+// lease before the evidence exists — noting it early would let a later commit
+// drain evidence nobody ever merged or reviewed.
+func (m *Manager) TryLeaseEvidenceForSession(parentSession, id string) (evidence.ChildEvidenceSummary, bool) {
+	return m.tryLeaseEvidenceForSession(parentSession, id)
+}
+
+func (m *Manager) tryLeaseEvidenceForSession(parentSession, id string) (evidence.ChildEvidenceSummary, bool) {
+	j := m.get(parentSession, id)
+	if j == nil {
+		return evidence.ChildEvidenceSummary{}, false
+	}
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	select {
+	case <-j.done:
+	default:
+		return evidence.ChildEvidenceSummary{}, false
+	}
+	if j.evidenceCommitted {
+		return evidence.ChildEvidenceSummary{}, true
+	}
+	out := make([]evidence.Receipt, len(j.evidence.Receipts))
+	copy(out, j.evidence.Receipts)
+	return evidence.ChildEvidenceSummary{Receipts: out}, true
+}
+
+// PendingEvidenceJobIDsForSession returns the IDs of parentSession's terminal
+// jobs that carry uncommitted mutation evidence — a prior turn leased it but
+// never delivered (the turn failed or was cancelled, and the next turn's Reset
+// wiped it from the per-turn ledger), or the process restarted before any turn
+// collected it at all. The agent re-leases these at the start of every turn so
+// a turn that never calls wait/bash_output still surfaces the pending mutation
+// to its final-readiness checks instead of silently shipping it unreviewed.
+func (m *Manager) PendingEvidenceJobIDsForSession(parentSession string) []string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var ids []string
+	for _, key := range m.order {
+		j := m.jobs[key]
+		if j == nil || !sessionMatches(parentSession, j.SessionID) {
+			continue
+		}
+		j.mu.Lock()
+		terminal := false
+		select {
+		case <-j.done:
+			terminal = true
+		default:
+		}
+		pending := terminal && !j.evidenceCommitted && len(j.evidence.Receipts) > 0
+		j.mu.Unlock()
+		if pending {
+			ids = append(ids, j.ID)
+		}
+	}
+	return ids
+}
+
+// CommitEvidenceForSession permanently consumes a terminal job's evidence after
+// the collecting turn has accounted for it (passed final-readiness). It clears
+// the in-memory copy and drains the persisted mutation summary so neither a
+// same-process re-poll nor a restart resurrects receipts the delivered turn
+// already reviewed. Best-effort on the disk rewrite — a failed rewrite merely
+// restores the conservative resurrection behavior.
+func (m *Manager) CommitEvidenceForSession(parentSession, id string) {
+	j := m.get(parentSession, id)
+	if j == nil {
+		return
+	}
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	select {
+	case <-j.done:
+	default:
+		return
+	}
+	if j.evidenceCommitted {
+		return
+	}
+	hadEvidence := len(j.evidence.Receipts) > 0
+	j.evidenceCommitted = true
+	j.evidence = evidence.ChildEvidenceSummary{}
+	if hadEvidence {
+		if err := m.writeJobMetaLocked(j, j.status); err != nil {
+			j.noteArtifactErr("evidence drain: " + err.Error())
+		}
+	}
 }

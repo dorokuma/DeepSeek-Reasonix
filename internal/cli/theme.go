@@ -365,13 +365,6 @@ func themeStyle(c cliColor) lipgloss.Style {
 	return lipgloss.NewStyle().Foreground(themeLipColor(c))
 }
 
-func withThemeFG(st lipgloss.Style, c cliColor) lipgloss.Style {
-	if !colorEnabled {
-		return st
-	}
-	return st.Foreground(themeLipColor(c))
-}
-
 func withThemeBorderFG(st lipgloss.Style, c cliColor) lipgloss.Style {
 	if !colorEnabled {
 		return st
@@ -386,10 +379,6 @@ func init() {
 func refreshCLIStyles() {
 	inputBoxStyle = withThemeBorderFG(lipgloss.NewStyle().
 		Border(lipgloss.NormalBorder(), true, false, true, false), activeCLITheme.accent).
-		PaddingLeft(1)
-	approvalBannerStyle = withThemeFG(withThemeBorderFG(lipgloss.NewStyle().
-		Border(lipgloss.NormalBorder(), true, false, true, false), activeCLITheme.warn), activeCLITheme.warn).
-		Bold(true).
 		PaddingLeft(1)
 	todoPanelStyle = withThemeBorderFG(lipgloss.NewStyle().
 		Border(lipgloss.NormalBorder(), true, false, false, false), activeCLITheme.border).

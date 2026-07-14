@@ -718,3 +718,21 @@ func TestPlanModeOff_AllToolsAllowed(t *testing.T) {
 		t.Error("bash should not be blocked when plan mode is off")
 	}
 }
+
+func TestCallContextMirrorsPlanModeOntoLeafKey(t *testing.T) {
+	// Leaf-package tools (internal/tool/builtin) read plan mode via
+	// planmode.Active because importing this package would cycle. The call
+	// context constructor is the single production writer of both flags, so
+	// this pins them in lockstep.
+	on := withCallContext(context.Background(), "c", event.Discard, nil, true)
+	if !PlanModeFromContext(on) || !planmode.Active(on) {
+		t.Fatal("plan-mode flags disagree for an active planning call")
+	}
+	off := withCallContext(context.Background(), "c", event.Discard, nil, false)
+	if PlanModeFromContext(off) || planmode.Active(off) {
+		t.Fatal("plan-mode flags disagree for a normal call")
+	}
+	if !planmode.Active(WithToolCallContext(context.Background(), "c", event.Discard, nil, true)) {
+		t.Fatal("exported host-initiated wrapper lost the leaf plan-mode flag")
+	}
+}

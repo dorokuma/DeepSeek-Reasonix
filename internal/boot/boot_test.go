@@ -979,6 +979,179 @@ func (p *headlessTaskTestProvider) Stream(context.Context, provider.Request) (<-
 	return ch, nil
 }
 
+// TestBuildHeadlessApprovalModePropagatesToTaskSubagentGate pins boot.Build's
+// actual wiring for the fix: a `task` sub-agent spawned from a headless run
+// must honor the same --permission-mode contract as the parent executor
+// instead of the mode-unaware default gate (ask resolves to allow) that boot
+// used to build unconditionally. Auto must fail closed on write_file's
+// explicit ask rule even inside the sub-agent; only yolo may bypass it.
+func TestBuildHeadlessApprovalModePropagatesToTaskSubagentGate(t *testing.T) {
+	runTaskWriteOnce := func(t *testing.T, mode string) bool {
+		t.Helper()
+		isolateConfigHome(t)
+		dir := robustTempDir(t)
+		t.Chdir(dir)
+
+		registerHeadlessTaskWriteTestProvider()
+		prov := &headlessTaskWriteTestProvider{}
+		setHeadlessTaskWriteTestProvider(t, prov)
+		writeFile(t, dir, "reasonix.toml", `
+default_model = "test-model"
+
+[agent]
+system_prompt = "BASE"
+
+[permissions]
+mode = "ask"
+ask = ["write_file"]
+
+[[providers]]
+name = "test-model"
+kind = "boot-headless-write-test"
+model = "x"
+`)
+
+		ctrl, err := Build(context.Background(), Options{Sink: event.Discard, HeadlessApprovalMode: mode})
+		if err != nil {
+			t.Fatalf("Build: %v", err)
+		}
+		defer ctrl.Close()
+
+		if err := ctrl.Run(context.Background(), "use a task subagent to write a file"); err != nil {
+			t.Fatalf("Run: %v", err)
+		}
+		_, statErr := os.Stat(filepath.Join(dir, "sub.txt"))
+		return statErr == nil
+	}
+
+	if written := runTaskWriteOnce(t, "auto"); written {
+		t.Fatalf("auto: task sub-agent wrote sub.txt despite the explicit ask rule on write_file")
+	}
+	if written := runTaskWriteOnce(t, "yolo"); !written {
+		t.Fatal("yolo: task sub-agent did not write sub.txt, want the ask rule bypassed")
+	}
+}
+
+// TestBuildInteractiveApprovalModeSwitchPropagatesToTaskSubagentGate pins the
+// interactive counterpart of TestBuildHeadlessApprovalModePropagatesToTaskSubagentGate:
+// boot.Build with no HeadlessApprovalMode — the interactive REPL's boot path,
+// which always starts a session at the default Ask posture and switches modes
+// later at runtime via Shift+Tab (Controller.SetToolApprovalMode) — followed
+// by a runtime switch to auto must also reach the task sub-agent's gate.
+// Before this fix, the sub-agent gate was captured once at boot with the
+// mode-unaware default (ask resolves to allow) and had no rebuild hook, so a
+// later SetToolApprovalMode(auto) call updated only the parent executor.
+func TestBuildInteractiveApprovalModeSwitchPropagatesToTaskSubagentGate(t *testing.T) {
+	isolateConfigHome(t)
+	dir := robustTempDir(t)
+	t.Chdir(dir)
+
+	registerHeadlessTaskWriteTestProvider()
+	prov := &headlessTaskWriteTestProvider{}
+	setHeadlessTaskWriteTestProvider(t, prov)
+	writeFile(t, dir, "reasonix.toml", `
+default_model = "test-model"
+
+[agent]
+system_prompt = "BASE"
+
+[permissions]
+mode = "ask"
+ask = ["write_file"]
+
+[[providers]]
+name = "test-model"
+kind = "boot-headless-write-test"
+model = "x"
+`)
+
+	ctrl, err := Build(context.Background(), Options{Sink: event.Discard})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	defer ctrl.Close()
+
+	ctrl.SetToolApprovalMode("auto")
+
+	if err := ctrl.Run(context.Background(), "use a task subagent to write a file"); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(dir, "sub.txt")); statErr == nil {
+		t.Fatal("auto (interactive mode switch): task sub-agent wrote sub.txt despite the explicit ask rule on write_file")
+	}
+}
+
+const headlessTaskWriteTestProviderKind = "boot-headless-write-test"
+
+var (
+	headlessTaskWriteTestProviderOnce    sync.Once
+	headlessTaskWriteTestProviderCurrent *headlessTaskWriteTestProvider
+	headlessTaskWriteTestProviderMu      sync.Mutex
+)
+
+func registerHeadlessTaskWriteTestProvider() {
+	headlessTaskWriteTestProviderOnce.Do(func() {
+		provider.Register(headlessTaskWriteTestProviderKind, func(provider.Config) (provider.Provider, error) {
+			headlessTaskWriteTestProviderMu.Lock()
+			defer headlessTaskWriteTestProviderMu.Unlock()
+			if headlessTaskWriteTestProviderCurrent == nil {
+				return nil, errors.New("headless task write test provider is not installed")
+			}
+			return headlessTaskWriteTestProviderCurrent, nil
+		})
+	})
+}
+
+func setHeadlessTaskWriteTestProvider(t *testing.T, p *headlessTaskWriteTestProvider) {
+	t.Helper()
+	headlessTaskWriteTestProviderMu.Lock()
+	headlessTaskWriteTestProviderCurrent = p
+	headlessTaskWriteTestProviderMu.Unlock()
+	t.Cleanup(func() {
+		headlessTaskWriteTestProviderMu.Lock()
+		if headlessTaskWriteTestProviderCurrent == p {
+			headlessTaskWriteTestProviderCurrent = nil
+		}
+		headlessTaskWriteTestProviderMu.Unlock()
+	})
+}
+
+// headlessTaskWriteTestProvider scripts a parent turn that spawns a `task`
+// sub-agent, which itself calls write_file before answering — reproducing the
+// exact call shape TaskTool.runSubSession drives so the boot-level gate wiring
+// is exercised end to end, not just the gate object in isolation.
+type headlessTaskWriteTestProvider struct {
+	mu    sync.Mutex
+	calls int
+}
+
+func (p *headlessTaskWriteTestProvider) Name() string { return "boot-headless-write-test" }
+
+func (p *headlessTaskWriteTestProvider) Stream(context.Context, provider.Request) (<-chan provider.Chunk, error) {
+	p.mu.Lock()
+	call := p.calls
+	p.calls++
+	p.mu.Unlock()
+
+	var chunks []provider.Chunk
+	switch call {
+	case 0:
+		chunks = []provider.Chunk{{Type: provider.ChunkToolCall, ToolCall: &provider.ToolCall{ID: "task-1", Name: "task", Arguments: `{"prompt":"write a file"}`}}}
+	case 1:
+		chunks = []provider.Chunk{{Type: provider.ChunkToolCall, ToolCall: &provider.ToolCall{ID: "write-1", Name: "write_file", Arguments: `{"path":"sub.txt","content":"hi"}`}}}
+	case 2:
+		chunks = []provider.Chunk{{Type: provider.ChunkText, Text: "subagent answer"}, {Type: provider.ChunkDone}}
+	default:
+		chunks = []provider.Chunk{{Type: provider.ChunkText, Text: "parent done"}, {Type: provider.ChunkDone}}
+	}
+	ch := make(chan provider.Chunk, len(chunks))
+	for _, chunk := range chunks {
+		ch <- chunk
+	}
+	close(ch)
+	return ch, nil
+}
+
 func TestNewProviderAppliesConfiguredDefaultEffort(t *testing.T) {
 	var gotReq map[string]any
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -1506,8 +1679,6 @@ model = "x"
 			for name, want := range map[string]bool{
 				"bash":                false,
 				"read_file":           true,
-				"memory":              true,
-				"remember":            false,
 				"connect_tool_source": tc.tokenMode == TokenModeEconomy,
 			} {
 				got, ok := readOnly[name]
@@ -1629,25 +1800,10 @@ func economyBootToolNames() []string {
 		"ask",
 		"bash",
 		"bash_output",
-		"code_index",
-		"complete_step",
 		"connect_tool_source",
 		"edit_file",
-		"forget",
-		"glob",
-		"grep",
-		"history",
 		"kill_shell",
-		"list_sessions",
-		"ls",
-		"memory",
-		"move_file",
-		"multi_edit",
 		"read_file",
-		"read_session",
-		"remember",
-		"slash_command",
-		"todo_write",
 		"wait",
 		"write_file",
 	}
@@ -1695,32 +1851,17 @@ command = "reasonix-missing-mockmcp"
 		"ask",
 		"bash",
 		"bash_output",
-		"code_index",
-		"complete_step",
 		"connect_tool_source",
 		"edit_file",
-		"forget",
-		"glob",
-		"grep",
-		"history",
 		"kill_shell",
-		"list_sessions",
-		"ls",
-		"memory",
-		"move_file",
-		"multi_edit",
 		"read_file",
-		"read_session",
-		"remember",
-		"slash_command",
-		"todo_write",
 		"wait",
 		"write_file",
 	}
 	if got := toolSchemaNames(req.Tools); !reflect.DeepEqual(got, wantTools) {
 		t.Fatalf("economy first request tool order changed\ngot  %v\nwant %v", got, wantTools)
 	}
-	for _, want := range []string{"connect_tool_source", "read_file", "grep", "edit_file", "bash", "slash_command", "ask"} {
+	for _, want := range []string{"connect_tool_source", "read_file", "edit_file", "write_file", "bash", "ask"} {
 		if !requestHasTool(req, want) {
 			t.Fatalf("economy first request missing tool %q; tools=%v", want, toolSchemaNames(req.Tools))
 		}
@@ -1729,6 +1870,8 @@ command = "reasonix-missing-mockmcp"
 		"web_fetch", "task", "read_only_task", "read_only_skill", "run_skill", "read_skill", "install_skill", "install_source",
 		"explore", "research", "review", "security_review",
 		"lsp_definition", "lsp_references", "lsp_hover", "lsp_diagnostics",
+		"code_index", "complete_step", "glob", "grep", "ls", "move_file", "multi_edit", "todo_write",
+		"history", "list_sessions", "read_session", "memory", "remember", "forget", "slash_command",
 	} {
 		if requestHasTool(req, forbidden) {
 			t.Fatalf("economy first request should hide %q; tools=%v", forbidden, toolSchemaNames(req.Tools))
@@ -1743,6 +1886,181 @@ command = "reasonix-missing-mockmcp"
 	}
 	if strings.Contains(sys, "# Skills") || strings.Contains(sys, "projskill") {
 		t.Fatalf("skills index should not be in economy system prompt:\n%s", sys)
+	}
+}
+
+func TestBuildTokenEconomyConnectsOptionalSourcesOnDemand(t *testing.T) {
+	tests := []struct {
+		source string
+		tools  []string
+	}{
+		{source: "search", tools: []string{"code_index", "glob", "grep", "ls"}},
+		{source: "files", tools: []string{"delete_range", "delete_symbol", "move_file", "multi_edit", "notebook_edit"}},
+		{source: "workflow", tools: []string{"complete_step", "todo_write"}},
+		{source: "sessions", tools: []string{"history", "list_sessions", "read_session"}},
+		{source: "memory", tools: []string{"forget", "memory", "remember"}},
+		{source: "commands", tools: []string{"slash_command"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.source, func(t *testing.T) {
+			isolateConfigHome(t)
+			dir := robustTempDir(t)
+			t.Chdir(dir)
+
+			registerBootTokenProfileTestProvider()
+			prov := testutil.NewMock("token-economy",
+				testutil.Turn{ToolCalls: []provider.ToolCall{
+					{ID: "source-1", Name: "connect_tool_source", Arguments: fmt.Sprintf(`{"source":%q}`, tt.source)},
+				}},
+				testutil.Turn{Text: "done"},
+			)
+			setBootTokenProfileTestProvider(t, prov)
+			writeFile(t, dir, "reasonix.toml", `
+default_model = "test-model"
+
+[agent]
+system_prompt = "BASE"
+
+[[providers]]
+name = "test-model"
+kind = "boot-token-profile-test"
+model = "x"
+`)
+			writeFile(t, dir, ".reasonix/commands/check.md", "---\ndescription: inspect the project\n---\ninspect $ARGUMENTS")
+
+			ctrl, err := Build(context.Background(), Options{Sink: event.Discard, TokenMode: TokenModeEconomy})
+			if err != nil {
+				t.Fatalf("Build: %v", err)
+			}
+			defer ctrl.Close()
+			if err := ctrl.Run(context.Background(), "enable an optional source"); err != nil {
+				t.Fatalf("Run: %v", err)
+			}
+			reqs := prov.Requests()
+			if len(reqs) != 2 {
+				t.Fatalf("requests = %d, want 2", len(reqs))
+			}
+			for _, name := range tt.tools {
+				if requestHasTool(reqs[0], name) {
+					t.Fatalf("first request should hide %q; tools=%v", name, toolSchemaNames(reqs[0].Tools))
+				}
+				if !requestHasTool(reqs[1], name) {
+					t.Fatalf("second request should expose %q after source=%s; tools=%v", name, tt.source, toolSchemaNames(reqs[1].Tools))
+				}
+			}
+		})
+	}
+}
+
+func TestBuildTokenEconomyBuiltinSourcesHonorEnabledTools(t *testing.T) {
+	tests := []struct {
+		source   string
+		enabled  string
+		disabled string
+	}{
+		{source: "search", enabled: "grep", disabled: "glob"},
+		{source: "files", enabled: "move_file", disabled: "multi_edit"},
+		{source: "workflow", enabled: "todo_write", disabled: "complete_step"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.source, func(t *testing.T) {
+			isolateConfigHome(t)
+			dir := robustTempDir(t)
+			t.Chdir(dir)
+
+			registerBootTokenProfileTestProvider()
+			prov := testutil.NewMock("token-economy",
+				testutil.Turn{ToolCalls: []provider.ToolCall{
+					{ID: "source-1", Name: "connect_tool_source", Arguments: fmt.Sprintf(`{"source":%q}`, tt.source)},
+				}},
+				testutil.Turn{Text: "done"},
+			)
+			setBootTokenProfileTestProvider(t, prov)
+			writeFile(t, dir, "reasonix.toml", fmt.Sprintf(`
+default_model = "test-model"
+
+[tools]
+enabled = ["read_file", %q]
+
+[agent]
+system_prompt = "BASE"
+
+[[providers]]
+name = "test-model"
+kind = "boot-token-profile-test"
+model = "x"
+`, tt.enabled))
+
+			ctrl, err := Build(context.Background(), Options{Sink: event.Discard, TokenMode: TokenModeEconomy})
+			if err != nil {
+				t.Fatalf("Build: %v", err)
+			}
+			defer ctrl.Close()
+			if err := ctrl.Run(context.Background(), "enable a configured source"); err != nil {
+				t.Fatalf("Run: %v", err)
+			}
+			reqs := prov.Requests()
+			if len(reqs) != 2 {
+				t.Fatalf("requests = %d, want 2", len(reqs))
+			}
+			if requestHasTool(reqs[0], tt.enabled) {
+				t.Fatalf("first request should hide on-demand tool %q; tools=%v", tt.enabled, toolSchemaNames(reqs[0].Tools))
+			}
+			if !requestHasTool(reqs[1], tt.enabled) {
+				t.Fatalf("second request should expose enabled tool %q; tools=%v", tt.enabled, toolSchemaNames(reqs[1].Tools))
+			}
+			if requestHasTool(reqs[1], tt.disabled) {
+				t.Fatalf("source %s should honor [tools].enabled and hide %q; tools=%v", tt.source, tt.disabled, toolSchemaNames(reqs[1].Tools))
+			}
+		})
+	}
+}
+
+func TestBuildTokenEconomyExplicitOnDemandAllowlistDoesNotEnableAllBuiltins(t *testing.T) {
+	isolateConfigHome(t)
+	dir := robustTempDir(t)
+	t.Chdir(dir)
+
+	registerBootTokenProfileTestProvider()
+	prov := testutil.NewMock("token-economy",
+		testutil.Turn{ToolCalls: []provider.ToolCall{
+			{ID: "source-1", Name: "connect_tool_source", Arguments: `{"source":"search"}`},
+		}},
+		testutil.Turn{Text: "done"},
+	)
+	setBootTokenProfileTestProvider(t, prov)
+	writeFile(t, dir, "reasonix.toml", `
+default_model = "test-model"
+
+[tools]
+enabled = ["grep", "glob", "ls"]
+
+[agent]
+system_prompt = "BASE"
+
+[[providers]]
+name = "test-model"
+kind = "boot-token-profile-test"
+model = "x"
+`)
+
+	ctrl, err := Build(context.Background(), Options{Sink: event.Discard, TokenMode: TokenModeEconomy})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	defer ctrl.Close()
+	if err := ctrl.Run(context.Background(), "enable search tools"); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	reqs := prov.Requests()
+	if len(reqs) != 2 {
+		t.Fatalf("requests = %d, want 2", len(reqs))
+	}
+	if got, want := toolSchemaNames(reqs[0].Tools), []string{"ask", "connect_tool_source"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("first request tools = %v, want %v", got, want)
+	}
+	if got, want := toolSchemaNames(reqs[1].Tools), []string{"ask", "connect_tool_source", "glob", "grep", "ls"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("second request tools = %v, want %v", got, want)
 	}
 }
 
@@ -2143,6 +2461,16 @@ func TestBuildTokenEconomyPlanModeBlocksSourcesWithPolicy(t *testing.T) {
 			forbiddenTools: []string{"install_source"},
 		},
 		{
+			source:         "memory",
+			args:           `{"source":"memory"}`,
+			forbiddenTools: []string{"memory", "remember", "forget"},
+		},
+		{
+			source:         "files",
+			args:           `{"source":"files"}`,
+			forbiddenTools: []string{"delete_range", "delete_symbol", "move_file", "multi_edit", "notebook_edit"},
+		},
+		{
 			source: "skills",
 			args:   `{"source":"skills"}`,
 			forbiddenTools: []string{
@@ -2221,6 +2549,84 @@ command = "reasonix-missing-mockmcp"
 				t.Fatalf("blocked source %s should not expose tools with prefix %q; tools=%v", tt.source, tt.forbiddenPrefix, toolSchemaNames(reqs[1].Tools))
 			}
 		})
+	}
+}
+
+func TestBuildTokenEconomyPlanModeConnectsWorkflowPlanningSubset(t *testing.T) {
+	isolateConfigHome(t)
+	dir := robustTempDir(t)
+	t.Chdir(dir)
+
+	registerBootTokenProfileTestProvider()
+	prov := testutil.NewMock("token-economy",
+		testutil.Turn{ToolCalls: []provider.ToolCall{
+			{ID: "source-1", Name: "connect_tool_source", Arguments: `{"source":"workflow"}`},
+		}},
+		testutil.Turn{Text: "plan drafted"},
+		testutil.Turn{ToolCalls: []provider.ToolCall{
+			{ID: "source-2", Name: "connect_tool_source", Arguments: `{"source":"workflow"}`},
+		}},
+		testutil.Turn{Text: "done"},
+	)
+	setBootTokenProfileTestProvider(t, prov)
+	writeFile(t, dir, "reasonix.toml", `
+default_model = "test-model"
+
+[agent]
+system_prompt = "BASE"
+
+[[providers]]
+name = "test-model"
+kind = "boot-token-profile-test"
+model = "x"
+`)
+
+	ctrl, err := Build(context.Background(), Options{Sink: event.Discard, TokenMode: TokenModeEconomy})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	defer ctrl.Close()
+	ctrl.SetPlanMode(true)
+	if err := ctrl.Run(context.Background(), "draft a plan and track it with todos"); err != nil {
+		t.Fatalf("plan Run: %v", err)
+	}
+
+	reqs := prov.Requests()
+	if len(reqs) != 2 {
+		t.Fatalf("requests = %d, want 2", len(reqs))
+	}
+	if !requestHasTool(reqs[1], "todo_write") {
+		t.Fatalf("plan-mode workflow connect should expose todo_write; tools=%v", toolSchemaNames(reqs[1].Tools))
+	}
+	if requestHasTool(reqs[1], "complete_step") {
+		t.Fatalf("plan-mode workflow connect must not expose complete_step; tools=%v", toolSchemaNames(reqs[1].Tools))
+	}
+	var planConnectOutput string
+	for _, msg := range ctrl.History() {
+		if msg.Role == provider.RoleTool && msg.Name == "connect_tool_source" {
+			planConnectOutput += msg.Content
+		}
+	}
+	if strings.Contains(planConnectOutput, "blocked:") {
+		t.Fatalf("workflow source should not be blocked in plan mode, got:\n%s", planConnectOutput)
+	}
+	if !strings.Contains(planConnectOutput, "complete_step stays blocked in plan mode") {
+		t.Fatalf("plan-mode workflow connect should explain the deferred complete_step, got:\n%s", planConnectOutput)
+	}
+
+	ctrl.SetPlanMode(false)
+	if err := ctrl.Run(context.Background(), "the plan is approved; execute it"); err != nil {
+		t.Fatalf("execute Run: %v", err)
+	}
+	reqs = prov.Requests()
+	if len(reqs) != 4 {
+		t.Fatalf("requests = %d, want 4", len(reqs))
+	}
+	if !requestHasTool(reqs[3], "complete_step") {
+		t.Fatalf("reconnecting workflow after plan mode should expose complete_step; tools=%v", toolSchemaNames(reqs[3].Tools))
+	}
+	if !requestHasTool(reqs[3], "todo_write") {
+		t.Fatalf("todo_write should stay enabled after plan mode; tools=%v", toolSchemaNames(reqs[3].Tools))
 	}
 }
 
@@ -3442,6 +3848,171 @@ api_key_env = "REASONIX_TEST_KEY_UNSET"
 		t.Fatalf("Build should load config from nearest git root: %v", err)
 	}
 	defer ctrl.Close()
+}
+
+func TestNormalizeAdditionalDirs(t *testing.T) {
+	root := t.TempDir()
+	extra := filepath.Join(root, "extra")
+	if err := os.Mkdir(extra, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(root, "extra-link")
+	if err := os.Symlink(extra, link); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+
+	got, err := normalizeAdditionalDirs(root, []string{"extra", link, "", " extra "})
+	if err != nil {
+		t.Fatalf("normalizeAdditionalDirs: %v", err)
+	}
+	real, err := filepath.EvalSymlinks(extra)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got, []string{real}) {
+		t.Fatalf("normalized dirs = %v, want [%s]", got, real)
+	}
+}
+
+func TestAppendUniquePathsDeduplicatesSymlinkEquivalentRoots(t *testing.T) {
+	real := t.TempDir()
+	link := filepath.Join(t.TempDir(), "root-link")
+	if err := os.Symlink(real, link); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	got := appendUniquePaths([]string{link}, real)
+	if !reflect.DeepEqual(got, []string{link}) {
+		t.Fatalf("roots = %v, want only original symlink root", got)
+	}
+}
+
+func TestNormalizeAdditionalDirsRejectsInvalidPaths(t *testing.T) {
+	root := t.TempDir()
+	file := filepath.Join(root, "file.txt")
+	if err := os.WriteFile(file, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{"missing", file} {
+		t.Run(filepath.Base(path), func(t *testing.T) {
+			if _, err := normalizeAdditionalDirs(root, []string{path}); err == nil {
+				t.Fatalf("normalizeAdditionalDirs(%q) unexpectedly succeeded", path)
+			}
+		})
+	}
+}
+
+func TestBuildAdditionalDirsAllowWriterAndPreserveToolSchemas(t *testing.T) {
+	isolateConfigHome(t)
+	root := robustTempDir(t)
+	extra := t.TempDir()
+	t.Chdir(root)
+	writeFile(t, root, "reasonix.toml", `
+default_model = "test-model"
+
+[agent]
+system_prompt = "BASE"
+
+[[providers]]
+name = "test-model"
+kind = "boot-token-profile-test"
+model = "x"
+`)
+	registerBootTokenProfileTestProvider()
+
+	captureSchemas := func(opts Options) []byte {
+		t.Helper()
+		prov := testutil.NewMock("additional-dir-schema", testutil.Turn{Text: "done"})
+		setBootTokenProfileTestProvider(t, prov)
+		opts.Sink = event.Discard
+		ctrl, err := Build(context.Background(), opts)
+		if err != nil {
+			t.Fatalf("Build: %v", err)
+		}
+		if err := ctrl.Run(context.Background(), "capture schemas"); err != nil {
+			ctrl.Close()
+			t.Fatalf("Run: %v", err)
+		}
+		ctrl.Close()
+		reqs := prov.Requests()
+		if len(reqs) != 1 {
+			t.Fatalf("requests = %d, want 1", len(reqs))
+		}
+		encoded, err := json.Marshal(reqs[0].Tools)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return encoded
+	}
+
+	baseline := captureSchemas(Options{})
+	withOverrides := captureSchemas(Options{
+		AdditionalDirs:  []string{extra},
+		PermissionAllow: []string{"Bash(git *)", "Edit"},
+	})
+	if !bytes.Equal(baseline, withOverrides) {
+		t.Fatalf("session access overrides changed provider-visible tool schemas\nbaseline=%s\nwith=%s", baseline, withOverrides)
+	}
+
+	target := filepath.Join(extra, "written.txt")
+	prov := testutil.NewMock("additional-dir-write",
+		testutil.Turn{ToolCalls: []provider.ToolCall{{ID: "write-1", Name: "write_file", Arguments: fmt.Sprintf(`{"path":%q,"content":"ok"}`, target)}}},
+		testutil.Turn{Text: "done"},
+	)
+	setBootTokenProfileTestProvider(t, prov)
+	ctrl, err := Build(context.Background(), Options{Sink: event.Discard, AdditionalDirs: []string{extra}})
+	if err != nil {
+		t.Fatalf("Build writer: %v", err)
+	}
+	defer ctrl.Close()
+	if err := ctrl.Run(context.Background(), "write into the additional directory"); err != nil {
+		t.Fatalf("Run writer: %v", err)
+	}
+	if got, err := os.ReadFile(target); err != nil || string(got) != "ok" {
+		t.Fatalf("additional-dir file = %q, err=%v", got, err)
+	}
+}
+
+func TestBuildAdditionalDirsReachSandboxedBashWriteRoots(t *testing.T) {
+	if runtime.GOOS == "windows" || !sandbox.Available() {
+		t.Skip("requires a Unix sandbox backend")
+	}
+	isolateConfigHome(t)
+	root := robustTempDir(t)
+	extra := t.TempDir()
+	t.Chdir(root)
+	writeFile(t, root, "reasonix.toml", `
+default_model = "test-model"
+
+[agent]
+system_prompt = "BASE"
+
+[sandbox]
+bash = "enforce"
+
+[[providers]]
+name = "test-model"
+kind = "boot-token-profile-test"
+model = "x"
+`)
+	registerBootTokenProfileTestProvider()
+	target := filepath.Join(extra, "sandboxed.txt")
+	command := "printf ok > " + strconv.Quote(target)
+	prov := testutil.NewMock("additional-dir-bash",
+		testutil.Turn{ToolCalls: []provider.ToolCall{{ID: "bash-1", Name: "bash", Arguments: fmt.Sprintf(`{"command":%q}`, command)}}},
+		testutil.Turn{Text: "done"},
+	)
+	setBootTokenProfileTestProvider(t, prov)
+	ctrl, err := Build(context.Background(), Options{Sink: event.Discard, AdditionalDirs: []string{extra}})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	defer ctrl.Close()
+	if err := ctrl.Run(context.Background(), "write from sandboxed bash"); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if got, err := os.ReadFile(target); err != nil || string(got) != "ok" {
+		t.Fatalf("sandboxed file = %q, err=%v", got, err)
+	}
 }
 
 func TestBuildMigratesLegacyEagerBeforeStatsDemotion(t *testing.T) {

@@ -79,6 +79,18 @@ ok(
 );
 
 ok(
+  finalDeclaration(".app--darwin .app-chrome--tabs .tabbar", "--wails-draggable") === "drag" &&
+    finalDeclaration(".app--windows-frameless:not(.app--workbench):not(.app--creation) .app-chrome--native-tabs .tabbar", "--wails-draggable") === "drag",
+  "classic tabbar whitespace drags the window on macOS and frameless Windows",
+);
+
+ok(
+  finalDeclaration(".app--darwin .app-chrome--tabs .tabbar *", "--wails-draggable") === "no-drag" &&
+    finalDeclaration(".app--windows .app-chrome--native-tabs .tabbar *", "--wails-draggable") === "no-drag",
+  "classic tabbar controls and tab gaps remain interactive no-drag regions",
+);
+
+ok(
   /const WORKSPACE_PANEL_DEFAULT_OPEN = true;/.test(layoutStoreSource) &&
     /workspacePanelOpen:\s*WORKSPACE_PANEL_DEFAULT_OPEN/.test(layoutStoreSource),
   "right dock starts expanded on launch",
@@ -112,6 +124,48 @@ ok(
 ok(
   finalDeclaration(":root[data-theme-style] .app-chrome--tabs .tabbar > .tooltip-trigger:has(.tabbar__new)", "flex")?.includes("--chrome-panel-control-size"),
   "themed AppChrome new-tab button keeps a stable slot beside the tabs",
+);
+
+ok(
+  finalDeclaration(":root[data-theme-style] .tabbar__tab--active", "box-shadow")?.includes(
+    "inset 0 -2px 0 var(--project-accent, var(--accent))",
+  ),
+  "active themed tab carries the project-accent underline",
+);
+
+ok(
+  finalDeclaration(":root[data-theme-style] .tabbar__tab--active:focus-visible", "box-shadow")?.includes(
+    "inset 0 -2px 0 var(--project-accent, var(--accent))",
+  ) &&
+    finalDeclaration(":root[data-theme-style] .tabbar__tab--active:focus-visible", "box-shadow")?.includes(
+      "0 0 0 3px var(--accent-soft)",
+    ),
+  "keyboard focus on the active tab keeps both the focus ring and the accent underline",
+);
+
+ok(
+  matchingBlocks(".app--darwin .app-chrome--tabs .tabbar__tab--active").every(
+    (block) => !block.includes("inset 0 2px"),
+  ),
+  "macOS active tab declares no dead top-edge accent (the themed bottom-edge layer owns it)",
+);
+
+ok(
+  finalDeclaration(":root[data-theme-style] .tabbar__tabs", "gap") === "6px" &&
+    finalDeclaration(":root[data-theme-style] .tabbar__tab", "border") === "1px solid var(--border)",
+  "themed tabs keep distinct full outlines with visible spacing",
+);
+
+ok(
+  finalDeclaration(":root[data-theme-style] .app-chrome--tabs .tabbar__tab + .tabbar__tab:not(.tabbar__tab--drop-before)::before", "width") === "1px" &&
+    finalDeclaration(":root[data-theme-style] .app-chrome--tabs .tabbar__tab + .tabbar__tab:not(.tabbar__tab--drop-before)::before", "background") === "var(--border-2)",
+  "adjacent AppChrome tabs render a stronger divider inside their gap",
+);
+
+ok(
+  finalDeclaration(":root[data-theme-style] .tabbar__tab--active", "border-color") === "var(--border-2)" &&
+    finalDeclaration(":root[data-theme-style] .tabbar__tab--active", "font-weight") === "600",
+  "active themed tabs combine a stronger border outline and heavier label weight",
 );
 
 ok(
@@ -189,7 +243,7 @@ ok(
 );
 
 ok(
-  /const controllerReady = state\.meta\?\.ready === true && !state\.backendActivationPending;/.test(appSource) &&
+  /const controllerReady = state\.meta\?\.ready === true && !state\.backendActivationPending && !runtimeTransitioning;/.test(appSource) &&
     /if \(!activeTabId \|\| !controllerReady\) return;\s*void commitThenSend\(activeTabId, text\)\.catch/.test(appSource) &&
     /onPrompt=\{handleTranscriptPrompt\}/.test(appSource) &&
     /submitDisabled=\{!controllerReady\}/.test(appSource),

@@ -41,7 +41,7 @@ input,textarea{font:inherit;color:inherit}
 
 .app{display:grid;grid-template-columns:220px 1fr;grid-template-rows:1fr auto;height:100vh}
 .sidebar{grid-row:1/3;background:var(--bg-2);border-right:1px solid var(--border);display:flex;flex-direction:column;overflow:hidden}
-.transcript{overflow-y:auto;padding:24px 28px;scroll-behavior:smooth}
+.transcript{overflow-y:auto;padding:24px 28px}
 .footer{border-top:1px solid var(--border);background:var(--bg);padding:12px 28px 16px;display:flex;flex-direction:column;gap:8px;position:relative}
 .footer::before{content:'';position:absolute;inset:-20px 0 auto 0;height:20px;background:linear-gradient(to top,var(--bg),transparent);pointer-events:none}
 
@@ -141,6 +141,7 @@ input,textarea{font:inherit;color:inherit}
 
 /* approval */
 .approval{background:var(--panel);border:1px solid var(--accent);border-radius:var(--radius-lg);padding:12px 14px;margin:8px 0;box-shadow:var(--shadow-md);animation:msg-in .2s ease}
+.approval:focus{outline:none}
 .approval__header{display:flex;align-items:center;gap:7px;margin-bottom:8px}
 .approval__icon{color:var(--warning);width:16px;height:16px}
 .approval__title{font-weight:600;font-size:13px}
@@ -946,9 +947,29 @@ function slashGroupLabel(group){return __('cmd_group_'+group)||group;}
 function post(path, body) {
   return fetch(path, {method:'POST',headers:{'content-type':'application/json'},body:body?JSON.stringify(body):undefined});
 }
-function scrollDown() { requestAnimationFrame(()=>{log.scrollTop=log.scrollHeight;});}
+// Follow streaming output only while the user is pinned to the bottom of the
+// transcript; scrolling up detaches so history stays readable mid-stream.
+// Detach triggers on wheel intent (any upward notch on scrollable content),
+// not only on position: during fast streaming every frame re-bottoms the
+// viewport, so a slow trackpad drag would never accumulate the 40px position
+// delta. force re-pins (own message sent, session loaded, action prompts,
+// click feedback) and wins over a concurrent user scroll — an approval needs
+// a decision and its key handler is document-level, so it must not sit
+// off-screen. Scrolls are instant: a smooth animation lags behind rapid
+// chunks, and its intermediate positions would read as "not at bottom" and
+// break pin detection.
+let pinnedToBottom=true;
+function atBottom() { return log.scrollHeight-log.scrollTop-log.clientHeight<40; }
+log.addEventListener('scroll',()=>{pinnedToBottom=atBottom();});
+log.addEventListener('wheel',e=>{if(e.deltaY<0&&log.scrollHeight>log.clientHeight)pinnedToBottom=false;},{passive:true});
+function scrollDown(force) { if(force)pinnedToBottom=true; if(!pinnedToBottom)return; requestAnimationFrame(()=>{if(force)pinnedToBottom=true; else if(!pinnedToBottom)return; log.scrollTo({top:log.scrollHeight,behavior:'instant'});});}
 function hideWelcome() { if(welcome) welcome.style.display='none';}
 function showWelcome() { if(welcome) welcome.style.display='';}
+// Global single-key shortcuts must stay dead while the user is typing (the
+// composer is autofocused, so this is the default state) and when a
+// browser/OS chord is held (Cmd+A must never resolve an approval).
+function isTextEntry(t) { return !!t&&(t.tagName==='INPUT'||t.tagName==='TEXTAREA'||t.tagName==='SELECT'||t.isContentEditable); }
+function isPlainKey(e) { return !e.ctrlKey&&!e.metaKey&&!e.altKey&&!isTextEntry(e.target); }
 function fmtTok(n) { return n>=1000?(n/1000).toFixed(1).replace(/\.0$/,'')+'k':String(n);}
 function currencySymbol(c){const v=String(c||'¥').trim();if(/^(cny|rmb|yuan)$/i.test(v))return '¥';if(/^(usd|dollar)$/i.test(v))return '$';return v||'¥';}
 function fmtMoney(n,c){if(typeof n!=='number'||!isFinite(n))return '—';const s=currencySymbol(c);return s+(n<1?n.toFixed(4):n.toFixed(2));}
@@ -977,7 +998,7 @@ function showNotice(text, tone) {
   hideWelcome();
   const n=el('div','notice'+(tone==='warn'?' notice--warn':''),text);
   log.appendChild(n);
-  scrollDown();
+  scrollDown(true); // synchronous feedback to a user action — always reveal
 }
 function updateActionAvailability() {
   setActionDisabled('btn-compact', running || !hasVisibleHistory, running ? __('thinking') : __('no_conversation'));
@@ -1025,7 +1046,7 @@ function setConnState(state) {
 }
 
 // ── messages ──
-function addUserMsg(text) { hasVisibleHistory=true; updateActionAvailability(); hideWelcome(); const d=el('div','msg msg--user'); d.appendChild(el('span','msg__caret','›')); d.appendChild(el('div','msg__text',text)); log.appendChild(d); scrollDown(); currentMsg=null;currentText=null;currentReasoning=null; }
+function addUserMsg(text) { hasVisibleHistory=true; updateActionAvailability(); hideWelcome(); const d=el('div','msg msg--user'); d.appendChild(el('span','msg__caret','›')); d.appendChild(el('div','msg__text',text)); log.appendChild(d); scrollDown(true); currentMsg=null;currentText=null;currentReasoning=null; }
 function ensureMsg() { if(!currentMsg){hasVisibleHistory=true; updateActionAvailability(); hideWelcome();currentMsg=el('div','msg msg--assistant');log.appendChild(currentMsg);} return currentMsg; }
 function appendText(t) { const m=ensureMsg(); if(!currentText){currentText=document.createElement('span');currentText.className='msg__text'; const old=m.querySelector('.cursor');if(old)old.remove(); m.appendChild(currentText); m.appendChild(el('span','cursor'));} currentText.textContent+=t; scrollDown(); }
 function appendReasoning(t) { const m=ensureMsg(); if(!currentReasoning){const w=el('div','reasoning'); const b=el('button','reasoning__toggle'); b.innerHTML='<span class="reasoning__chevron">▶</span> '+__('thinking'); const body=el('div','reasoning__body'); body.style.display='none'; b.onclick=()=>{body.style.display=body.style.display==='none'?'':'none';b.querySelector('.reasoning__chevron').className='reasoning__chevron'+(body.style.display!=='none'?' reasoning__chevron--open':'');}; w.appendChild(b);w.appendChild(body); if(currentText) m.insertBefore(w,currentText); else m.appendChild(w); currentReasoning=body;} currentReasoning.textContent+=t; scrollDown(); }
@@ -1140,6 +1161,12 @@ function dangerousBashCommand(command) {
     || /^dd\s+if=/.test(command)
     || /^fdisk\b/.test(command);
 }
+// A turn's approval/ask prompts die with the turn: cancel (composer Esc, stop
+// button) or turn end must remove the cards and their key listeners, or a
+// stale card keeps soliciting a decision for a dead request and the approval
+// key listener would resolve it on a later unrelated keypress.
+let pendingPrompts=[];
+function clearPendingPrompts(){pendingPrompts.splice(0).forEach(fn=>fn());}
 function showApproval(a) {
   const d=el('div','approval');
   const prefix = a.tool === 'bash' ? bashCommandPrefix(a.subject) : '';
@@ -1157,16 +1184,32 @@ function showApproval(a) {
   }
   actions.push('<button class="approval__btn approval__btn--deny" data-allow="false"><span class="approval__key">N</span> '+__('deny')+'</button>');
   d.innerHTML='<div class="approval__header"><svg class="approval__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg><span class="approval__title">'+__('approval_title')+'</span></div><div class="approval__subject">'+escHtml(a.tool)+(a.subject?' — '+escHtml(a.subject):'')+'</div><div class="approval__actions">'+actions.join('')+'</div>';
-  log.appendChild(d);scrollDown();
-  const resolve=payload=>{post('/approve',Object.assign({id:a.id},payload));d.remove();document.removeEventListener('keydown',onkey);};
+  log.appendChild(d);scrollDown(true);
+  // The advertised Y/A/P/N keys need a non-text-entry target (isPlainKey), but
+  // the composer is autofocused, so in the default state every shortcut would
+  // just type into the draft. Move focus onto the card so the keys route here —
+  // unless the user is mid-entry (a non-empty composer draft, or any other
+  // text field such as the session search): stealing focus there would turn
+  // their next keystroke into an unintended approval. Cleanup hands focus back
+  // to the composer only when it still sits inside the card, so a user who
+  // deliberately moved elsewhere is not yanked back.
+  d.tabIndex=-1;
+  if(!isTextEntry(document.activeElement)||(document.activeElement===input&&!input.value))d.focus({preventScroll:true});
+  const cleanup=()=>{pendingPrompts=pendingPrompts.filter(f=>f!==cleanup);const hadFocus=d.contains(document.activeElement);d.remove();document.removeEventListener('keydown',onkey);if(hadFocus)input.focus();};
+  pendingPrompts.push(cleanup);
+  const resolve=payload=>{post('/approve',Object.assign({id:a.id},payload));cleanup();};
   d.querySelectorAll('.approval__btn').forEach(btn=>{btn.onclick=()=>resolve({allow:btn.dataset.allow==='true',session:btn.dataset.session==='true',persist:btn.dataset.persist==='true',scope:btn.dataset.scope||''});});
-  const onkey=e=>{const k=e.key.toLowerCase();if(k==='y'||k==='1'){resolve({allow:true,session:false});}else if(k==='a'||k==='2'){resolve({allow:true,session:true});}else if(hasPrefix&&k==='3'){resolve({allow:true,session:true,scope:'prefix'});}else if(k==='p'||(!hasPrefix&&k==='3')||(hasPrefix&&k==='4')){resolve({allow:true,session:true,persist:true,scope:hasPrefix?'prefix':''});}else if(k==='n'||k==='escape'||(!hasPrefix&&k==='4')||(hasPrefix&&k==='5')){resolve({allow:false,session:false});}};
+  // A consumed shortcut must preventDefault: cleanup refocuses the composer
+  // synchronously, and the keystroke's default text insertion runs after
+  // keydown — without it the approving key lands in the draft as a stray char.
+  const onkey=e=>{if(!isPlainKey(e))return; const k=e.key.toLowerCase(); let payload=null;if(k==='y'||k==='1'){payload={allow:true,session:false};}else if(k==='a'||k==='2'){payload={allow:true,session:true};}else if(hasPrefix&&k==='3'){payload={allow:true,session:true,scope:'prefix'};}else if(k==='p'||(!hasPrefix&&k==='3')||(hasPrefix&&k==='4')){payload={allow:true,session:true,persist:true,scope:hasPrefix?'prefix':''};}else if(k==='n'||k==='escape'||(!hasPrefix&&k==='4')||(hasPrefix&&k==='5')){payload={allow:false,session:false};}if(payload){e.preventDefault();resolve(payload);}};
   document.addEventListener('keydown',onkey);
 }
 
 // ── ask ──
 function showAsk(ask) {
   const d=el('div','ask');
+  const cleanup=()=>{pendingPrompts=pendingPrompts.filter(f=>f!==cleanup);d.remove();};
   ask.questions.forEach(q=>{
     const qDiv=el('div'); qDiv.appendChild(el('div','ask__prompt',q.prompt));
     const opts=el('div','ask__options'); const selected=new Set();
@@ -1178,10 +1221,11 @@ function showAsk(ask) {
     qDiv.appendChild(opts);
     const submit=el('button','ask__submit',__('submit')); submit.disabled=true;
     opts.addEventListener('click',()=>{submit.disabled=selected.size===0;});
-    submit.onclick=()=>{const answers=ask.questions.map(qq=>({questionId:qq.id,selected:Array.from(selected).map(i=>qq.options[i].label)}));post('/answer',{id:ask.id,answers});d.remove();};
+    submit.onclick=()=>{const answers=ask.questions.map(qq=>({questionId:qq.id,selected:Array.from(selected).map(i=>qq.options[i].label)}));post('/answer',{id:ask.id,answers});cleanup();};
     qDiv.appendChild(submit); d.appendChild(qDiv);
   });
-  log.appendChild(d);scrollDown();
+  log.appendChild(d);scrollDown(true);
+  pendingPrompts.push(cleanup);
 }
 
 // ── compaction ──
@@ -1265,18 +1309,27 @@ function applyRewind() {
 
 document.addEventListener('keydown',e=>{
   const overlay=$('#rewind-overlay'); if(!overlay)return;
-  if(e.key==='Escape'){e.preventDefault();if(rewindStage===0)overlay.remove();else{rewindStage=0;renderRewindPicker();}return;}
+  // The picker is modal and runs in the capture phase: plain keys it owns are
+  // swallowed before they reach the composer underneath — Enter would
+  // otherwise both send the composer draft and advance the picker, and
+  // letters would type into the hidden draft. Modifier chords
+  // (copy/reload/devtools), IME composition, and non-printable keys (F5, Tab)
+  // pass through — a bare Cmd+C must not hit a scope key and apply a rewind.
+  if(e.ctrlKey||e.metaKey||e.altKey||e.isComposing||e.key==='Process')return;
+  if(!(e.key==='Escape'||e.key==='Enter'||e.key==='ArrowDown'||e.key==='ArrowUp'||e.key.length===1))return;
+  e.preventDefault();e.stopPropagation();
+  if(e.key==='Escape'){if(rewindStage===0)overlay.remove();else{rewindStage=0;renderRewindPicker();}return;}
   if(rewindStage===0){
-    if(e.key==='j'||e.key==='ArrowDown'){e.preventDefault();rewindSelected=Math.min(rewindSelected+1,rewindCheckpoints.length-1);renderRewindPicker();}
-    if(e.key==='k'||e.key==='ArrowUp'){e.preventDefault();rewindSelected=Math.max(rewindSelected-1,0);renderRewindPicker();}
-    if(e.key==='Enter'){e.preventDefault();rewindStage=1;rewindScope=0;renderRewindPicker();}
+    if(e.key==='j'||e.key==='ArrowDown'){rewindSelected=Math.min(rewindSelected+1,rewindCheckpoints.length-1);renderRewindPicker();}
+    if(e.key==='k'||e.key==='ArrowUp'){rewindSelected=Math.max(rewindSelected-1,0);renderRewindPicker();}
+    if(e.key==='Enter'){rewindStage=1;rewindScope=0;renderRewindPicker();}
   } else {
-    if(e.key==='j'||e.key==='ArrowDown'){e.preventDefault();rewindScope=Math.min(rewindScope+1,SCOPES.length-1);renderRewindPicker();}
-    if(e.key==='k'||e.key==='ArrowUp'){e.preventDefault();rewindScope=Math.max(rewindScope-1,0);renderRewindPicker();}
-    if(e.key==='Enter'){e.preventDefault();applyRewind();}
-    const idx=SCOPES.findIndex(s=>s.key===e.key); if(idx>=0){e.preventDefault();rewindScope=idx;applyRewind();}
+    if(e.key==='j'||e.key==='ArrowDown'){rewindScope=Math.min(rewindScope+1,SCOPES.length-1);renderRewindPicker();}
+    if(e.key==='k'||e.key==='ArrowUp'){rewindScope=Math.max(rewindScope-1,0);renderRewindPicker();}
+    if(e.key==='Enter'){applyRewind();}
+    const idx=SCOPES.findIndex(s=>s.key===e.key); if(idx>=0){rewindScope=idx;applyRewind();}
   }
-});
+},true);
 
 // ── slash menu ──
 let slashOpen=false, slashIndex=0, slashFiltered=[];
@@ -1329,7 +1382,7 @@ es.onmessage=ev=>{setConnState('connected');
   const e=JSON.parse(ev.data);
   if(e.kind!=='retrying')clearRetrying();
   switch(e.kind){
-    case 'turn_started': setRunning(true); finalizeMsg(); toolCards={}; todosDismissed=false; break;
+    case 'turn_started': setRunning(true); clearPendingPrompts(); finalizeMsg(); toolCards={}; todosDismissed=false; break;
     case 'reasoning': appendReasoning(e.reasoning||e.text||''); break;
     case 'text': currentReasoning=null; appendText(e.text||''); break;
     case 'message': finalizeMsg(); break;
@@ -1358,7 +1411,7 @@ es.onmessage=ev=>{setConnState('connected');
     case 'compaction_started': showCompaction({trigger:e.compaction?.trigger}); break;
     case 'compaction_done': showCompaction(e.compaction||{}); break;
     case 'retrying': setRetrying(e.retryAttempt,e.retryMax); break;
-    case 'turn_done': finalizeMsg(); setRunning(false); if(e.err){log.appendChild(el('div','msg--error','✗ '+e.err));scrollDown();} fetchStatus(); fetchTodos(); refreshCheckpointAvailability(); break;
+    case 'turn_done': clearPendingPrompts(); finalizeMsg(); setRunning(false); if(e.err){log.appendChild(el('div','msg--error','✗ '+e.err));scrollDown();} fetchStatus(); fetchTodos(); refreshCheckpointAvailability(); break;
   }
 };
 es.onerror=()=>{
@@ -1433,7 +1486,7 @@ function renderHistoryMessages(ms){
       renderToolResult({id,name:m.toolName||'tool',output:m.content||''});
     }
   });
-  currentMsg=null;currentText=null;currentReasoning=null; scrollDown(); updateActionAvailability(); return true;
+  currentMsg=null;currentText=null;currentReasoning=null; scrollDown(true); updateActionAvailability(); return true;
 }
 fetch('/history').then(r=>r.json()).then(msgs=>{renderHistoryMessages(msgs);fetchTodos();}).catch(()=>{});
 
@@ -1607,7 +1660,7 @@ input.addEventListener('keydown',e=>{
 document.addEventListener('keydown',e=>{
   if(e.target===input&&e.key==='Tab'&&e.shiftKey){e.preventDefault();cycleMode();return;}
   if(e.target===input&&(e.key==='y'||e.key==='Y')&&(e.ctrlKey||e.metaKey)&&!e.altKey&&!e.shiftKey){e.preventDefault();toggleYolo();return;}
-  if(e.key==='/'&&e.target!==input){e.preventDefault();input.focus();return;}
+  if(e.key==='/'&&isPlainKey(e)){e.preventDefault();input.focus();return;}
 });
 
 // mode helpers — Shift+Tab toggles Plan; Ctrl+Y toggles YOLO separately.

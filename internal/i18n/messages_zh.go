@@ -51,7 +51,7 @@ var Chinese = Messages{
 	ChatStatusCancellingFmt:                "%s 正在停止… (%d 秒 · Ctrl+C 退出)",
 	ChatStatusIdle:                         "就绪",
 	ChatStatusYoloIdle:                     "已跳过工具批准",
-	ChatStatusCycleHint:                    "shift+tab 切换计划 · ctrl+y yolo",
+	ChatStatusCycleHint:                    "shift+tab 循环询问/自动/计划 · ctrl+y yolo",
 	ChatStatusCacheNowFmt:                  "本次命中 %s",
 	ChatStatusCacheAvgFmt:                  "平均 %s",
 	ChatStatusPlanApproval:                 "Enter/y 批准并执行 · n/Esc 继续规划 · PgUp/PgDn/Ctrl+Home/End 滚动",
@@ -220,6 +220,7 @@ var Chinese = Messages{
 	CmdResume:           "恢复已保存的会话",
 	CmdRename:           "重命名会话",
 	CmdModel:            "切换模型",
+	CmdStatus:           "显示会话状态",
 	CmdWorkMode:         "切换工作模式",
 	CmdMemory:           "查看记忆文件",
 	CmdMigrate:          "重试旧数据迁移",
@@ -423,7 +424,7 @@ var Chinese = Messages{
 	AnthropicSelectModelsLabel:     "选择要启用的 %s 模型",
 
 	UnknownCommandFmt:         "未知命令 %q",
-	UsageRunHint:              "用法：reasonix run [--model NAME] <task>",
+	UsageRunHint:              "用法：reasonix -p [--model NAME] <task>",
 	ErrorPrefix:               "错误：",
 	ReconfigureOnUnknownModel: "配置的模型已不可用 —— 重新运行引导配置。",
 	WriteConfigErr:            "写入配置失败：",
@@ -475,8 +476,9 @@ var Chinese = Messages{
 	UsageBody: `reasonix — 由配置和插件驱动的 coding agent（多模型）
 
 用法：
-  reasonix [--model NAME] [-c|--continue] [--resume] [--copy] [--yolo] [--dir PATH]   交互式会话（多轮；-c 恢复最近一次，--resume 选择一个，--copy 在副本中继续）
-  reasonix run  [--model NAME] [--max-steps N] [-c|--continue] [--resume PATH] [--copy] <task>   执行单次任务后退出
+  reasonix [--model NAME] [-c|--continue] [-r|--resume [QUERY]] [--permission-mode MODE] [--effort LEVEL] [--add-dir PATH]   交互式会话
+  reasonix -p|--print [--model NAME] [--output-format text|json|stream-json] [--allowed-tools RULES] [--add-dir PATH] <task>
+  reasonix run [--model NAME] [--max-steps N] [-c|--continue] [--resume PATH] [--copy] [--output-format FORMAT] <task>
   reasonix review [--base BRANCH] [--commit SHA] [--model NAME]  AI 代码审查（基于本地 diff）
   reasonix serve [--model NAME] [--addr HOST:PORT] [--auth none|token|password] [--token STR] [--password STR] [--hash-password]  通过 HTTP+SSE 提供服务（支持可选认证）
   reasonix acp [--model NAME]                           通过 stdio 提供 Agent Client Protocol（也可用：reasonix --acp）
@@ -497,8 +499,10 @@ var Chinese = Messages{
 示例：
   reasonix
   reasonix --continue
+  reasonix --resume provider-config
   reasonix run "把 main.go 里的 TODO 实现掉"
   reasonix run --model mimo-pro "给这个函数补单元测试"
+  reasonix -p "总结这个仓库" --output-format json
   reasonix subagent run review "审查当前改动"
   echo "解释这段代码" | reasonix run
 

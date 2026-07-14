@@ -87,6 +87,13 @@ type Options struct {
 	// EffortOverride is a session-local reasoning effort override. Nil means use
 	// the resolved provider config; a non-nil empty string means provider default.
 	EffortOverride *string
+	// PermissionAllow adds process-local allow rules (for example CLI
+	// --allowed-tools). They override configured ask rules but never deny rules
+	// and are not persisted.
+	PermissionAllow []string
+	// AdditionalDirs grants this session's file writers and sandboxed shell
+	// access to extra directories without changing persisted sandbox config.
+	AdditionalDirs []string
 	// Stderr is the writer for diagnostic warnings and plugin subprocess
 	// stderr output. When nil, defaults to os.Stderr. Set to io.Discard
 	// during model switch inside a bubbletea session to prevent any output
@@ -124,6 +131,15 @@ type Options struct {
 	// terminal. Headless/bot frontends pass a positive value so an unanswered
 	// prompt can't wedge the session indefinitely (#4626, #4402).
 	ApprovalTimeout time.Duration
+	// HeadlessApprovalMode selects the non-interactive tool-approval contract
+	// (control.ToolApprovalAuto/DontAsk/Yolo) applied to every headless-only gate
+	// this boot constructs: the top-level executor, task/read_only_task,
+	// writer-capable skill sub-agents, and the planner runner. Empty (or "ask")
+	// keeps the default headless gate, which resolves ordinary ask decisions to
+	// allow. Callers that later call Controller.ApplyHeadlessApprovalMode with a
+	// different mode than they passed here should also pass it here, or
+	// sub-agent gates will not match the parent executor's mode.
+	HeadlessApprovalMode string
 	// SessionRecoveryMeta and OnSessionRecovered let richer frontends attach
 	// local UI metadata to automatic transcript recovery branches.
 	SessionRecoveryMeta func(control.SessionRecoveryRequest) agent.BranchMeta
@@ -146,6 +162,10 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 		stderr = os.Stderr
 	}
 	root := resolveWorkspaceRoot(opts.WorkspaceRoot)
+	additionalDirs, err := normalizeAdditionalDirs(root, opts.AdditionalDirs)
+	if err != nil {
+		return nil, err
+	}
 	// One-time import of v1/v0.5 legacy config — runs before Load so the freshly
 	// written config + ~/.env are picked up this same boot. CLI Run also calls this
 	// before config-only commands; this call stays as the shared frontend fallback.
@@ -346,6 +366,7 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 
 	reg := tool.NewRegistry()
 	writeRoots := cfg.WriteRootsForRoot(root)
+	writeRoots = appendUniquePaths(writeRoots, additionalDirs...)
 	forbidReadRoots := cfg.ForbidReadRootsForRoot(root)
 	// managedConfig names the Reasonix-owned config FILES (config.toml,
 	// compatibility TOMLs, legacy v0.x config.json) the file-writers may repair
@@ -372,7 +393,12 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 		enabledBuiltins = tokenEconomyBuiltins(enabledBuiltins)
 	}
 	readPathResolver := builtin.NewPathResolver()
-	addBuiltins(reg, enabledBuiltins, writeRoots, bashSpec, bashTimeout, searchSpec, stderr, root, proxySpec, forbidReadRoots, readPathResolver, sessionGuard, managedConfig, opts.FileOverlay, opts.TerminalRunner)
+	// An explicit Economy allowlist can contain only on-demand tools, leaving no
+	// startup built-ins. Do not pass that filtered empty slice to addBuiltins,
+	// where an empty list intentionally means "all built-ins".
+	if !tokenEconomy || len(cfg.Tools.Enabled) == 0 || len(enabledBuiltins) > 0 {
+		addBuiltins(reg, enabledBuiltins, writeRoots, bashSpec, bashTimeout, searchSpec, stderr, root, proxySpec, forbidReadRoots, readPathResolver, sessionGuard, managedConfig, opts.FileOverlay, opts.TerminalRunner)
+	}
 	// Use the caller-supplied shared host when set, so controllers for the same
 	// workspace root reuse running MCP processes (e.g. one CodeGraph daemon
 	// instead of one per tab). Otherwise construct a private host per controller.
@@ -581,15 +607,22 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 		subagentStore.WithDestroyedChecker(jm.IsDestroying)
 	}
 
-	// Permission policy gates every tool call. The headless gate (no Approver)
-	// resolves ordinary "ask" decisions to allow — preserving `reasonix run`
-	// autonomy — while deny rules and fresh-human approval tools hard-block.
-	// Interactive frontends (chat, desktop) swap in an interactive gate later via
-	// Controller.EnableInteractiveApproval.
+	// Permission policy gates every tool call. With no HeadlessApprovalMode
+	// (interactive default), the headless gate resolves ordinary "ask" decisions
+	// to allow — preserving `reasonix run` autonomy — while deny rules and
+	// fresh-human approval tools hard-block. Interactive frontends (chat,
+	// desktop) swap in an interactive gate later via
+	// Controller.EnableInteractiveApproval. When the caller selects a headless
+	// approval mode (`reasonix run --permission-mode auto/dontAsk/yolo`), this
+	// gate is built with that mode's contract instead — the same contract
+	// ApplyHeadlessApprovalMode installs on the parent executor — so the
+	// mode-vs-explicit-ask-rule boundary is not weaker for sub-agents than for
+	// the parent.
 	// Sub-agents always run headless: they have no UI to answer a prompt, so they
 	// inherit this same gate.
-	policy := permission.New(cfg.Permissions.Mode, cfg.Permissions.Allow, cfg.Permissions.Ask, cfg.Permissions.Deny)
-	headlessGate := control.NewHeadlessPermissionGate(policy)
+	policy := permission.New(cfg.Permissions.Mode, cfg.Permissions.Allow, cfg.Permissions.Ask, cfg.Permissions.Deny).
+		WithSessionAllow(opts.PermissionAllow)
+	headlessGate := control.NewSharedHeadlessGate(policy, opts.HeadlessApprovalMode)
 
 	// Hooks: load the global settings.json plus the project's (only when trusted —
 	// project hooks run arbitrary shell commands, so cloning a repo must not
@@ -686,20 +719,35 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 		addReadOnlyTaskTool()
 	}
 
-	// The `memory` tool searches/reads saved facts on demand; `remember` persists
-	// durable facts to the project's auto-memory store; `forget` prunes ones that
-	// turn out wrong. The saved index loads into the prefix on the next session.
-	reg.Add(history.NewTool(history.Options{SessionDir: sessionDir, GlobalSessionDir: config.SessionDir(), ArchiveDir: config.ArchiveDir()}))
-
-	// Session history tools let the AI discover and read past conversations.
-	// `list_sessions` returns all saved session files; `read_session` loads one
-	// and renders the full conversation as readable text.
-	reg.Add(sessiontool.NewListSessionsTool(sessionDir))
-	reg.Add(sessiontool.NewReadSessionTool(sessionDir))
-
-	reg.Add(memory.NewRecallTool(mem.Store))
-	reg.Add(memory.NewRememberTool(mem.Store))
-	reg.Add(memory.NewForgetTool(mem.Store))
+	// Session and memory tools are always present in Balanced/Delivery. Economy
+	// installs them only after connect_tool_source requests that capability, so
+	// simple coding turns do not pay for unrelated schemas.
+	sessionToolsAdded := false
+	addSessionTools := func() string {
+		if sessionToolsAdded {
+			return "sessions are already enabled."
+		}
+		sessionToolsAdded = true
+		reg.Add(history.NewTool(history.Options{SessionDir: sessionDir, GlobalSessionDir: config.SessionDir(), ArchiveDir: config.ArchiveDir()}))
+		reg.Add(sessiontool.NewListSessionsTool(sessionDir))
+		reg.Add(sessiontool.NewReadSessionTool(sessionDir))
+		return "enabled history, list_sessions, read_session."
+	}
+	memoryToolsAdded := false
+	addMemoryTools := func() string {
+		if memoryToolsAdded {
+			return "memory tools are already enabled."
+		}
+		memoryToolsAdded = true
+		reg.Add(memory.NewRecallTool(mem.Store))
+		reg.Add(memory.NewRememberTool(mem.Store))
+		reg.Add(memory.NewForgetTool(mem.Store))
+		return "enabled memory, remember, forget."
+	}
+	if !tokenEconomy {
+		addSessionTools()
+		addMemoryTools()
+	}
 
 	// The `ask` tool puts structured multiple-choice questions to the user. It
 	// reaches them through the Asker on the call context, which interactive
@@ -899,7 +947,12 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	// Custom slash commands (.reasonix/commands + user dir). Best-effort: a malformed
 	// file is skipped, and a load error never blocks the session.
 	cmds, _ := command.LoadRoots(config.CommandRootsForRoot(root)...)
-	addSlashCommandTool := func(includeSkills bool) {
+	slashCommandAdded := false
+	slashCommandIncludesSkills := false
+	addSlashCommandTool := func(includeSkills bool) string {
+		if slashCommandAdded && (!includeSkills || slashCommandIncludesSkills) {
+			return "slash commands are already enabled."
+		}
 		// Expose loaded slash commands to the model via slash_command. In economy
 		// mode skills join this list only after the skills source is enabled.
 		var slashEntries []command.SlashEntry
@@ -926,6 +979,9 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 			})
 		}
 		reg.Add(command.NewSlashCommandTool(slashEntries))
+		slashCommandAdded = true
+		slashCommandIncludesSkills = slashCommandIncludesSkills || includeSkills
+		return "enabled slash_command."
 	}
 	installSourceAdded := false
 	addInstallSourceTool := func() string {
@@ -996,13 +1052,40 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 		addSlashCommandTool(true)
 		return "enabled skills. Use run_skill/read_skill/read_only_skill or the dedicated skill tools on the next model request.\n\n" + skill.IndexBlock(skills)
 	}
-	if tokenEconomy {
-		addSlashCommandTool(false)
-	} else {
+	if !tokenEconomy {
 		addInstallSourceTool()
 		addSkillTools()
 	}
 	if tokenEconomy {
+		addBuiltinSourceTools := func(source string, names ...string) string {
+			var missing []string
+			for _, name := range names {
+				if !builtinToolEnabled(cfg.Tools.Enabled, name) {
+					continue
+				}
+				if _, exists := reg.Get(name); !exists {
+					missing = append(missing, name)
+				}
+			}
+			if len(missing) == 0 {
+				return source + " tools are already enabled or disabled by [tools].enabled."
+			}
+			installed := addTools(reg, builtin.Workspace{
+				Dir:             root,
+				WriteRoots:      writeRoots,
+				ForbidReadRoots: forbidReadRoots,
+				Bash:            bashSpec,
+				BashTimeout:     bashTimeout,
+				Search:          searchSpec,
+				ProxySpec:       proxySpec,
+				ReadPaths:       readPathResolver,
+				SessionGuard:    sessionGuard,
+				ManagedConfig:   managedConfig,
+				FileOverlay:     opts.FileOverlay,
+				Terminal:        opts.TerminalRunner,
+			}.Tools(missing...))
+			return "enabled " + strings.Join(installed, ", ") + "."
+		}
 		reg.Add(&toolSourceConnector{
 			skills: func(context.Context) (string, error) {
 				return addSkillTools(), nil
@@ -1045,6 +1128,31 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 					return "LSP tools are already enabled.", nil
 				}
 				return "enabled " + strings.Join(names, ", ") + ".", nil
+			},
+			sessions: func(context.Context) (string, error) {
+				return addSessionTools(), nil
+			},
+			memory: func(context.Context) (string, error) {
+				return addMemoryTools(), nil
+			},
+			commands: func(context.Context) (string, error) {
+				return addSlashCommandTool(false), nil
+			},
+			search: func(context.Context) (string, error) {
+				return addBuiltinSourceTools("search", "code_index", "glob", "grep", "ls"), nil
+			},
+			files: func(context.Context) (string, error) {
+				return addBuiltinSourceTools("files", "delete_range", "delete_symbol", "move_file", "multi_edit", "notebook_edit"), nil
+			},
+			workflow: func(ctx context.Context) (string, error) {
+				// Plan mode narrows workflow to its read-only planning subset:
+				// todo_write stays available (planmode.Marker promises it),
+				// while complete_step joins via a fresh connect after approval.
+				if agent.PlanModeFromContext(ctx) {
+					return addBuiltinSourceTools("workflow", "todo_write") +
+						" complete_step stays blocked in plan mode; connect workflow again after plan approval to enable it.", nil
+				}
+				return addBuiltinSourceTools("workflow", "complete_step", "todo_write"), nil
 			},
 			mcp: func(_ context.Context, name string) (string, error) {
 				spec, ok := onDemandMCPSpecs[name]
@@ -1257,6 +1365,7 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 		Executor:               executor,
 		Sink:                   sink,
 		Policy:                 policy,
+		SubagentGate:           headlessGate,
 		Label:                  label,
 		ModelRef:               modelRef,
 		SystemPrompt:           sysPrompt,
@@ -1562,6 +1671,83 @@ func resolveWorkspaceRoot(explicit string) string {
 		return root
 	}
 	return wd
+}
+
+func normalizeAdditionalDirs(root string, dirs []string) ([]string, error) {
+	if len(dirs) == 0 {
+		return nil, nil
+	}
+	base := strings.TrimSpace(root)
+	if base == "" {
+		base = "."
+	}
+	if !filepath.IsAbs(base) {
+		abs, err := filepath.Abs(base)
+		if err != nil {
+			return nil, fmt.Errorf("resolve workspace root: %w", err)
+		}
+		base = abs
+	}
+
+	var out []string
+	for _, raw := range dirs {
+		dir := strings.TrimSpace(raw)
+		if dir == "" {
+			continue
+		}
+		if !filepath.IsAbs(dir) {
+			dir = filepath.Join(base, dir)
+		}
+		dir, err := filepath.Abs(filepath.Clean(dir))
+		if err != nil {
+			return nil, fmt.Errorf("resolve additional directory %q: %w", raw, err)
+		}
+		real, err := filepath.EvalSymlinks(dir)
+		if err != nil {
+			return nil, fmt.Errorf("resolve additional directory %q: %w", raw, err)
+		}
+		info, err := os.Stat(real)
+		if err != nil {
+			return nil, fmt.Errorf("inspect additional directory %q: %w", raw, err)
+		}
+		if !info.IsDir() {
+			return nil, fmt.Errorf("additional path %q is not a directory", raw)
+		}
+		out = appendUniquePaths(out, filepath.Clean(real))
+	}
+	return out, nil
+}
+
+func appendUniquePaths(base []string, extra ...string) []string {
+	out := append([]string(nil), base...)
+	seen := make(map[string]struct{}, len(out)+len(extra))
+	for _, path := range out {
+		seen[pathComparisonKey(path)] = struct{}{}
+	}
+	for _, path := range extra {
+		path = filepath.Clean(path)
+		key := pathComparisonKey(path)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, path)
+	}
+	return out
+}
+
+func pathComparisonKey(path string) string {
+	path = filepath.Clean(path)
+	if abs, err := filepath.Abs(path); err == nil {
+		path = abs
+	}
+	if real, err := filepath.EvalSymlinks(path); err == nil {
+		path = real
+	}
+	if runtime.GOOS == "windows" {
+		return strings.ToLower(path)
+	}
+	return path
 }
 
 func nearestGitRoot(start string) (string, bool) {

@@ -733,6 +733,114 @@ func TestModalPanelsHideComposerBox(t *testing.T) {
 	}
 }
 
+func TestApprovalChoicesPreserveDecisionSemantics(t *testing.T) {
+	tests := []struct {
+		name string
+		tool string
+		want []approvalChoice
+	}{
+		{
+			name: "ordinary tool",
+			tool: "bash",
+			want: []approvalChoice{
+				{allow: true},
+				{allow: true, allowForSession: true},
+				{allow: true, allowForSession: true, persistToConfig: true},
+				{},
+			},
+		},
+		{
+			name: "fresh decision",
+			tool: "remember",
+			want: []approvalChoice{{allow: true}, {}},
+		},
+		{
+			name: "fresh session grant",
+			tool: control.SandboxEscapeApprovalTool,
+			want: []approvalChoice{{allow: true}, {allow: true, allowForSession: true}, {}},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := approvalChoices(&event.Approval{Tool: tt.tool, Subject: "echo hi"})
+			if len(got) != len(tt.want) {
+				t.Fatalf("choices = %d, want %d", len(got), len(tt.want))
+			}
+			for i := range got {
+				got[i].label = ""
+				if got[i] != tt.want[i] {
+					t.Errorf("choice %d = %+v, want %+v", i, got[i], tt.want[i])
+				}
+			}
+		})
+	}
+}
+
+func TestApprovalArrowKeysMoveVisibleSelection(t *testing.T) {
+	m := newTestChatTUI()
+	m.pendingApproval = &event.Approval{ID: "approval", Tool: "bash", Subject: "echo hi"}
+	next, _ := m.handleApprovalKey(tea.KeyPressMsg{Code: tea.KeyDown})
+	m = next.(chatTUI)
+	if m.approvalSelection != 1 {
+		t.Fatalf("approval selection = %d, want 1", m.approvalSelection)
+	}
+	banner := ansi.Strip(m.renderApprovalBanner())
+	if !strings.Contains(banner, "❯ 2.") {
+		t.Fatalf("approval banner should highlight second row:\n%s", banner)
+	}
+}
+
+// TestApprovalLegacyFourAlwaysDenies pins the documented contract that the
+// legacy numeric 4 rejects an approval even when the current prompt shows fewer
+// than four rows (fresh two-choice prompts, plan approval). Before the fix,
+// pressing 4 on a short prompt was a no-op.
+func TestApprovalLegacyFourAlwaysDenies(t *testing.T) {
+	for _, tool := range []string{"remember", control.SandboxEscapeApprovalTool, "bash"} {
+		m := newTestChatTUI()
+		m.ctrl = control.New(control.Options{})
+		m.pendingApproval = &event.Approval{ID: "a", Tool: tool, Subject: "echo hi"}
+		m.approvalSelection = 0
+		next, _ := m.handleApprovalKey(tea.KeyPressMsg{Code: '4'})
+		m = next.(chatTUI)
+		if m.pendingApproval != nil {
+			t.Fatalf("%s: pressing 4 must resolve (deny) the approval, still pending", tool)
+		}
+	}
+}
+
+// TestCompletionMenuCtrlPNMovesSelection covers the Ctrl+P/Ctrl+N contract the
+// docs advertise for the slash/@ completion menu.
+func TestCompletionMenuCtrlPNMovesSelection(t *testing.T) {
+	m := newTestChatTUI()
+	m.completion = completion{active: true, kind: compSlash, items: []compItem{{label: "/mcp"}, {label: "/model"}}, sel: 0}
+
+	next, _ := m.update(tea.KeyPressMsg{Code: 'n', Mod: tea.ModCtrl})
+	m = next.(chatTUI)
+	if m.completion.sel != 1 {
+		t.Fatalf("ctrl+n should move completion selection to 1, got %d", m.completion.sel)
+	}
+	next, _ = m.update(tea.KeyPressMsg{Code: 'p', Mod: tea.ModCtrl})
+	m = next.(chatTUI)
+	if m.completion.sel != 0 {
+		t.Fatalf("ctrl+p should move completion selection back to 0, got %d", m.completion.sel)
+	}
+}
+
+func TestStatusCommandShowsDetailsRemovedFromFooter(t *testing.T) {
+	m := newTestChatTUI()
+	m.modelRef = "provider/model"
+	m.effortLevel = "max"
+	m.runtimeProfile = "delivery"
+	m.balance = "$10.00"
+	m.runSlashCommand("/status")
+	out := ansi.Strip(strings.Join(m.transcript, "\n"))
+	for _, want := range []string{"Session status", "provider/model", "delivery", "effort max", "$10.00"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("/status output missing %q:\n%s", want, out)
+		}
+	}
+}
+
 func TestInputOwnedOverlaysKeepComposerBox(t *testing.T) {
 	ask := event.Ask{
 		ID: "ask-1",
@@ -2078,6 +2186,36 @@ func TestWideInputChangeRequestsClearScreen(t *testing.T) {
 	}
 }
 
+func TestChooserFreeTextWideInputChangeRequestsClearScreen(t *testing.T) {
+	prev := clearWideInputChanges
+	clearWideInputChanges = true
+	defer func() { clearWideInputChanges = prev }()
+
+	m := newTestChatTUI()
+	m.chooser = newChooser(event.Ask{
+		ID: "ask-1",
+		Questions: []event.AskQuestion{{
+			ID:     "q1",
+			Prompt: "Pick one",
+			Options: []event.AskOption{{
+				Label: "Option A",
+			}},
+		}},
+	})
+	m.chooser.typing = true
+	m.input.SetValue("天安a")
+	m.input.SetCursorColumn(len([]rune("天安a")))
+
+	next, cmd := m.update(tea.KeyPressMsg{Code: '门', Text: "门"})
+	got := next.(chatTUI)
+	if got.input.Value() != "天安a门" {
+		t.Fatalf("chooser free-text input should preserve the textarea value, got %q", got.input.Value())
+	}
+	if cmd == nil {
+		t.Fatal("chooser free-text wide-char input changes should request a full redraw")
+	}
+}
+
 func TestReplayActiveBranchClearsPlanModeAndMarksSessionSwitch(t *testing.T) {
 	m := newTestChatTUI()
 	m.ctrl = control.New(control.Options{})
@@ -2870,7 +3008,7 @@ func TestEscInPlanModeDoesNotExitPlan(t *testing.T) {
 	}
 }
 
-func TestDesktopShortcutLayoutShiftTabTogglesPlanOnly(t *testing.T) {
+func TestDesktopShortcutLayoutShiftTabCyclesSafeModes(t *testing.T) {
 	m := newTestChatTUI()
 	m.ctrl = control.New(control.Options{})
 	m.ctrl.SetToolApprovalMode(control.ToolApprovalAuto)
@@ -2885,8 +3023,8 @@ func TestDesktopShortcutLayoutShiftTabTogglesPlanOnly(t *testing.T) {
 	if !m.planMode || !m.ctrl.PlanMode() {
 		t.Fatalf("first Shift+Tab should enter plan mode, tui=%v controller=%v", m.planMode, m.ctrl.PlanMode())
 	}
-	if got := m.ctrl.ToolApprovalMode(); got != control.ToolApprovalAuto {
-		t.Fatalf("Shift+Tab changed approval mode to %q, want auto", got)
+	if got := m.ctrl.ToolApprovalMode(); got != control.ToolApprovalAsk {
+		t.Fatalf("plan mode approval = %q, want ask", got)
 	}
 
 	out, _ = m.Update(shiftTab)
@@ -2894,8 +3032,14 @@ func TestDesktopShortcutLayoutShiftTabTogglesPlanOnly(t *testing.T) {
 	if m.planMode || m.ctrl.PlanMode() {
 		t.Fatalf("second Shift+Tab should leave plan mode, tui=%v controller=%v", m.planMode, m.ctrl.PlanMode())
 	}
-	if got := m.ctrl.ToolApprovalMode(); got != control.ToolApprovalAuto {
-		t.Fatalf("second Shift+Tab changed approval mode to %q, want auto", got)
+	if got := m.ctrl.ToolApprovalMode(); got != control.ToolApprovalAsk {
+		t.Fatalf("cycle after plan = %q, want ask", got)
+	}
+
+	out, _ = m.Update(shiftTab)
+	m = out.(chatTUI)
+	if got := m.ctrl.ToolApprovalMode(); got != control.ToolApprovalAuto || m.planMode {
+		t.Fatalf("third Shift+Tab should enter auto, approval=%q plan=%v", got, m.planMode)
 	}
 }
 
@@ -2908,7 +3052,10 @@ func TestDesktopShortcutLayoutShiftTabClearsGoalWhenEnteringPlan(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	out, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyTab, Mod: tea.ModShift})
+	shiftTab := tea.KeyPressMsg{Code: tea.KeyTab, Mod: tea.ModShift}
+	out, _ := m.Update(shiftTab)
+	m = out.(chatTUI)
+	out, _ = m.Update(shiftTab)
 	m = out.(chatTUI)
 	if !m.planMode || !m.ctrl.PlanMode() {
 		t.Fatalf("Shift+Tab should enter plan mode, tui=%v controller=%v", m.planMode, m.ctrl.PlanMode())
@@ -3036,7 +3183,7 @@ func TestDesktopShortcutLayoutDoesNotStealCompletionTab(t *testing.T) {
 	}
 }
 
-func TestShiftTabStillTogglesPlanUnderClassicShortcutLayout(t *testing.T) {
+func TestShiftTabCyclesSafeModesUnderClassicShortcutLayout(t *testing.T) {
 	m := newTestChatTUI()
 	m.ctrl = control.New(control.Options{})
 	m.cfg = config.Default()
@@ -3046,10 +3193,30 @@ func TestShiftTabStillTogglesPlanUnderClassicShortcutLayout(t *testing.T) {
 
 	out, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyTab, Mod: tea.ModShift})
 	m = out.(chatTUI)
-	if !m.planMode || !m.ctrl.PlanMode() {
-		t.Fatalf("Shift+Tab should toggle plan mode, tui=%v controller=%v", m.planMode, m.ctrl.PlanMode())
+	if m.planMode || m.ctrl.PlanMode() || m.ctrl.ToolApprovalMode() != control.ToolApprovalAuto {
+		t.Fatalf("first Shift+Tab should enter auto, plan=%v approval=%q", m.planMode, m.ctrl.ToolApprovalMode())
 	}
+	out, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyTab, Mod: tea.ModShift})
+	m = out.(chatTUI)
+	if !m.planMode || !m.ctrl.PlanMode() || m.ctrl.ToolApprovalMode() != control.ToolApprovalAsk {
+		t.Fatalf("second Shift+Tab should enter plan, plan=%v approval=%q", m.planMode, m.ctrl.ToolApprovalMode())
+	}
+}
+
+func TestShiftTabLeavesDontAskForAskMode(t *testing.T) {
+	m := newTestChatTUI()
+	m.ctrl = control.New(control.Options{})
+	m.ctrl.SetToolApprovalMode(control.ToolApprovalDontAsk)
+	m.cfg = config.Default()
+	if err := m.cfg.SetUIShortcutLayout("desktop"); err != nil {
+		t.Fatal(err)
+	}
+	if got := m.modeTagText(); got != "Don't Ask" {
+		t.Fatalf("dontAsk mode tag = %q", got)
+	}
+
+	m.cycleMode()
 	if got := m.ctrl.ToolApprovalMode(); got != control.ToolApprovalAsk {
-		t.Fatalf("Shift+Tab changed approval mode to %q", got)
+		t.Fatalf("Shift+Tab from dontAsk = %q, want ask", got)
 	}
 }

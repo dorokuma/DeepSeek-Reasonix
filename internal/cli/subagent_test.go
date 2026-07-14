@@ -221,7 +221,7 @@ func TestSubagentProfileCLIRunAndTrySelectIsolatedRunners(t *testing.T) {
 
 	var normalCalls, readOnlyCalls int
 	var normalTask, tryTask string
-	setupSubagentCommand = func(context.Context, string, int, bool, event.Sink) (*control.Controller, error) {
+	setupSubagentCommand = func(context.Context, string, int, bool, event.Sink, string) (*control.Controller, error) {
 		return control.New(control.Options{
 			Skills: []skill.Skill{{Name: "helper", RunAs: skill.RunSubagent, Invocation: "manual", Scope: skill.ScopeGlobal}},
 			SkillRunner: func(_ context.Context, _ skill.Skill, task string, opts skill.SubagentRunOptions) (string, error) {
@@ -259,6 +259,70 @@ func TestSubagentProfileCLIRunAndTrySelectIsolatedRunners(t *testing.T) {
 	})
 	if strings.TrimSpace(out) != "try answer" || readOnlyCalls != 1 || tryTask != "inspect only" {
 		t.Fatalf("try output=%q readonly=%d task=%q", out, readOnlyCalls, tryTask)
+	}
+}
+
+// TestSubagentRunTryDirPinsExplicitWorkspaceRoot reproduces the reported gap:
+// a git repo at <repo>/.git with --dir pointing at a nested subdirectory must
+// pin that subdirectory as the workspace root, not widen it to the repo root
+// via git-root fallback. It drives the real chdirTo -> workspaceRootForDir ->
+// setupSubagentCommand plumbing, not just the helpers in isolation.
+func TestSubagentRunTryDirPinsExplicitWorkspaceRoot(t *testing.T) {
+	previous := setupSubagentCommand
+	t.Cleanup(func() { setupSubagentCommand = previous })
+	origWD, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	repo := t.TempDir()
+	if err := os.Mkdir(filepath.Join(repo, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	sub := filepath.Join(repo, "a", "b")
+	if err := os.MkdirAll(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Register the cwd restore after repo's t.TempDir() cleanup so it runs
+	// first (LIFO): on Windows, RemoveAll fails while cwd sits inside repo.
+	t.Cleanup(func() { _ = os.Chdir(origWD) })
+	if err := os.Chdir(repo); err != nil {
+		t.Fatal(err)
+	}
+
+	var gotRoot string
+	setupSubagentCommand = func(_ context.Context, _ string, _ int, _ bool, _ event.Sink, workspaceRoot string) (*control.Controller, error) {
+		gotRoot = workspaceRoot
+		return control.New(control.Options{
+			Skills: []skill.Skill{{Name: "helper", RunAs: skill.RunSubagent, Invocation: "manual", Scope: skill.ScopeGlobal}},
+			SkillRunner: func(_ context.Context, _ skill.Skill, task string, opts skill.SubagentRunOptions) (string, error) {
+				return "run answer", nil
+			},
+			ReadOnlySkillRunner: func(_ context.Context, _ skill.Skill, task string, opts skill.SubagentRunOptions) (string, error) {
+				return "try answer", nil
+			},
+		}), nil
+	}
+
+	for _, verb := range []string{"run", "try"} {
+		gotRoot = ""
+		captureStdout(t, func() {
+			if rc := subagentCommand([]string{verb, "helper", "--dir", sub, "inspect"}); rc != 0 {
+				t.Fatalf("%s rc = %d", verb, rc)
+			}
+		})
+		want, err := filepath.EvalSymlinks(sub)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got, err := filepath.EvalSymlinks(gotRoot)
+		if err != nil {
+			t.Fatalf("subagent %s --dir: setup seam got unusable workspace root %q: %v", verb, gotRoot, err)
+		}
+		if got != want {
+			t.Fatalf("subagent %s --dir %s: setup seam workspace root = %q, want explicit dir %q (must not widen to repo root)", verb, sub, gotRoot, sub)
+		}
 	}
 }
 

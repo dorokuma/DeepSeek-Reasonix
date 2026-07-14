@@ -111,6 +111,7 @@ func (m *chatTUI) runEffortCommand(input string) tea.Cmd {
 			RuntimeProfile:   m.runtimeProfile,
 			ToolApprovalMode: oldCtrl.ToolApprovalMode(),
 			PlanMode:         oldCtrl.PlanMode(),
+			EffortOverride:   &effort,
 		}, carried, prevPath)
 		if err != nil {
 			return modelSwitchMsg{ref: ref, err: err}
