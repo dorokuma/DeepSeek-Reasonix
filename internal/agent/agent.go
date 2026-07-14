@@ -2888,21 +2888,27 @@ func (a *Agent) executeOne(ctx context.Context, call provider.ToolCall) toolOutc
 		}
 		untrustedReadOnly := planModeUntrustedReadOnly(t)
 		if decision := a.planModeDecision(call.Name, t.ReadOnly(), untrustedReadOnly, safety, json.RawMessage(call.Arguments)); decision.Blocked {
-			trustAllowed := false
-			if decision.ReadOnlyCommandTrust != nil {
-				if allow, outcome, handled := a.checkPlanModeBashReadOnlyTrust(ctx, call, decision.ReadOnlyCommandTrust); handled {
-					if !allow {
-						return outcome
+			// Installed MCP writers follow the normal permission posture instead of
+			// being rejected by the planning-stage gate. PlanSafetyUnsafe remains an
+			// explicit hard stop.
+			mcpPermissionPath := safety != planmode.PlanSafetyUnsafe && isInstalledMCPTool(t) && !t.ReadOnly()
+			if !mcpPermissionPath {
+				trustAllowed := false
+				if decision.ReadOnlyCommandTrust != nil {
+					if allow, outcome, handled := a.checkPlanModeBashReadOnlyTrust(ctx, call, decision.ReadOnlyCommandTrust); handled {
+						if !allow {
+							return outcome
+						}
+						trustAllowed = true
+						planModeTrustedReadOnly = true
 					}
-					trustAllowed = true
-					planModeTrustedReadOnly = true
 				}
-			}
-			if !trustAllowed {
-				return toolOutcome{
-					output:  decision.Message,
-					blocked: true,
-					errMsg:  "blocked: plan mode is read-only",
+				if !trustAllowed {
+					return toolOutcome{
+						output:  decision.Message,
+						blocked: true,
+						errMsg:  "blocked: plan mode is read-only",
+					}
 				}
 			}
 		}
@@ -2980,10 +2986,13 @@ func (a *Agent) executeOne(ctx context.Context, call provider.ToolCall) toolOutc
 		}
 		untrustedReadOnly := planModeUntrustedReadOnly(execTool)
 		if decision := a.planModeDecision(permName, resolved.ReadOnly, untrustedReadOnly, safety, permArgs); decision.Blocked {
-			return toolOutcome{
-				output:  decision.Message,
-				blocked: true,
-				errMsg:  "blocked: plan mode is read-only",
+			mcpPermissionPath := safety != planmode.PlanSafetyUnsafe && isInstalledMCPTool(execTool) && !resolved.ReadOnly
+			if !mcpPermissionPath {
+				return toolOutcome{
+					output:  decision.Message,
+					blocked: true,
+					errMsg:  "blocked: plan mode is read-only",
+				}
 			}
 		}
 	}

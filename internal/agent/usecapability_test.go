@@ -446,7 +446,7 @@ func TestUseCapabilityInspectDoesNotStartServer(t *testing.T) {
 	}
 }
 
-func TestPlanModeBlocksInstalledWriteMCPThroughUseCapabilityBeforePermission(t *testing.T) {
+func TestPlanModeRoutesInstalledWriteMCPThroughUseCapabilityPermission(t *testing.T) {
 	reg := tool.NewRegistry()
 	reg.Add(annotatedMCPTool{fakeTool: fakeTool{name: "mcp__github__create_issue", readOnly: false}, server: "github", raw: "create_issue"})
 	reg.Add(annotatedMCPTool{fakeTool: fakeTool{name: "mcp__github__search_issues", readOnly: true}, server: "github", raw: "search_issues"})
@@ -460,8 +460,8 @@ func TestPlanModeBlocksInstalledWriteMCPThroughUseCapabilityBeforePermission(t *
 		ID: "1", Name: "use_capability",
 		Arguments: `{"action":"call","capability_id":"mcp-tool:github/create_issue","arguments":{}}`,
 	})
-	if !out.blocked || !strings.Contains(out.errMsg, "plan mode") || gate.normalCalls != 0 || gate.freshCalls != 0 {
-		t.Fatalf("installed MCP writer should be blocked before permission behind proxy, outcome=%+v normal=%d fresh=%d", out, gate.normalCalls, gate.freshCalls)
+	if out.blocked || out.errMsg != "" || gate.normalCalls != 1 {
+		t.Fatalf("installed MCP writer should use normal permission behind proxy, outcome=%+v calls=%d", out, gate.normalCalls)
 	}
 	// A read-only target still passes through the proxy in plan mode.
 	out = a.executeOne(context.Background(), provider.ToolCall{
@@ -502,6 +502,7 @@ func TestDestructiveMCPThroughUseCapabilityUsesFreshApproval(t *testing.T) {
 	reg.Add(uc)
 	gate := &mcpPermissionRecordingGate{allowNormal: true, allowFresh: true}
 	a := New(&scriptedProvider{name: "p"}, reg, NewSession("sys"), Options{Gate: gate}, event.Discard)
+	a.planMode.Store(true)
 
 	out := a.executeOne(context.Background(), provider.ToolCall{
 		ID: "1", Name: "use_capability",

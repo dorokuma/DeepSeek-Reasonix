@@ -457,7 +457,7 @@ Mode meanings:
 | Ask | Prompts for fallback writer approvals. |
 | Auto | Auto-allows fallback approvals; explicit `ask` / `deny` rules still apply. |
 | YOLO | Skips ordinary tool approval prompts; `deny`, user `ask` questions, and plan approval prompts still wait. |
-| Plan | Keeps the next work read-only until a plan is approved or Plan is turned off. |
+| Plan | Keeps the next work read-only until a plan is approved or Plan is turned off; installed MCP writers instead follow the normal permission posture. |
 | Goal | Pursues a saved objective until complete, blocked, or cleared. |
 
 ## Permissions & sandbox
@@ -586,7 +586,8 @@ permission reader-default. Because the annotation is supplied by a third-party
 server, it does not by itself grant access to Plan mode, the planner, or
 read-only research sub-agents. Use the local `trusted_read_only_tools` override
 for a reader you have audited. Tools without the hint remain write-capable.
-MCP writers remain blocked with built-in writers until the plan is approved.
+Installed MCP writers use the normal permission posture even while planning;
+built-in writers remain blocked until the plan is approved.
 
 MCP `destructiveHint: true` is stricter than both classifications. Every call
 requires a new review, even if the tool also reports `readOnlyHint`, the current
@@ -616,6 +617,17 @@ always forces a new review. A raw-tool `tools` entry overrides the server
 default. `trusted_read_only_tools` remains a compatibility and local-trust
 override for audited readers on servers that omit or cannot be trusted to
 maintain annotations.
+
+Two boundaries are worth knowing. `writes` trusts the server's read-only
+classification, so a server that mislabels a writer as `readOnlyHint` escapes
+that review — use `prompt` for servers you do not trust to maintain
+annotations. And when Guardian is enabled with no `approvals_reviewer`
+configured, `prompt`/`writes` reviews keep the legacy routing: Guardian
+pre-screens the call and may allow it without a human prompt; set
+`approvals_reviewer = "user"` when every review must reach a person. A
+project's `.mcp.json` merges these fields into the session, so review
+`approve`/`writes` policies in a repository you did not author like any other
+code — explicit deny rules and `destructiveHint` reviews still apply.
 
 A server's **prompts** surface as `/mcp__<server>__<prompt>` slash commands
 (positional args after the command); its **resources** are pulled in by writing

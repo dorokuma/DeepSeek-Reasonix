@@ -312,7 +312,7 @@ func TestUntrustedMCPReaderExcludedFromReadOnlySubagentRegistries(t *testing.T) 
 	}
 }
 
-func TestPlanModeBlocksInstalledMCPWriterBeforePermissionGate(t *testing.T) {
+func TestPlanModeInstalledMCPWriterUsesNormalPermissionGate(t *testing.T) {
 	reg := tool.NewRegistry()
 	reg.Add(annotatedMCPTool{fakeTool: fakeTool{name: "mcp__srv__write", readOnly: false}, server: "srv", raw: "write"})
 	gate := &mcpPermissionRecordingGate{allowNormal: true}
@@ -320,11 +320,24 @@ func TestPlanModeBlocksInstalledMCPWriterBeforePermissionGate(t *testing.T) {
 	a.SetPlanMode(true)
 
 	out := a.executeOne(context.Background(), provider.ToolCall{Name: "mcp__srv__write", Arguments: `{"value":"x"}`})
-	if !out.blocked || !strings.Contains(out.errMsg, "plan mode") {
-		t.Fatalf("installed MCP writer must be blocked in plan mode, got: %+v", out)
+	if strings.HasPrefix(out.output, "blocked:") || !strings.Contains(out.output, "done") {
+		t.Fatalf("approved installed MCP writer should run through normal permission, got: %q", out.output)
 	}
-	if gate.normalCalls != 0 || gate.freshCalls != 0 || len(gate.readOnly) != 0 {
-		t.Fatalf("plan gate must run before permission, normal=%d fresh=%d readOnly=%v", gate.normalCalls, gate.freshCalls, gate.readOnly)
+	if gate.normalCalls != 1 || gate.freshCalls != 0 || len(gate.readOnly) != 1 || gate.readOnly[0] {
+		t.Fatalf("permission calls normal=%d fresh=%d readOnly=%v, want normal writer call", gate.normalCalls, gate.freshCalls, gate.readOnly)
+	}
+}
+
+func TestPlanModeInstalledMCPWriterHonorsPermissionDenial(t *testing.T) {
+	reg := tool.NewRegistry()
+	reg.Add(annotatedMCPTool{fakeTool: fakeTool{name: "mcp__srv__write", readOnly: false}, server: "srv", raw: "write"})
+	gate := &mcpPermissionRecordingGate{reason: "denied by policy"}
+	a := New(nil, reg, NewSession(""), Options{Gate: gate}, event.Discard)
+	a.SetPlanMode(true)
+
+	out := a.executeOne(context.Background(), provider.ToolCall{Name: "mcp__srv__write"})
+	if !strings.Contains(out.output, "denied by policy") || gate.normalCalls != 1 {
+		t.Fatalf("denied installed MCP writer result=%q calls=%d", out.output, gate.normalCalls)
 	}
 }
 
@@ -338,6 +351,7 @@ func TestDestructiveMCPUsesFreshApprovalEvenWhenReadOnly(t *testing.T) {
 	})
 	gate := &mcpPermissionRecordingGate{allowNormal: true, allowFresh: true}
 	a := New(nil, reg, NewSession(""), Options{Gate: gate}, event.Discard)
+	a.SetPlanMode(true)
 
 	out := a.executeOne(context.Background(), provider.ToolCall{Name: "mcp__srv__danger"})
 	if strings.HasPrefix(out.output, "blocked:") || !strings.Contains(out.output, "done") {
@@ -358,6 +372,7 @@ func TestDestructiveMCPFailsClosedWithoutFreshApprovalGate(t *testing.T) {
 	})
 	normalGate := &readOnlyRecordingGate{}
 	a := New(nil, reg, NewSession(""), Options{Gate: normalGate}, event.Discard)
+	a.SetPlanMode(true)
 
 	out := a.executeOne(context.Background(), provider.ToolCall{Name: "mcp__srv__danger"})
 	if !strings.Contains(out.output, "requires fresh human approval") {
