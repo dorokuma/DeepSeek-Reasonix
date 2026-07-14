@@ -453,6 +453,48 @@ func TestParseClaudeHooksWarnOnUnsupportedSemantics(t *testing.T) {
 	}
 }
 
+// TestParseClaudeHooksReportsStructuralGapsOncePerFile pins the noise bound:
+// a plugin with several wildcard hooks reports each structural input gap
+// (WebFetch prompt, NotebookEdit cell_number, TaskOutput multi-job) once per
+// hooks file, not once per hook item.
+func TestParseClaudeHooksReportsStructuralGapsOncePerFile(t *testing.T) {
+	root := t.TempDir()
+	writeTestFile(t, filepath.Join(root, ClaudeManifest), `{"name": "hook-pack"}`)
+	writeTestFile(t, filepath.Join(root, "hooks", "hooks.json"), `{"hooks":{
+  "PreToolUse":[{"matcher":"*","hooks":[{"type":"command","command":"bin/a"},{"type":"command","command":"bin/b"}]}],
+  "PostToolUse":[{"matcher":"*","hooks":[{"type":"command","command":"bin/c"}]}]
+}}`)
+
+	pkg, warnings, err := ParseDir(root)
+	if err != nil {
+		t.Fatalf("ParseDir: %v", err)
+	}
+	if pkg.Compatibility.Status != "partial" {
+		t.Fatalf("compatibility status = %q, want partial", pkg.Compatibility.Status)
+	}
+	gapSubs := []string{`required "prompt"`, "cell_number", "multiple or all background jobs"}
+	for _, sub := range gapSubs {
+		warned := 0
+		for _, w := range warnings {
+			if strings.Contains(w, sub) {
+				warned++
+			}
+		}
+		if warned != 1 {
+			t.Errorf("warnings mentioning %q = %d, want exactly 1 per hooks file (got %v)", sub, warned, warnings)
+		}
+		skipped := 0
+		for _, issue := range pkg.Compatibility.Skipped {
+			if strings.Contains(issue.Reason, sub) {
+				skipped++
+			}
+		}
+		if skipped != 1 {
+			t.Errorf("compatibility issues mentioning %q = %d, want exactly 1 per hooks file", sub, skipped)
+		}
+	}
+}
+
 func TestParseClaudeHooksDoesNotWarnOnMatchersThatCanFire(t *testing.T) {
 	cases := []struct {
 		name      string

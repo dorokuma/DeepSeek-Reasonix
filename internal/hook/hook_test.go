@@ -49,12 +49,19 @@ func requireNode(t *testing.T) {
 	}
 }
 
+// realSpawnTimeout bounds tests that assert a real child process completes.
+// Generous on purpose: node cold starts and first-run scans of a freshly
+// built test binary can stall for seconds on a loaded machine, and these
+// tests assert behavior, not latency. Tests asserting the timeout path keep
+// their own tight budgets — that direction cannot flake under load.
+const realSpawnTimeout = 15 * time.Second
+
 const sampleSettings = `{"hooks":{"PreToolUse":[{"match":"bash","command":"echo pre"}],"Stop":[{"command":"echo stop"}]}}`
 
 func hookSettingsWithCommand(t *testing.T, event Event, command string) string {
 	t.Helper()
 	body, err := json.Marshal(Settings{Hooks: map[Event][]HookConfig{
-		event: []HookConfig{{Match: "bash", Command: command}},
+		event: []HookConfig{{Match: "bash", Command: command, Timeout: int(realSpawnTimeout / time.Millisecond)}},
 	}})
 	if err != nil {
 		t.Fatal(err)
@@ -196,7 +203,7 @@ func TestNormalizeCommandRepairsOnlyStdinNodeEvalQuoting(t *testing.T) {
 				r := DefaultSpawner(context.Background(), SpawnInput{
 					Command: got,
 					Stdin:   `{"toolName":"bash"}`,
-					Timeout: 2 * time.Second,
+					Timeout: realSpawnTimeout,
 				})
 				if r.ExitCode != 0 || r.Stdout != "bash" {
 					t.Fatalf("normalized command did not execute: command=%q result=%+v", got, r)
@@ -661,7 +668,7 @@ func TestClaudeFacingToolInputAdaptsMappedTools(t *testing.T) {
 		{"read_only_skill", "read_only_skill", `{"name":"explore","arguments":"map the auth flow"}`, `{"skill":"explore","args":"map the auth flow"}`},
 		{"task-output", "bash_output", `{"job_id":"bash-1","filter":"err"}`, `{"task_id":"bash-1","filter":"err","block":false,"timeout":0}`},
 		{"task-output-wait-one", "wait", `{"job_ids":["task-1"],"timeout_seconds":3}`, `{"job_ids":["task-1"],"timeout_seconds":3,"task_id":"task-1","block":true,"timeout":3000}`},
-		{"task-output-wait-many", "wait", `{"job_ids":["task-1","task-2"]}`, `{"job_ids":["task-1","task-2"],"block":true,"timeout":0}`},
+		{"task-output-wait-many", "wait", `{"job_ids":["task-1","task-2"]}`, `{"job_ids":["task-1","task-2"],"block":true}`},
 		{"task-stop", "kill_shell", `{"job_id":"bash-1"}`, `{"task_id":"bash-1"}`},
 		{"ask-defaults", "ask", `{"questions":[{"question":"Which?","header":"Choice","options":[{"label":"A"},{"label":"B","description":"Keep B"}]}]}`, `{"questions":[{"question":"Which?","header":"Choice","multiSelect":false,"options":[{"label":"A","description":""},{"label":"B","description":"Keep B"}]}]}`},
 		{"todo-default-active-form", "todo_write", `{"todos":[{"content":"Run tests","status":"pending"},{"content":"Ship it","status":"completed","activeForm":"Shipping it"}]}`, `{"todos":[{"content":"Run tests","status":"pending","activeForm":"Run tests"},{"content":"Ship it","status":"completed","activeForm":"Shipping it"}]}`},
@@ -1191,7 +1198,7 @@ func TestRunAsyncHookReturnsBeforeSpawnerFinishes(t *testing.T) {
 	}
 	select {
 	case <-started:
-	case <-time.After(time.Second):
+	case <-time.After(5 * time.Second):
 		t.Fatal("async hook did not start")
 	}
 	close(release)
@@ -1234,17 +1241,17 @@ func TestDefaultSpawner(t *testing.T) {
 	}
 	ctx := context.Background()
 	// exit 0 with stdout
-	r := DefaultSpawner(ctx, SpawnInput{Command: "printf hi", Timeout: 2 * time.Second})
+	r := DefaultSpawner(ctx, SpawnInput{Command: "printf hi", Timeout: realSpawnTimeout})
 	if r.ExitCode != 0 || r.Stdout != "hi" {
 		t.Errorf("expected exit 0 / hi, got code=%d out=%q err=%v", r.ExitCode, r.Stdout, r.SpawnErr)
 	}
 	// exit 2 (block verdict on a gating event)
-	r = DefaultSpawner(ctx, SpawnInput{Command: "exit 2", Timeout: 2 * time.Second})
+	r = DefaultSpawner(ctx, SpawnInput{Command: "exit 2", Timeout: realSpawnTimeout})
 	if r.ExitCode != 2 {
 		t.Errorf("expected exit 2, got %d", r.ExitCode)
 	}
 	// stdin is delivered as the payload
-	r = DefaultSpawner(ctx, SpawnInput{Command: "cat", Stdin: "payload-here", Timeout: 2 * time.Second})
+	r = DefaultSpawner(ctx, SpawnInput{Command: "cat", Stdin: "payload-here", Timeout: realSpawnTimeout})
 	if r.Stdout != "payload-here" {
 		t.Errorf("stdin not delivered: %q", r.Stdout)
 	}
@@ -1262,7 +1269,7 @@ func TestDefaultSpawnerOutputCap(t *testing.T) {
 	// Emit more than the cap; expect truncation flagged and bounded capture.
 	r := DefaultSpawner(context.Background(), SpawnInput{
 		Command: "yes x | head -c 400000",
-		Timeout: 5 * time.Second,
+		Timeout: realSpawnTimeout,
 	})
 	if !r.Truncated {
 		t.Error("oversized output should be flagged truncated")
@@ -1290,7 +1297,7 @@ func TestWellFormedNodeEvalKeepsShellSemantics(t *testing.T) {
 	r := DefaultSpawner(context.Background(), SpawnInput{
 		Command: command,
 		Stdin:   `{"toolName":"bash"}`,
-		Timeout: 2 * time.Second,
+		Timeout: realSpawnTimeout,
 		Env:     map[string]string{"HOOK_TEST_MARKER": "expanded-"},
 	})
 	if r.ExitCode != 0 {

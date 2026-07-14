@@ -313,7 +313,9 @@ such as Superpowers and Claude-style skill packs, Reasonix maps:
   empty value. Legacy `BashOutput`/`KillShell` matchers still fire while the
   emitted names and fields use current Claude vocabulary. `bash_output`
   supplies `TaskOutput`'s required non-blocking fields; `wait` also maps to
-  `TaskOutput`, including `task_id` when it waits for exactly one job.
+  `TaskOutput`, including `task_id` when it waits for exactly one job, and
+  omits `TaskOutput`'s optional `timeout` for an unbounded wait rather than
+  claiming a `0`ms budget.
   `AskUserQuestion` supplies omitted `multiSelect:false` and empty option
   descriptions, while `TodoWrite` derives an omitted `activeForm` from the
   task content. `NotebookEdit` also supplies `new_source` from Reasonix's
@@ -340,7 +342,9 @@ such as Superpowers and Claude-style skill packs, Reasonix maps:
   `Stop`/`SubagentStop` hook (which cannot block the turn in Reasonix), or a
   matcher that covers one of three inputs Reasonix cannot losslessly express:
   `WebFetch.prompt`, `NotebookEdit.cell_id` for a Reasonix `cell_number` call,
-  or `TaskOutput.task_id` when Reasonix `wait` covers multiple/all jobs.
+  or `TaskOutput.task_id` when Reasonix `wait` covers multiple/all jobs. Each
+  structural gap is reported once per hooks file, so a wildcard-matcher
+  plugin sees one warning per gap instead of one per hook.
 - A plugin-root `.mcp.json` to installed MCP entries. Claude `local` maps to
   stdio, non-ASCII display names receive stable internal IDs, and duplicate
   declarations are deduplicated. Imported servers default to

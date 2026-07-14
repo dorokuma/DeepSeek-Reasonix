@@ -573,13 +573,15 @@ func claudeFacingToolInput(toolName string, args json.RawMessage, cwd string) js
 	}
 	if toolName == "wait" {
 		obj["block"] = json.RawMessage("true")
-		obj["timeout"] = json.RawMessage("0")
 		var jobIDs []string
 		if err := json.Unmarshal(obj["job_ids"], &jobIDs); err == nil && len(jobIDs) == 1 {
 			if body, err := json.Marshal(jobIDs[0]); err == nil {
 				obj["task_id"] = body
 			}
 		}
+		// An unbounded Reasonix wait omits TaskOutput's optional timeout
+		// entirely: in Claude's schema timeout is the maximum wait in ms, so
+		// claiming 0 would read as "don't wait" — the opposite of the call.
 		var timeoutSeconds int64
 		if err := json.Unmarshal(obj["timeout_seconds"], &timeoutSeconds); err == nil && timeoutSeconds > 0 && timeoutSeconds <= (1<<63-1)/1000 {
 			if body, err := json.Marshal(timeoutSeconds * 1000); err == nil {

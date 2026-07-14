@@ -160,6 +160,7 @@ func appendClaudeHooksFile(root, rel string, manifest *Manifest) ([]string, []Co
 	}
 	var warnings []string
 	var issues []CompatibilityIssue
+	var gapWebFetch, gapNotebook, gapTaskOutput bool
 	for event, blocks := range raw.Hooks {
 		event = strings.TrimSpace(event)
 		if !claudeHookEvents[event] {
@@ -206,20 +207,10 @@ func appendClaudeHooksFile(root, rel string, manifest *Manifest) ([]string, []Co
 					warnings = append(warnings, rel+": "+reason)
 					issues = append(issues, CompatibilityIssue{Capability: "hooks", Path: rel, Reason: reason})
 				}
-				if claudeToolScopedHookEvents[event] && claudeMatcherIncludesTool(match, "WebFetch") {
-					reason := fmt.Sprintf("%s hook %q matcher %q includes Claude WebFetch, but Reasonix web_fetch cannot supply Claude's required \"prompt\" input; the hook receives only \"url\" for that tool", event, command, match)
-					warnings = append(warnings, rel+": "+reason)
-					issues = append(issues, CompatibilityIssue{Capability: "hooks", Path: rel, Reason: reason})
-				}
-				if claudeToolScopedHookEvents[event] && claudeMatcherIncludesTool(match, "NotebookEdit") {
-					reason := fmt.Sprintf("%s hook %q matcher %q includes Claude NotebookEdit, but Reasonix notebook_edit may target a cell by cell_number, which cannot be converted to Claude's opaque cell_id; the hook receives cell_number as an extra field for those calls", event, command, match)
-					warnings = append(warnings, rel+": "+reason)
-					issues = append(issues, CompatibilityIssue{Capability: "hooks", Path: rel, Reason: reason})
-				}
-				if claudeToolScopedHookEvents[event] && (claudeMatcherIncludesTool(match, "TaskOutput") || claudeMatcherIncludesTool(match, "BashOutput")) {
-					reason := fmt.Sprintf("%s hook %q matcher %q includes Claude TaskOutput, but Reasonix wait may cover multiple or all background jobs in one call, which cannot be represented by Claude's single task_id; the hook receives job_ids as an extra field for those calls", event, command, match)
-					warnings = append(warnings, rel+": "+reason)
-					issues = append(issues, CompatibilityIssue{Capability: "hooks", Path: rel, Reason: reason})
+				if claudeToolScopedHookEvents[event] {
+					gapWebFetch = gapWebFetch || claudeMatcherIncludesTool(match, "WebFetch")
+					gapNotebook = gapNotebook || claudeMatcherIncludesTool(match, "NotebookEdit")
+					gapTaskOutput = gapTaskOutput || claudeMatcherIncludesTool(match, "TaskOutput") || claudeMatcherIncludesTool(match, "BashOutput")
 				}
 				manifest.Hooks[event] = appendUniqueHook(manifest.Hooks[event], Hook{
 					Match:         match,
@@ -235,6 +226,25 @@ func appendClaudeHooksFile(root, rel string, manifest *Manifest) ([]string, []Co
 				})
 			}
 		}
+	}
+	// Structural input gaps (fields Reasonix cannot losslessly express) are
+	// reported once per hooks file: every additional matching hook repeats
+	// the same information, and a wildcard-matcher plugin would otherwise
+	// collect one copy per hook. File-level wording also keeps the emitted
+	// set deterministic despite the random event-map iteration order above.
+	for _, gap := range []struct {
+		hit    bool
+		reason string
+	}{
+		{gapWebFetch, `a tool-scoped hook matcher includes Claude WebFetch, but Reasonix web_fetch cannot supply Claude's required "prompt" input; such hooks receive only "url" for that tool`},
+		{gapNotebook, "a tool-scoped hook matcher includes Claude NotebookEdit, but Reasonix notebook_edit may target a cell by cell_number, which cannot be converted to Claude's opaque cell_id; such hooks receive cell_number as an extra field for those calls"},
+		{gapTaskOutput, "a tool-scoped hook matcher includes Claude TaskOutput, but Reasonix wait may cover multiple or all background jobs in one call, which cannot be represented by Claude's single task_id; such hooks receive job_ids as an extra field for those calls"},
+	} {
+		if !gap.hit {
+			continue
+		}
+		warnings = append(warnings, rel+": "+gap.reason)
+		issues = append(issues, CompatibilityIssue{Capability: "hooks", Path: rel, Reason: gap.reason})
 	}
 	return uniqueSorted(warnings), issues
 }
