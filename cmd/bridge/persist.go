@@ -17,6 +17,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 )
 
 const defaultStateDir = "/var/lib/reasonix-bridge"
@@ -29,6 +30,7 @@ type chatRecord struct {
 	SessionPath string  `json:"session_path"`
 	Port        int     `json:"port"`
 	Model       string  `json:"model,omitempty"` // per-chat model override, survives restart
+	LastActive  time.Time `json:"last_active,omitempty"` // last activity timestamp for pruning
 	CumPrompt   int     `json:"cum_prompt,omitempty"`
 	CumComplete int     `json:"cum_completion,omitempty"`
 	CumTotal    int     `json:"cum_total,omitempty"`

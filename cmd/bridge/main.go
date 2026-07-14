@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/joho/godotenv"
 
@@ -185,9 +186,12 @@ func checkWritable(path string) error {
 	return nil
 }
 
+// version is set at build time via -ldflags "-X main.version=..."
+var version = "dev"
+
 func main() {
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
-	log.Println("reasonix-bridge v2 starting...")
+	log.Printf("reasonix-bridge v2 starting (version %s)...", version)
 
 	// Telegram 壳对用户一律中文；核心 notice/斜杠文案走 i18n，必须先锁定 zh。
 	// 配置/环境里的 language 也强制中文，禁止掉出英文提示。
@@ -242,6 +246,15 @@ func main() {
 		log.Printf("warning: load cron tasks: %v", err)
 	}
 	bridge.cron.Start()
+
+	// Send restart notification to the last active chat, if any.
+	if chatID := pendingRestartNotify(); chatID != 0 {
+		go func() {
+			// Brief delay so polling loop is fully established.
+			time.Sleep(500 * time.Millisecond)
+			bridge.sendMessage(chatID, "⚠️ 服务已重启，如遇异常请重新发送")
+		}()
+	}
 
 	// Handle signals (§9.2)
 	sigCh := make(chan os.Signal, 1)

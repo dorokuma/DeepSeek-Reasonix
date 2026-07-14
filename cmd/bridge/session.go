@@ -97,7 +97,7 @@ func (sm *SessionManager) SaveAll() error {
 	sm.mu.Lock()
 	records := make([]chatRecord, 0, len(sm.index))
 	for chatID, path := range sm.index {
-		records = append(records, chatRecord{ChatID: chatID, SessionPath: path})
+		records = append(records, chatRecord{ChatID: chatID, SessionPath: path, LastActive: time.Now()})
 	}
 	sm.mu.Unlock()
 	return store.saveAll(records)
@@ -126,7 +126,7 @@ func (sm *SessionManager) resolvePath(chatID int64, label string) string {
 
 	// Persist the new mapping immediately (#4, #6, #11, #16)
 	if sm.store != nil {
-		if err := sm.store.upsert(chatRecord{ChatID: chatID, SessionPath: path}); err != nil {
+		if err := sm.store.upsert(chatRecord{ChatID: chatID, SessionPath: path, LastActive: time.Now()}); err != nil {
 			log.Printf("persist index for chat %d: %v", chatID, err)
 		}
 	}
@@ -180,7 +180,7 @@ func (sm *SessionManager) ensureController(ctx context.Context, chatID int64) (*
 			ctrl.SetSessionPath(newPath)
 			// Persist the corrected mapping immediately
 			if sm.store != nil {
-				if perr := sm.store.upsert(chatRecord{ChatID: chatID, SessionPath: newPath}); perr != nil {
+				if perr := sm.store.upsert(chatRecord{ChatID: chatID, SessionPath: newPath, LastActive: time.Now()}); perr != nil {
 					log.Printf("persist re-minted path for chat %d: %v", chatID, perr)
 				}
 			}
@@ -237,7 +237,7 @@ func (sm *SessionManager) SyncSessionPath(chatID int64) {
 	sm.index[chatID] = path
 	sm.mu.Unlock()
 	if store != nil {
-		if err := store.upsert(chatRecord{ChatID: chatID, SessionPath: path}); err != nil {
+		if err := store.upsert(chatRecord{ChatID: chatID, SessionPath: path, LastActive: time.Now()}); err != nil {
 			log.Printf("SyncSessionPath chat %d: %v", chatID, err)
 		}
 	}
@@ -290,7 +290,7 @@ func (sm *SessionManager) NewSession(ctx context.Context, chatID int64) error {
 	sm.mu.Unlock()
 
 	if store != nil {
-		if err := store.upsert(chatRecord{ChatID: chatID, SessionPath: newPath}); err != nil {
+		if err := store.upsert(chatRecord{ChatID: chatID, SessionPath: newPath, LastActive: time.Now()}); err != nil {
 			log.Printf("persist index after /new for chat %d: %v", chatID, err)
 		}
 	}
