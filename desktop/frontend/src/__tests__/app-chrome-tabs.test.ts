@@ -243,7 +243,7 @@ ok(
 );
 
 ok(
-  /const controllerReady = state\.meta\?\.ready === true && !state\.backendActivationPending;/.test(appSource) &&
+  /const controllerReady = state\.meta\?\.ready === true && !state\.backendActivationPending && !runtimeTransitioning;/.test(appSource) &&
     /if \(!activeTabId \|\| !controllerReady\) return;\s*void commitThenSend\(activeTabId, text\)\.catch/.test(appSource) &&
     /onPrompt=\{handleTranscriptPrompt\}/.test(appSource) &&
     /submitDisabled=\{!controllerReady\}/.test(appSource),

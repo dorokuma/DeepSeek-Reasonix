@@ -150,6 +150,41 @@ type recordingSessionRunner struct {
 	memoryCompilerInputs []string
 }
 
+type deliveryScopeErrorRunner struct {
+	scopes []agent.DeliveryExecutionScope
+}
+
+func (r *deliveryScopeErrorRunner) Run(ctx context.Context, _ string) error {
+	if scope, ok := agent.DeliveryExecutionScopeFromContext(ctx); ok {
+		r.scopes = append(r.scopes, scope)
+	}
+	return &agent.FinalReadinessError{Attempts: 3, Reason: "missing verification"}
+}
+
+func TestGoalReadinessFailureBlocksAndKeepsDeliveryScope(t *testing.T) {
+	runner := &deliveryScopeErrorRunner{}
+	c := New(Options{Runner: runner})
+	c.SetGoal("ship the integration")
+
+	err := newTurnOrchestrator(c).runGoalLoopWithRawDisplay(context.Background(), "start", "start", "")
+	var readiness *agent.FinalReadinessError
+	if !errors.As(err, &readiness) {
+		t.Fatalf("run err = %v, want FinalReadinessError", err)
+	}
+	if got := c.GoalStatus(); got != GoalStatusBlocked {
+		t.Fatalf("GoalStatus = %q, want blocked", got)
+	}
+	if len(runner.scopes) != 1 || runner.scopes[0].ID == "" || runner.scopes[0].TaskText != "ship the integration" {
+		t.Fatalf("delivery scopes = %+v", runner.scopes)
+	}
+	if !c.ResumeGoal() || c.GoalStatus() != GoalStatusRunning {
+		t.Fatal("blocked Goal should resume with its existing scope")
+	}
+	if id, task, ok := c.goals.deliveryScope(); !ok || id != runner.scopes[0].ID || task != "ship the integration" {
+		t.Fatalf("resumed scope = (%q, %q, %v), want preserved id/task", id, task, ok)
+	}
+}
+
 func (r *recordingSessionRunner) Run(ctx context.Context, input string) error {
 	r.inputs = append(r.inputs, input)
 	if source, ok := agent.MemoryCompilerSourceInputFromContext(ctx); ok {

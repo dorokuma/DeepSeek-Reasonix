@@ -2190,6 +2190,29 @@ func (c *Controller) SetGoalWithResearchMode(goal string, researchMode GoalResea
 	}
 }
 
+// ResumeGoal re-enters a recoverable blocked/stopped Goal without resetting its
+// delivery evidence scope or AutoResearch identity.
+func (c *Controller) ResumeGoal() bool {
+	path, data, persist, resumed := c.goals.resume(c.goalTodos())
+	if !resumed {
+		return false
+	}
+	c.persistGoalState(path, data, persist)
+	if c.executor != nil {
+		c.executor.RestoreDeliveryCheckpoint(c.goals.deliveryState())
+	}
+	return true
+}
+
+func (c *Controller) persistGoalDeliveryCheckpoint() {
+	if c.executor == nil {
+		return
+	}
+	checkpoint := c.executor.DeliveryCheckpoint()
+	path, data, ok := c.goals.setDeliveryCheckpoint(checkpoint, c.goalTodos())
+	c.persistGoalState(path, data, ok)
+}
+
 func (c *Controller) ensureAutoResearchTask(goal string, researchMode GoalResearchMode) (string, string) {
 	goal = strings.TrimSpace(goal)
 	if goal == "" || c.autoResearch == nil || !shouldUseAutoResearch(goal, researchMode) {
@@ -3170,7 +3193,10 @@ func (c *Controller) Resume(s *agent.Session, path string) {
 	c.mu.Unlock()
 	c.setActiveJobSession(path)
 	c.rebindCheckpoints(path)
-	c.goals.restoreRunningFromState(path)
+	c.goals.restoreFromState(path)
+	if c.executor != nil {
+		c.executor.RestoreDeliveryCheckpoint(c.goals.deliveryState())
+	}
 	c.restoreTerminalGoalTodos(path)
 	c.loadGuardianSession()
 	c.snapshotMu.Unlock()

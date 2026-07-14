@@ -2962,7 +2962,6 @@ func (a *App) buildTabControllerWithContext(tab *WorkspaceTab, loadedSession loa
 	ctrl.EnableInteractiveApproval()
 	applyTabModeToController(ctrl, buildMode)
 	applyTabToolApprovalModeToController(ctrl, buildToolApprovalMode)
-	ctrl.SetGoal(buildGoal)
 
 	acquiredLeaseKey := ""
 	if dir := ctrl.SessionDir(); dir != "" {
@@ -3064,9 +3063,10 @@ func (a *App) buildTabControllerWithContext(tab *WorkspaceTab, loadedSession loa
 				return
 			}
 			if resumeSession != nil {
-				ctrl.Resume(sessionWithFreshSystemPrompt(resumeSession, systemPromptFrom(ctrl.History())), path)
+				resumeLoadedSessionAndGoal(ctrl, resumeSession, path, buildGoal)
 			} else {
 				ctrl.SetSessionPath(path)
+				ctrl.SetGoal(buildGoal)
 			}
 			a.persistTabSessionPath(tab, path)
 			a.mu.RLock()

@@ -1517,6 +1517,8 @@ func (a *App) rebuildSettingLocked(setting string) error {
 	if tab == nil {
 		return fmt.Errorf("no active tab")
 	}
+	tab.turnStartMu.Lock()
+	defer tab.turnStartMu.Unlock()
 	if controllerHasActiveRuntimeWork(a.controllerForTab(tab)) {
 		return rebuildControllerActiveWorkError(setting)
 	}
@@ -1607,11 +1609,7 @@ func (a *App) rebuildSettingLocked(setting string) error {
 		ctrl.Close()
 		return err
 	}
-	resumeWithFreshSystemPrompt(ctrl, carried, path)
-	if oldCtrl != nil {
-		oldCtrl.Close()
-	}
-	a.persistTabSessionPath(tab, path)
+	resumeWithFreshSystemPromptAndGoal(ctrl, carried, path, snap.goal)
 	a.mu.Lock()
 	if current := a.tabs[tab.ID]; current != tab {
 		a.mu.Unlock()
@@ -1629,6 +1627,10 @@ func (a *App) rebuildSettingLocked(setting string) error {
 	a.supersedeTabBuildLocked(tab)
 	a.saveTabsLocked()
 	a.mu.Unlock()
+	if oldCtrl != nil {
+		oldCtrl.Close()
+	}
+	a.persistTabSessionPath(tab, path)
 	a.clearDeferredRebuild(tab.ID)
 	a.emitReady(a.ctx)
 	return nil

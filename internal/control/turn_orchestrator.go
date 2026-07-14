@@ -208,7 +208,11 @@ func (o *turnOrchestrator) runOrchestratedTurn(ctx context.Context, turn orchest
 	if !turn.synthetic {
 		modelInput = c.withCapabilityRoute(input, turn.raw)
 	}
+	if scopeID, task, ok := c.goals.deliveryScope(); ok {
+		ctx = agent.WithDeliveryExecutionScope(ctx, agent.DeliveryExecutionScope{ID: scopeID, TaskText: task})
+	}
 	err := c.runner.Run(ctx, modelInput)
+	c.persistGoalDeliveryCheckpoint()
 	if err == nil {
 		c.recordAutoResearchEvidenceFromAssistant(autoResearchTaskID, lastAssistantText(c.History()))
 		c.recordAutoResearchTurnProgress(autoResearchTaskID, autoResearchAcceptedBefore)
@@ -280,6 +284,11 @@ func (o *turnOrchestrator) runGoalLoopWithRawDisplay(ctx context.Context, input,
 	if err := o.runTurnWithRawDisplay(ctx, input, raw, display); err != nil {
 		if ctx.Err() != nil {
 			o.c.stopGoal(GoalStatusStopped)
+		} else {
+			var readiness *agent.FinalReadinessError
+			if errors.As(err, &readiness) {
+				o.c.stopGoal(GoalStatusBlocked)
+			}
 		}
 		return err
 	}
@@ -290,6 +299,11 @@ func (o *turnOrchestrator) runEditedGoalLoopWithRawDisplay(ctx context.Context, 
 	if err := o.runEditedTurnWithRawDisplay(ctx, input, raw, display, original); err != nil {
 		if ctx.Err() != nil {
 			o.c.stopGoal(GoalStatusStopped)
+		} else {
+			var readiness *agent.FinalReadinessError
+			if errors.As(err, &readiness) {
+				o.c.stopGoal(GoalStatusBlocked)
+			}
 		}
 		return err
 	}

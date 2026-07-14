@@ -2267,6 +2267,22 @@ export function useController() {
     await clearGoalForTab(activeTabId);
   }, [activeTabId, clearGoalForTab]);
 
+  const resumeGoalForTab = useCallback(async (tabId: string): Promise<boolean> => {
+    if (!tabId) return false;
+    try {
+      const resumed = await app.ResumeGoalForTab(tabId);
+      await refreshMetaForTab(tabId, dispatchTo);
+      return resumed;
+    } catch {
+      return false;
+    }
+  }, [dispatchTo]);
+
+  const resumeGoal = useCallback(async (): Promise<boolean> => {
+    if (!activeTabId) return false;
+    return resumeGoalForTab(activeTabId);
+  }, [activeTabId, resumeGoalForTab]);
+
   const newSession = useCallback(async () => {
     const tabId = activeTabId;
     if (tabId) await waitForTabReady(tabId);
@@ -2445,19 +2461,20 @@ export function useController() {
     } catch { /* ignore */ }
   }, [activeTabId, dispatchTo]);
 
-  const setTokenMode = useCallback(async (mode: TokenMode) => {
-    if (!activeTabId) return;
+  const setTokenMode = useCallback(async (mode: TokenMode): Promise<boolean> => {
+    if (!activeTabId) return false;
     try {
       await app.SetTokenModeForTab(activeTabId, mode);
     } catch (err) {
       dispatchTo(activeTabId, { type: "local_notice", level: "warn", text: tokenModeSwitchNoticeText(err) });
-      return;
+      return false;
     }
     try {
       dispatchTo(activeTabId, { type: "meta", meta: await app.MetaForTab(activeTabId) });
       dispatchTo(activeTabId, { type: "context", context: await app.ContextUsageForTab(activeTabId) });
       dispatchTo(activeTabId, { type: "effort", effort: await app.EffortForTab(activeTabId) });
     } catch { /* ignore */ }
+    return true;
   }, [activeTabId, dispatchTo]);
 
   const fetchMemory = useCallback((): Promise<MemoryView> =>
@@ -2740,7 +2757,7 @@ export function useController() {
     state: activeState,
     activeTabId,
     send, sendToTab, runShell, runShellForTab, steer, steerForTab, notice, cancel, approve, answerQuestion, setControllerMode,
-    setCollaborationMode, setCollaborationModeForTab, setToolApprovalMode, setToolApprovalModeForTab, setGoal, setGoalForTab, clearGoal, clearGoalForTab,
+    setCollaborationMode, setCollaborationModeForTab, setToolApprovalMode, setToolApprovalModeForTab, setGoal, setGoalForTab, clearGoal, clearGoalForTab, resumeGoal, resumeGoalForTab,
     newSession, clearSession, listSessions, listTrashedSessions, resumeSession, openChannelSession, previewSession, deleteSession, restoreSession, purgeTrashedSession, renameSession,
     loadOlderHistory,
     refreshMeta, pickWorkspace, switchWorkspace, compact, rewind, rewindForTab, setModel, setEffort, setTokenMode,

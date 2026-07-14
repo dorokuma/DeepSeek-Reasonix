@@ -165,6 +165,7 @@ export interface AppBindings {
   SetToolApprovalModeForTab(tabID: string, mode: string): Promise<void>;
   SetGoal(goal: string): Promise<void>;
   SetGoalForTab(tabID: string, goal: string): Promise<void>;
+  ResumeGoalForTab(tabID: string): Promise<boolean>;
   ClearGoal(): Promise<void>;
   ClearGoalForTab(tabID: string): Promise<void>;
   Compact(): Promise<void>;
@@ -2256,6 +2257,15 @@ function makeMockApp(): AppBindings {
                 }
               : tab,
           );
+        },
+        async ResumeGoalForTab(tabID) {
+          let resumed = false;
+          mockTabs = mockTabs.map((tab) => {
+            if (tab.id !== tabID || !tab.goal || tab.goalStatus === "complete") return tab;
+            resumed = true;
+            return { ...tab, goalStatus: "running", collaborationMode: "goal" };
+          });
+          return resumed;
         },
         async ClearGoal() {
           await this.SetGoal("");
