@@ -4141,7 +4141,8 @@ export default function App() {
         void handleOpenTopic(scope, workspaceRoot, topicId);
       }} />
       <TranscriptSelectionMenu
-        enabled={Boolean(activeTabId && !activeTab?.readOnly && !decisionSurface && !sidebarImDetailConnection)}
+        enabled={Boolean(activeTabId && !activeTab?.readOnly && !decisionSurface && !sidebarImDetailConnection && !hydratePlaceholderActive)}
+        resetKey={activeTabId ?? ""}
         onAddToChat={addSelectedTextToComposer}
       />
       {windowsFramelessChrome && <WindowsWindowControls />}

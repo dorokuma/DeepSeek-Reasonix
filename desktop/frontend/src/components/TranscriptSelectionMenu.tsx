@@ -29,9 +29,15 @@ const ACTION_EDGE_GAP = 8;
 
 export function TranscriptSelectionMenu({
   enabled = true,
+  resetKey,
   onAddToChat,
 }: {
   enabled?: boolean;
+  // Identifies the transcript the selection was made in (the active tab).
+  // The overlay captures only text, while onAddToChat routes to whatever is
+  // active at click time — so any surviving overlay must be discarded when
+  // the source changes or a selection from session A could land in session B.
+  resetKey?: string | number;
   onAddToChat?: (text: string) => void;
 }) {
   const t = useT();
@@ -58,6 +64,19 @@ export function TranscriptSelectionMenu({
     setAction(null);
     setActionPoint(null);
   }, []);
+
+  // Drop every piece of captured selection state when the source transcript
+  // changes: the floating action, the copy menu, and the Escape-dismissal
+  // memory all describe the previous tab's content.
+  const lastResetKeyRef = useRef(resetKey);
+  useEffect(() => {
+    if (lastResetKeyRef.current === resetKey) return;
+    lastResetKeyRef.current = resetKey;
+    dismissedRef.current = null;
+    setPoint(null);
+    setText("");
+    closeAction();
+  }, [closeAction, resetKey]);
 
   const addSelectionToChat = useCallback(() => {
     if (!action || !onAddToChat) return;

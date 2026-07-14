@@ -229,6 +229,61 @@ console.log("\ntranscript selection menu");
     await flushTimers();
   });
 
+  // A session/tab switch must discard the captured selection: the overlay only
+  // stores text while onAddToChat routes to the tab active at click time, so a
+  // surviving overlay could add session A's selection to session B. During
+  // placeholder hydration the previous transcript stays on screen, so the
+  // disabled window must also keep the shortcut keyup from re-summoning it.
+  selectNodeText(msgBody.firstChild as Node);
+  await act(async () => {
+    msgBody.dispatchEvent(new window.MouseEvent("pointerup", { bubbles: true, button: 0 }));
+    await drainFrame();
+  });
+  ok(document.querySelector(".transcript-selection-action") != null, "selection opens the floating action before a tab switch");
+  await act(async () => {
+    root.render(
+      <LocaleProvider>
+        <TranscriptSelectionMenu onAddToChat={(text) => additions.push(text)} resetKey="tab-b" />
+      </LocaleProvider>,
+    );
+    await flushTimers();
+  });
+  eq(document.querySelector(".transcript-selection-action"), null, "a tab switch discards the captured selection action");
+  await act(async () => {
+    root.render(
+      <LocaleProvider>
+        <TranscriptSelectionMenu onAddToChat={(text) => additions.push(text)} resetKey="tab-b" enabled={false} />
+      </LocaleProvider>,
+    );
+    await flushTimers();
+  });
+  await act(async () => {
+    document.dispatchEvent(new window.KeyboardEvent("keyup", { key: "Meta", bubbles: true }));
+    await drainFrame();
+  });
+  eq(document.querySelector(".transcript-selection-action"), null, "keyup over a hydration placeholder cannot re-summon the action");
+
+  selectNodeText(msgBody.firstChild as Node);
+  await act(async () => {
+    root.render(
+      <LocaleProvider>
+        <TranscriptSelectionMenu onAddToChat={(text) => additions.push(text)} resetKey="tab-b" />
+      </LocaleProvider>,
+    );
+    await flushTimers();
+  });
+  await dispatchContextMenu(msgBody);
+  ok(document.querySelector(".context-menu") != null, "the copy menu opens before a tab switch");
+  await act(async () => {
+    root.render(
+      <LocaleProvider>
+        <TranscriptSelectionMenu onAddToChat={(text) => additions.push(text)} resetKey="tab-c" />
+      </LocaleProvider>,
+    );
+    await flushTimers();
+  });
+  eq(document.querySelector(".context-menu"), null, "a tab switch also discards the copy menu");
+
   // Collapsed selection: no menu, default untouched.
   document.getSelection()?.removeAllRanges();
   const collapsedEvent = await dispatchContextMenu(msgBody);
