@@ -3,6 +3,7 @@
 // section. Clicking a topic opens its tab; "+" next to a project creates a
 // new topic.
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import type { CSSProperties, DragEvent as ReactDragEvent, KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent } from "react";
 import { Archive, ArrowDown, Pencil, Plus, Folder, FolderPlus, Search, BriefcaseBusiness, Copy, FolderOpen, XCircle, History, Check, ListCollapse, ListRestart, MessageSquare, Clock, Pin, MoreHorizontal, Minimize2, Maximize2 } from "lucide-react";
 import { asArray } from "../lib/array";
@@ -100,8 +101,11 @@ export type ProjectTreeFolderDisclosure = {
   iconStackClassName: string;
 };
 
-export function projectTreeFolderDisclosure(hasChildren: boolean, isExpanded: boolean): ProjectTreeFolderDisclosure {
-  const canExpand = hasChildren;
+// allowEmptyExpand lets classic folders open without children so the expanded
+// state can host the "no sessions" placeholder row; other variants keep the
+// original contract where empty folders are inert.
+export function projectTreeFolderDisclosure(hasChildren: boolean, isExpanded: boolean, allowEmptyExpand = false): ProjectTreeFolderDisclosure {
+  const canExpand = hasChildren || allowEmptyExpand;
   const isOpen = canExpand && isExpanded;
   return {
     canExpand,
@@ -123,14 +127,35 @@ function topicIsActive(node: ProjectNode, activeScope?: string, activeWorkspaceR
   );
 }
 
-export function projectTreeTopicMetaLine(node: ProjectNode, t: Translator, compact = false): string {
+export function projectTreeTopicMetaLine(node: ProjectNode, t: Translator, compact = false, timeOnly = false): string {
   const parts: string[] = [];
   const turns = node.turns ?? 0;
-  if (turns > 0) parts.push(t(turns === 1 ? "history.turnOne" : "history.turnOther", { n: turns }));
+  if (!timeOnly && turns > 0) parts.push(t(turns === 1 ? "history.turnOne" : "history.turnOther", { n: turns }));
   const activityAt = node.lastActivityAt || node.createdAt || 0;
   if (activityAt) parts.push(topicActivityLabel(activityAt, t, compact));
   if (parts.length === 0) parts.push(t("projectTree.previously"));
   return parts.join(" · ");
+}
+
+// Model for the classic hover preview card: the row keeps a time-only meta
+// line, so the card carries the full title, turns, exact date, and project.
+export type ProjectTreeTopicHoverCard = {
+  title: string;
+  statusLabel: string;
+  metaLine: string;
+  exactTime: string;
+  projectLabel: string;
+};
+
+export function projectTreeTopicHoverCardModel(node: ProjectNode, t: Translator, projectLabel: string): ProjectTreeTopicHoverCard {
+  const activityAt = node.lastActivityAt || node.createdAt || 0;
+  return {
+    title: (node.label || node.topicId || "Untitled").replace(/^●\s*/, ""),
+    statusLabel: topicStatusLabel(node, t),
+    metaLine: projectTreeTopicMetaLine(node, t),
+    exactTime: activityAt ? topicActivityDateLabel(activityAt) : "",
+    projectLabel,
+  };
 }
 
 function topicUnknownTimeLabel(node: ProjectNode, t: Translator): string {
@@ -432,6 +457,18 @@ export function arrangeClassicProjectTree(nodes: ProjectNode[], sortMode: Workbe
   return arrangeWorkbenchTree(nodes, "project", sortMode);
 }
 
+// Classic folders preview only the first few topics; the rest sit behind a
+// show-more toggle so one busy project cannot push the others out of view.
+export const CLASSIC_TOPIC_PREVIEW_LIMIT = 5;
+
+export function classicTopicWindow(children: ProjectNode[], showAll: boolean): { visible: ProjectNode[]; hiddenCount: number } {
+  if (showAll || children.length <= CLASSIC_TOPIC_PREVIEW_LIMIT) return { visible: children, hiddenCount: 0 };
+  return {
+    visible: children.slice(0, CLASSIC_TOPIC_PREVIEW_LIMIT),
+    hiddenCount: children.length - CLASSIC_TOPIC_PREVIEW_LIMIT,
+  };
+}
+
 function splitWorkbenchPinnedTree(nodes: ProjectNode[], sortMode: WorkbenchSortMode): WorkbenchTreeSections {
   const pinnedTopics: ProjectNode[] = [];
   const pinnedProjects: ProjectNode[] = [];
@@ -578,14 +615,35 @@ export function ProjectTree({
   const topicIndexRef = useRef(0);
   const visibleTopicsCollectorRef = useRef<TopicShortcutEntry[]>([]);
   const [filterMenuOpen, setFilterMenuOpen] = useState(false);
+  const [showAllTopics, setShowAllTopics] = useState<Set<string>>(new Set());
+  const [hoverCard, setHoverCard] = useState<{ key: string; card: ProjectTreeTopicHoverCard; left: number; top: number } | null>(null);
+  const hoverCardTimerRef = useRef<number | null>(null);
   const creatingRef = useRef(false);
   const clickTimerRef = useRef<ProjectTreePendingTopicOpen | null>(null);
   useEffect(() => {
     return () => {
       if (clickTimerRef.current !== null) clearTimeout(clickTimerRef.current.timer);
+      if (hoverCardTimerRef.current !== null) window.clearTimeout(hoverCardTimerRef.current);
     };
   }, []);
   const manuallyCollapsedRef = useRef(manuallyCollapsed);
+
+  const cancelHoverCard = useCallback(() => {
+    if (hoverCardTimerRef.current !== null) {
+      window.clearTimeout(hoverCardTimerRef.current);
+      hoverCardTimerRef.current = null;
+    }
+    setHoverCard((current) => (current === null ? current : null));
+  }, []);
+
+  const toggleShowAllTopics = useCallback((key: string) => {
+    setShowAllTopics((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }, []);
 
   const closeMenu = useCallback(() => {
     setMenuTopic(null);
@@ -1072,6 +1130,61 @@ export function ProjectTree({
     return splitWorkbenchPinnedTree(visibleTree, workbenchSortMode);
   }, [compactTopics, visibleTree, workbenchSortMode]);
 
+  const classicTopics = !compactTopics && !creationTopics;
+  const classicTruncationActive = classicTopics && query.trim() === "" && timeFilter === "all";
+
+  const projectLabelByRoot = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const nodeItem of tree) {
+      if (!nodeItem) continue;
+      if (nodeItem.kind === "project" && nodeItem.root) map.set(nodeItem.root, nodeItem.label || nodeItem.root);
+      if (nodeItem.kind === "global_folder") map.set(GLOBAL_PROJECT_ORDER_KEY, nodeItem.label || "Global");
+    }
+    return map;
+  }, [tree]);
+
+  const scheduleHoverCard = useCallback((element: HTMLElement, rowKey: string, node: ProjectNode) => {
+    if (hoverCardTimerRef.current !== null) window.clearTimeout(hoverCardTimerRef.current);
+    hoverCardTimerRef.current = window.setTimeout(() => {
+      hoverCardTimerRef.current = null;
+      if (!element.isConnected) return;
+      if (menuTopic || menuProject || editingTopic || editingProject || dragProjectRoot) return;
+      const rect = element.getBoundingClientRect();
+      const globalScope = node.kind === "global_topic" || node.kind === "global_session";
+      const projectLabel = globalScope
+        ? projectLabelByRoot.get(GLOBAL_PROJECT_ORDER_KEY) ?? "Global"
+        : projectLabelByRoot.get(node.root ?? "") ?? "";
+      setHoverCard({
+        key: rowKey,
+        card: projectTreeTopicHoverCardModel(node, t, projectLabel),
+        left: rect.right + 10,
+        top: Math.max(8, Math.min(rect.top, window.innerHeight - 150)),
+      });
+    }, 350);
+  }, [menuTopic, menuProject, editingTopic, editingProject, dragProjectRoot, projectLabelByRoot, t]);
+
+  // Opening an old session from history can land on a topic hidden behind the
+  // classic show-more window; reveal that folder so the active row stays visible.
+  useEffect(() => {
+    if (!classicTruncationActive) return;
+    const revealKeys: string[] = [];
+    for (const nodeItem of visibleTree) {
+      if (!nodeItem || (nodeItem.kind !== "project" && nodeItem.kind !== "global_folder")) continue;
+      const children = asArray(nodeItem.children);
+      const activeIndex = children.findIndex((child) =>
+        topicIsActive(child, activeScope, activeWorkspaceRoot, activeTopicId, activeSessionPath) ||
+        asArray(child.children).some((grand) => topicIsActive(grand, activeScope, activeWorkspaceRoot, activeTopicId, activeSessionPath)));
+      if (activeIndex >= CLASSIC_TOPIC_PREVIEW_LIMIT) revealKeys.push(projectNodeKey(nodeItem, 0));
+    }
+    if (revealKeys.length === 0) return;
+    setShowAllTopics((prev) => {
+      if (revealKeys.every((key) => prev.has(key))) return prev;
+      const next = new Set(prev);
+      for (const key of revealKeys) next.add(key);
+      return next;
+    });
+  }, [classicTruncationActive, visibleTree, activeScope, activeWorkspaceRoot, activeTopicId, activeSessionPath]);
+
   const projectDragEnabled = query.trim() === "";
 
   const commitProjectReorder = useCallback(async (draggedRoot: string, targetRoot: string, position: ProjectDropPosition) => {
@@ -1130,7 +1243,7 @@ export function ProjectTree({
     const children = asArray(node.children);
     const isExpanded = query.trim() ? true : expanded.has(key);
     const hasChildren = children.length > 0;
-    const folderDisclosure = projectTreeFolderDisclosure(hasChildren, isExpanded);
+    const folderDisclosure = projectTreeFolderDisclosure(hasChildren, isExpanded, classicTopics);
 
     if (isTopicNode(node) || isRuntimeSessionNode(node)) {
       const isSessionNode = isRuntimeSessionNode(node);
@@ -1144,8 +1257,11 @@ export function ProjectTree({
       const activityAt = node.lastActivityAt || node.createdAt || 0;
       const sideTimeVisible = compactTopics || creationTopics;
       const timeLabel = sideTimeVisible ? (activityAt ? topicActivityLabel(activityAt, t, true) : topicUnknownTimeLabel(node, t)) : "";
-      const exactTimeLabel = sideTimeVisible && activityAt ? topicActivityDateLabel(activityAt) : "";
-      const meta = projectTreeTopicMetaLine(node, t, compactTopics);
+      const exactTimeLabel = activityAt ? topicActivityDateLabel(activityAt) : "";
+      const metaFull = projectTreeTopicMetaLine(node, t, compactTopics);
+      // Classic rows keep only the activity time inline; turns and the exact
+      // date live in the hover preview card and the accessible label.
+      const meta = classicTopics ? projectTreeTopicMetaLine(node, t, false, true) : metaFull;
       const status = topicStatus(node);
       const statusLabel = topicStatusLabel(node, t);
       const waitingConfirmation = status === "waiting_confirmation";
@@ -1162,7 +1278,7 @@ export function ProjectTree({
       const imSourceTitle = imSourceLabel ? t("msg.fromIm", { source: imSourceLabel }) : "";
       const imSourcePlatform = (imSource?.platform || "im").replace(/[^a-z0-9_-]/gi, "").toLowerCase() || "im";
       const conflictCopyTitle = isSessionNode && node.recovered ? t("recovery.branch") : "";
-      const title = [label, conflictCopyTitle, imSourceTitle, statusLabel, meta, exactTimeLabel].filter(Boolean).join(" · ");
+      const title = [label, conflictCopyTitle, imSourceTitle, statusLabel, metaFull, exactTimeLabel].filter(Boolean).join(" · ");
       const topicMenuOpen = !isSessionNode && menuTopic === topicId;
       const pinned = Boolean(node.pinned);
       const pinLabel = t(pinned ? "projectTree.unpinTopic" : "projectTree.pinTopic");
@@ -1242,11 +1358,15 @@ export function ProjectTree({
           className={`project-tree__topic${scopeClass}${isSessionNode ? " project-tree__topic--session" : ""}${active ? " project-tree__topic--active" : ""}${node.running ? " project-tree__topic--running" : ""}${status ? ` project-tree__topic--status-${status}` : ""}${unread ? " project-tree__topic--unread" : ""}${!isSessionNode && pinned ? " project-tree__topic--pinned" : ""}${topicMenuOpen ? " project-tree__topic--menu-open" : ""}${sideTimeVisible && (timeLabel || showStatusInSide || showWaitingPill) ? " project-tree__topic--with-side" : meta ? " project-tree__topic--has-meta" : ""}${imSource ? " project-tree__topic--im-source" : ""}${shortcutIndex > 0 ? " project-tree__topic--show-shortcut" : ""}`}
           style={accentStyle}
           onContextMenu={isSessionNode ? undefined : openTopicMenu}
+          onMouseEnter={classicTopics ? (event) => scheduleHoverCard(event.currentTarget, key, node) : undefined}
+          onMouseLeave={classicTopics ? cancelHoverCard : undefined}
+          onMouseDown={classicTopics ? cancelHoverCard : undefined}
         >
           <button
             type="button"
             className="project-tree__topic-main"
-            title={title}
+            title={classicTopics ? undefined : title}
+            aria-label={classicTopics ? title : undefined}
             style={{ paddingLeft: 14 + depth * 16 }}
             onClick={() => {
               if (!openRequest) return;
@@ -1602,6 +1722,43 @@ export function ProjectTree({
         : []),
     ];
 
+    const folderShowAll = showAllTopics.has(key);
+    const { visible: windowedChildren, hiddenCount } = classicTruncationActive
+      ? classicTopicWindow(children, folderShowAll)
+      : { visible: children, hiddenCount: 0 };
+    const windowToggleVisible = classicTruncationActive && (hiddenCount > 0 || (folderShowAll && children.length > CLASSIC_TOPIC_PREVIEW_LIMIT));
+    const renderFolderChildren = () => {
+      if (!hasChildren) {
+        if (!classicTopics) return null;
+        return (
+          <div className={`project-tree__children${isExpanded ? " project-tree__children--expanded" : ""}`}>
+            <div className="project-tree__children-inner">
+              <div className="project-tree__topic-placeholder" style={{ paddingLeft: 14 + (depth + 1) * 16 }}>
+                {t("projectTree.noTopics")}
+              </div>
+            </div>
+          </div>
+        );
+      }
+      return (
+        <div className={`project-tree__children${isExpanded ? " project-tree__children--expanded" : ""}`}>
+          <div className="project-tree__children-inner">
+            {windowedChildren.map((child) => renderNode(child, depth + 1, section, isVisible && isExpanded))}
+            {windowToggleVisible && (
+              <button
+                type="button"
+                className="project-tree__topic-window-toggle"
+                style={{ paddingLeft: 14 + (depth + 1) * 16 }}
+                onClick={() => toggleShowAllTopics(key)}
+              >
+                {hiddenCount > 0 ? t("projectTree.showMoreTopics", { n: hiddenCount }) : t("projectTree.showFewerTopics")}
+              </button>
+            )}
+          </div>
+        </div>
+      );
+    };
+
     if (editingProject?.key === key) {
       return (
         <div key={key} className="project-tree__project-wrapper">
@@ -1621,13 +1778,7 @@ export function ProjectTree({
               onBlur={() => void commitRenameProject(projectRoot)}
             />
           </div>
-          {hasChildren && (
-            <div className={`project-tree__children${isExpanded ? " project-tree__children--expanded" : ""}`}>
-              <div className="project-tree__children-inner">
-                {children.map((child) => renderNode(child, depth + 1, section, isVisible && isExpanded))}
-              </div>
-            </div>
-          )}
+          {renderFolderChildren()}
         </div>
       );
     }
@@ -1709,13 +1860,7 @@ export function ProjectTree({
             onClose={closeMenu}
           />
         </div>
-        {hasChildren && (
-          <div className={`project-tree__children${isExpanded ? " project-tree__children--expanded" : ""}`}>
-            <div className="project-tree__children-inner">
-              {children.map((child) => renderNode(child, depth + 1, section, isVisible && isExpanded))}
-            </div>
-          </div>
-        )}
+        {renderFolderChildren()}
       </div>
     );
   };
@@ -2136,10 +2281,32 @@ export function ProjectTree({
       ) : (
         <>
           {renderProjectHeader("classic")}
-          <div className="project-tree__list">
+          <div className="project-tree__list" onScroll={cancelHoverCard}>
             {visibleTree.length === 0 ? renderEmptyState() : visibleTree.map((node) => renderNode(node, 0))}
           </div>
         </>
+      )}
+      {hoverCard && createPortal(
+        <div
+          className="project-tree__hover-card"
+          style={{ left: hoverCard.left, top: hoverCard.top }}
+          aria-hidden="true"
+        >
+          <div className="project-tree__hover-card-title">{hoverCard.card.title}</div>
+          {hoverCard.card.statusLabel && (
+            <div className="project-tree__hover-card-status">{hoverCard.card.statusLabel}</div>
+          )}
+          <div className="project-tree__hover-card-meta">
+            {[hoverCard.card.metaLine, hoverCard.card.exactTime].filter(Boolean).join(" · ")}
+          </div>
+          {hoverCard.card.projectLabel && (
+            <div className="project-tree__hover-card-project">
+              <Folder size={12} aria-hidden="true" />
+              <span>{hoverCard.card.projectLabel}</span>
+            </div>
+          )}
+        </div>,
+        document.body,
       )}
     </div>
   );

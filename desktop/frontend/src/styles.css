@@ -21248,6 +21248,92 @@ body > .mermaid-diagram--fullscreen {
   user-select: none;
 }
 
+/* Classic hover preview card: rendered through a body portal so the sidebar's
+   overflow clipping cannot cut it off; pointer-events stay off so it never
+   steals the hover from the row underneath. */
+.project-tree__hover-card {
+  position: fixed;
+  z-index: var(--z-menu);
+  min-width: 180px;
+  max-width: 260px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--bg-elev);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.22);
+  pointer-events: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.project-tree__hover-card-title {
+  color: var(--fg);
+  font-size: 12px;
+  font-weight: 550;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.project-tree__hover-card-status {
+  color: var(--accent);
+  font-size: 11px;
+}
+
+.project-tree__hover-card-meta {
+  color: var(--fg-faint);
+  font-size: 11px;
+}
+
+.project-tree__hover-card-project {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--fg-muted);
+  font-size: 11px;
+}
+
+.project-tree__hover-card-project svg {
+  color: var(--fg-faint);
+  flex: 0 0 auto;
+}
+
+/* Classic per-folder show-more toggle and empty-folder placeholder rows. */
+.project-tree__topic-window-toggle {
+  --wails-draggable: no-drag;
+  display: flex;
+  align-items: center;
+  width: 100%;
+  height: 24px;
+  padding: 0 8px;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--fg-faint);
+  font-size: 11px;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: color 0.12s;
+}
+
+.project-tree__topic-window-toggle:hover {
+  color: var(--fg-muted);
+}
+
+.project-tree__topic-window-toggle:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.project-tree__topic-placeholder {
+  display: flex;
+  align-items: center;
+  height: 26px;
+  padding: 0 8px;
+  color: var(--fg-faint);
+  font-size: 12px;
+  user-select: none;
+}
+
 .project-tree__header-actions .project-tree__add-project:focus-visible,
 .project-tree__header-actions .project-tree__collapse-all:focus-visible,
 .project-tree__header-actions .project-tree__header-action-btn:focus-visible {

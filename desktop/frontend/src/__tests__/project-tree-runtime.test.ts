@@ -11,6 +11,8 @@ import {
   projectTreeShouldRenderTopicActions,
   projectTreeTopicMetaLine,
   arrangeClassicProjectTree,
+  classicTopicWindow,
+  projectTreeTopicHoverCardModel,
 } from "../components/ProjectTree";
 import type { ProjectNode } from "../lib/types";
 
@@ -333,6 +335,83 @@ eq(
   ).map((node) => (node.children ?? []).map((child) => child.topicId)),
   [["pinned-old", "recent"]],
   "classic sorting keeps pinned topics above unpinned ones",
+);
+
+console.log("\nclassic topic window and hover card");
+
+const windowTopics = Array.from({ length: 7 }, (_, i) => classicTopic(`t${i}`, { lastActivityAt: 1000 - i }));
+
+eq(
+  (() => {
+    const { visible, hiddenCount } = classicTopicWindow(windowTopics, false);
+    return { ids: visible.map((node) => node.topicId), hiddenCount };
+  })(),
+  { ids: ["t0", "t1", "t2", "t3", "t4"], hiddenCount: 2 },
+  "classic window previews the first five topics and reports the hidden count",
+);
+
+eq(
+  (() => {
+    const { visible, hiddenCount } = classicTopicWindow(windowTopics, true);
+    return { count: visible.length, hiddenCount };
+  })(),
+  { count: 7, hiddenCount: 0 },
+  "classic window shows everything once the folder is toggled open",
+);
+
+eq(
+  classicTopicWindow(windowTopics.slice(0, 4), false),
+  { visible: windowTopics.slice(0, 4), hiddenCount: 0 },
+  "classic window leaves short folders untouched",
+);
+
+eq(
+  projectTreeTopicMetaLine(
+    { key: "topic_t", kind: "topic", label: "T", root: "/repo", topicId: "t", turns: 12, createdAt: Date.now() },
+    testT,
+    false,
+    true,
+  ),
+  "projectTree.justNow",
+  "time-only meta line drops the turn count for classic rows",
+);
+
+eq(
+  projectTreeTopicHoverCardModel(
+    { key: "topic_t", kind: "topic", label: "● Busy topic", root: "/repo", topicId: "t", turns: 3, status: "streaming" },
+    testT,
+    "my-project",
+  ),
+  {
+    title: "Busy topic",
+    statusLabel: "projectTree.status.streaming",
+    metaLine: "3 turns",
+    exactTime: "",
+    projectLabel: "my-project",
+  },
+  "hover card model strips the running marker and carries turns, status, and project",
+);
+
+eq(
+  projectTreeFolderDisclosure(false, false, true),
+  {
+    canExpand: true,
+    isOpen: false,
+    ariaExpanded: false,
+    iconStackClassName: "project-tree__icon-stack project-tree__icon-stack--expandable",
+  },
+  "classic empty folders stay expandable so the placeholder row is reachable",
+);
+
+eq(
+  projectTreeFolderDisclosure(false, true, true),
+  {
+    canExpand: true,
+    isOpen: true,
+    ariaExpanded: true,
+    iconStackClassName: "project-tree__icon-stack project-tree__icon-stack--expandable",
+  },
+  "expanded classic empty folders report the open state for the placeholder",
 );
 
 console.log(`\n${passed} passed, ${failed} failed`);
