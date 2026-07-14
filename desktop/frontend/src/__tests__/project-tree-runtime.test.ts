@@ -182,19 +182,31 @@ eq(
 );
 
 eq(
-  projectTreeShouldRenderTopicActions(false, true, false),
+  projectTreeShouldRenderTopicActions(false, "workbench", false),
   true,
   "read workbench topic renders hover actions",
 );
 
 eq(
-  projectTreeShouldRenderTopicActions(false, true, true),
-  false,
-  "unread workbench topic omits hover actions from the keyboard tab order",
+  projectTreeShouldRenderTopicActions(false, "classic", false),
+  true,
+  "read classic topic renders hover actions",
 );
 
 eq(
-  projectTreeShouldRenderTopicActions(true, true, false),
+  projectTreeShouldRenderTopicActions(false, "classic", true),
+  false,
+  "unread classic topic reserves the action column for unread attention",
+);
+
+eq(
+  projectTreeShouldRenderTopicActions(false, "creation", false),
+  false,
+  "creation topic keeps hover actions disabled",
+);
+
+eq(
+  projectTreeShouldRenderTopicActions(true, "classic", false),
   false,
   "runtime session rows do not render topic hover actions",
 );

@@ -18,13 +18,15 @@ import type { ShortcutPlatform } from "../lib/keyboardShortcuts";
 import { ContextMenu, contextMenuPointFromEvent, type ContextMenuItem, type ContextMenuPoint } from "./ContextMenu";
 import { Tooltip } from "./Tooltip";
 
+type ProjectTreeVariant = "classic" | "workbench" | "creation";
+
 interface ProjectTreeProps {
   activeScope?: string;
   activeWorkspaceRoot?: string;
   activeTopicId?: string;
   activeSessionPath?: string;
   imTopicSources?: Record<string, ProjectTreeImTopicSource>;
-  variant?: "classic" | "workbench" | "creation";
+  variant?: ProjectTreeVariant;
   onOpenTopic: (scope: string, workspaceRoot: string, topicId: string, sessionPath?: string) => Promise<void> | void;
   onOpenProjectHistory: (scope: "global" | "project", workspaceRoot: string) => Promise<void> | void;
   onAddProject: () => Promise<void>;
@@ -221,8 +223,8 @@ export function projectTreeTopicHasUnreadActivity(
   return Boolean(key && activityAt > 0 && (readActivity[key] ?? 0) < activityAt);
 }
 
-export function projectTreeShouldRenderTopicActions(isSessionNode: boolean, compactTopics: boolean, unread: boolean): boolean {
-  return !isSessionNode && compactTopics && !unread;
+export function projectTreeShouldRenderTopicActions(isSessionNode: boolean, variant: ProjectTreeVariant, unread: boolean): boolean {
+  return !isSessionNode && variant !== "creation" && !unread;
 }
 
 function topicActivityLabel(ms: number, t: Translator, compact = false): string {
@@ -1450,8 +1452,13 @@ export function ProjectTree({
             )}
           </button>
           {unread && <span className="project-tree__topic-unread-dot" aria-hidden="true" />}
-          {projectTreeShouldRenderTopicActions(isSessionNode, compactTopics, unread) && (
-            <span className="project-tree__topic-actions" aria-label={t("projectTree.topicActions")}>
+          {projectTreeShouldRenderTopicActions(isSessionNode, variant, unread) && (
+            <span
+              className="project-tree__topic-actions"
+              aria-label={t("projectTree.topicActions")}
+              onMouseEnter={classicTopics ? cancelHoverCard : undefined}
+              onFocus={classicTopics ? cancelHoverCard : undefined}
+            >
               <Tooltip label={pinLabel} side="top" className="project-tree__topic-action-slot">
                 <button
                   className={`project-tree__topic-action${pinned ? " project-tree__topic-action--pinned" : ""}`}

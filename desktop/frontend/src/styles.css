@@ -21927,12 +21927,14 @@ body > .mermaid-diagram--fullscreen {
 }
 
 /* Topic action icons (pin, archive): clean, no background, no border */
-:root[data-theme-style] .sidebar--workbench .project-tree__topic-action {
+:root[data-theme-style] .sidebar--workbench .project-tree__topic-action,
+:root[data-theme-style] .app--classic .project-tree__topic-action {
   background: transparent;
   border-color: transparent;
   box-shadow: none;
 }
-:root[data-theme-style] .sidebar--workbench .project-tree__topic-action:hover {
+:root[data-theme-style] .sidebar--workbench .project-tree__topic-action:hover,
+:root[data-theme-style] .app--classic .project-tree__topic-action:hover {
   background: transparent;
   border-color: transparent;
   box-shadow: none;
@@ -21953,17 +21955,24 @@ body > .mermaid-diagram--fullscreen {
 }
 
 /* Remove right-side slide animations on topic hover */
-:root[data-theme-style] .sidebar--workbench .project-tree__topic-actions {
+:root[data-theme-style] .sidebar--workbench .project-tree__topic-actions,
+:root[data-theme-style] .app--classic .project-tree__topic-actions {
   transform: translateY(-50%) translateX(0);
 }
 :root[data-theme-style] .sidebar--workbench .project-tree__topic:hover .project-tree__topic-actions,
 :root[data-theme-style] .sidebar--workbench .project-tree__topic:focus-within .project-tree__topic-actions,
-:root[data-theme-style] .sidebar--workbench .project-tree__topic--menu-open .project-tree__topic-actions {
+:root[data-theme-style] .sidebar--workbench .project-tree__topic--menu-open .project-tree__topic-actions,
+:root[data-theme-style] .app--classic .project-tree__topic:hover .project-tree__topic-actions,
+:root[data-theme-style] .app--classic .project-tree__topic:focus-within .project-tree__topic-actions,
+:root[data-theme-style] .app--classic .project-tree__topic--menu-open .project-tree__topic-actions {
   transform: translateY(-50%) translateX(0);
 }
 :root[data-theme-style] .sidebar--workbench .project-tree__topic:hover .project-tree__topic-side,
 :root[data-theme-style] .sidebar--workbench .project-tree__topic:focus-within .project-tree__topic-side,
-:root[data-theme-style] .sidebar--workbench .project-tree__topic--menu-open .project-tree__topic-side {
+:root[data-theme-style] .sidebar--workbench .project-tree__topic--menu-open .project-tree__topic-side,
+:root[data-theme-style] .app--classic .project-tree__topic:hover .project-tree__topic-side,
+:root[data-theme-style] .app--classic .project-tree__topic:focus-within .project-tree__topic-side,
+:root[data-theme-style] .app--classic .project-tree__topic--menu-open .project-tree__topic-side {
   transform: translateX(0);
 }
 
@@ -27258,6 +27267,7 @@ body > .mermaid-diagram--fullscreen {
 }
 
 .sidebar--workbench .project-tree__topic-unread-dot,
+.app--classic .project-tree__topic-unread-dot,
 .app--creation .project-tree__topic-unread-dot {
   position: absolute;
   top: 50%;
@@ -27275,6 +27285,7 @@ body > .mermaid-diagram--fullscreen {
   transition: opacity var(--dur-fast), transform var(--dur-fast);
 }
 
+.app--classic .project-tree__topic-unread-dot,
 .app--creation .project-tree__topic-unread-dot {
   right: 10px;
 }
@@ -27325,7 +27336,8 @@ body > .mermaid-diagram--fullscreen {
   color: var(--fg-faint);
 }
 
-.sidebar--workbench .project-tree__topic-actions {
+.sidebar--workbench .project-tree__topic-actions,
+.app--classic .project-tree__topic-actions {
   position: absolute;
   top: 50%;
   right: 8px;
@@ -27341,7 +27353,10 @@ body > .mermaid-diagram--fullscreen {
 
 .sidebar--workbench .project-tree__topic:hover .project-tree__topic-actions,
 .sidebar--workbench .project-tree__topic:focus-within .project-tree__topic-actions,
-.sidebar--workbench .project-tree__topic--menu-open .project-tree__topic-actions {
+.sidebar--workbench .project-tree__topic--menu-open .project-tree__topic-actions,
+.app--classic .project-tree__topic:hover .project-tree__topic-actions,
+.app--classic .project-tree__topic:focus-within .project-tree__topic-actions,
+.app--classic .project-tree__topic--menu-open .project-tree__topic-actions {
   opacity: 1;
   pointer-events: auto;
   transform: translateY(-50%) translateX(0);
@@ -27350,9 +27365,19 @@ body > .mermaid-diagram--fullscreen {
 .sidebar--workbench .project-tree__topic:hover .project-tree__topic-side,
 .sidebar--workbench .project-tree__topic:focus-within .project-tree__topic-side,
 .sidebar--workbench .project-tree__topic--menu-open .project-tree__topic-side,
-.sidebar--workbench .project-tree__topic--unread .project-tree__topic-side {
+.sidebar--workbench .project-tree__topic--unread .project-tree__topic-side,
+.app--classic .project-tree__topic:hover .project-tree__topic-side,
+.app--classic .project-tree__topic:focus-within .project-tree__topic-side,
+.app--classic .project-tree__topic--menu-open .project-tree__topic-side,
+.app--classic .project-tree__topic--unread .project-tree__topic-side {
   opacity: 0;
   transform: translateX(-3px);
+}
+
+.app--classic .project-tree__topic:hover .project-tree__topic-side,
+.app--classic .project-tree__topic:focus-within .project-tree__topic-side,
+.app--classic .project-tree__topic--menu-open .project-tree__topic-side {
+  min-width: 56px;
 }
 
 .app--creation .project-tree__topic--unread .project-tree__topic-side,
@@ -27361,14 +27386,16 @@ body > .mermaid-diagram--fullscreen {
   opacity: 0;
 }
 
-.sidebar--workbench .project-tree__topic-action-slot {
+.sidebar--workbench .project-tree__topic-action-slot,
+.app--classic .project-tree__topic-action-slot {
   flex: 0 0 auto;
   width: 26px;
   height: 26px;
   display: inline-flex;
 }
 
-.sidebar--workbench .project-tree__topic-action {
+.sidebar--workbench .project-tree__topic-action,
+.app--classic .project-tree__topic-action {
   --wails-draggable: no-drag;
   width: 26px;
   height: 26px;
@@ -27384,7 +27411,8 @@ body > .mermaid-diagram--fullscreen {
   transition: color var(--dur-fast), background var(--dur-fast), border-color var(--dur-fast), transform var(--dur-fast);
 }
 
-.sidebar--workbench .project-tree__topic-action:hover {
+.sidebar--workbench .project-tree__topic-action:hover,
+.app--classic .project-tree__topic-action:hover {
   color: var(--fg);
   border-color: color-mix(in srgb, var(--fg-faint) 28%, transparent);
   background: var(--bg-elev);
@@ -27392,13 +27420,16 @@ body > .mermaid-diagram--fullscreen {
 }
 
 .sidebar--workbench .project-tree__topic-action--pinned,
-.sidebar--workbench .project-tree__topic-action--pinned:hover {
+.sidebar--workbench .project-tree__topic-action--pinned:hover,
+.app--classic .project-tree__topic-action--pinned,
+.app--classic .project-tree__topic-action--pinned:hover {
   color: var(--accent);
   border-color: color-mix(in srgb, var(--accent) 30%, transparent);
   background: var(--accent-soft);
 }
 
-.sidebar--workbench .project-tree__topic-action--archive:hover {
+.sidebar--workbench .project-tree__topic-action--archive:hover,
+.app--classic .project-tree__topic-action--archive:hover {
   color: var(--fg);
 }
 
@@ -31515,11 +31546,13 @@ body > .mermaid-diagram--fullscreen {
 }
 
 /* In workbench mode, hide the time/side and actions when shortcuts are shown */
-.sidebar--workbench .project-tree__topic--show-shortcut .project-tree__topic-side {
+.sidebar--workbench .project-tree__topic--show-shortcut .project-tree__topic-side,
+.app--classic .project-tree__topic--show-shortcut .project-tree__topic-side {
   opacity: 0;
   transform: translateX(-3px);
 }
-.sidebar--workbench .project-tree__topic--show-shortcut .project-tree__topic-actions {
+.sidebar--workbench .project-tree__topic--show-shortcut .project-tree__topic-actions,
+.app--classic .project-tree__topic--show-shortcut .project-tree__topic-actions {
   opacity: 0;
   pointer-events: none;
   transform: translateY(-50%) translateX(4px);
