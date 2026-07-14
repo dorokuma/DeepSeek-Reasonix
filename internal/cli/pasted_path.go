@@ -148,7 +148,14 @@ func normalizeWindowsPOSIXPath(src string) string {
 func unescapeWindowsShellPath(src string) string {
 	var b strings.Builder
 	b.Grow(len(src))
-	for i := 0; i < len(src); i++ {
+	i := 0
+	// A leading double backslash is a UNC or device prefix (\\server\share,
+	// \\?\C:\..., \\.\...), not an escape pair; keep it verbatim.
+	if strings.HasPrefix(src, `\\`) {
+		b.WriteString(`\\`)
+		i = 2
+	}
+	for ; i < len(src); i++ {
 		if src[i] != '\\' || i+1 >= len(src) {
 			b.WriteByte(src[i])
 			continue

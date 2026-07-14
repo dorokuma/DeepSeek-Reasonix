@@ -60,6 +60,20 @@ func TestResolveExistingPastedPathWindowsCandidates(t *testing.T) {
 			ok:     true,
 		},
 		{
+			name:   "unc backslash path",
+			input:  `\\server\share\My\ Shot.png`,
+			exists: []string{`\\server\share\My Shot.png`},
+			want:   `\\server\share\My Shot.png`,
+			ok:     true,
+		},
+		{
+			name:   "extended-length path",
+			input:  `\\?\C:\Users\me\My\ Shot.png`,
+			exists: []string{`\\?\C:\Users\me\My Shot.png`},
+			want:   `\\?\C:\Users\me\My Shot.png`,
+			ok:     true,
+		},
+		{
 			name:  "native interpretation precedes shell fallback",
 			input: `C:\work\(draft)\shot.png`,
 			exists: []string{
