@@ -31,8 +31,8 @@ type Config struct {
 func loadConfig() (*Config, error) {
 	// Load .env if present (dev convenience)
 	_ = godotenv.Load()
-	// 1. Load /etc/reasonix-telegram.env if exists
-	envFile := "/etc/reasonix-telegram.env"
+	// 1. Load /etc/reasonix-bridge.env if exists
+	envFile := "/etc/reasonix-bridge.env"
 	if _, err := os.Stat(envFile); err == nil {
 		if err := godotenv.Load(envFile); err != nil {
 			return nil, fmt.Errorf("load env file %s: %w", envFile, err)
@@ -73,7 +73,7 @@ func loadConfig() (*Config, error) {
 		return nil, fmt.Errorf("TG_BOT_TOKEN is required")
 	}
 	if cfg.StateDir == "" {
-		cfg.StateDir = "/var/lib/reasonix-telegram"
+		cfg.StateDir = "/var/lib/reasonix-bridge"
 	}
 	if cfg.WorkDir == "" {
 		cfg.WorkDir = "/root"
@@ -187,7 +187,7 @@ func checkWritable(path string) error {
 
 func main() {
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
-	log.Println("reasonix-telegram v2 starting...")
+	log.Println("reasonix-bridge v2 starting...")
 
 	// Telegram 壳对用户一律中文；核心 notice/斜杠文案走 i18n，必须先锁定 zh。
 	// 配置/环境里的 language 也强制中文，禁止掉出英文提示。

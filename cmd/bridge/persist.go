@@ -19,9 +19,9 @@ import (
 	"sync"
 )
 
-const defaultStateDir = "/var/lib/reasonix-telegram"
+const defaultStateDir = "/var/lib/reasonix-bridge"
 
-// chatRecord is persisted across reasonix-telegram restarts so we can resume the
+// chatRecord is persisted across reasonix-bridge restarts so we can resume the
 // same Reasonix conversation (reasonix serve --resume <path>).
 type chatRecord struct {
 	ChatID      int64   `json:"chat_id"`

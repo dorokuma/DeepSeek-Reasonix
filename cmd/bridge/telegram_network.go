@@ -1,4 +1,4 @@
-// Network configuration for reasonix-telegram.
+// Network configuration for reasonix-bridge.
 // Uses system DNS (cgo) so that all traffic goes through the dae transparent proxy.
 // No IPv4-preference or fallback-IP logic — IPv6 AAAA records are resolved normally.
 package main
