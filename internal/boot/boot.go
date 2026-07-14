@@ -1953,18 +1953,38 @@ func PluginSpecsForRootWithOptions(entries []config.PluginEntry, workspaceRoot s
 func pluginSpecFromEntryWithOptions(e config.PluginEntry, workspaceRoot string, opts PluginSpecOptions) plugin.Spec {
 	e = e.ExpandedPlugin() // resolve ${VAR} / ${VAR:-default} from the environment
 	return plugin.ApplyKnownOverrides(plugin.Spec{
-		Name:               e.Name,
-		Type:               e.Type,
-		Command:            e.Command,
-		Args:               e.Args,
-		Env:                e.Env,
-		URL:                e.URL,
-		Headers:            e.Headers,
-		DefaultCallTimeout: opts.DefaultCallTimeout,
-		CallTimeout:        secondsDuration(e.CallTimeoutSeconds),
-		ToolTimeouts:       toolTimeoutDurations(e.ToolTimeoutSeconds),
-		ReadOnlyToolNames:  legacyRawReadOnlyToolNames(e.TrustedReadOnlyTools),
+		Name:                     e.Name,
+		Type:                     e.Type,
+		Command:                  e.Command,
+		Args:                     e.Args,
+		Env:                      e.Env,
+		URL:                      e.URL,
+		Headers:                  e.Headers,
+		DefaultCallTimeout:       opts.DefaultCallTimeout,
+		CallTimeout:              secondsDuration(e.CallTimeoutSeconds),
+		ToolTimeouts:             toolTimeoutDurations(e.ToolTimeoutSeconds),
+		ReadOnlyToolNames:        legacyRawReadOnlyToolNames(e.TrustedReadOnlyTools),
+		DefaultToolsApprovalMode: e.DefaultToolsApprovalMode,
+		ToolApprovalModes:        mcpToolApprovalModes(e.Tools),
+		ApprovalsReviewer:        e.ApprovalsReviewer,
 	}, workspaceRoot)
+}
+
+func mcpToolApprovalModes(policies map[string]config.MCPToolPolicy) map[string]string {
+	if len(policies) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(policies))
+	for name, policy := range policies {
+		name = strings.TrimSpace(name)
+		if name != "" {
+			out[name] = policy.ApprovalMode
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 func secondsDuration(seconds int) time.Duration {

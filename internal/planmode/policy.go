@@ -35,6 +35,9 @@ const (
 type Call struct {
 	Name     string
 	ReadOnly bool
+	// UntrustedReadOnly is true when ReadOnly came only from an external MCP
+	// server hint. It must not unlock planning without a local declaration.
+	UntrustedReadOnly bool
 	// Safety is the tool's self-reported plan-mode stance. It is Unknown when
 	// the tool does not implement tool.PlanModeClassifier; the agent translates
 	// the interface result into this field at the gate call site.
@@ -200,7 +203,7 @@ func (p Policy) Decide(call Call) Decision {
 		}
 		return Decision{}
 	}
-	if call.ReadOnly {
+	if call.ReadOnly && !call.UntrustedReadOnly {
 		// A read-only tool that is nonetheless unsafe while planning is caught
 		// above via PlanSafetyUnsafe / knownBlockedTools.
 		return Decision{}

@@ -88,6 +88,13 @@ type PlanModeClassifier interface {
 	PlanModeSafe() bool
 }
 
+// PlanModeUntrustedReadOnly marks a tool whose ReadOnly classification comes
+// only from an external MCP server hint. Planning and read-only research paths
+// must not use that hint as a local trust boundary.
+type PlanModeUntrustedReadOnly interface {
+	PlanModeUntrustedReadOnly() bool
+}
+
 // MCPMetadata exposes the original MCP identity behind a model-visible
 // "mcp__<server>__<tool>" adapter. The model name may be normalized for provider
 // function-name rules; config such as trusted_read_only_tools must use the raw
@@ -102,6 +109,51 @@ type MCPMetadata interface {
 // execution policy consumes them locally.
 type MCPAnnotations interface {
 	MCPDestructiveHint() bool
+}
+
+const (
+	MCPApprovalAuto    = "auto"
+	MCPApprovalPrompt  = "prompt"
+	MCPApprovalWrites  = "writes"
+	MCPApprovalApprove = "approve"
+
+	MCPApprovalReviewerUser       = "user"
+	MCPApprovalReviewerAutoReview = "auto_review"
+)
+
+// MCPApprovalPolicy exposes local execution policy for one MCP tool. These
+// values are intentionally not part of Schema(), so changing approval policy
+// does not alter the provider-visible tool contract or prompt-cache prefix.
+type MCPApprovalPolicy interface {
+	MCPApprovalMode() string
+	MCPApprovalReviewer() string
+}
+
+// NormalizeMCPApprovalMode returns the conservative effective MCP approval
+// mode. Empty keeps annotation-driven behavior; unknown values force a prompt.
+func NormalizeMCPApprovalMode(mode string) string {
+	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case "":
+		return MCPApprovalAuto
+	case MCPApprovalAuto, MCPApprovalPrompt, MCPApprovalWrites, MCPApprovalApprove:
+		return strings.ToLower(strings.TrimSpace(mode))
+	default:
+		return MCPApprovalPrompt
+	}
+}
+
+// NormalizeMCPApprovalReviewer returns the configured reviewer. Empty preserves
+// legacy behavior at the controller boundary; unknown values fail back to the
+// human reviewer rather than silently enabling automatic review.
+func NormalizeMCPApprovalReviewer(reviewer string) string {
+	switch strings.ToLower(strings.TrimSpace(reviewer)) {
+	case "":
+		return ""
+	case MCPApprovalReviewerAutoReview, "guardian":
+		return MCPApprovalReviewerAutoReview
+	default:
+		return MCPApprovalReviewerUser
+	}
 }
 
 // SnipHint describes how context maintenance should shorten a stale, oversized

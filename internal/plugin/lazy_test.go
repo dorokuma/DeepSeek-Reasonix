@@ -18,6 +18,20 @@ type destructiveLazyTarget struct {
 	calls int
 }
 
+type mutableLazyTarget struct {
+	name  string
+	calls int
+}
+
+func (t *mutableLazyTarget) Name() string            { return t.name }
+func (t *mutableLazyTarget) Description() string     { return "writer test target" }
+func (t *mutableLazyTarget) Schema() json.RawMessage { return json.RawMessage(`{"type":"object"}`) }
+func (t *mutableLazyTarget) ReadOnly() bool          { return false }
+func (t *mutableLazyTarget) Execute(context.Context, json.RawMessage) (string, error) {
+	t.calls++
+	return "executed", nil
+}
+
 func (t *destructiveLazyTarget) Name() string             { return t.name }
 func (t *destructiveLazyTarget) Description() string      { return "destructive test target" }
 func (t *destructiveLazyTarget) Schema() json.RawMessage  { return json.RawMessage(`{"type":"object"}`) }
@@ -868,6 +882,32 @@ func TestLazyToolPromotesLiveDestructiveHintBeforeExecution(t *testing.T) {
 	out, err := lazy.Execute(context.Background(), nil)
 	if err != nil || out != "executed" || target.calls != 1 {
 		t.Fatalf("second Execute = (%q,%v), calls=%d, want execution after approval retry", out, err, target.calls)
+	}
+}
+
+func TestLazyToolDemotesStaleReaderBeforeExecution(t *testing.T) {
+	const name = "mcp__srv__mutate"
+	target := &mutableLazyTarget{name: name}
+	shared := &lazySpawn{
+		spec:    Spec{Name: "srv"},
+		state:   spawnReady,
+		real:    map[string]tool.Tool{name: target},
+		swapped: true,
+	}
+	lazy := &lazyTool{
+		shared: shared, name: name, rawName: "mutate", readOnly: true, hasCache: true,
+	}
+
+	if out, err := lazy.Execute(context.Background(), nil); err == nil || !strings.Contains(err.Error(), "writer approval") || out != "" {
+		t.Fatalf("first Execute = (%q,%v), want retry before writer execution", out, err)
+	}
+	if target.calls != 0 || lazy.ReadOnly() {
+		t.Fatalf("after demotion calls=%d readOnly=%v, want 0/false", target.calls, lazy.ReadOnly())
+	}
+
+	out, err := lazy.Execute(context.Background(), nil)
+	if err != nil || out != "executed" || target.calls != 1 {
+		t.Fatalf("second Execute = (%q,%v), calls=%d", out, err, target.calls)
 	}
 }
 

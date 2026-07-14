@@ -2687,6 +2687,56 @@ func TestGuardianCannotAutoAllowFreshHumanApprovalTools(t *testing.T) {
 	}
 }
 
+func TestMCPAutoReviewerIsFinalAndDoesNotPromptHuman(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		outcome string
+		risk    string
+		allow   bool
+	}{
+		{name: "allow", outcome: "allow", risk: "low", allow: true},
+		{name: "deny", outcome: "deny", risk: "high", allow: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			guardianProv := &recordingProvider{
+				name:    "guardian",
+				streams: [][]provider.Chunk{textTurn(fmt.Sprintf(`{"risk_level":%q,"user_authorization":"unknown","outcome":%q,"rationale":"reviewed"}`, tc.risk, tc.outcome))},
+			}
+			guardianSess := guardian.NewSession(guardianProv, tool.NewRegistry(), guardian.PolicyPrompt(), "guardian-test", 0, nil, event.Discard)
+			exec := agent.New(&recordingProvider{name: "executor"}, tool.NewRegistry(), agent.NewSession("sys"), agent.Options{}, event.Discard)
+			prompts := 0
+			c := New(Options{
+				Executor: exec,
+				Guardian: guardianSess,
+				Sink: event.FuncSink(func(e event.Event) {
+					if e.Kind == event.ApprovalRequest {
+						prompts++
+					}
+				}),
+			})
+			gate := permission.NewGate(permission.New("allow", nil, nil, nil), gateApprover{c})
+			allow, _, err := gate.CheckMCP(context.Background(), "mcp__srv__wipe", "srv/wipe", json.RawMessage(`{"target":"all"}`), false, true, "approve", "auto_review")
+			if err != nil || allow != tc.allow || prompts != 0 || len(guardianProv.requests) != 1 {
+				t.Fatalf("auto reviewer result allow=%v err=%v prompts=%d reviews=%d", allow, err, prompts, len(guardianProv.requests))
+			}
+		})
+	}
+}
+
+func TestMCPAutoReviewerFailsClosedWhenUnavailable(t *testing.T) {
+	prompts := 0
+	c := New(Options{Sink: event.FuncSink(func(e event.Event) {
+		if e.Kind == event.ApprovalRequest {
+			prompts++
+		}
+	})})
+	gate := permission.NewGate(permission.New("allow", nil, nil, nil), gateApprover{c})
+	allow, reason, err := gate.CheckMCP(context.Background(), "mcp__srv__write", "srv/write", nil, false, false, "prompt", "auto_review")
+	if err != nil || allow || !strings.Contains(reason, "no reviewer session") || prompts != 0 {
+		t.Fatalf("missing auto reviewer = (%v,%q,%v), prompts=%d", allow, reason, err, prompts)
+	}
+}
+
 func TestHeadlessGateRefusesFreshHumanApprovalTools(t *testing.T) {
 	gate := NewHeadlessPermissionGate(permission.New("ask", nil, nil, nil))
 

@@ -3640,6 +3640,21 @@ func TestPluginSpecsMapConfiguredCallTimeouts(t *testing.T) {
 	}
 }
 
+func TestPluginSpecsMapMCPApprovalPolicy(t *testing.T) {
+	specs := PluginSpecs([]config.PluginEntry{{
+		Name:                     "admin",
+		DefaultToolsApprovalMode: "writes",
+		Tools: map[string]config.MCPToolPolicy{
+			"wipe": {ApprovalMode: "prompt"},
+		},
+		ApprovalsReviewer: "auto_review",
+	}})
+	if len(specs) != 1 || specs[0].DefaultToolsApprovalMode != "writes" ||
+		specs[0].ToolApprovalModes["wipe"] != "prompt" || specs[0].ApprovalsReviewer != "auto_review" {
+		t.Fatalf("mapped MCP approval policy = %+v", specs)
+	}
+}
+
 func TestApplyDefaultMCPCallTimeoutPreservesConfiguredDefault(t *testing.T) {
 	specs := applyDefaultMCPCallTimeout([]plugin.Spec{
 		{Name: "configured", DefaultCallTimeout: 2 * time.Minute},

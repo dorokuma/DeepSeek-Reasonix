@@ -7158,6 +7158,61 @@ func TestAddMCPServerPersistsRemoteHeaders(t *testing.T) {
 	t.Fatalf("stripe MCP missing from view: %+v", view)
 }
 
+func TestAddMCPServerPersistsCompleteAdvancedConfiguration(t *testing.T) {
+	isolateDesktopUserDirs(t)
+	dir := robustTempDir(t)
+	t.Chdir(dir)
+	srv := desktopMCPHTTPServer(t)
+	defer srv.Close()
+
+	app := NewApp()
+	app.setTestCtrl(control.New(control.Options{Host: plugin.NewHost()}), "")
+	defer app.activeCtrl().Close()
+	autoStart := false
+	callTimeout := 45
+	defaultMode := "writes"
+	reviewer := "auto_review"
+	_, err := app.AddMCPServer(MCPServerInput{
+		Name:               "admin",
+		Transport:          "streamable-http",
+		URL:                srv.URL,
+		AutoStart:          &autoStart,
+		CallTimeoutSeconds: &callTimeout,
+		ToolTimeoutSeconds: map[string]int{
+			"wipe": 120,
+		},
+		TrustedReadOnlyTools:     []string{"status"},
+		DefaultToolsApprovalMode: &defaultMode,
+		ToolPolicies: map[string]config.MCPToolPolicy{
+			"wipe": {ApprovalMode: "prompt"},
+		},
+		ApprovalsReviewer: &reviewer,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := config.LoadForRoot(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry, ok := findPluginEntry(cfg.Plugins, "admin")
+	if !ok || entry.Type != "http" || entry.AutoStart == nil || *entry.AutoStart ||
+		entry.CallTimeoutSeconds != 45 || entry.ToolTimeoutSeconds["wipe"] != 120 ||
+		entry.DefaultToolsApprovalMode != "writes" || entry.Tools["wipe"].ApprovalMode != "prompt" ||
+		entry.ApprovalsReviewer != "auto_review" || !reflect.DeepEqual(entry.TrustedReadOnlyTools, []string{"status"}) {
+		t.Fatalf("persisted advanced MCP entry = %+v, found=%v", entry, ok)
+	}
+
+	views := app.MCPServers()
+	if len(views) != 1 || views[0].Transport != "http" || views[0].AutoStart ||
+		views[0].CallTimeoutSeconds != 45 || views[0].ToolTimeoutSeconds["wipe"] != 120 ||
+		views[0].DefaultToolsApprovalMode != "writes" || views[0].ToolPolicies["wipe"].ApprovalMode != "prompt" ||
+		views[0].ApprovalsReviewer != "auto_review" {
+		t.Fatalf("advanced MCP ServerView = %+v", views)
+	}
+}
+
 func TestCapabilitiesMarksBackgroundRemoteMCPAuthPossible(t *testing.T) {
 	isolateDesktopUserDirs(t)
 	dir := robustTempDir(t)

@@ -194,6 +194,7 @@ export const zhTW: Record<DictKey, string> = {
   "caps.hideAdvancedOptions": "收起進階選項",
   "caps.jsonConfig": "完整設定",
   "caps.jsonPasteHint": "支援 {\"server-name\": {...}} 或 {\"mcpServers\": {\"server-name\": {...}}}。",
+  "caps.jsonUnsupported": "此 JSON 包含 Reasonix 不支援的欄位。",
   "caps.jsonInvalid": "請輸入有效 JSON；環境變數和請求標頭的值必須是字串。",
   "caps.jsonSingleServer": "JSON 中必須且只能包含一個 MCP 伺服器。",
   "caps.jsonNameMismatch": "暫不支援重新命名現有 MCP 伺服器。",

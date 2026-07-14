@@ -1459,6 +1459,12 @@ type PermissionsConfig struct {
 	Deny  []string `toml:"deny"`
 }
 
+// MCPToolPolicy is local execution policy for one raw server tool name. It is
+// intentionally absent from provider-visible tool schemas.
+type MCPToolPolicy struct {
+	ApprovalMode string `toml:"approval_mode" json:"approval_mode"`
+}
+
 // PluginEntry declares an external MCP server. Type selects the transport:
 // "stdio" (default) launches Command/Args/Env as a subprocess; "http"
 // (a.k.a. streamable-http) and "sse" connect to a remote URL with optional
@@ -1481,9 +1487,16 @@ type PluginEntry struct {
 	// from this server. Keys are server-local tool names, not model-visible
 	// mcp__server__tool names.
 	ToolTimeoutSeconds map[string]int `toml:"tool_timeout_seconds"`
-	// TrustedReadOnlyTools is a legacy compatibility override for MCP servers
-	// that omit readOnlyHint. New configurations should rely on server annotations.
+	// TrustedReadOnlyTools is a local trust and compatibility override for
+	// audited readers. Third-party readOnlyHint alone is not a Plan-mode trust
+	// boundary.
 	TrustedReadOnlyTools []string `toml:"trusted_read_only_tools"`
+	// DefaultToolsApprovalMode is auto|prompt|writes|approve. Empty is auto.
+	DefaultToolsApprovalMode string `toml:"default_tools_approval_mode"`
+	// Tools overrides approval policy by raw server-local tool name.
+	Tools map[string]MCPToolPolicy `toml:"tools"`
+	// ApprovalsReviewer is user|auto_review. Empty preserves legacy routing.
+	ApprovalsReviewer string `toml:"approvals_reviewer"`
 	// AutoStart controls whether the server connects during session startup.
 	// Nil preserves historical behavior: configured servers start automatically.
 	AutoStart *bool `toml:"auto_start"`

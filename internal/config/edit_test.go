@@ -943,6 +943,15 @@ func TestPluginMutators(t *testing.T) {
 	if err := c.UpsertPlugin(PluginEntry{Name: "bad", Command: "x", ToolTimeoutSeconds: map[string]int{" ": 1}}); err == nil {
 		t.Error("empty tool_timeout_seconds key should error")
 	}
+	if err := c.UpsertPlugin(PluginEntry{Name: "bad", Command: "x", DefaultToolsApprovalMode: "always"}); err == nil {
+		t.Error("invalid MCP approval mode should error")
+	}
+	if err := c.UpsertPlugin(PluginEntry{Name: "bad", Command: "x", Tools: map[string]MCPToolPolicy{"wipe": {ApprovalMode: "sometimes"}}}); err == nil {
+		t.Error("invalid per-tool MCP approval mode should error")
+	}
+	if err := c.UpsertPlugin(PluginEntry{Name: "bad", Command: "x", ApprovalsReviewer: "nobody"}); err == nil {
+		t.Error("invalid MCP approvals reviewer should error")
+	}
 
 	// Replace in place.
 	if err := c.UpsertPlugin(PluginEntry{Name: "ex", Command: "other-cmd"}); err != nil {

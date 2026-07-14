@@ -487,6 +487,32 @@ func TestClientListToolsPropagatesReadOnlyAndDestructiveHints(t *testing.T) {
 	}
 }
 
+func TestMCPApprovalPolicyDoesNotChangeProviderSchemas(t *testing.T) {
+	schema := json.RawMessage(`{"type":"object","properties":{"target":{"type":"string"}}}`)
+	makeSchemas := func(spec Spec) []byte {
+		client := &Client{name: "admin", spec: spec}
+		reg := tool.NewRegistry()
+		reg.Add(&remoteTool{
+			client: client, name: "mcp__admin__wipe", rawName: "wipe",
+			desc: "wipe target", schema: schema,
+		})
+		out, err := json.Marshal(reg.Schemas())
+		if err != nil {
+			t.Fatal(err)
+		}
+		return out
+	}
+	baseline := makeSchemas(Spec{Name: "admin"})
+	configured := makeSchemas(Spec{
+		Name: "admin", DefaultToolsApprovalMode: "writes",
+		ToolApprovalModes: map[string]string{"wipe": "prompt"},
+		ApprovalsReviewer: "auto_review",
+	})
+	if !bytes.Equal(baseline, configured) {
+		t.Fatalf("provider schemas changed with local approval policy:\nbaseline=%s\nconfigured=%s", baseline, configured)
+	}
+}
+
 func TestSpecReadOnlyToolNamesMarksUnhintedToolsReadOnly(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()

@@ -302,23 +302,28 @@ func (p Policy) Decide(toolName string, readOnly bool, args json.RawMessage) Dec
   it resolves `Ask` to **allow** — preserving autonomous behaviour. A `Deny` is a
   hard block in *every* mode: the tool never executes and the model receives a
   "blocked" result it can adapt to (the same shape as a plan-mode refusal).
-- **Destructive MCP calls.** An installed MCP tool declaring
-  `destructiveHint: true` requires a fresh interactive human approval for every
-  invocation. Explicit `deny` still wins before prompting; ordinary allow rules,
-  remembered/session grants, Auto/YOLO, and a conflicting `readOnlyHint: true`
-  cannot satisfy or suppress this approval. Headless execution fails closed.
+- **MCP approval policy.** Installed MCP tools may set a server default and raw
+  tool overrides using `auto|prompt|writes|approve`. Precedence is explicit deny,
+  `destructiveHint`, raw-tool mode, server default, then global Ask/Auto/YOLO.
+  `auto` delegates to the ordinary permission decision; `prompt` reviews every
+  call; `writes` reviews writers only; and `approve` allows ordinary calls.
+  `approvals_reviewer = "user"` uses the interactive user, while `auto_review`
+  uses the session Guardian as a final reviewer. Missing reviewers and reviewer
+  errors fail closed. A destructive call is reviewed on every invocation and
+  cannot reuse remembered/session grants. All of this is local metadata and is
+  absent from provider-visible tool schemas.
 - **Relationship to plan mode.** Plan mode (§3.4) is an orthogonal, coarser gate
-  checked before the permission layer. While planning, a tool runs when
-  `ReadOnly()==true` or when a concrete external tool is listed in
-  `[agent].plan_mode_allowed_tools`; installed MCP `readOnlyHint` annotations are
-  accepted as the server's classification. An installed MCP tool without a
-  read-only annotation remains writer-classified, but it is allowed through the
+  checked before the permission layer. A third-party MCP `readOnlyHint` affects
+  ordinary permission and dispatch classification but is marked
+  `PlanModeUntrustedReadOnly`: it does not grant access to Plan mode, planner, or
+  read-only sub-agent registries. A locally declared `trusted_read_only_tools`
+  entry is trusted. An installed MCP tool without a read-only annotation remains
+  writer-classified, but it is allowed through the
   Plan gate into the normal permission layer: Ask/Auto/YOLO and explicit
   `ask`/`deny` rules decide the call. This exception is limited to tools carrying
   concrete MCP server/raw-tool metadata; built-in writers remain Plan-blocked. Legacy
   `trusted_read_only_tools` entries remain readable as overrides for older MCP
-  servers that omit annotations, but they are no longer an interactive trust
-  workflow. Bash is gated separately: built-in read-only commands and concrete
+  servers that omit annotations. Bash is gated separately: built-in read-only commands and concrete
   prefixes declared in `[agent].plan_mode_read_only_commands` may run. Interactive
   controllers may also ask once before running an unknown query-shaped prefix
   and may remember a persistent approval as the same
@@ -634,7 +639,10 @@ args    = []
 # env   = { FOO = "bar" }
 # call_timeout_seconds = 600            # per-server MCP call timeout; 0 = global/default cap
 # tool_timeout_seconds = { "generate_video" = 1800 }   # raw MCP tool names
-# trusted_read_only_tools = ["search"]   # legacy override when a server omits readOnlyHint
+# trusted_read_only_tools = ["search"]   # locally audited Plan/read-only-research readers
+# default_tools_approval_mode = "auto"   # auto|prompt|writes|approve
+# tools = { "delete_all" = { approval_mode = "prompt" } }
+# approvals_reviewer = "user"            # user|auto_review
 
 # [[plugins]]                   # a remote MCP server over Streamable HTTP
 # name    = "stripe"

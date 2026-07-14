@@ -435,6 +435,17 @@ func (o *onDemandMCPTool) MCPDestructiveHint() bool {
 	return o.destructive
 }
 
+func (o *onDemandMCPTool) MCPApprovalMode() string {
+	if mode := strings.TrimSpace(o.spec.ToolApprovalModes[o.raw]); mode != "" {
+		return tool.NormalizeMCPApprovalMode(mode)
+	}
+	return tool.NormalizeMCPApprovalMode(o.spec.DefaultToolsApprovalMode)
+}
+
+func (o *onDemandMCPTool) MCPApprovalReviewer() string {
+	return tool.NormalizeMCPApprovalReviewer(o.spec.ApprovalsReviewer)
+}
+
 func (o *onDemandMCPTool) Execute(ctx context.Context, args json.RawMessage) (string, error) {
 	tools, err := o.proxy.ensureServerTools(ctx, o.server)
 	if err != nil {

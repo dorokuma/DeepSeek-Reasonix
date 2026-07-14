@@ -24,16 +24,19 @@ const mcpJSONFile = ".mcp.json"
 // stdio server; type/url/headers describe a remote one. Reasonix also accepts
 // timeout fields as MCP call policy extensions.
 type mcpServerSpec struct {
-	Type                 string            `json:"type"`
-	Command              string            `json:"command"`
-	Args                 []string          `json:"args"`
-	Env                  map[string]string `json:"env"`
-	URL                  string            `json:"url"`
-	Headers              map[string]string `json:"headers"`
-	CallTimeoutSeconds   int               `json:"call_timeout_seconds"`
-	ToolTimeoutSeconds   map[string]int    `json:"tool_timeout_seconds"`
-	TrustedReadOnlyTools []string          `json:"trusted_read_only_tools"`
-	AutoStart            *bool             `json:"auto_start"`
+	Type                     string                   `json:"type"`
+	Command                  string                   `json:"command"`
+	Args                     []string                 `json:"args"`
+	Env                      map[string]string        `json:"env"`
+	URL                      string                   `json:"url"`
+	Headers                  map[string]string        `json:"headers"`
+	CallTimeoutSeconds       int                      `json:"call_timeout_seconds"`
+	ToolTimeoutSeconds       map[string]int           `json:"tool_timeout_seconds"`
+	TrustedReadOnlyTools     []string                 `json:"trusted_read_only_tools"`
+	AutoStart                *bool                    `json:"auto_start"`
+	DefaultToolsApprovalMode string                   `json:"default_tools_approval_mode"`
+	Tools                    map[string]MCPToolPolicy `json:"tools"`
+	ApprovalsReviewer        string                   `json:"approvals_reviewer"`
 }
 
 // loadMCPJSON reads path (Claude Code's .mcp.json) and returns its servers as
@@ -194,17 +197,20 @@ func anonymousMCPName(i int) string {
 
 func pluginEntryFromMCPSpec(name string, s mcpServerSpec) PluginEntry {
 	e := PluginEntry{
-		Name:                 name,
-		Type:                 s.Type,
-		Command:              s.Command,
-		Args:                 s.Args,
-		Env:                  s.Env,
-		URL:                  s.URL,
-		Headers:              s.Headers,
-		CallTimeoutSeconds:   s.CallTimeoutSeconds,
-		ToolTimeoutSeconds:   s.ToolTimeoutSeconds,
-		TrustedReadOnlyTools: s.TrustedReadOnlyTools,
-		AutoStart:            s.AutoStart,
+		Name:                     name,
+		Type:                     s.Type,
+		Command:                  s.Command,
+		Args:                     s.Args,
+		Env:                      s.Env,
+		URL:                      s.URL,
+		Headers:                  s.Headers,
+		CallTimeoutSeconds:       s.CallTimeoutSeconds,
+		ToolTimeoutSeconds:       s.ToolTimeoutSeconds,
+		TrustedReadOnlyTools:     s.TrustedReadOnlyTools,
+		AutoStart:                s.AutoStart,
+		DefaultToolsApprovalMode: s.DefaultToolsApprovalMode,
+		Tools:                    s.Tools,
+		ApprovalsReviewer:        s.ApprovalsReviewer,
 	}
 	e, _ = NormalizePluginCommandLine(e)
 	return e
@@ -325,6 +331,20 @@ func applyPluginEntryToMCPJSONServer(server map[string]json.RawMessage, entry Pl
 	setMCPJSONIntMap(server, "tool_timeout_seconds", entry.ToolTimeoutSeconds)
 	setMCPJSONStringArray(server, "trusted_read_only_tools", entry.TrustedReadOnlyTools)
 	setMCPJSONBool(server, "auto_start", entry.AutoStart)
+	setMCPJSONString(server, "default_tools_approval_mode", strings.TrimSpace(entry.DefaultToolsApprovalMode))
+	setMCPJSONToolPolicies(server, "tools", entry.Tools)
+	setMCPJSONString(server, "approvals_reviewer", strings.TrimSpace(entry.ApprovalsReviewer))
+}
+
+func setMCPJSONToolPolicies(server map[string]json.RawMessage, key string, values map[string]MCPToolPolicy) {
+	if len(values) == 0 {
+		delete(server, key)
+		return
+	}
+	raw, err := json.Marshal(values)
+	if err == nil {
+		server[key] = raw
+	}
 }
 
 func writeMCPJSONServers(path string, root map[string]json.RawMessage, servers map[string]json.RawMessage) error {

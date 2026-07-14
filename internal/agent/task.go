@@ -760,6 +760,9 @@ func ReadOnlySubagentToolRegistryForDepth(parent *tool.Registry, names []string,
 		if !tl.ReadOnly() {
 			continue
 		}
+		if u, ok := tl.(tool.PlanModeUntrustedReadOnly); ok && u.PlanModeUntrustedReadOnly() {
+			continue
+		}
 		sub.Add(tl)
 	}
 	return sub
@@ -782,6 +785,9 @@ func FilterReadOnlyRegistry(parent *tool.Registry, exclude ...string) *tool.Regi
 		}
 		tl, ok := parent.Get(name)
 		if !ok || !tl.ReadOnly() {
+			continue
+		}
+		if u, ok := tl.(tool.PlanModeUntrustedReadOnly); ok && u.PlanModeUntrustedReadOnly() {
 			continue
 		}
 		sub.Add(tl)

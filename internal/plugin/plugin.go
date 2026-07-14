@@ -73,6 +73,15 @@ type Spec struct {
 	// declarations such as agent.plan_mode_allowed_tools without reverse-parsing
 	// normalized MCP tool names back into raw server-local names.
 	ReadOnlyModelToolNames map[string]bool
+	// DefaultToolsApprovalMode controls MCP approval when no raw-tool override
+	// exists: auto|prompt|writes|approve. Empty is auto.
+	DefaultToolsApprovalMode string
+	// ToolApprovalModes overrides approval behavior by raw server-local tool name.
+	ToolApprovalModes map[string]string
+	// ApprovalsReviewer selects user|auto_review for this server. Empty preserves
+	// legacy behavior: Guardian reviews ordinary Ask decisions, while destructive
+	// calls still require the user.
+	ApprovalsReviewer string
 	// StripRawPrefix, when non-empty, removes this prefix from each MCP tool's
 	// raw name before namespacing. For example, StripRawPrefix="server_" turns
 	// "server_search" into "search", yielding "mcp__search__search" instead of
@@ -1138,6 +1147,17 @@ func (s Spec) toolReadOnlyOverride(rawName, visibleName string) bool {
 	return s.ReadOnlyToolNames[rawName] || s.ReadOnlyModelToolNames[toolName(s.Name, visibleName)]
 }
 
+func (s Spec) toolApprovalMode(rawName string) string {
+	if mode := strings.TrimSpace(s.ToolApprovalModes[rawName]); mode != "" {
+		return tool.NormalizeMCPApprovalMode(mode)
+	}
+	return tool.NormalizeMCPApprovalMode(s.DefaultToolsApprovalMode)
+}
+
+func (s Spec) approvalReviewer() string {
+	return tool.NormalizeMCPApprovalReviewer(s.ApprovalsReviewer)
+}
+
 func (c *Client) listTools(ctx context.Context) ([]tool.Tool, error) {
 	c.toolsMu.Lock()
 	defer c.toolsMu.Unlock()
@@ -1186,14 +1206,16 @@ func (c *Client) listTools(ctx context.Context) ([]tool.Tool, error) {
 			visibleName = strings.TrimPrefix(visibleName, c.spec.StripRawPrefix)
 		}
 		toolInfos = append(toolInfos, info)
+		trusted := c.spec.toolReadOnlyOverride(t.Name, visibleName)
 		tools = append(tools, &remoteTool{
-			client:      c,
-			name:        toolName(c.name, visibleName),
-			rawName:     t.Name,
-			desc:        t.Description,
-			schema:      schema,
-			readOnly:    c.spec.toolReadOnly(t.Name, visibleName, readOnlyHint),
-			destructive: destructiveHint,
+			client:          c,
+			name:            toolName(c.name, visibleName),
+			rawName:         t.Name,
+			desc:            t.Description,
+			schema:          schema,
+			readOnly:        c.spec.toolReadOnly(t.Name, visibleName, readOnlyHint),
+			readOnlyTrusted: trusted,
+			destructive:     destructiveHint,
 		})
 	}
 	sort.SliceStable(toolInfos, func(i, j int) bool { return toolInfos[i].Name < toolInfos[j].Name })
@@ -1349,6 +1371,9 @@ type remoteTool struct {
 	desc     string
 	schema   json.RawMessage
 	readOnly bool // from MCP readOnlyHint or a backward-compatible Spec override
+	// readOnlyTrusted is true only when local configuration, not the server hint,
+	// classified the tool as read-only.
+	readOnlyTrusted bool
 	// destructive is the MCP destructiveHint. It always requires a fresh human
 	// approval and takes precedence over a conflicting readOnlyHint.
 	destructive bool
@@ -1369,7 +1394,25 @@ func (t *remoteTool) MCPRawToolName() string { return t.rawName }
 // or local configuration explicitly classifies them as read-only.
 func (t *remoteTool) ReadOnly() bool { return t.readOnly }
 
+func (t *remoteTool) PlanModeUntrustedReadOnly() bool {
+	return t.readOnly && !t.readOnlyTrusted
+}
+
 func (t *remoteTool) MCPDestructiveHint() bool { return t.destructive }
+
+func (t *remoteTool) MCPApprovalMode() string {
+	if t.client == nil {
+		return tool.MCPApprovalAuto
+	}
+	return t.client.spec.toolApprovalMode(t.rawName)
+}
+
+func (t *remoteTool) MCPApprovalReviewer() string {
+	if t.client == nil {
+		return ""
+	}
+	return t.client.spec.approvalReviewer()
+}
 
 func (t *remoteTool) Schema() json.RawMessage {
 	if len(t.schema) == 0 {

@@ -187,12 +187,15 @@ func (s *lazySpawn) trySwap() {
 // sees cached metadata (or a stub when no cache exists); Execute consults the
 // state machine, kicking off the handshake on first call.
 type lazyTool struct {
-	shared   *lazySpawn
-	name     string // namespaced "mcp__<server>__<tool>"
-	rawName  string // original server-local tool name, when cached
-	desc     string
-	schema   json.RawMessage
-	readOnly bool
+	shared  *lazySpawn
+	name    string // namespaced "mcp__<server>__<tool>"
+	rawName string // original server-local tool name, when cached
+	desc    string
+	schema  json.RawMessage
+	// readOnly/readOnlyTrusted are guarded by shared.mu because a live handshake
+	// can demote a stale cached reader before asking the model to retry.
+	readOnly        bool
+	readOnlyTrusted bool
 	// destructive is guarded by shared.mu because a live handshake may promote
 	// a stale cached false value before asking the model to retry.
 	destructive bool
@@ -206,7 +209,14 @@ type lazyTool struct {
 
 func (lt *lazyTool) Name() string        { return lt.name }
 func (lt *lazyTool) Description() string { return lt.desc }
-func (lt *lazyTool) ReadOnly() bool      { return lt.readOnly }
+func (lt *lazyTool) ReadOnly() bool {
+	if lt.shared == nil {
+		return lt.readOnly
+	}
+	lt.shared.mu.Lock()
+	defer lt.shared.mu.Unlock()
+	return lt.readOnly
+}
 func (lt *lazyTool) MCPServerName() string {
 	if lt.shared == nil {
 		return ""
@@ -214,6 +224,14 @@ func (lt *lazyTool) MCPServerName() string {
 	return lt.shared.spec.Name
 }
 func (lt *lazyTool) MCPRawToolName() string { return lt.rawName }
+func (lt *lazyTool) PlanModeUntrustedReadOnly() bool {
+	if lt.shared == nil {
+		return lt.readOnly && !lt.readOnlyTrusted
+	}
+	lt.shared.mu.Lock()
+	defer lt.shared.mu.Unlock()
+	return lt.readOnly && !lt.readOnlyTrusted
+}
 func (lt *lazyTool) MCPDestructiveHint() bool {
 	if lt.shared == nil {
 		return lt.destructive
@@ -221,6 +239,18 @@ func (lt *lazyTool) MCPDestructiveHint() bool {
 	lt.shared.mu.Lock()
 	defer lt.shared.mu.Unlock()
 	return lt.destructive
+}
+func (lt *lazyTool) MCPApprovalMode() string {
+	if lt.shared == nil {
+		return tool.MCPApprovalAuto
+	}
+	return lt.shared.spec.toolApprovalMode(lt.rawName)
+}
+func (lt *lazyTool) MCPApprovalReviewer() string {
+	if lt.shared == nil {
+		return ""
+	}
+	return lt.shared.spec.approvalReviewer()
 }
 func (lt *lazyTool) Schema() json.RawMessage {
 	if len(lt.schema) == 0 {
@@ -241,13 +271,13 @@ func (lt *lazyTool) Execute(ctx context.Context, args json.RawMessage) (string, 
 	switch sp.state {
 	case spawnReady:
 		real := sp.real[lt.name]
-		promoted := lt.promoteDestructiveHint(real)
+		safetyErr := lt.reconcileLiveSafety(real)
 		sp.mu.Unlock()
 		if real == nil {
 			return "", fmt.Errorf("MCP server %q did not expose tool %q (the cached schema may be stale)", sp.spec.Name, lt.name)
 		}
-		if promoted {
-			return "", destructiveHintChangedError(sp.spec.Name, lt.rawName)
+		if safetyErr != nil {
+			return "", safetyErr
 		}
 		return real.Execute(ctx, args)
 
@@ -322,12 +352,12 @@ func (lt *lazyTool) Execute(ctx context.Context, args json.RawMessage) (string, 
 					sp.trySwap()
 					r := sp.real[lt.name]
 					if r != nil {
-						promoted := lt.promoteDestructiveHint(r)
+						safetyErr := lt.reconcileLiveSafety(r)
 						// Unlock before forwarding so the lock isn't held
 						// during Execute (matching the spawnReady pattern).
 						sp.mu.Unlock()
-						if promoted {
-							return "", destructiveHintChangedError(sp.spec.Name, lt.rawName)
+						if safetyErr != nil {
+							return "", safetyErr
 						}
 						return r.Execute(ctx, args)
 					}
@@ -355,10 +385,10 @@ func (lt *lazyTool) Execute(ctx context.Context, args json.RawMessage) (string, 
 			sp.mu.Unlock()
 			return "", fmt.Errorf("MCP server %q did not expose tool %q (the cached schema may be stale)", sp.spec.Name, lt.name)
 		}
-		promoted := lt.promoteDestructiveHint(r)
+		safetyErr := lt.reconcileLiveSafety(r)
 		sp.mu.Unlock()
-		if promoted {
-			return "", destructiveHintChangedError(sp.spec.Name, lt.rawName)
+		if safetyErr != nil {
+			return "", safetyErr
 		}
 		return r.Execute(ctx, args)
 	}
@@ -367,20 +397,28 @@ func (lt *lazyTool) Execute(ctx context.Context, args json.RawMessage) (string, 
 	return "", fmt.Errorf("deferred plugin %q in unexpected state", sp.spec.Name)
 }
 
-// promoteDestructiveHint updates a pinned cache-hit placeholder when the live
-// server becomes stricter. Caller must hold shared.mu. Returning true tells the
-// current call to stop before execution; the next call sees the promoted hint
-// and enters the fresh-approval path.
-func (lt *lazyTool) promoteDestructiveHint(real tool.Tool) bool {
-	if real == nil || lt.destructive {
-		return false
+// reconcileLiveSafety updates a pinned cache-hit placeholder when the live
+// server becomes stricter. Caller must hold shared.mu. The current call always
+// stops on a reader-to-writer demotion or destructive promotion so the next
+// attempt re-enters the agent's approval policy with current metadata.
+func (lt *lazyTool) reconcileLiveSafety(real tool.Tool) error {
+	if real == nil {
+		return nil
+	}
+	if lt.readOnly && !real.ReadOnly() {
+		lt.readOnly = false
+		lt.readOnlyTrusted = false
+		return fmt.Errorf("MCP server %q no longer marks tool %q as read-only; retry so Reasonix can apply writer approval before execution", lt.shared.spec.Name, lt.rawName)
+	}
+	if lt.destructive {
+		return nil
 	}
 	annotations, ok := real.(tool.MCPAnnotations)
 	if !ok || !annotations.MCPDestructiveHint() {
-		return false
+		return nil
 	}
 	lt.destructive = true
-	return true
+	return destructiveHintChangedError(lt.shared.spec.Name, lt.rawName)
 }
 
 func destructiveHintChangedError(server, rawTool string) error {
@@ -432,15 +470,17 @@ func LazyToolset(spec Spec, cs *CachedSchema, host *Host, reg *tool.Registry, se
 			if spec.StripRawPrefix != "" {
 				visibleName = strings.TrimPrefix(visibleName, spec.StripRawPrefix)
 			}
+			trusted := spec.toolReadOnlyOverride(ct.Name, visibleName)
 			out = append(out, &lazyTool{
-				shared:      shared,
-				name:        toolName(spec.Name, visibleName),
-				rawName:     ct.Name,
-				desc:        ct.Description,
-				schema:      ct.Schema,
-				readOnly:    spec.toolReadOnly(ct.Name, visibleName, ct.ReadOnly),
-				destructive: ct.Destructive,
-				hasCache:    true,
+				shared:          shared,
+				name:            toolName(spec.Name, visibleName),
+				rawName:         ct.Name,
+				desc:            ct.Description,
+				schema:          ct.Schema,
+				readOnly:        spec.toolReadOnly(ct.Name, visibleName, ct.ReadOnly),
+				readOnlyTrusted: trusted,
+				destructive:     ct.Destructive,
+				hasCache:        true,
 			})
 		}
 	}

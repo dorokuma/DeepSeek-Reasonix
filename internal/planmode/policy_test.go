@@ -364,10 +364,10 @@ func TestDecideBlocksBashProcessControlArguments(t *testing.T) {
 	}
 }
 
-func TestDecideAcceptsInstalledMCPReadOnlyHint(t *testing.T) {
-	call := Call{Name: "mcp__srv__query", ReadOnly: true}
-	if d := (Policy{}).Decide(call); d.Blocked {
-		t.Fatalf("an installed MCP read-only tool should be allowed in plan mode: %s", d.Message)
+func TestDecideRejectsUntrustedMCPReadOnlyHint(t *testing.T) {
+	call := Call{Name: "mcp__srv__query", ReadOnly: true, UntrustedReadOnly: true}
+	if d := (Policy{}).Decide(call); !d.Blocked {
+		t.Fatal("a third-party MCP read-only hint must not grant Plan-mode trust")
 	}
 }
 

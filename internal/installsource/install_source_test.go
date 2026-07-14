@@ -625,6 +625,32 @@ func TestPlanMCPJSONDefaultTierIsBackground(t *testing.T) {
 	}
 }
 
+func TestPlanMCPJSONPreservesApprovalPolicy(t *testing.T) {
+	entries, warnings, err := parseMCPJSON([]byte(`{
+  "mcpServers": {
+    "admin": {
+      "command": "admin-mcp",
+      "call_timeout_seconds": 45,
+      "tool_timeout_seconds": {"wipe": 120},
+      "trusted_read_only_tools": ["status"],
+      "default_tools_approval_mode": "writes",
+      "tools": {"wipe": {"approval_mode": "prompt"}},
+      "approvals_reviewer": "auto_review"
+    }
+  }
+}`))
+	if err != nil || len(warnings) != 0 || len(entries) != 1 {
+		t.Fatalf("parseMCPJSON: entries=%+v warnings=%v err=%v", entries, warnings, err)
+	}
+	got := entries[0]
+	if got.CallTimeoutSeconds != 45 || got.ToolTimeoutSeconds["wipe"] != 120 ||
+		len(got.TrustedReadOnlyTools) != 1 || got.TrustedReadOnlyTools[0] != "status" ||
+		got.DefaultToolsApprovalMode != "writes" || got.Tools["wipe"].ApprovalMode != "prompt" ||
+		got.ApprovalsReviewer != "auto_review" {
+		t.Fatalf("advanced MCP config was dropped: %+v", got)
+	}
+}
+
 func TestNormalizeTierDefaultBackgroundUnknownBackground(t *testing.T) {
 	if got, ok := normalizeTier(""); got != "background" || !ok {
 		t.Fatalf("normalizeTier(empty) = %q, %v; want background, true", got, ok)

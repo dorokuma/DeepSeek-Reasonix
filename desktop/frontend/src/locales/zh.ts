@@ -283,6 +283,7 @@ export const zh: Record<DictKey, string> = {
   "caps.hideAdvancedOptions": "收起高级选项",
   "caps.jsonConfig": "完整配置",
   "caps.jsonPasteHint": "支持 {\"server-name\": {...}} 或 {\"mcpServers\": {\"server-name\": {...}}}。",
+  "caps.jsonUnsupported": "此 JSON 包含 Reasonix 不支持的字段。",
   "caps.jsonInvalid": "请输入有效 JSON；环境变量和请求头的值必须是字符串。",
   "caps.jsonSingleServer": "JSON 中必须且只能包含一个 MCP 服务器。",
   "caps.jsonNameMismatch": "暂不支持重命名已有 MCP 服务器。",

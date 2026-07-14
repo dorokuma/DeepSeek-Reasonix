@@ -218,14 +218,16 @@ func (g *readOnlyRecordingGate) Check(ctx context.Context, toolName string, args
 
 type annotatedMCPTool struct {
 	fakeTool
-	server      string
-	raw         string
-	destructive bool
+	server            string
+	raw               string
+	destructive       bool
+	untrustedReadOnly bool
 }
 
-func (t annotatedMCPTool) MCPServerName() string    { return t.server }
-func (t annotatedMCPTool) MCPRawToolName() string   { return t.raw }
-func (t annotatedMCPTool) MCPDestructiveHint() bool { return t.destructive }
+func (t annotatedMCPTool) MCPServerName() string           { return t.server }
+func (t annotatedMCPTool) MCPRawToolName() string          { return t.raw }
+func (t annotatedMCPTool) MCPDestructiveHint() bool        { return t.destructive }
+func (t annotatedMCPTool) PlanModeUntrustedReadOnly() bool { return t.untrustedReadOnly }
 
 type mcpPermissionRecordingGate struct {
 	normalCalls int
@@ -250,23 +252,63 @@ func (g *mcpPermissionRecordingGate) CheckFresh(_ context.Context, _ string, sub
 	return g.allowFresh, g.reason, nil
 }
 
-func TestPlanModeInstalledMCPReadOnlyHintRunsWithoutTrustPrompt(t *testing.T) {
+func TestPlanModeInstalledMCPReadOnlyHintDoesNotGrantLocalTrust(t *testing.T) {
 	reg := tool.NewRegistry()
-	reg.Add(fakeTool{name: "mcp__srv__query", readOnly: true})
+	reg.Add(annotatedMCPTool{
+		fakeTool: fakeTool{name: "mcp__srv__query", readOnly: true},
+		server:   "srv", raw: "query", untrustedReadOnly: true,
+	})
 	trustGate := &fakePlanModeReadOnlyTrustGate{allow: false, reason: "must not prompt"}
 	permissionGate := &readOnlyRecordingGate{}
 	a := New(nil, reg, NewSession(""), Options{Gate: permissionGate, PlanModeReadOnlyTrustGate: trustGate}, event.Discard)
 	a.SetPlanMode(true)
 
 	out := a.executeOne(context.Background(), provider.ToolCall{Name: "mcp__srv__query", Arguments: `{"q":"x"}`})
-	if strings.HasPrefix(out.output, "blocked:") || !strings.Contains(out.output, "done") {
-		t.Fatalf("installed read-only MCP tool should run in plan mode, got: %q", out.output)
+	if !strings.HasPrefix(out.output, "blocked:") {
+		t.Fatalf("server-hinted MCP reader should remain blocked in plan mode, got: %q", out.output)
 	}
 	if trustGate.calls != 0 {
 		t.Fatalf("MCP read-only tool triggered trust prompts = %d, want 0", trustGate.calls)
 	}
-	if len(permissionGate.readOnly) != 1 || !permissionGate.readOnly[0] {
-		t.Fatalf("normal permission gate read-only calls = %v, want [true]", permissionGate.readOnly)
+	if len(permissionGate.readOnly) != 0 {
+		t.Fatalf("blocked untrusted reader reached permission gate: %v", permissionGate.readOnly)
+	}
+}
+
+func TestPlanModeLocallyTrustedMCPReaderRuns(t *testing.T) {
+	reg := tool.NewRegistry()
+	reg.Add(annotatedMCPTool{
+		fakeTool: fakeTool{name: "mcp__srv__query", readOnly: true},
+		server:   "srv", raw: "query",
+	})
+	permissionGate := &readOnlyRecordingGate{}
+	a := New(nil, reg, NewSession(""), Options{Gate: permissionGate}, event.Discard)
+	a.SetPlanMode(true)
+
+	out := a.executeOne(context.Background(), provider.ToolCall{Name: "mcp__srv__query"})
+	if strings.HasPrefix(out.output, "blocked:") || !strings.Contains(out.output, "done") {
+		t.Fatalf("locally trusted MCP reader should run in plan mode, got: %q", out.output)
+	}
+}
+
+func TestUntrustedMCPReaderExcludedFromReadOnlySubagentRegistries(t *testing.T) {
+	parent := tool.NewRegistry()
+	parent.Add(fakeTool{name: "read_file", readOnly: true})
+	parent.Add(annotatedMCPTool{
+		fakeTool: fakeTool{name: "mcp__srv__query", readOnly: true},
+		server:   "srv", raw: "query", untrustedReadOnly: true,
+	})
+
+	for name, filtered := range map[string]*tool.Registry{
+		"filter": FilterReadOnlyRegistry(parent),
+		"depth":  ReadOnlySubagentToolRegistryForDepth(parent, []string{"read_file", "mcp__srv__query"}, 1, 1),
+	} {
+		if _, ok := filtered.Get("read_file"); !ok {
+			t.Fatalf("%s registry lost built-in reader", name)
+		}
+		if _, ok := filtered.Get("mcp__srv__query"); ok {
+			t.Fatalf("%s registry admitted untrusted MCP reader", name)
+		}
 	}
 }
 

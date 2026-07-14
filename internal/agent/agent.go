@@ -197,6 +197,13 @@ type FreshApprovalGate interface {
 	CheckFresh(ctx context.Context, toolName, subject string, args json.RawMessage, readOnly bool) (allow bool, reason string, err error)
 }
 
+// MCPApprovalGate applies local per-server/per-tool MCP policy without changing
+// provider-visible tool metadata. Destructive calls are identified separately
+// so the gate can route every invocation through the configured reviewer.
+type MCPApprovalGate interface {
+	CheckMCP(ctx context.Context, toolName, subject string, args json.RawMessage, readOnly, destructive bool, mode, reviewer string) (allow bool, reason string, err error)
+}
+
 const PlanModeReadOnlyCommandApprovalTool = "plan_mode_read_only_command"
 
 // PlanModeReadOnlyTrustRequest describes a bash command that is safe enough to
@@ -2879,7 +2886,8 @@ func (a *Agent) executeOne(ctx context.Context, call provider.ToolCall) toolOutc
 				safety = planmode.PlanSafetyUnsafe
 			}
 		}
-		if decision := a.planModeDecision(call.Name, t.ReadOnly(), safety, json.RawMessage(call.Arguments)); decision.Blocked {
+		untrustedReadOnly := planModeUntrustedReadOnly(t)
+		if decision := a.planModeDecision(call.Name, t.ReadOnly(), untrustedReadOnly, safety, json.RawMessage(call.Arguments)); decision.Blocked {
 			// Installed MCP writers follow the normal permission posture instead of
 			// being rejected by the planning-stage gate. PlanSafetyUnsafe remains an
 			// explicit hard stop.
@@ -2976,7 +2984,8 @@ func (a *Agent) executeOne(ctx context.Context, call provider.ToolCall) toolOutc
 				safety = planmode.PlanSafetyUnsafe
 			}
 		}
-		if decision := a.planModeDecision(permName, resolved.ReadOnly, safety, permArgs); decision.Blocked {
+		untrustedReadOnly := planModeUntrustedReadOnly(execTool)
+		if decision := a.planModeDecision(permName, resolved.ReadOnly, untrustedReadOnly, safety, permArgs); decision.Blocked {
 			mcpPermissionPath := safety != planmode.PlanSafetyUnsafe && isInstalledMCPTool(execTool) && !resolved.ReadOnly
 			if !mcpPermissionPath {
 				return toolOutcome{
@@ -2995,16 +3004,29 @@ func (a *Agent) executeOne(ctx context.Context, call provider.ToolCall) toolOutc
 			errMsg:  "blocked: delivery acceptance criteria required",
 		}
 	}
-	if mcpDestructiveHint(execTool) {
-		freshGate, ok := a.gate.(FreshApprovalGate)
-		if !ok {
-			return toolOutcome{
-				output:  "blocked: this destructive MCP tool requires fresh human approval in an interactive session.",
-				blocked: true,
-				errMsg:  "blocked: destructive MCP approval required",
+	destructive := mcpDestructiveHint(execTool)
+	if isInstalledMCPTool(execTool) {
+		mode, reviewer := mcpApprovalPolicy(execTool)
+		var allow bool
+		var reason string
+		var err error
+		if mcpGate, ok := a.gate.(MCPApprovalGate); ok {
+			allow, reason, err = mcpGate.CheckMCP(ctx, permName, mcpApprovalSubject(execTool, permName), permArgs, readOnly, destructive, mode, reviewer)
+		} else if destructive {
+			freshGate, ok := a.gate.(FreshApprovalGate)
+			if !ok {
+				return toolOutcome{
+					output:  "blocked: this destructive MCP tool requires fresh human approval or a configured automatic approval reviewer before execution.",
+					blocked: true,
+					errMsg:  "blocked: destructive MCP approval required",
+				}
 			}
+			allow, reason, err = freshGate.CheckFresh(ctx, permName, mcpApprovalSubject(execTool, permName), permArgs, readOnly)
+		} else if a.gate != nil {
+			allow, reason, err = a.gate.Check(ctx, permName, permArgs, readOnly)
+		} else {
+			allow = true
 		}
-		allow, reason, err := freshGate.CheckFresh(ctx, permName, mcpApprovalSubject(execTool, permName), permArgs, readOnly)
 		if err != nil {
 			return toolOutcome{
 				output:  fmt.Sprintf("blocked: %s (%v)", reason, err),
@@ -3014,12 +3036,12 @@ func (a *Agent) executeOne(ctx context.Context, call provider.ToolCall) toolOutc
 		}
 		if !allow {
 			if strings.TrimSpace(reason) == "" {
-				reason = "the user declined this destructive MCP tool call"
+				reason = "the MCP tool call was not approved"
 			}
 			return toolOutcome{
 				output:  "blocked: " + reason,
 				blocked: true,
-				errMsg:  "blocked by destructive MCP approval",
+				errMsg:  "blocked by MCP approval policy",
 			}
 		}
 	} else if a.gate != nil {
@@ -3185,9 +3207,22 @@ func isInstalledMCPTool(t tool.Tool) bool {
 	return ok && strings.TrimSpace(meta.MCPServerName()) != "" && strings.TrimSpace(meta.MCPRawToolName()) != ""
 }
 
+func planModeUntrustedReadOnly(t tool.Tool) bool {
+	untrusted, ok := t.(tool.PlanModeUntrustedReadOnly)
+	return ok && untrusted.PlanModeUntrustedReadOnly()
+}
+
 func mcpDestructiveHint(t tool.Tool) bool {
 	annotations, ok := t.(tool.MCPAnnotations)
 	return ok && annotations.MCPDestructiveHint()
+}
+
+func mcpApprovalPolicy(t tool.Tool) (mode, reviewer string) {
+	policy, ok := t.(tool.MCPApprovalPolicy)
+	if !ok {
+		return tool.MCPApprovalAuto, ""
+	}
+	return tool.NormalizeMCPApprovalMode(policy.MCPApprovalMode()), tool.NormalizeMCPApprovalReviewer(policy.MCPApprovalReviewer())
 }
 
 func mcpApprovalSubject(t tool.Tool, fallback string) string {
@@ -3233,19 +3268,20 @@ func (a *Agent) checkPlanModeBashReadOnlyTrust(ctx context.Context, call provide
 }
 
 func (a *Agent) planModeBlocked(toolName string, readOnly bool, safety planmode.PlanSafety, args json.RawMessage) (blocked bool, message string) {
-	decision := a.planModeDecision(toolName, readOnly, safety, args)
+	decision := a.planModeDecision(toolName, readOnly, false, safety, args)
 	return decision.Blocked, decision.Message
 }
 
-func (a *Agent) planModeDecision(toolName string, readOnly bool, safety planmode.PlanSafety, args json.RawMessage) planmode.Decision {
+func (a *Agent) planModeDecision(toolName string, readOnly, untrustedReadOnly bool, safety planmode.PlanSafety, args json.RawMessage) planmode.Decision {
 	return planmode.Policy{
 		AllowedTools:     a.planModeAllowedTools,
 		ReadOnlyCommands: a.planModeReadOnlyCommands,
 	}.Decide(planmode.Call{
-		Name:     toolName,
-		ReadOnly: readOnly,
-		Safety:   safety,
-		Args:     args,
+		Name:              toolName,
+		ReadOnly:          readOnly,
+		UntrustedReadOnly: untrustedReadOnly,
+		Safety:            safety,
+		Args:              args,
 	})
 }
 

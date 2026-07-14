@@ -4,7 +4,7 @@ import { asArray } from "../lib/array";
 import { app, openExternal } from "../lib/bridge";
 import { useT } from "../lib/i18n";
 import { mcpServerLifecycleActions, mcpServerRetryableFromAvailableList } from "../lib/mcpServerLifecycle";
-import type { CapabilitiesView, MCPServerInput, PluginCommandView, PluginHookView, PluginInstallOptions, PluginMCPServerView, PluginSkillView, PluginView, ServerView, SkillRootSkillView, SkillRootView, SkillsSettingsView, SkillView, TabMeta } from "../lib/types";
+import type { CapabilitiesView, MCPApprovalMode, MCPApprovalsReviewer, MCPServerInput, MCPToolPolicy, PluginCommandView, PluginHookView, PluginInstallOptions, PluginMCPServerView, PluginSkillView, PluginView, ServerView, SkillRootSkillView, SkillRootView, SkillsSettingsView, SkillView, TabMeta } from "../lib/types";
 import { InlineConfirmButton } from "./InlineConfirmButton";
 import { ResizableDrawer } from "./ResizableDrawer";
 import { Tooltip } from "./Tooltip";
@@ -1232,7 +1232,11 @@ function serverCommand(s: ServerView): string {
 }
 
 function normalizeTransportValue(transport: string): string {
-  return transport === "http" || transport === "sse" ? transport : "stdio";
+  const value = transport.trim().toLowerCase();
+  if (value === "http" || value === "streamable-http") return "http";
+  if (value === "sse") return "sse";
+  if (value === "" || value === "stdio") return "stdio";
+  return value;
 }
 
 function parseKeyValueText(text: string): Record<string, string> {
@@ -2189,9 +2193,16 @@ type MCPServerEditorDraft = {
 	url: string;
 	env: string;
 	headers: string;
+	autoStart?: boolean;
+	callTimeoutSeconds?: number;
+	toolTimeoutSeconds?: Record<string, number>;
+	trustedReadOnlyTools?: string[];
+	defaultToolsApprovalMode?: MCPApprovalMode | "";
+	tools?: Record<string, MCPToolPolicy>;
+	approvalsReviewer?: MCPApprovalsReviewer | "";
 };
 
-type MCPServerJSONError = "invalid" | "single" | "name" | "required";
+type MCPServerJSONError = "invalid" | "single" | "name" | "required" | "unsupported";
 
 function mcpServerSchemaIssueCount(server: ServerView): number {
 	return (server.toolList ?? []).filter((tool) => tool.schemaError).length;
@@ -2369,10 +2380,17 @@ function mcpServerEditorDraft(server?: ServerView): MCPServerEditorDraft {
 		url: server && transport !== "stdio" ? server.url || serverCommand(server) : "",
 		env: "",
 		headers: "",
+		autoStart: server?.autoStart,
+		callTimeoutSeconds: server?.callTimeoutSeconds,
+		toolTimeoutSeconds: server?.toolTimeoutSeconds ? { ...server.toolTimeoutSeconds } : undefined,
+		trustedReadOnlyTools: server?.trustedReadOnlyTools ? [...server.trustedReadOnlyTools] : undefined,
+		defaultToolsApprovalMode: server?.defaultToolsApprovalMode,
+		tools: server?.toolPolicies ? { ...server.toolPolicies } : undefined,
+		approvalsReviewer: server?.approvalsReviewer,
 	};
 }
 
-function mcpServerDraftInput(draft: MCPServerEditorDraft, trustedReadOnlyTools?: string[]): MCPServerInput {
+function mcpServerDraftInput(draft: MCPServerEditorDraft): MCPServerInput {
 	const isStdio = draft.transport === "stdio";
 	const structuredCommand = draft.structuredCommand?.display === draft.command ? draft.structuredCommand : undefined;
 	const envText = draft.env.trim();
@@ -2385,11 +2403,17 @@ function mcpServerDraftInput(draft: MCPServerEditorDraft, trustedReadOnlyTools?:
 		url: isStdio ? "" : draft.url.trim(),
 		env: envText ? parseKeyValueText(envText) : null,
 		headers: !isStdio && headerText ? parseKeyValueText(headerText) : null,
-		trustedReadOnlyTools,
+		autoStart: draft.autoStart ?? null,
+		callTimeoutSeconds: draft.callTimeoutSeconds ?? null,
+		toolTimeoutSeconds: draft.toolTimeoutSeconds ?? null,
+		trustedReadOnlyTools: draft.trustedReadOnlyTools,
+		defaultToolsApprovalMode: draft.defaultToolsApprovalMode ?? null,
+		tools: draft.tools ?? null,
+		approvalsReviewer: draft.approvalsReviewer ?? null,
 	};
 }
 
-function mcpServerDraftJSON(draft: MCPServerEditorDraft): string {
+export function mcpServerDraftJSON(draft: MCPServerEditorDraft): string {
 	const input = mcpServerDraftInput(draft);
 	const entry: Record<string, unknown> = { type: input.transport };
 	if (input.transport === "stdio") {
@@ -2399,6 +2423,13 @@ function mcpServerDraftJSON(draft: MCPServerEditorDraft): string {
 	else entry.url = input.url;
 	if (input.env && Object.keys(input.env).length > 0) entry.env = input.env;
 	if (input.headers && Object.keys(input.headers).length > 0) entry.headers = input.headers;
+	if (input.autoStart != null) entry.auto_start = input.autoStart;
+	if (input.callTimeoutSeconds != null) entry.call_timeout_seconds = input.callTimeoutSeconds;
+	if (input.toolTimeoutSeconds && Object.keys(input.toolTimeoutSeconds).length > 0) entry.tool_timeout_seconds = input.toolTimeoutSeconds;
+	if (input.trustedReadOnlyTools) entry.trusted_read_only_tools = input.trustedReadOnlyTools;
+	if (input.defaultToolsApprovalMode != null) entry.default_tools_approval_mode = input.defaultToolsApprovalMode;
+	if (input.tools && Object.keys(input.tools).length > 0) entry.tools = input.tools;
+	if (input.approvalsReviewer != null) entry.approvals_reviewer = input.approvalsReviewer;
 	return JSON.stringify({ [input.name || "server-name"]: entry }, null, 2);
 }
 
@@ -2412,7 +2443,55 @@ function stringRecord(value: unknown): Record<string, string> | null {
 	return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, item as string]));
 }
 
-function parseMCPServerJSON(raw: string, fixedName?: string, trustedReadOnlyTools?: string[]): { input: MCPServerInput; draft: MCPServerEditorDraft } {
+function assertSupportedKeys(value: Record<string, unknown>, supported: readonly string[]) {
+	const allowed = new Set(supported);
+	if (Object.keys(value).some((key) => !allowed.has(key))) throw new Error("unsupported" satisfies MCPServerJSONError);
+}
+
+function nonNegativeInteger(value: unknown): number | undefined {
+	if (value == null) return undefined;
+	if (typeof value !== "number" || !Number.isInteger(value) || value < 0) throw new Error("invalid" satisfies MCPServerJSONError);
+	return value;
+}
+
+function nonNegativeIntegerRecord(value: unknown): Record<string, number> | undefined {
+	if (value == null) return undefined;
+	if (!isRecord(value)) throw new Error("invalid" satisfies MCPServerJSONError);
+	const out: Record<string, number> = {};
+	for (const [name, item] of Object.entries(value)) {
+		if (!name.trim()) throw new Error("invalid" satisfies MCPServerJSONError);
+		out[name] = nonNegativeInteger(item) as number;
+	}
+	return out;
+}
+
+function approvalMode(value: unknown): MCPApprovalMode | undefined {
+	if (value == null || value === "") return undefined;
+	if (value === "auto" || value === "prompt" || value === "writes" || value === "approve") return value;
+	throw new Error("invalid" satisfies MCPServerJSONError);
+}
+
+function approvalsReviewer(value: unknown): MCPApprovalsReviewer | undefined {
+	if (value == null || value === "") return undefined;
+	if (value === "user" || value === "auto_review") return value;
+	throw new Error("invalid" satisfies MCPServerJSONError);
+}
+
+function mcpToolPolicies(value: unknown): Record<string, MCPToolPolicy> | undefined {
+	if (value == null) return undefined;
+	if (!isRecord(value)) throw new Error("invalid" satisfies MCPServerJSONError);
+	const out: Record<string, MCPToolPolicy> = {};
+	for (const [name, item] of Object.entries(value)) {
+		if (!name.trim() || !isRecord(item)) throw new Error("invalid" satisfies MCPServerJSONError);
+		assertSupportedKeys(item, ["approval_mode"]);
+		const mode = approvalMode(item.approval_mode);
+		if (!mode) throw new Error("invalid" satisfies MCPServerJSONError);
+		out[name] = { approval_mode: mode };
+	}
+	return out;
+}
+
+export function parseMCPServerJSON(raw: string, fixedName?: string): { input: MCPServerInput; draft: MCPServerEditorDraft } {
 	let parsed: unknown;
 	try {
 		parsed = JSON.parse(raw);
@@ -2420,16 +2499,29 @@ function parseMCPServerJSON(raw: string, fixedName?: string, trustedReadOnlyTool
 		throw new Error("invalid" satisfies MCPServerJSONError);
 	}
 	if (!isRecord(parsed)) throw new Error("single" satisfies MCPServerJSONError);
+	if (isRecord(parsed.mcpServers)) assertSupportedKeys(parsed, ["mcpServers"]);
 	const container = isRecord(parsed.mcpServers) ? parsed.mcpServers : parsed;
 	const entries = Object.entries(container);
 	if (entries.length !== 1) throw new Error("single" satisfies MCPServerJSONError);
 	const [name, value] = entries[0];
 	if (!name.trim() || !isRecord(value)) throw new Error("single" satisfies MCPServerJSONError);
+	assertSupportedKeys(value, [
+		"type", "transport", "command", "args", "url", "env", "headers", "auto_start",
+		"call_timeout_seconds", "tool_timeout_seconds", "trusted_read_only_tools",
+		"default_tools_approval_mode", "tools", "approvals_reviewer",
+	]);
 	if (fixedName && name !== fixedName) throw new Error("name" satisfies MCPServerJSONError);
+	if (value.type != null && typeof value.type !== "string") throw new Error("invalid" satisfies MCPServerJSONError);
+	if (value.transport != null && typeof value.transport !== "string") throw new Error("invalid" satisfies MCPServerJSONError);
+	if (value.type != null && value.transport != null) throw new Error("unsupported" satisfies MCPServerJSONError);
 	const transportValue = typeof value.type === "string" ? value.type : value.transport;
 	const transport = normalizeTransportValue(typeof transportValue === "string" ? transportValue : (typeof value.url === "string" ? "http" : "stdio"));
+	if (transport !== "stdio" && transport !== "http" && transport !== "sse") throw new Error("invalid" satisfies MCPServerJSONError);
+	if (transport === "stdio" && (value.url != null || value.headers != null)) throw new Error("unsupported" satisfies MCPServerJSONError);
+	if (transport !== "stdio" && (value.command != null || value.args != null)) throw new Error("unsupported" satisfies MCPServerJSONError);
 	const command = typeof value.command === "string" ? value.command.trim() : "";
-	const args = Array.isArray(value.args) && value.args.every((arg) => typeof arg === "string") ? value.args as string[] : [];
+	if (value.args != null && (!Array.isArray(value.args) || !value.args.every((arg) => typeof arg === "string"))) throw new Error("invalid" satisfies MCPServerJSONError);
+	const args = value.args ? value.args as string[] : [];
 	const url = typeof value.url === "string" ? value.url.trim() : "";
 	if ((transport === "stdio" && !command) || (transport !== "stdio" && !url)) {
 		throw new Error("required" satisfies MCPServerJSONError);
@@ -2442,6 +2534,17 @@ function parseMCPServerJSON(raw: string, fixedName?: string, trustedReadOnlyTool
 	} catch {
 		throw new Error("invalid" satisfies MCPServerJSONError);
 	}
+	if (value.auto_start != null && typeof value.auto_start !== "boolean") throw new Error("invalid" satisfies MCPServerJSONError);
+	if (value.trusted_read_only_tools != null && (!Array.isArray(value.trusted_read_only_tools) || !value.trusted_read_only_tools.every((item) => typeof item === "string"))) {
+		throw new Error("invalid" satisfies MCPServerJSONError);
+	}
+	const autoStart = value.auto_start as boolean | undefined;
+	const callTimeoutSeconds = nonNegativeInteger(value.call_timeout_seconds);
+	const toolTimeoutSeconds = nonNegativeIntegerRecord(value.tool_timeout_seconds);
+	const trustedReadOnlyTools = value.trusted_read_only_tools ? [...value.trusted_read_only_tools as string[]] : undefined;
+	const defaultToolsApprovalMode = value.default_tools_approval_mode === "" ? "" : approvalMode(value.default_tools_approval_mode);
+	const tools = mcpToolPolicies(value.tools);
+	const reviewer = value.approvals_reviewer === "" ? "" : approvalsReviewer(value.approvals_reviewer);
 	const input: MCPServerInput = {
 		name: fixedName || name,
 		transport,
@@ -2450,7 +2553,13 @@ function parseMCPServerJSON(raw: string, fixedName?: string, trustedReadOnlyTool
 		url: transport === "stdio" ? "" : url,
 		env,
 		headers: transport === "stdio" ? null : headers,
+		autoStart: autoStart ?? null,
+		callTimeoutSeconds: callTimeoutSeconds ?? null,
+		toolTimeoutSeconds: toolTimeoutSeconds ?? null,
 		trustedReadOnlyTools,
+		defaultToolsApprovalMode: defaultToolsApprovalMode ?? null,
+		tools: tools ?? null,
+		approvalsReviewer: reviewer ?? null,
 	};
 	return {
 		input,
@@ -2466,6 +2575,13 @@ function parseMCPServerJSON(raw: string, fixedName?: string, trustedReadOnlyTool
 			url,
 			env: env ? Object.entries(env).map(([key, item]) => `${key}=${item}`).join("\n") : "",
 			headers: headers ? Object.entries(headers).map(([key, item]) => `${key}=${item}`).join("\n") : "",
+			autoStart,
+			callTimeoutSeconds,
+			toolTimeoutSeconds,
+			trustedReadOnlyTools,
+			defaultToolsApprovalMode,
+			tools,
+			approvalsReviewer: reviewer,
 		},
 	};
 }
@@ -2475,6 +2591,7 @@ function mcpServerJSONErrorLabel(error: unknown, t: ReturnType<typeof useT>): st
 	if (code === "single") return t("caps.jsonSingleServer");
 	if (code === "name") return t("caps.jsonNameMismatch");
 	if (code === "required") return t("caps.jsonRequired");
+	if (code === "unsupported") return t("caps.jsonUnsupported");
 	return t("caps.jsonInvalid");
 }
 
@@ -2508,7 +2625,7 @@ function MCPServerSettingsEditor({
 			return;
 		}
 		try {
-			const parsed = parseMCPServerJSON(json, server?.name, server?.trustedReadOnlyTools);
+			const parsed = parseMCPServerJSON(json, server?.name);
 			setDraft(parsed.draft);
 			setJSONError("");
 			setMode("form");
@@ -2518,11 +2635,11 @@ function MCPServerSettingsEditor({
 	};
 	const submit = () => {
 		if (mode === "form") {
-			onSubmit(mcpServerDraftInput(draft, server?.trustedReadOnlyTools));
+			onSubmit(mcpServerDraftInput(draft));
 			return;
 		}
 		try {
-			const parsed = parseMCPServerJSON(json, server?.name, server?.trustedReadOnlyTools);
+			const parsed = parseMCPServerJSON(json, server?.name);
 			setJSONError("");
 			onSubmit(parsed.input);
 		} catch (error) {

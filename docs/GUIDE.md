@@ -122,11 +122,11 @@ tool_timeout_seconds = { "generate_video" = 1800 }   # optional raw MCP tool nam
 For the full schema and every field's contract, see [`SPEC.md` §5](./SPEC.md#5-configuration-toml).
 
 `[agent].plan_mode_allowed_tools` is an escape valve for concrete custom or
-external tools Reasonix cannot classify itself. Installed MCP tools use their
-`readOnlyHint` directly, so annotated readers work in planner and read-only
-research surfaces without a second trust prompt. It never unlocks known blocked
-plan-mode tools such as `bash`, `task`, writers, installers, or memory mutation tools, and it never
-bypasses bash's plan-mode safety checks.
+external tools Reasonix cannot classify itself. Third-party MCP `readOnlyHint`
+annotations do not establish this local trust; use `trusted_read_only_tools` for
+audited raw MCP reader names. These declarations never unlock known blocked
+plan-mode tools such as `bash`, `task`, writers, installers, or memory mutation
+tools, and they never bypass bash's plan-mode safety checks.
 
 Use `[agent].plan_mode_read_only_commands` when plan-mode research needs a
 specific shell command that Reasonix cannot classify but you know is read-only,
@@ -581,33 +581,42 @@ Reasonix is an MCP client. A `[[plugins]]` entry's `type` selects the transport:
 (Streamable HTTP) connects to a remote `url` with optional static `headers`
 (`${VAR}` / `${VAR:-default}` expanded from the environment, so tokens stay out
 of the file). Tools surface to the model as `mcp__<server>__<tool>`; a tool
-declaring MCP's `readOnlyHint: true` joins parallel dispatch, the permission
-reader-default, plan mode, and read-only research. Reasonix treats installing an
-MCP server as the user's trust decision and does not add a separate pre-trust
-prompt. Tools without the hint remain write-capable. Installed MCP writers use
-the normal permission posture even while planning: Ask prompts, Auto/YOLO can
-continue without an ordinary prompt, and explicit `ask` / `deny` rules still
-apply. This Plan-mode exception is limited to installed MCP tools; built-in
-writers remain blocked until the plan is approved.
+declaring MCP's `readOnlyHint: true` joins parallel dispatch and the ordinary
+permission reader-default. Because the annotation is supplied by a third-party
+server, it does not by itself grant access to Plan mode, the planner, or
+read-only research sub-agents. Use the local `trusted_read_only_tools` override
+for a reader you have audited. Tools without the hint remain write-capable.
+Installed MCP writers use the normal permission posture even while planning;
+built-in writers remain blocked until the plan is approved.
 
 MCP `destructiveHint: true` is stricter than both classifications. Every call
-requires a new human approval, even if the tool also reports `readOnlyHint`, the
-current posture is Auto/YOLO, or an allow rule was saved. Non-interactive runs
-fail closed because they cannot obtain that decision.
+requires a new review, even if the tool also reports `readOnlyHint`, the current
+posture is Auto/YOLO, or an allow rule was saved. The default reviewer is the
+user; `approvals_reviewer = "auto_review"` delegates each decision to the
+session Guardian. A missing, failed, timed-out, or denying automatic reviewer
+fails closed. Non-interactive runs and sub-agents also fail closed when the
+required reviewer is unavailable.
 
-Older configurations may still contain this compatibility override for servers
-that omit `readOnlyHint`:
+Server and raw-tool approval policy stays local and never changes the schema
+sent to the model:
 
 ```toml
 [[plugins]]
 name = "github"
 command = "github-mcp"
+default_tools_approval_mode = "writes" # auto|prompt|writes|approve
+tools = { "delete_repository" = { approval_mode = "prompt" } }
+approvals_reviewer = "auto_review"     # user|auto_review
 trusted_read_only_tools = ["issue_read", "pull_request_read"]
 ```
 
-Reasonix continues to parse and preserve the field, but it is no longer exposed
-in the normal desktop settings workflow. Prefer a correct server annotation for
-new configurations.
+`auto` delegates to the global Ask/Auto/YOLO permission posture; `prompt`
+reviews every call; `writes` reviews only writer-classified calls; and `approve`
+allows ordinary calls. Explicit deny rules always win, and `destructiveHint`
+always forces a new review. A raw-tool `tools` entry overrides the server
+default. `trusted_read_only_tools` remains a compatibility and local-trust
+override for audited readers on servers that omit or cannot be trusted to
+maintain annotations.
 
 A server's **prompts** surface as `/mcp__<server>__<prompt>` slash commands
 (positional args after the command); its **resources** are pulled in by writing

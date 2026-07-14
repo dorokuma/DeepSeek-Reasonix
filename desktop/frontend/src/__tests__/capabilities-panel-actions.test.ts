@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import React from "react";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
-import { MCPServersSettingsPage, PluginsSettingsPage } from "../components/CapabilitiesPanel";
+import { MCPServersSettingsPage, PluginsSettingsPage, mcpServerDraftJSON, parseMCPServerJSON } from "../components/CapabilitiesPanel";
 import { slashCommandGroup, slashCommandKindTag, sortSlashCommandsForMenu } from "../components/SlashMenu";
 import { selectToolsOnFirstCustomUse } from "../components/SubagentsPanel";
 import type { AppBindings } from "../lib/bridge";
@@ -14,6 +14,37 @@ import type { MCPServerInput, Meta, PluginInstallOptions, PluginView, ServerView
 function ok(value: unknown, message: string) {
   if (!value) throw new Error(message);
 }
+
+const completeMCPJSON = JSON.stringify({
+  admin: {
+    type: "streamable-http",
+    url: "https://mcp.example.test/api",
+    auto_start: false,
+    call_timeout_seconds: 45,
+    tool_timeout_seconds: { wipe: 120 },
+    trusted_read_only_tools: ["status"],
+    default_tools_approval_mode: "writes",
+    tools: { wipe: { approval_mode: "prompt" } },
+    approvals_reviewer: "auto_review",
+  },
+});
+const completeMCP = parseMCPServerJSON(completeMCPJSON);
+ok(completeMCP.input.transport === "http", "streamable-http should normalize to http");
+ok(completeMCP.input.autoStart === false, "advanced JSON should preserve auto_start=false");
+ok(completeMCP.input.callTimeoutSeconds === 45 && completeMCP.input.toolTimeoutSeconds?.wipe === 120, "advanced JSON should preserve timeouts");
+ok(completeMCP.input.defaultToolsApprovalMode === "writes" && completeMCP.input.tools?.wipe.approval_mode === "prompt", "advanced JSON should preserve approval modes");
+ok(completeMCP.input.approvalsReviewer === "auto_review", "advanced JSON should preserve the reviewer");
+const completeMCPRoundTrip = parseMCPServerJSON(mcpServerDraftJSON(completeMCP.draft));
+ok(completeMCPRoundTrip.input.transport === "http" && completeMCPRoundTrip.input.tools?.wipe.approval_mode === "prompt", "Form/JSON switching should preserve advanced fields");
+let unsupportedMCPFieldRejected = false;
+try {
+  parseMCPServerJSON(JSON.stringify({ admin: { command: "admin-mcp", unsupported: true } }));
+} catch (error) {
+  unsupportedMCPFieldRejected = error instanceof Error && error.message === "unsupported";
+}
+ok(unsupportedMCPFieldRejected, "unsupported advanced JSON fields should fail explicitly");
+const clearedMCPPolicy = parseMCPServerJSON(JSON.stringify({ admin: { command: "admin-mcp", default_tools_approval_mode: "", approvals_reviewer: "" } }));
+ok(clearedMCPPolicy.input.defaultToolsApprovalMode === "" && clearedMCPPolicy.input.approvalsReviewer === "", "empty advanced policy values should clear saved overrides");
 
 const subagentTools = [
   { name: "read_file", description: "Read files" },

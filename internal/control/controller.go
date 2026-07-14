@@ -4217,15 +4217,34 @@ func (c *Controller) ConnectMCPServer(e config.PluginEntry) (int, error) {
 func (c *Controller) connectMCPServer(e config.PluginEntry) (int, error) {
 	exp := e.ExpandedPlugin()
 	return c.mcp.connectSpec(plugin.ApplyKnownOverrides(plugin.Spec{
-		Name:              exp.Name,
-		Type:              exp.Type,
-		Command:           exp.Command,
-		Args:              exp.Args,
-		Env:               exp.Env,
-		URL:               exp.URL,
-		Headers:           exp.Headers,
-		ReadOnlyToolNames: trustedReadOnlyToolNames(exp.TrustedReadOnlyTools),
+		Name:                     exp.Name,
+		Type:                     exp.Type,
+		Command:                  exp.Command,
+		Args:                     exp.Args,
+		Env:                      exp.Env,
+		URL:                      exp.URL,
+		Headers:                  exp.Headers,
+		ReadOnlyToolNames:        trustedReadOnlyToolNames(exp.TrustedReadOnlyTools),
+		DefaultToolsApprovalMode: exp.DefaultToolsApprovalMode,
+		ToolApprovalModes:        controllerMCPToolApprovalModes(exp.Tools),
+		ApprovalsReviewer:        exp.ApprovalsReviewer,
 	}, c.WorkspaceRoot()))
+}
+
+func controllerMCPToolApprovalModes(policies map[string]config.MCPToolPolicy) map[string]string {
+	if len(policies) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(policies))
+	for name, policy := range policies {
+		if name = strings.TrimSpace(name); name != "" {
+			out[name] = policy.ApprovalMode
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 func trustedReadOnlyToolNames(names []string) map[string]bool {
@@ -4662,6 +4681,73 @@ func (g gateApprover) ApproveFresh(ctx context.Context, toolName, subject string
 	}
 	if !reply.allow {
 		return false, i18n.M.MCPDestructiveDeclined, nil
+	}
+	return true, "", nil
+}
+
+func (g gateApprover) ApproveMCP(ctx context.Context, toolName, subject string, args json.RawMessage, destructive, forced bool, reviewer string) (bool, string, error) {
+	reviewer = tool.NormalizeMCPApprovalReviewer(reviewer)
+	subject = approvalDisplaySubject(toolName, subject, args)
+	if !forced && g.c.approval.preApproved(toolName, subject) {
+		return true, "", nil
+	}
+	if reviewer == tool.MCPApprovalReviewerAutoReview {
+		if g.c.guardianSess == nil {
+			return false, "automatic MCP approval review is configured, but no reviewer session is available", nil
+		}
+		if g.c.executor == nil {
+			return false, "automatic MCP approval review is configured, but no parent session is available", nil
+		}
+		allow, reason, err := g.c.guardianSess.Review(ctx, toolName, args, g.c.executor.Session())
+		if err != nil {
+			return false, "automatic MCP approval review failed", err
+		}
+		return allow, reason, nil
+	}
+	if destructive {
+		return g.ApproveFresh(ctx, toolName, subject, args)
+	}
+
+	// An explicit MCP prompt/write policy outranks global Auto/YOLO. The legacy
+	// empty-reviewer path still lets Guardian approve low-risk calls or provide
+	// context for a final human decision.
+	var reason string
+	if reviewer == "" && g.c.guardianSess != nil {
+		if g.c.executor == nil {
+			return false, "automatic MCP approval review is configured, but no parent session is available", nil
+		}
+		allow, reviewReason, err := g.c.guardianSess.Review(ctx, toolName, args, g.c.executor.Session())
+		if err != nil {
+			return false, "automatic MCP approval review failed", err
+		}
+		if allow {
+			return true, "", nil
+		}
+		reason = reviewReason
+	}
+	target := strings.TrimSpace(subject)
+	if target == "" {
+		target = toolName
+	}
+	if !forced {
+		allow, _, err := g.c.requestApprovalWithReason(ctx, toolName, target, args, reason)
+		if err != nil {
+			return false, "approval aborted", err
+		}
+		if !allow && strings.TrimSpace(reason) == "" {
+			reason = "the user declined this MCP tool call"
+		}
+		return allow, reason, nil
+	}
+	reply, err := g.c.requestStrictFreshApprovalDecision(ctx, toolName, target, args, reason)
+	if err != nil {
+		return false, "approval aborted", err
+	}
+	if !reply.allow {
+		if strings.TrimSpace(reason) == "" {
+			reason = "the user declined this MCP tool call"
+		}
+		return false, reason, nil
 	}
 	return true, "", nil
 }

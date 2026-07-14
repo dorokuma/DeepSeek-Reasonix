@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -147,6 +148,31 @@ func TestMCPJSONCallTimeoutsRoundTrip(t *testing.T) {
 	}
 	if server["unknown_field"] != true {
 		t.Fatalf("unknown per-server field was not preserved: %+v", server)
+	}
+}
+
+func TestMCPJSONApprovalPolicyRoundTrip(t *testing.T) {
+	path := filepath.Join(t.TempDir(), mcpJSONFile)
+	want := PluginEntry{
+		Name:                     "admin",
+		Command:                  "admin-mcp",
+		DefaultToolsApprovalMode: "writes",
+		Tools: map[string]MCPToolPolicy{
+			"delete/all": {ApprovalMode: "prompt"},
+			"status":     {ApprovalMode: "approve"},
+		},
+		ApprovalsReviewer: "auto_review",
+	}
+	if _, err := UpsertMCPJSONPlugin(path, want); err != nil {
+		t.Fatal(err)
+	}
+	got, err := loadMCPJSON(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].DefaultToolsApprovalMode != want.DefaultToolsApprovalMode ||
+		got[0].ApprovalsReviewer != want.ApprovalsReviewer || !reflect.DeepEqual(got[0].Tools, want.Tools) {
+		t.Fatalf("approval policy round trip = %+v, want %+v", got, want)
 	}
 }
 

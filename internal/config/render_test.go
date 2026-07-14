@@ -572,7 +572,7 @@ func TestRenderTOMLPreservesLegacyPluginReadOnlyOverrides(t *testing.T) {
 	if !strings.Contains(rendered, `trusted_read_only_tools = ["issue_read", "pull_request_read"]`) {
 		t.Fatalf("rendered config should preserve trusted_read_only_tools:\n%s", rendered)
 	}
-	if !strings.Contains(rendered, "legacy read-only override for MCP servers that omit readOnlyHint") {
+	if !strings.Contains(rendered, "local Plan/read-only-research trust for audited raw MCP reader names") {
 		t.Fatalf("rendered config should document the legacy trusted_read_only_tools semantics:\n%s", rendered)
 	}
 
@@ -622,6 +622,39 @@ func TestRenderTOMLPreservesMCPCallTimeouts(t *testing.T) {
 	}
 	if !reflect.DeepEqual(got.Plugins[0].ToolTimeoutSeconds, cfg.Plugins[0].ToolTimeoutSeconds) {
 		t.Fatalf("ToolTimeoutSeconds round trip = %v, want %v", got.Plugins[0].ToolTimeoutSeconds, cfg.Plugins[0].ToolTimeoutSeconds)
+	}
+}
+
+func TestRenderTOMLPreservesMCPApprovalPolicy(t *testing.T) {
+	cfg := Default()
+	cfg.Plugins = []PluginEntry{{
+		Name:                     "admin",
+		Command:                  "admin-mcp",
+		DefaultToolsApprovalMode: "writes",
+		Tools: map[string]MCPToolPolicy{
+			"delete/all": {ApprovalMode: "prompt"},
+			"status":     {ApprovalMode: "approve"},
+		},
+		ApprovalsReviewer: "auto_review",
+	}}
+
+	rendered := RenderTOML(cfg)
+	for _, want := range []string{
+		`default_tools_approval_mode = "writes"`,
+		`tools = { "delete/all" = { approval_mode = "prompt" }, status = { approval_mode = "approve" } }`,
+		`approvals_reviewer = "auto_review"`,
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("rendered config missing %q:\n%s", want, rendered)
+		}
+	}
+	var got Config
+	if _, err := toml.Decode(rendered, &got); err != nil {
+		t.Fatalf("rendered TOML does not parse: %v\n%s", err, rendered)
+	}
+	if got.Plugins[0].DefaultToolsApprovalMode != "writes" || got.Plugins[0].ApprovalsReviewer != "auto_review" ||
+		!reflect.DeepEqual(got.Plugins[0].Tools, cfg.Plugins[0].Tools) {
+		t.Fatalf("approval policy round trip = %+v", got.Plugins[0])
 	}
 }
 

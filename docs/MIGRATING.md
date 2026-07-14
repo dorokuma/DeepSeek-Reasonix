@@ -111,14 +111,15 @@ and DeepSeek prefix-cache–oriented design.
   the same `plan_mode_read_only_commands` entry. Auto/YOLO tool approval does
   not answer this bash trust prompt. Use `read_only_task` / `read_only_skill`
   instead of trying to unlock `task` / `run_skill` while planning. Installed MCP
-  tools now use the server's `readOnlyHint` directly: readers can run during
-  planning and read-only research without a separate trust prompt, while tools
-  without the hint remain writer-classified and use the normal Ask/Auto/YOLO
-  permission path even during planning. MCP tools declaring
-  `destructiveHint: true` still require a new interactive approval on every call
-  and fail closed in headless runs. Existing `trusted_read_only_tools`
-  entries still load as legacy read-only overrides for older servers that omit
-  annotations, but the desktop no longer exposes a pre-trust workflow.
+  tools use the server's `readOnlyHint` for ordinary permission and dispatch,
+  but third-party hints no longer grant Plan/planner/read-only sub-agent access.
+  Add audited raw names to `trusted_read_only_tools` when local Plan trust is
+  intended. Tools without the hint remain writer-classified and use the normal
+  permission path even during planning. New optional MCP-local fields
+  (`default_tools_approval_mode`, `tools.<raw>.approval_mode`, and
+  `approvals_reviewer`) default to the previous behavior when absent. MCP tools
+  declaring `destructiveHint: true` require a new review on every call and fail
+  closed when their configured reviewer is unavailable.
 - **Read-only subagent research**: use `read_only_task` for generic isolated
   research in plan mode, or `read_only_skill` when the work should follow an
   existing skill. Both expose only read-only tools and safe foreground bash, do

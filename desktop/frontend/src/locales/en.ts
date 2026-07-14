@@ -282,6 +282,7 @@ export const en = {
   "caps.hideAdvancedOptions": "Hide advanced options",
   "caps.jsonConfig": "Complete configuration",
   "caps.jsonPasteHint": "Accepts {\"server-name\": {...}} or {\"mcpServers\": {\"server-name\": {...}}}.",
+  "caps.jsonUnsupported": "This JSON contains fields that Reasonix does not support.",
   "caps.jsonInvalid": "Enter valid JSON. Environment variables and headers must contain string values.",
   "caps.jsonSingleServer": "The JSON must contain exactly one MCP server.",
   "caps.jsonNameMismatch": "Renaming an existing MCP server is not supported.",

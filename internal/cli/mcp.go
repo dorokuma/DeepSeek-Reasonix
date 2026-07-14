@@ -410,8 +410,10 @@ Changes take effect on the next session; inside a running chat, use /mcp add to
 connect a server live.
 
 Installed MCP tools that report readOnlyHint are treated as read-only by the
-permission layer and plan mode. Unhinted MCP writers follow the normal approval
+ordinary permission layer, but third-party hints do not grant Plan/planner or
+read-only sub-agent trust. Unhinted MCP writers follow the normal approval
 policy even while planning. Tools that report destructiveHint require a new
-interactive approval for every call; Auto/YOLO cannot bypass it and headless
-runs refuse it.`)
+review for every call; Auto/YOLO and remembered grants cannot bypass it. The
+default reviewer is the interactive user; configured automatic review fails
+closed when unavailable.`)
 }

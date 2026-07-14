@@ -1106,6 +1106,22 @@ func validatePlugin(e PluginEntry) error {
 			return fmt.Errorf("plugin %q: tool_timeout_seconds[%q] must be >= 0", e.Name, name)
 		}
 	}
+	if !validMCPApprovalMode(e.DefaultToolsApprovalMode, true) {
+		return fmt.Errorf("plugin %q: unknown default_tools_approval_mode %q (want auto|prompt|writes|approve)", e.Name, e.DefaultToolsApprovalMode)
+	}
+	for name, policy := range e.Tools {
+		if strings.TrimSpace(name) == "" {
+			return fmt.Errorf("plugin %q: tools contains an empty tool name", e.Name)
+		}
+		if !validMCPApprovalMode(policy.ApprovalMode, false) {
+			return fmt.Errorf("plugin %q: tools[%q].approval_mode must be auto|prompt|writes|approve", e.Name, name)
+		}
+	}
+	switch strings.ToLower(strings.TrimSpace(e.ApprovalsReviewer)) {
+	case "", "user", "auto_review":
+	default:
+		return fmt.Errorf("plugin %q: unknown approvals_reviewer %q (want user|auto_review)", e.Name, e.ApprovalsReviewer)
+	}
 	switch strings.ToLower(strings.TrimSpace(e.Type)) {
 	case "", "stdio":
 		if strings.TrimSpace(e.Command) == "" {
@@ -1119,6 +1135,17 @@ func validatePlugin(e PluginEntry) error {
 		return fmt.Errorf("plugin %q: unknown type %q (want stdio|http|sse)", e.Name, e.Type)
 	}
 	return nil
+}
+
+func validMCPApprovalMode(mode string, allowEmpty bool) bool {
+	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case "auto", "prompt", "writes", "approve":
+		return true
+	case "":
+		return allowEmpty
+	default:
+		return false
+	}
 }
 
 // SaveTo writes the configuration to path as annotated TOML, atomically: it

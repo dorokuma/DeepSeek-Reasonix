@@ -115,9 +115,9 @@ tool_timeout_seconds = { "generate_video" = 1800 }   # 可选：raw MCP tool 名
 完整 schema 与每个字段的契约见 [`SPEC.md` §5](./SPEC.md#5-configuration-toml)。
 
 `[agent].plan_mode_allowed_tools` 是 Reasonix 无法自动分类具体自定义/外部工具时的逃生阀。
-已安装的 MCP 工具直接使用 `readOnlyHint`，因此标注为只读的工具无需二次信任提示即可用于
-planner / read-only research。它不再解锁 `bash`、`task`、
-写文件工具、安装器、记忆变更工具等计划模式已知阻断项，也不会绕过 bash 在计划模式下的安全检查。
+第三方 MCP 的 `readOnlyHint` 不构成这类本地信任；已审计的 raw MCP reader 名称应写入
+`trusted_read_only_tools`。这些声明不解锁 `bash`、`task`、写文件工具、安装器、记忆变更工具等
+计划模式已知阻断项，也不会绕过 bash 在计划模式下的安全检查。
 
 当计划阶段需要运行 Reasonix 尚不能自动分类、但你确认只读的 shell 查询命令时，使用
 `[agent].plan_mode_read_only_commands`，例如 `gh issue view`、`gh pr diff` 或内部只读查询 CLI。
@@ -471,26 +471,32 @@ Reasonix 是一个 MCP 客户端。`[[plugins]]` 的 `type` 选择传输：`stdi
 程（`command`/`args`/`env`）；`http`（Streamable HTTP）连接远程 `url`，可带静态
 `headers`（`${VAR}` / `${VAR:-default}` 从环境展开，密钥不入文件）。工具以
 `mcp__<server>__<tool>` 暴露给模型，与 Claude Code 一致；声明 MCP `readOnlyHint: true`
-的工具会参与并行调度、命中权限层的只读默认放行，并可用于 planner / read-only research。
-Reasonix 把安装 MCP server 本身视为用户的信任决定，不再增加单独的预先信任提示。没有
-`readOnlyHint` 的工具仍按写工具处理。即使正在计划模式，已安装的 MCP 写工具也进入普通权限层：
-Ask 会询问，Auto/YOLO 可按当前权限姿态继续，显式 `ask` / `deny` 规则仍然生效。这个例外只适用于
-已安装 MCP；普通内置写工具仍会在计划批准前被阻止。
+的工具会参与并行调度并命中普通权限层的只读默认放行。但这个标注来自第三方 server，本身不构成
+Plan mode、planner 或 read-only research 子代理的本地信任；已审计的 reader 需要写入本地
+`trusted_read_only_tools`。没有 `readOnlyHint` 的工具仍按写工具处理。即使正在计划模式，已安装的
+MCP 写工具也进入普通权限层；普通内置写工具仍会在计划批准前被阻止。
 
 MCP `destructiveHint: true` 的约束更严格。即使工具同时声明 `readOnlyHint`、当前是 Auto/YOLO，
-或已经存在 allow 规则，每次调用仍必须获得一次新的人工批准；非交互运行因无法取得本次决定而拒绝执行。
+或已经存在 allow 规则，每次调用仍必须重新审查。默认由用户批准；显式配置
+`approvals_reviewer = "auto_review"` 后，每次交给当前会话的 Guardian。自动 reviewer 缺失、失败、
+超时或拒绝都会关闭执行；非交互运行和子代理拿不到所需 reviewer 时也会拒绝。
 
-旧配置可能仍包含下面这个兼容字段，用于没有声明 `readOnlyHint` 的旧 server：
+server 和 raw tool 的审批策略只存在于本地，不会改变发给模型的 schema：
 
 ```toml
 [[plugins]]
 name = "github"
 command = "github-mcp"
+default_tools_approval_mode = "writes" # auto|prompt|writes|approve
+tools = { "delete_repository" = { approval_mode = "prompt" } }
+approvals_reviewer = "auto_review"     # user|auto_review
 trusted_read_only_tools = ["issue_read", "pull_request_read"]
 ```
 
-Reasonix 会继续解析并保留这个字段，但普通桌面设置流程不再展示它。新配置应优先由 MCP server
-正确提供 `readOnlyHint`。
+`auto` 交给全局 Ask/Auto/YOLO；`prompt` 每次调用都审查；`writes` 只审查写工具；`approve`
+放行普通调用。显式 deny 永远优先，`destructiveHint` 永远强制一次新审查，`tools` 中的 raw tool
+配置覆盖 server 默认值。`trusted_read_only_tools` 继续作为兼容字段和本地信任声明，用于已审计、
+但没有可靠 annotation 的 reader。
 
 服务器的 **prompts** 会暴露成 `/mcp__<server>__<prompt>` 斜杠命令（命令后空格分隔参
 数）；**resources** 通过在消息里写 `@<server>:<uri>` 拉入；`/mcp` 列出已连接服务器及
