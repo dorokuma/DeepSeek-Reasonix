@@ -28,11 +28,9 @@ func (r *MultiAgentRunner) Run(ctx context.Context, path, message string, depth 
 	if opts := OptionsFromContext(ctx); opts != nil {
 		bgCtx = WithOptions(bgCtx, opts)
 	}
-	// Canonical path + shared Control so list_agents / nested spawn see live tree.
+	// Canonical path so list_agents / nested spawn see live tree.
 	bgCtx = multiagent.WithAgentPath(bgCtx, path)
-	if r.Control != nil {
-		bgCtx = multiagent.WithControl(bgCtx, r.Control)
-	}
+	bgCtx = multiagent.WithControl(bgCtx, nil) // 确保子代理没有 Control，禁止嵌套
 	return r.Tool.runSub(bgCtx, message, subReg, event.Discard, 0, r.Tool.sysPrompt, "task", "", "")
 }
 

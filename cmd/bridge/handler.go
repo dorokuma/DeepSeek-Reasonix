@@ -32,7 +32,8 @@ type streamState struct {
 	fallbackMsgID int
 	idle          chan struct{} // closed while worker is not running; recreated on start
 	lastPush      time.Time
-	primed        bool // first draft frame of this turn already sent
+	primed        bool  // first draft frame of this turn already sent
+	toolMsgIDs    []int // track tool-call message IDs for cleanup before final reply
 }
 
 // Bridge manages the Telegram bot lifecycle.
@@ -503,7 +504,21 @@ func (b *Bridge) handleSubmit(chatID int64, text string) {
 			s.markDelivered()
 		},
 		func(cid int64, toolName, args, status string, elapsed time.Duration) {
-			log.Printf("[chat %d] tool: %s %s (%v)", cid, toolName, status, elapsed)
+			line := "🔧 " + toolName
+			if args != "" {
+				line += "(" + truncate(args, 60) + ")"
+			}
+			msgID, err := b.sendMessageID(cid, line)
+			if err == nil && msgID > 0 {
+				b.mu.Lock()
+				st, ok := b.streams[cid]
+				b.mu.Unlock()
+				if ok {
+					st.mu.Lock()
+					st.toolMsgIDs = append(st.toolMsgIDs, msgID)
+					st.mu.Unlock()
+				}
+			}
 		},
 		func(cid int64, err error) {
 			if err == nil {
@@ -716,6 +731,7 @@ func (b *Bridge) resetStream(chatID int64) {
 	st.running = false
 	st.fallbackMsgID = 0
 	st.primed = false
+	st.toolMsgIDs = nil
 	st.lastPush = time.Time{}
 	st.idle = make(chan struct{})
 	close(st.idle)
@@ -903,6 +919,15 @@ func (b *Bridge) closeStream(chatID int64, draftID int64, finalText string) erro
 	st.draftID = 0
 	st.mu.Unlock()
 
+	// Delete tool-call messages before sending final reply
+	st.mu.Lock()
+	toolIDs := st.toolMsgIDs
+	st.toolMsgIDs = nil
+	st.mu.Unlock()
+	for _, mid := range toolIDs {
+		b.deleteMessage(chatID, mid)
+	}
+
 	// Persist via sendRichMessage; fall back to plain sendMessage chunks.
 	if mid, err := b.client.SendRichMessage(b.ctx, chatID, body); err != nil {
 		log.Printf("[chat %d] sendRichMessage failed: %v — plain sendMessage", chatID, err)
@@ -933,6 +958,13 @@ func (b *Bridge) dismissStream(chatID int64) {
 	draftID := st.draftID
 	st.draftID = 0
 	st.mu.Unlock()
+	st.mu.Lock()
+	toolIDs := st.toolMsgIDs
+	st.toolMsgIDs = nil
+	st.mu.Unlock()
+	for _, mid := range toolIDs {
+		b.deleteMessage(chatID, mid)
+	}
 	b.waitStreamIdle(st, 2*time.Second)
 	if draftID > 0 {
 		b.dismissDraftID(chatID, draftID)

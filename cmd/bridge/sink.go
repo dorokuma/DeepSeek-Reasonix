@@ -22,8 +22,6 @@ type sinkState struct {
 	showThinking  bool // render reasoning as MarkdownV2 spoiler
 	reasoningText strings.Builder
 	answerText    strings.Builder
-	toolLines     []string
-	agentStatuses []string
 	noticeText    strings.Builder
 	lastContent   string // last rendered draft content
 	// partialTools tracks early ToolDispatch (Partial) so we don't double-count start.
@@ -169,19 +167,6 @@ func (s *sinkState) Emit(e event.Event) {
 				}
 				break
 			}
-			line := formatToolLine(e.Tool.Name, e.Tool.Args, "⏳", 0)
-			// Replace partial placeholder if any, else append.
-			replaced := false
-			for i, existing := range s.toolLines {
-				if strings.Contains(existing, e.Tool.Name) && strings.Contains(existing, "⏳") {
-					s.toolLines[i] = line
-					replaced = true
-					break
-				}
-			}
-			if !replaced {
-				s.toolLines = append(s.toolLines, line)
-			}
 			if text, ok := s.draftIfChanged(); ok {
 				doUpdate, updateText, draftID = true, text, s.draftID
 			}
@@ -195,16 +180,6 @@ func (s *sinkState) Emit(e event.Event) {
 	case event.ToolResult:
 		if s.dialogueUI {
 			elapsed := time.Duration(e.Tool.DurationMs) * time.Millisecond
-			status := "✅"
-			if e.Tool.Err != "" {
-				status = "❌"
-			}
-			for i, line := range s.toolLines {
-				if strings.Contains(line, e.Tool.Name) && strings.Contains(line, "⏳") {
-					s.toolLines[i] = formatToolLine(e.Tool.Name, "", status, elapsed)
-					break
-				}
-			}
 			if text, ok := s.draftIfChanged(); ok {
 				doUpdate, updateText, draftID = true, text, s.draftID
 			}
@@ -214,12 +189,6 @@ func (s *sinkState) Emit(e event.Event) {
 
 	case event.ToolProgress:
 		if s.dialogueUI {
-			for i, line := range s.toolLines {
-				if strings.Contains(line, e.Tool.Name) {
-					s.toolLines[i] = line + "\n  " + e.Tool.Output
-					break
-				}
-			}
 			if text, ok := s.draftIfChanged(); ok {
 				doUpdate, updateText, draftID = true, text, s.draftID
 			}
@@ -227,8 +196,6 @@ func (s *sinkState) Emit(e event.Event) {
 
 	case event.AgentStatus:
 		if s.dialogueUI {
-			line := formatAgentLine(e.AgentStatus.AgentPath, e.AgentStatus.Status)
-			s.agentStatuses = append(s.agentStatuses, line)
 			if text, ok := s.draftIfChanged(); ok {
 				doUpdate, updateText, draftID = true, text, s.draftID
 			}
@@ -385,8 +352,6 @@ func isBenignTurnErr(err error) bool {
 func (s *sinkState) resetTurn() {
 	s.reasoningText.Reset()
 	s.answerText.Reset()
-	s.toolLines = nil
-	s.agentStatuses = nil
 	s.noticeText.Reset()
 	s.lastContent = ""
 	s.partialTools = nil
@@ -415,14 +380,6 @@ func (s *sinkState) renderContent() string {
 		b.WriteString("</tg-thinking>\n")
 	}
 
-	for _, line := range s.toolLines {
-		b.WriteString(line)
-		b.WriteString("\n")
-	}
-	for _, line := range s.agentStatuses {
-		b.WriteString(line)
-		b.WriteString("\n")
-	}
 	if s.noticeText.Len() > 0 {
 		b.WriteString(s.noticeText.String())
 		b.WriteString("\n")
@@ -437,52 +394,6 @@ func (s *sinkState) plainAnswer() string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.answerText.String()
-}
-
-func formatToolLine(name, args, status string, elapsed time.Duration) string {
-	icon := toolIcon(name)
-	line := icon + " " + name
-	if args != "" {
-		line += "(" + truncate(args, 60) + ")"
-	}
-	line += " " + status
-	if elapsed > 0 {
-		line += " " + elapsed.Truncate(time.Millisecond).String()
-	}
-	return line
-}
-
-func formatAgentLine(path, status string) string {
-	icon := "🤖"
-	switch status {
-	case "completed":
-		icon = "✅"
-	case "errored":
-		icon = "❌"
-	case "interrupted":
-		icon = "⏸"
-	default:
-		icon = "🤖"
-	}
-	return "  " + icon + " " + path + " " + status
-}
-
-func toolIcon(name string) string {
-	switch {
-	case strings.Contains(name, "read_file"), strings.Contains(name, "grep"),
-		strings.Contains(name, "glob"), strings.Contains(name, "ls"):
-		return "📖"
-	case strings.Contains(name, "write_file"), strings.Contains(name, "edit_file"),
-		strings.Contains(name, "multi_edit"):
-		return "✏️"
-	case strings.Contains(name, "bash"), strings.Contains(name, "shell"):
-		return "⚡"
-	case strings.Contains(name, "spawn_agent"), strings.Contains(name, "wait_agent"),
-		strings.Contains(name, "list_agents"), strings.Contains(name, "interrupt_agent"):
-		return "🤖"
-	default:
-		return "📋"
-	}
 }
 
 func truncate(s string, max int) string {

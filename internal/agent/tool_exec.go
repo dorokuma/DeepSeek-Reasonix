@@ -21,6 +21,30 @@ import (
 )
 
 func (a *Agent) executeBatch(ctx context.Context, calls []provider.ToolCall) []string {
+	// Early exit if already cancelled.
+	if ctx.Err() != nil {
+		results := make([]string, len(calls))
+		for i := range results {
+			results[i] = fmt.Sprintf("cancelled: %v", ctx.Err())
+		}
+		return results
+	}
+
+	// Create a cancellable child context for tool execution. When the parent
+	// context is cancelled this propagates to all in-flight tools so they can
+	// exit early (tools must check ctx.Err()).
+	toolCtx, toolCancel := context.WithCancel(ctx)
+	defer toolCancel()
+	done := make(chan struct{})
+	defer close(done)
+	go func() {
+		select {
+		case <-ctx.Done():
+			toolCancel()
+		case <-done:
+		}
+	}()
+
 	for _, c := range calls {
 		t, ok := a.tools.Get(c.Name)
 		ev := event.Tool{ID: c.ID, Name: c.Name, Args: c.Arguments, ReadOnly: ok && t.ReadOnly()}
@@ -40,23 +64,23 @@ func (a *Agent) executeBatch(ctx context.Context, calls []provider.ToolCall) []s
 	results := make([]string, len(calls))
 	outcomes := make([]toolOutcome, len(calls))
 	durations := make([]int64, len(calls))
-	run := func(i int) {
+	trun := func(i int) {
 		start := time.Now()
-		outcomes[i] = a.executeOne(ctx, calls[i])
+		outcomes[i] = a.executeOne(toolCtx, calls[i])
 		durations[i] = time.Since(start).Milliseconds()
 		results[i] = outcomes[i].output
 	}
 
 	for _, batch := range partitionToolCalls(a.tools, calls) {
 		if batch.parallel && batch.end-batch.start > 1 {
-			runParallel(ctx, batch.start, batch.end, run, func(idx int, msg string) {
+			runParallel(toolCtx, batch.start, batch.end, trun, func(idx int, msg string) {
 				outcomes[idx] = toolOutcome{errMsg: msg, output: msg}
 				results[idx] = msg
 			})
 			continue
 		}
 		for i := batch.start; i < batch.end; i++ {
-			run(i)
+			trun(i)
 		}
 	}
 
@@ -155,6 +179,12 @@ func runParallel(ctx context.Context, start, end int, run func(int), onPanic fun
 					}
 				}
 			}()
+			// Skip execution if context was cancelled while waiting for the
+			// semaphore — tools that check ctx.Err() would return immediately
+			// anyway, but this avoids the overhead of building their context.
+			if ctx.Err() != nil {
+				return
+			}
 			run(i)
 		}()
 	}
@@ -406,6 +436,9 @@ func (a *Agent) executeOne(ctx context.Context, call provider.ToolCall) toolOutc
 		}
 	}
 
+	if ctx.Err() != nil {
+		return toolOutcome{output: "", errMsg: fmt.Sprintf("cancelled: %v", ctx.Err())}
+	}
 	result, err := t.Execute(cctx, effectiveArgs)
 
 	// Clear diagnostic metadata after tool execution.

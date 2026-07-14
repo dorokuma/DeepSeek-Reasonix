@@ -5,10 +5,9 @@ import "context"
 type ctxKey struct{}
 
 // WithControl stamps Control on the tool context.
+// Passing nil explicitly clears any previously set Control, preventing
+// parent Control from leaking into sub-agents.
 func WithControl(ctx context.Context, c *Control) context.Context {
-	if c == nil {
-		return ctx
-	}
 	return context.WithValue(ctx, ctxKey{}, c)
 }
 

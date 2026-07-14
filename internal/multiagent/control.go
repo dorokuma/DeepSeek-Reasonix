@@ -287,6 +287,10 @@ func (c *Control) prepareSpawnPathLocked(path string) error {
 	if st == StatusInterrupted && !finished.IsZero() && time.Since(finished) < spawnInterruptCooldown {
 		return fmt.Errorf("agent %q was just interrupted; use followup_task instead of spawn_agent for the same work", path)
 	}
+	// If old agent is interrupted, force followup instead of allowing replacement
+	if st == StatusInterrupted {
+		return fmt.Errorf("agent %q was interrupted; use followup_task to resume instead of spawning a replacement", path)
+	}
 	// Completed / errored / old interrupt: drop registry so the canonical path can be reused.
 	delete(c.agents, path)
 	if c.byLeaf[oldNick] == path {
@@ -349,6 +353,30 @@ func (c *Control) runAgent(runCtx context.Context, rec *Metadata, path, message 
 	if c.OnCompletion != nil {
 		c.OnCompletion()
 	}
+
+	// Auto-expire terminal agents: if nobody followups within 5 minutes,
+	// delete the registry entry to release memory.
+	recNick := rec.Nickname // capture for closure (rec may be reused)
+	go func() {
+		time.Sleep(5 * time.Minute)
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		// Check if still terminal (a followup_task may have restarted it to Running).
+		r, ok := c.agents[path]
+		if !ok {
+			return // already cleaned up
+		}
+		r.mu.Lock()
+		st := r.Status
+		r.mu.Unlock()
+		switch st {
+		case StatusCompleted, StatusErrored, StatusInterrupted, StatusShutdown:
+			delete(c.agents, path)
+			if recNick != "" && c.byLeaf[recNick] == path {
+				delete(c.byLeaf, recNick)
+			}
+		}
+	}()
 }
 
 func (c *Control) leafTaken(nick string) bool {

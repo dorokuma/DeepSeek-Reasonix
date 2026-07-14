@@ -172,6 +172,11 @@ type Agent struct {
 	repeatSuccessCounts map[string]int
 	repeatSuccessMu     sync.Mutex
 
+	// lastToolName/toolRepeatCount detect repeated identical tool calls that
+	// may indicate the model is stuck in a loop.
+	lastToolName   string
+	toolRepeatCount int
+
 	// steerCh receives external user messages injected via Steer() while Run()
 	// is executing. Buffered 8; drops when full.
 	steerCh chan string
@@ -538,6 +543,8 @@ func (a *Agent) Run(ctx context.Context, input string) error {
 		a.steerCh = make(chan string, 8)
 	}
 	a.repeatSuccessCounts = nil
+	a.lastToolName = ""
+	a.toolRepeatCount = 0
 	a.sink.Emit(event.Event{Kind: event.TurnStarted, AutoReentry: input == ""})
 	// Parse multimodal data URLs embedded in the input text (e.g.
 	// [REASONIX_IMAGE:data:image/jpeg;base64,...]) and convert them to
@@ -704,6 +711,21 @@ func (a *Agent) Run(ctx context.Context, input string) error {
 				ToolCallID: call.ID,
 				Name:       call.Name,
 			})
+		}
+
+		// Detect repeated tool calls: same tool invoked consecutively without producing a final answer
+		for _, call := range calls {
+			if call.Name == a.lastToolName {
+				a.toolRepeatCount++
+			} else {
+				a.lastToolName = call.Name
+				a.toolRepeatCount = 1
+			}
+			if a.toolRepeatCount >= 10 {
+				a.sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelWarn,
+					Text: fmt.Sprintf("⚠️ 同一工具 \"%s\" 已连续调用 %d 次，可能陷入循环。请换个思路或直接给出答案。", call.Name, a.toolRepeatCount)})
+				return fmt.Errorf("tool loop detected: %q called %d times consecutively without final answer", call.Name, a.toolRepeatCount)
+			}
 		}
 
 		// The prompt only grows from here; compact before the next turn so it

@@ -248,11 +248,13 @@ func main() {
 	bridge.cron.Start()
 
 	// Send restart notification to the last active chat, if any.
-	if chatID := pendingRestartNotify(); chatID != 0 {
+	if chatID, msgID := pendingRestartNotify(); chatID != 0 {
 		go func() {
-			// Brief delay so polling loop is fully established.
 			time.Sleep(500 * time.Millisecond)
-			bridge.sendMessage(chatID, "⚠️ 服务已重启，如遇异常请重新发送")
+			if err := bridge.editMessageText(chatID, msgID, "✅ 重启成功"); err != nil {
+				log.Printf("restart notify edit failed: %v, falling back to sendMessage", err)
+				bridge.sendMessage(chatID, "✅ 重启成功")
+			}
 		}()
 	}
 

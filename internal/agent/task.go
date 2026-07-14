@@ -26,12 +26,6 @@ var subagentMetaTools = []string{
 	"run_skill",
 	"install_skill",
 	"install_source",
-	"spawn_agent",
-	"wait_agent",
-	"list_agents",
-	"send_message",
-	"followup_task",
-	"interrupt_agent",
 }
 
 // SubagentMetaTools returns the tool names that spawned agents should not inherit
@@ -193,6 +187,10 @@ func FilterReadOnlyRegistry(parent *tool.Registry, exclude ...string) *tool.Regi
 // sink, and returns its final assistant answer. sysPrompt/role/model/effort
 // configure the child (playbook or freeform default).
 func (t *TaskTool) runSub(ctx context.Context, prompt string, subReg *tool.Registry, sink event.Sink, maxSteps int, sysPrompt, role, modelRef, effort string) (string, error) {
+	const subAgentMaxSteps = 200
+	if maxSteps <= 0 || maxSteps > subAgentMaxSteps {
+		maxSteps = subAgentMaxSteps
+	}
 	if t.resolveProvider == nil {
 		return "", fmt.Errorf("subagent model resolver not configured")
 	}

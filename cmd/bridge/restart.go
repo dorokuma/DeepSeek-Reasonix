@@ -47,9 +47,7 @@ func markRestartNotify(chatID int64, msgID int) error {
 	return os.WriteFile(filepath.Join(stateDir, "restart_notify.json"), b, 0o600)
 }
 
-// pendingRestartNotify reads and deletes the restart-notify marker file.
-// Returns the stored chatID if present, otherwise 0.
-func pendingRestartNotify() int64 {
+func pendingRestartNotify() (int64, int) {
 	stateDir := os.Getenv("STATE_DIR")
 	if stateDir == "" {
 		stateDir = "/var/lib/reasonix-bridge"
@@ -57,16 +55,16 @@ func pendingRestartNotify() int64 {
 	path := filepath.Join(stateDir, "restart_notify.json")
 	b, err := os.ReadFile(path)
 	if err != nil {
-		return 0
+		return 0, 0
 	}
-	_ = os.Remove(path) // consume the marker
+	_ = os.Remove(path)
 	var data struct {
 		ChatID int64 `json:"chat_id"`
 		MsgID  int   `json:"msg_id"`
 	}
 	if err := json.Unmarshal(b, &data); err != nil {
 		log.Printf("pendingRestartNotify: unmarshal: %v", err)
-		return 0
+		return 0, 0
 	}
-	return data.ChatID
+	return data.ChatID, data.MsgID
 }

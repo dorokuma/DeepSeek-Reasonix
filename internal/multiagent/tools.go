@@ -47,7 +47,9 @@ Parameters:
 - task_name: unique name (lowercase, digits, underscores)
 - message: complete self-contained instructions for the sub-agent
 
-Returns: JSON with task_name (canonical path) and nickname.`
+Returns: JSON with task_name (canonical path) and nickname.
+
+Default to parallel. When a task has multiple independent subtasks, spawn them all at once (up to 3 in one turn). Each sub-agent has a 200-step budget — decompose complex tasks so each piece fits within that limit. Prefer many small focused agents over one big generalist.`
 }
 
 func (spawnAgent) Schema() json.RawMessage {

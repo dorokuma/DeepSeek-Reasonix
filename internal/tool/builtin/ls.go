@@ -55,7 +55,7 @@ func (l listDir) Execute(ctx context.Context, args json.RawMessage) (string, err
 				return out, nil
 			}
 		}
-		return l.listRecursive(p.Path)
+		return l.listRecursive(ctx, p.Path)
 	}
 
 	if rtk.Active() {
@@ -93,9 +93,12 @@ func (l listDir) Execute(ctx context.Context, args json.RawMessage) (string, err
 
 // listRecursive walks a directory tree depth-first, skipping noise dirs.
 // Depth is capped to guard against symlink loops.
-func (l listDir) listRecursive(root string) (string, error) {
+func (l listDir) listRecursive(ctx context.Context, root string) (string, error) {
 	var b strings.Builder
 	err := filepath.WalkDir(root, func(p string, d os.DirEntry, wErr error) error {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
 		if wErr != nil {
 			return wErr
 		}
