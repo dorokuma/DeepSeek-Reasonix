@@ -157,12 +157,15 @@ export interface AppBindings {
   ReplayPendingPrompts(): Promise<void>;
   SetPlanMode(on: boolean): Promise<void>;
   SetMode(mode: string): Promise<void>;
-  SetModeForTab(tabID: string, mode: string): Promise<void>;
+  // Resolves with the pending approval prompt ids the switch auto-allowed
+  // (drained); prompts not listed are still pending backend-side (#6432).
+  SetModeForTab(tabID: string, mode: string): Promise<string[] | void>;
   SetAutoApproveTools(on: boolean): Promise<void>;
   SetCollaborationMode(mode: string): Promise<void>;
   SetCollaborationModeForTab(tabID: string, mode: string): Promise<void>;
   SetToolApprovalMode(mode: string): Promise<void>;
-  SetToolApprovalModeForTab(tabID: string, mode: string): Promise<void>;
+  // Same drained-prompt-id contract as SetModeForTab.
+  SetToolApprovalModeForTab(tabID: string, mode: string): Promise<string[] | void>;
   SetGoal(goal: string): Promise<void>;
   SetGoalForTab(tabID: string, goal: string): Promise<void>;
   ResumeGoalForTab(tabID: string): Promise<boolean>;
@@ -952,6 +955,10 @@ function makeMockApp(): AppBindings {
   let cancelled = false;
   let pendingAskPreview = false;
   let pendingApprovalPreview = false;
+  // Mirrors the last emitted approval preview so mode switches can mirror the
+  // backend drain contract: only non-fresh tools auto-allow; plan/sandbox
+  // escape prompts stay pending and visible.
+  let pendingApprovalPreviewPrompt: { id: string; tool: string } | undefined;
   const globalWorkspaceRoot = "~/Library/Application Support/reasonix/global-workspace";
   let cwd = freshMock ? globalWorkspaceRoot : "~/projects/joyquant-db"; // mutable so PickWorkspace is visible in dev
   let workspaces = freshMock ? [] : ["~/projects/joyquant-db", "~/projects/joyquant-sys", "~/projects/reasonix", "~/projects/blade"];
@@ -1613,6 +1620,7 @@ function makeMockApp(): AppBindings {
         }
         if (tab.topicId === "topic_sys_coord") {
           pendingApprovalPreview = true;
+          pendingApprovalPreviewPrompt = { id: "mock-sys-confirm", tool: "bash" };
           emit({ kind: "reasoning", text: "我已经准备好执行同步脚本，但这个操作会影响本地 workspace，需要用户确认。" });
           await delay(160);
           emit({
@@ -1642,6 +1650,21 @@ function makeMockApp(): AppBindings {
   const emitMockTurnDone = () => {
     setMockTabRunning(currentMockTurnTabId(), false);
     emit({ kind: "turn_done" });
+  };
+  // Fresh user decisions never auto-allow on a posture switch (mirrors the
+  // backend's requiresFreshApprovalTool set).
+  const mockFreshApprovalTools = new Set(["exit_plan_mode", "sandbox_escape", "memory_remember", "memory_forget", "managed_config_write"]);
+  // Mirrors the backend drain contract for the mode-switch bindings: returns
+  // the prompt ids the new posture auto-allowed; fresh prompts stay pending.
+  const drainMockApprovalPreviews = (toolApprovalMode: string): string[] => {
+    if (toolApprovalMode !== "auto" && toolApprovalMode !== "yolo") return [];
+    const prompt = pendingApprovalPreviewPrompt;
+    if (!pendingApprovalPreview || !prompt || mockFreshApprovalTools.has(prompt.tool)) return [];
+    pendingApprovalPreview = false;
+    pendingApprovalPreviewPrompt = undefined;
+    emit({ kind: "message", text: `approval preview auto-allowed (${toolApprovalMode})` });
+    emitMockTurnDone();
+    return [prompt.id];
   };
   let mockTabs: TabMeta[] = noticePreviewMock ? [
     {
@@ -1747,6 +1770,7 @@ function makeMockApp(): AppBindings {
     window.setTimeout(() => {
       if (pendingApprovalPreview) return;
       pendingApprovalPreview = true;
+      pendingApprovalPreviewPrompt = { id: "mock-sandbox-escape-preview", tool: "sandbox_escape" };
       emitMockTurnStarted();
       emit({ kind: "reasoning", text: t("mock.sandboxEscapeReasoning") });
       emit({
@@ -1844,6 +1868,7 @@ function makeMockApp(): AppBindings {
       }
       if (trimmedInput === "/approve-preview" || trimmedInput === "approve preview" || trimmedInput === "approve预览") {
         pendingApprovalPreview = true;
+        pendingApprovalPreviewPrompt = { id: "mock-approval-preview", tool: "bash" };
         await delay(250);
         if (cancelled) return;
         emit({
@@ -1863,6 +1888,7 @@ function makeMockApp(): AppBindings {
         trimmedInput === "sandbox escape预览"
       ) {
         pendingApprovalPreview = true;
+        pendingApprovalPreviewPrompt = { id: "mock-sandbox-escape-preview", tool: "sandbox_escape" };
         await delay(250);
         if (cancelled) return;
         emit({
@@ -1882,6 +1908,7 @@ function makeMockApp(): AppBindings {
         trimmedInput === "plan approve预览"
       ) {
         pendingApprovalPreview = true;
+        pendingApprovalPreviewPrompt = { id: "mock-plan-approval-preview", tool: "exit_plan_mode" };
         await delay(250);
         if (cancelled) return;
         emit({
@@ -2157,6 +2184,7 @@ function makeMockApp(): AppBindings {
         async Approve(_id, allow, session, persist) {
           if (!pendingApprovalPreview) return;
           pendingApprovalPreview = false;
+          pendingApprovalPreviewPrompt = undefined;
           const suffix = persist ? "grant saved" : session ? "grant active this session" : "allowed once";
           emit({
             kind: "message",
@@ -2194,16 +2222,18 @@ function makeMockApp(): AppBindings {
         },
         async SetModeForTab(tabID, mode) {
           const nextMode = normalizeMode(mode);
-          mockTabs = mockTabs.map((tab) =>
-            tab.id === tabID
-              ? {
-                  ...tab,
-                  mode: nextMode,
-                  collaborationMode: normalizeCollaborationMode(undefined, tab.goal, nextMode),
-                  toolApprovalMode: mockToolApprovalModeAfterModeChange(tab.toolApprovalMode, nextMode),
-                }
-              : tab,
-          );
+          let nextToolApprovalMode: ToolApprovalMode | "" = "";
+          mockTabs = mockTabs.map((tab) => {
+            if (tab.id !== tabID) return tab;
+            nextToolApprovalMode = mockToolApprovalModeAfterModeChange(tab.toolApprovalMode, nextMode);
+            return {
+              ...tab,
+              mode: nextMode,
+              collaborationMode: normalizeCollaborationMode(undefined, tab.goal, nextMode),
+              toolApprovalMode: nextToolApprovalMode,
+            };
+          });
+          return drainMockApprovalPreviews(nextToolApprovalMode);
         },
         async SetCollaborationMode(mode) {
           const active = mockTabs.find((tab) => tab.active);
@@ -2239,6 +2269,7 @@ function makeMockApp(): AppBindings {
                 }
               : tab,
           );
+          return drainMockApprovalPreviews(next);
         },
         async SetGoal(goal) {
           const active = mockTabs.find((tab) => tab.active);

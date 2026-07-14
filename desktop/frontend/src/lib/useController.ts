@@ -159,6 +159,13 @@ interface State {
   // to reject (#6432 round 2: idle-applied-before-replay, and
   // running=true/pendingPrompt=false snapshots that never clear approval/ask).
   resolvedPromptId?: string;
+  // Monotonic per-tab prompt-id namespace generation. Approval/ask ids restart
+  // from "1" whenever the backend controller is rebuilt, so any id captured
+  // before the bump (an in-flight Approve/AnswerQuestion RPC) must not touch
+  // bookkeeping written after it — a late submit_prompt_failed from the old
+  // controller would otherwise erase the NEW controller's tombstone for the
+  // same numeric id and let a delayed replay resurrect an answered prompt.
+  promptEpoch: number;
   turnTokens: number;
   turnTotalTokens: number;
   turnCost: number;
@@ -196,6 +203,7 @@ export const initialState: State = {
   historyHasOlder: false,
   historyOlderLoading: false,
   backendActivationPending: false,
+  promptEpoch: 0,
   turnStartAt: 0,
   turnWaitAccumMs: 0,
   turnTokens: 0,
@@ -437,7 +445,8 @@ type Action =
   | { type: "local_notice"; level: "info" | "warn"; text: string }
   | { type: "clearApproval" }
   | { type: "clearAsk" }
-  | { type: "submit_prompt_failed"; id: string }
+  | { type: "approval_drained"; ids: string[] }
+  | { type: "submit_prompt_failed"; id: string; epoch: number }
   | { type: "controller_rebuilt" }
   | { type: "reset" };
 
@@ -1285,13 +1294,26 @@ export function reducer(s: State, a: Action): State {
       const next = { ...s, ask: undefined, pendingPrompt: Boolean(s.approval), resolvedPromptId: s.ask?.id ?? s.resolvedPromptId };
       return endPromptWaitIfIdle(next);
     }
+    // A tool-approval posture switch auto-allowed exactly these prompt ids on
+    // the backend. Hide + tombstone the visible approval only when it is one
+    // of them; anything else (plan/memory/sandbox-escape, ask-rule approvals
+    // under auto) is still genuinely pending there and must stay visible —
+    // tombstoning it would filter every future replay and strand the turn.
+    case "approval_drained": {
+      if (!s.approval || !a.ids.includes(s.approval.id)) return s;
+      const next = { ...s, approval: undefined, pendingPrompt: Boolean(s.ask), resolvedPromptId: s.approval.id };
+      return endPromptWaitIfIdle(next);
+    }
     // The optimistic clearApproval/clearAsk tombstone was wrong: the backend
     // call that was supposed to actually resolve this id failed, so the
     // prompt is still genuinely pending there. Undo the tombstone so the next
     // replay (proactively requested by the caller) can re-arm it instead of
-    // being silently swallowed forever.
+    // being silently swallowed forever. Only for the epoch the RPC was issued
+    // in: after a controller rebuild the same numeric id names a DIFFERENT
+    // prompt, and a late failure from the old controller must not erase the
+    // new controller's tombstone.
     case "submit_prompt_failed":
-      return s.resolvedPromptId === a.id ? { ...s, resolvedPromptId: undefined } : s;
+      return s.resolvedPromptId === a.id && s.promptEpoch === a.epoch ? { ...s, resolvedPromptId: undefined } : s;
     // A controller rebuild (model/effort/token-mode switch) replaces the
     // backend controller in place and its approval/ask ids restart from "1"
     // (per-controller counters, see sound.ts). Any id-anchored bookkeeping
@@ -1299,8 +1321,8 @@ export function reducer(s: State, a: Action): State {
     // dropped, or a genuinely new prompt reusing an old id would be misread
     // as a stale replay of an already-answered prompt and silently ignored.
     case "controller_rebuilt":
-      return { ...s, resolvedPromptId: undefined, promptArrivedId: undefined, promptArrivedAt: undefined };
-    case "reset": return { ...initialState, meta: s.meta, context: { used: 0, window: s.context.window, sessionTokens: 0, compactRatio: s.context.compactRatio }, balance: s.balance, effort: s.effort, jobs: s.jobs, hydrating: s.hydrating, hydrateReason: s.hydrateReason, hydrateError: s.hydrateError, hydrateHistoryLoaded: s.hydrateHistoryLoaded, hydratePlaceholderItems: s.hydratePlaceholderItems, backendActivationPending: s.backendActivationPending, sessionGen: s.sessionGen + 1 };
+      return { ...s, promptEpoch: s.promptEpoch + 1, resolvedPromptId: undefined, promptArrivedId: undefined, promptArrivedAt: undefined };
+    case "reset": return { ...initialState, meta: s.meta, context: { used: 0, window: s.context.window, sessionTokens: 0, compactRatio: s.context.compactRatio }, balance: s.balance, effort: s.effort, jobs: s.jobs, hydrating: s.hydrating, hydrateReason: s.hydrateReason, hydrateError: s.hydrateError, hydrateHistoryLoaded: s.hydrateHistoryLoaded, hydratePlaceholderItems: s.hydratePlaceholderItems, backendActivationPending: s.backendActivationPending, sessionGen: s.sessionGen + 1, promptEpoch: s.promptEpoch + 1 };
     case "event": return applyEvent(s, a.e);
     default: return s;
   }
@@ -2361,12 +2383,17 @@ export function useController() {
   const approve = useCallback((id: string, allow: boolean, session: boolean, persist: boolean) => {
     if (!activeTabId) return;
     const tabId = activeTabId;
+    // Pin the failure callback to the prompt-id epoch the RPC was issued in:
+    // if a controller rebuild lands while the call is in flight, a late
+    // failure must not undo bookkeeping the NEW controller wrote for the same
+    // numeric id (#6432 round 4).
+    const epoch = statesRef.current.get(tabId)?.promptEpoch ?? 0;
     dispatchTo(tabId, { type: "clearApproval" });
     app.ApproveTab(tabId, id, allow, session, persist).catch(() => {
       // The backend never actually resolved this prompt — undo the optimistic
       // tombstone and ask it to replay, so the approval card can come back
       // instead of being silently lost forever (#6432 round 3).
-      dispatchTo(tabId, { type: "submit_prompt_failed", id });
+      dispatchTo(tabId, { type: "submit_prompt_failed", id, epoch });
       replayPendingPromptsForActiveTab(tabId);
     });
   }, [activeTabId, dispatchTo]);
@@ -2374,17 +2401,23 @@ export function useController() {
   const answerQuestion = useCallback((id: string, answers: QuestionAnswer[]) => {
     if (!activeTabId) return;
     const tabId = activeTabId;
+    const epoch = statesRef.current.get(tabId)?.promptEpoch ?? 0;
     dispatchTo(tabId, { type: "clearAsk" });
     app.AnswerQuestionForTab(tabId, id, answers).catch(() => {
-      dispatchTo(tabId, { type: "submit_prompt_failed", id });
+      dispatchTo(tabId, { type: "submit_prompt_failed", id, epoch });
       replayPendingPromptsForActiveTab(tabId);
     });
   }, [activeTabId, dispatchTo]);
 
   const setControllerMode = useCallback((mode: Mode): Promise<void> => {
     if (!activeTabId) return Promise.resolve();
-    return app.SetModeForTab(activeTabId, mode).then(() => {
-      if (modeHasAutoApproveTools(mode) && activeTabId) dispatchTo(activeTabId, { type: "clearApproval" });
+    const tabId = activeTabId;
+    return app.SetModeForTab(tabId, mode).then((drained) => {
+      // Only dismiss the approvals the backend reports it actually
+      // auto-allowed. Fresh prompts (plan/memory/sandbox escape) survive a
+      // yolo switch backend-side and must stay visible (#6432 round 4).
+      const ids = Array.isArray(drained) ? drained : [];
+      if (ids.length) dispatchTo(tabId, { type: "approval_drained", ids });
     }).catch(() => {});
   }, [activeTabId, dispatchTo]);
 
@@ -2401,8 +2434,12 @@ export function useController() {
 
   const setToolApprovalModeForTab = useCallback(async (tabId: string, mode: ToolApprovalMode): Promise<void> => {
     if (!tabId) return;
-    await app.SetToolApprovalModeForTab(tabId, mode).catch(() => {});
-    if (mode === "auto" || mode === "yolo") dispatchTo(tabId, { type: "clearApproval" });
+    // Same contract as setControllerMode: the backend reports which pending
+    // approvals the new posture auto-allowed; anything else is still pending
+    // there (fresh prompts; ask-rule approvals under auto) and stays visible.
+    const drained = await app.SetToolApprovalModeForTab(tabId, mode).catch(() => undefined);
+    const ids = Array.isArray(drained) ? drained : [];
+    if (ids.length) dispatchTo(tabId, { type: "approval_drained", ids });
     await refreshMetaForTab(tabId, dispatchTo);
   }, [dispatchTo]);
 

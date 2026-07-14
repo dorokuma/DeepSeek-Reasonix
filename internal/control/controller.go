@@ -4516,15 +4516,28 @@ func (c *Controller) Jobs() []jobs.View {
 // executor's gate and leave sub-agents pinned to whatever mode was active
 // when the session booted.
 func (c *Controller) SetToolApprovalMode(mode string) {
+	c.ApplyToolApprovalMode(mode)
+}
+
+// ApplyToolApprovalMode is SetToolApprovalMode reporting which pending
+// approval prompt ids the new posture auto-allowed. Prompts NOT in the
+// returned set are still pending here — fresh user decisions (plan, memory,
+// sandbox escape) never drain, and auto keeps approvals an allow policy would
+// not cover — so a frontend must keep showing them instead of assuming the
+// posture switch resolved everything (#6432).
+func (c *Controller) ApplyToolApprovalMode(mode string) []string {
 	mode = normalizeToolApprovalMode(mode)
 	pending := c.approval.setMode(mode)
 	if c.subagentGate != nil {
 		c.subagentGate.Update(mode)
 	}
 	c.refreshInteractiveGate()
-	for _, reply := range pending {
-		reply <- approvalReply{allow: true}
+	drained := make([]string, 0, len(pending))
+	for _, p := range pending {
+		p.reply <- approvalReply{allow: true}
+		drained = append(drained, p.id)
 	}
+	return drained
 }
 
 func (c *Controller) ToolApprovalMode() string {
@@ -4553,6 +4566,12 @@ func (c *Controller) SetBypass(on bool) {
 // submitted right after a composer mode switch can't observe a half-applied
 // gate. Turning tool auto-approval on drains any pending tool approval.
 func (c *Controller) SetMode(plan, autoApproveTools bool) {
+	c.ApplyMode(plan, autoApproveTools)
+}
+
+// ApplyMode is SetMode reporting which pending approval prompt ids the tool
+// approval switch auto-allowed (see ApplyToolApprovalMode).
+func (c *Controller) ApplyMode(plan, autoApproveTools bool) []string {
 	c.mu.Lock()
 	c.planMode = plan
 	c.mu.Unlock()
@@ -4561,10 +4580,9 @@ func (c *Controller) SetMode(plan, autoApproveTools bool) {
 		c.executor.SetPlanMode(plan)
 	}
 	if autoApproveTools {
-		c.SetToolApprovalMode(ToolApprovalYolo)
-	} else {
-		c.SetToolApprovalMode(ToolApprovalAsk)
+		return c.ApplyToolApprovalMode(ToolApprovalYolo)
 	}
+	return c.ApplyToolApprovalMode(ToolApprovalAsk)
 }
 
 // AutoApproveTools reports whether YOLO/full-access tool auto-approval is on,

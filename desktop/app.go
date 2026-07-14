@@ -1385,10 +1385,14 @@ func (a *App) SetMode(mode string) {
 	a.SetModeForTab("", mode)
 }
 
-func (a *App) SetModeForTab(tabID, mode string) {
+// SetModeForTab returns the pending approval prompt ids the switch
+// auto-allowed, so the frontend dismisses exactly those cards and keeps the
+// ones the backend still holds (plan/memory/sandbox-escape never drain, and
+// auto keeps approvals an allow policy would not cover — #6432).
+func (a *App) SetModeForTab(tabID, mode string) []string {
 	tab := a.tabByID(tabID)
 	if tab == nil {
-		return
+		return nil
 	}
 	tab.turnStartMu.Lock()
 	defer tab.turnStartMu.Unlock()
@@ -1396,7 +1400,7 @@ func (a *App) SetModeForTab(tabID, mode string) {
 	a.mu.Lock()
 	if a.tabs[tab.ID] != tab {
 		a.mu.Unlock()
-		return
+		return nil
 	}
 	tab.mode = normalized
 	tab.toolApprovalMode = normalizeToolApprovalMode(tab.toolApprovalMode)
@@ -1409,36 +1413,57 @@ func (a *App) SetModeForTab(tabID, mode string) {
 	approvalMode := tab.toolApprovalMode
 	tabIDForSave := tab.ID
 	a.mu.Unlock()
-	applyTabModeToController(ctrl, normalized)
-	applyTabToolApprovalModeToController(ctrl, approvalMode)
+	drained := applyTabModeToController(ctrl, normalized)
+	drained = append(drained, applyTabToolApprovalModeToController(ctrl, approvalMode)...)
 	a.mu.Lock()
 	if a.tabs[tabIDForSave] == tab {
 		a.saveTabsLocked()
 	}
 	a.mu.Unlock()
+	return drained
 }
 
-func applyTabModeToController(ctrl control.SessionAPI, mode string) {
+// modeApplier / toolApprovalApplier are the drained-id-reporting variants of
+// SessionAPI's SetMode / SetToolApprovalMode. Asserted optionally so test
+// fakes implementing the plain SessionAPI keep compiling (they report nil).
+type modeApplier interface {
+	ApplyMode(plan, autoApproveTools bool) []string
+}
+
+type toolApprovalApplier interface {
+	ApplyToolApprovalMode(mode string) []string
+}
+
+func applyTabModeToController(ctrl control.SessionAPI, mode string) []string {
 	if ctrl == nil {
-		return
+		return nil
 	}
+	plan, yolo := false, false
 	switch normalizeTabMode(mode) {
 	case "plan":
-		ctrl.SetMode(true, false)
+		plan = true
 	case "yolo":
-		ctrl.SetMode(false, true)
+		yolo = true
 	case "plan-yolo":
-		ctrl.SetMode(true, true)
-	default:
-		ctrl.SetMode(false, false)
+		plan, yolo = true, true
 	}
+	if applier, ok := ctrl.(modeApplier); ok {
+		return applier.ApplyMode(plan, yolo)
+	}
+	ctrl.SetMode(plan, yolo)
+	return nil
 }
 
-func applyTabToolApprovalModeToController(ctrl control.SessionAPI, mode string) {
+func applyTabToolApprovalModeToController(ctrl control.SessionAPI, mode string) []string {
 	if ctrl == nil {
-		return
+		return nil
 	}
-	ctrl.SetToolApprovalMode(normalizeToolApprovalMode(mode))
+	mode = normalizeToolApprovalMode(mode)
+	if applier, ok := ctrl.(toolApprovalApplier); ok {
+		return applier.ApplyToolApprovalMode(mode)
+	}
+	ctrl.SetToolApprovalMode(mode)
+	return nil
 }
 
 func (a *App) currentModeForTab(tabID string) string {
@@ -5674,10 +5699,12 @@ func (a *App) SetToolApprovalMode(mode string) {
 	a.SetToolApprovalModeForTab("", mode)
 }
 
-func (a *App) SetToolApprovalModeForTab(tabID, mode string) {
+// SetToolApprovalModeForTab returns the pending approval prompt ids the
+// switch auto-allowed (see SetModeForTab).
+func (a *App) SetToolApprovalModeForTab(tabID, mode string) []string {
 	tab := a.tabByID(tabID)
 	if tab == nil {
-		return
+		return nil
 	}
 	tab.turnStartMu.Lock()
 	defer tab.turnStartMu.Unlock()
@@ -5685,19 +5712,20 @@ func (a *App) SetToolApprovalModeForTab(tabID, mode string) {
 	a.mu.Lock()
 	if a.tabs[tab.ID] != tab {
 		a.mu.Unlock()
-		return
+		return nil
 	}
 	tab.toolApprovalMode = mode
 	tab.mode = tabModeFromAxes(tabModeHasPlan(currentTabMode(tab)), mode == control.ToolApprovalYolo)
 	ctrl := tab.Ctrl
 	tabIDForSave := tab.ID
 	a.mu.Unlock()
-	applyTabToolApprovalModeToController(ctrl, mode)
+	drained := applyTabToolApprovalModeToController(ctrl, mode)
 	a.mu.Lock()
 	if a.tabs[tabIDForSave] == tab {
 		a.saveTabsLocked()
 	}
 	a.mu.Unlock()
+	return drained
 }
 
 // CommandInfo describes one available slash command for the composer's "/" menu.

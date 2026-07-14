@@ -158,7 +158,7 @@ eq(replayed.promptArrivedId, "plan-1", "same-id replay keeps the anchor id");
   const armed = reducer({ ...initialState }, { type: "event", e: planApprovalEvent });
   const answeredOptimistically = reducer(armed, { type: "clearApproval" });
   eq(answeredOptimistically.resolvedPromptId, "plan-1", "the optimistic answer records a tombstone before the backend call resolves");
-  const submitFailed = reducer(answeredOptimistically, { type: "submit_prompt_failed", id: "plan-1" });
+  const submitFailed = reducer(answeredOptimistically, { type: "submit_prompt_failed", id: "plan-1", epoch: answeredOptimistically.promptEpoch });
   eq(submitFailed.resolvedPromptId, undefined, "a failed submit undoes the tombstone for that id");
   const recovered = reducer(submitFailed, { type: "event", e: planApprovalEvent });
   eq(recovered.approval?.id, "plan-1", "a replay after a failed submit can recover the still-pending prompt");
@@ -168,8 +168,68 @@ eq(replayed.promptArrivedId, "plan-1", "same-id replay keeps the anchor id");
   const armed2 = reducer({ ...initialState }, { type: "event", e: { kind: "approval_request", approval: { id: "plan-2", tool: "exit_plan_mode", subject: "Approve plan" } } as WireEvent });
   const answered2 = reducer(armed2, { type: "clearApproval" });
   eq(answered2.resolvedPromptId, "plan-2", "answering the second prompt records its own tombstone");
-  const staleFailure = reducer(answered2, { type: "submit_prompt_failed", id: "plan-1" });
+  const staleFailure = reducer(answered2, { type: "submit_prompt_failed", id: "plan-1", epoch: answered2.promptEpoch });
   eq(staleFailure.resolvedPromptId, "plan-2", "a stale failure for an older id does not clobber the current tombstone");
+}
+
+// #6432 round 4, finding 1 (P1): a tool-approval posture switch (auto/yolo)
+// only auto-allows a SUBSET of pending approvals backend-side (drainLocked
+// keeps fresh plan/memory/sandbox-escape decisions pending, and auto keeps
+// approvals an allow policy would not cover). The frontend must dismiss +
+// tombstone only the prompt ids the backend reports as drained — blanket-
+// tombstoning the visible prompt would filter every future replay of a
+// prompt the backend still holds, stranding the turn with no card to answer.
+{
+  // Backend kept the fresh plan approval: not in the drained set → stays.
+  const armed = reducer({ ...initialState }, { type: "event", e: planApprovalEvent });
+  const notDrained = reducer(armed, { type: "approval_drained", ids: ["7"] });
+  eq(notDrained, armed, "a drain report not covering the visible approval leaves the state untouched");
+  eq(notDrained.approval?.id, "plan-1", "the still-pending plan approval card survives the yolo switch");
+  eq(notDrained.resolvedPromptId, undefined, "no tombstone is written for a prompt the backend still holds");
+  const replayed = reducer(notDrained, { type: "event", e: planApprovalEvent });
+  eq(replayed.approval?.id, "plan-1", "a later replay of the still-pending prompt re-arms it");
+
+  const emptyDrain = reducer(armed, { type: "approval_drained", ids: [] });
+  eq(emptyDrain, armed, "an empty drain report is a no-op");
+
+  // Backend drained the ordinary tool approval: dismissed + tombstoned so a
+  // delayed re-delivery cannot resurrect it (round 2 contract preserved).
+  const bashEvent = { kind: "approval_request", approval: { id: "bash-3", tool: "bash", subject: "rm -rf build" } } as WireEvent;
+  const armedBash = reducer({ ...initialState }, { type: "event", e: bashEvent });
+  const drained = reducer(armedBash, { type: "approval_drained", ids: ["bash-3"] });
+  eq(drained.approval, undefined, "a drained approval is dismissed");
+  eq(drained.resolvedPromptId, "bash-3", "a drained approval is tombstoned like an answered one");
+  const zombieReplay = reducer(drained, { type: "event", e: bashEvent });
+  eq(zombieReplay.approval, undefined, "a delayed re-delivery of the drained prompt stays suppressed");
+}
+
+// #6432 round 4, finding 2 (P2): a late submit failure from BEFORE a
+// controller rebuild must not undo the tombstone the NEW controller's answer
+// wrote for the same numeric id — approval ids restart from "1" per
+// controller, so the old failure names a different prompt.
+{
+  const armed = reducer({ ...initialState }, { type: "event", e: planApprovalEvent });
+  const epochA = armed.promptEpoch;
+  const answeredA = reducer(armed, { type: "clearApproval" });
+  // Controller rebuild lands while the epoch-A RPC is still in flight.
+  const rebuilt = reducer(answeredA, { type: "controller_rebuilt" });
+  eq(rebuilt.promptEpoch, epochA + 1, "a controller rebuild advances the prompt epoch");
+  // The rebuilt controller reissues id "plan-1"; the user answers it too.
+  const armedB = reducer(rebuilt, { type: "event", e: planApprovalEvent });
+  const answeredB = reducer(armedB, { type: "clearApproval" });
+  eq(answeredB.resolvedPromptId, "plan-1", "the new controller's answer records its own tombstone");
+  // The old controller's RPC failure finally lands, carrying the old epoch.
+  const staleEpochFailure = reducer(answeredB, { type: "submit_prompt_failed", id: "plan-1", epoch: epochA });
+  eq(staleEpochFailure.resolvedPromptId, "plan-1", "a failure from a pre-rebuild epoch cannot erase the new controller's tombstone");
+  const zombie = reducer(staleEpochFailure, { type: "event", e: planApprovalEvent });
+  eq(zombie.approval, undefined, "the answered prompt's delayed replay stays suppressed after the stale failure");
+  // Same-epoch failures still recover the genuinely-unresolved prompt.
+  const currentEpochFailure = reducer(answeredB, { type: "submit_prompt_failed", id: "plan-1", epoch: answeredB.promptEpoch });
+  eq(currentEpochFailure.resolvedPromptId, undefined, "a same-epoch failure still undoes the tombstone");
+  // reset() starts a new session (new controller, ids restart) — the epoch
+  // advances there too so pre-reset failures cannot touch post-reset state.
+  const resetState = reducer(answeredB, { type: "reset" });
+  eq(resetState.promptEpoch, answeredB.promptEpoch + 1, "a session reset advances the prompt epoch too");
 }
 
 // A genuinely new prompt (different id) after an answer re-anchors, so its own

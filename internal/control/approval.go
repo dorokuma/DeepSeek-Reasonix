@@ -299,9 +299,9 @@ func (a *approvalManager) mode() string {
 }
 
 // setMode applies a (pre-normalized) posture and drains any pending approvals
-// the new posture should auto-allow, returning their reply channels for the
-// caller to signal after unlocking.
-func (a *approvalManager) setMode(mode string) []chan approvalReply {
+// the new posture should auto-allow, returning them for the caller to signal
+// {allow:true} after unlocking.
+func (a *approvalManager) setMode(mode string) []drainedApproval {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.toolApprovalMode = mode
@@ -379,11 +379,18 @@ func (a *approvalManager) sessionGrantAllowsLocked(tool, subject string) bool {
 	return false
 }
 
+// drainedApproval is a pending approval removed by a posture switch, keeping
+// its prompt id so frontends can dismiss exactly the prompts the new posture
+// resolved (fresh/plan/memory prompts stay pending and must stay visible).
+type drainedApproval struct {
+	id    string
+	reply chan approvalReply
+}
+
 // drainLocked removes every pending approval the new posture should auto-allow
-// and returns their reply channels; caller holds a.mu and sends {allow:true}
-// after unlocking.
-func (a *approvalManager) drainLocked(includeExplicitAsk bool) []chan approvalReply {
-	pending := make([]chan approvalReply, 0, len(a.approvals))
+// and returns them; caller holds a.mu and sends {allow:true} after unlocking.
+func (a *approvalManager) drainLocked(includeExplicitAsk bool) []drainedApproval {
+	pending := make([]drainedApproval, 0, len(a.approvals))
 	for id, approval := range a.approvals {
 		if approval.fresh || requiresFreshApprovalTool(approval.tool) {
 			continue
@@ -392,7 +399,7 @@ func (a *approvalManager) drainLocked(includeExplicitAsk bool) []chan approvalRe
 			continue
 		}
 		delete(a.approvals, id)
-		pending = append(pending, approval.reply)
+		pending = append(pending, drainedApproval{id: id, reply: approval.reply})
 	}
 	return pending
 }
