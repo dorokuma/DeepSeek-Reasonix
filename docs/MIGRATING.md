@@ -102,7 +102,8 @@ and DeepSeek prefix-cache–oriented design.
   credential query values (token, api_key, password, ...) no longer enter the
   host-local identity or cache fingerprints, so rotating a credential keeps
   existing trust. Receipts and caches written by earlier builds migrate
-  automatically on first evaluation when nothing else changed; the read-only
+  automatically — at the pre-start identity check for eager and cache-miss
+  servers, or on first evaluation otherwise — when nothing else changed; the read-only
   legacy fingerprint calculator is scheduled for removal two minor releases
   after this rollout.
 - **Plan mode and permission policy are now independent**: Plan directs the
@@ -124,8 +125,9 @@ and DeepSeek prefix-cache–oriented design.
   writer-classified. New optional MCP-local fields
   (`default_tools_approval_mode`, `tools.<raw>.approval_mode`, and
   `approvals_reviewer`) default to the previous behavior when absent. MCP tools
-  declaring `destructiveHint: true` require a new review on every call and fail
-  closed when their configured reviewer is unavailable.
+  declaring `destructiveHint: true` require a fresh human approval on every
+  call — the configured reviewer is never consulted for them — and
+  non-interactive sessions fail closed.
 - **Read-only subagent research**: use `read_only_task` for generic isolated
   research in plan mode, or `read_only_skill` when the work should follow an
   existing skill. Both expose only read-only tools and safe foreground bash, do
