@@ -86,6 +86,7 @@ func (m multiEdit) Execute(ctx context.Context, args json.RawMessage) (string, e
 	if err != nil {
 		return "", fmt.Errorf("read %s: %w", p.Path, err)
 	}
+	originalContent := content
 
 	// Apply edits in order against the running in-memory buffer. Any failure
 	// returns before the write, leaving the file untouched — that's the
@@ -113,8 +114,9 @@ func (m multiEdit) Execute(ctx context.Context, args json.RawMessage) (string, e
 	if err := writeFileEncoded(p.Path, content, enc); err != nil {
 		return "", fmt.Errorf("write %s: %w", p.Path, err)
 	}
+	summary := fmt.Sprintf("multi_edit %s: %d edits applied (%d total replacements)", p.Path, len(p.Edits), applied)
 	if usedFuzzy {
-		return fmt.Sprintf("multi_edit %s: %d edits applied (%d total replacements) (fuzzy match)", p.Path, len(p.Edits), applied), nil
+		summary += " (fuzzy match)"
 	}
-	return fmt.Sprintf("multi_edit %s: %d edits applied (%d total replacements)", p.Path, len(p.Edits), applied), nil
+	return withActualPostWriteDiff(summary, p.Path, originalContent, content), nil
 }

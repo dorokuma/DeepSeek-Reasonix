@@ -182,7 +182,12 @@ func TestEditFile(t *testing.T) {
 	f := filepath.Join(t.TempDir(), "a.txt")
 	os.WriteFile(f, []byte("hello world\n"), 0o644)
 
-	runTool(t, editFile{}, map[string]any{"path": f, "old_string": "world", "new_string": "reasonix"})
+	out := runTool(t, editFile{}, map[string]any{"path": f, "old_string": "world", "new_string": "reasonix"})
+	for _, want := range []string{"Actual diff after write:", "-hello world", "+hello reasonix"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("edit result should contain %q in actual post-write diff:\n%s", want, out)
+		}
+	}
 	if b, _ := os.ReadFile(f); string(b) != "hello reasonix\n" {
 		t.Fatalf("after edit = %q", b)
 	}
@@ -215,6 +220,11 @@ func TestMultiEdit(t *testing.T) {
 	})
 	if !strings.Contains(out, "multi_edit") || !strings.Contains(out, "2 edits applied") {
 		t.Errorf("summary unexpected: %q", out)
+	}
+	for _, want := range []string{"Actual diff after write:", "+package new", "+func reasonix()"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("multi_edit result should contain %q in actual post-write diff:\n%s", want, out)
+		}
 	}
 	got, _ := os.ReadFile(f)
 	want := "package new\n\nfunc reasonix() {\n\treasonix()\n}\n"

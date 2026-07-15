@@ -304,12 +304,37 @@ func TestEditFileNotUniqueReportsMatchingLines(t *testing.T) {
 func TestEditFileDelete(t *testing.T) {
 	f := filepath.Join(t.TempDir(), "a.txt")
 	os.WriteFile(f, []byte("remove this line\nkeep this\n"), 0o644)
-	runTool(t, editFile{}, map[string]any{
+	out := runTool(t, editFile{}, map[string]any{
 		"path": f, "old_string": "remove this line\n", "new_string": "",
 	})
+	for _, want := range []string{"Actual diff after write:", "-remove this line"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("delete result should contain %q in actual post-write diff:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, " keep this") {
+		t.Fatalf("actual diff should not auto-upload unchanged neighboring lines:\n%s", out)
+	}
 	got, _ := os.ReadFile(f)
 	if string(got) != "keep this\n" {
 		t.Errorf("after delete = %q", got)
+	}
+}
+
+func TestEditFileActualDiffIsBounded(t *testing.T) {
+	f := filepath.Join(t.TempDir(), "large.txt")
+	old := strings.Repeat("old line with enough content to grow the diff\n", 300)
+	newText := strings.Repeat("new line with enough content to grow the diff\n", 300)
+	os.WriteFile(f, []byte(old), 0o644)
+
+	out := runTool(t, editFile{}, map[string]any{
+		"path": f, "old_string": old, "new_string": newText,
+	})
+	if len(out) > maxPostWriteDiffBytes+1024 {
+		t.Fatalf("bounded edit result is too large: %d bytes", len(out))
+	}
+	if !strings.Contains(out, postWriteDiffTruncated) {
+		t.Fatalf("bounded edit result should disclose truncation:\n%s", out)
 	}
 }
 

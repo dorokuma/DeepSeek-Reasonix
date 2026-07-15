@@ -3402,13 +3402,18 @@ func (a *Agent) staleAnchorEditBlock(call provider.ToolCall) (string, bool) {
 		return "", false
 	}
 	return fmt.Sprintf(
-		"blocked: [fresh read required] %q targets %s, which was already modified earlier this turn. Re-read the current file with read_file without offset/limit before another anchor-based edit, or combine the final same-file changes in one multi_edit call. This prevents stale old_string anchors and half-deleted ranges.",
+		"blocked: [fresh read required] %q targets %s, which was already modified earlier this turn. Re-read the current file with read_file without offset/limit before another range deletion, or use multi_edit with exact replacements when possible. This prevents stale start/end anchors from selecting an unintended destructive span.",
 		call.Name, strings.Join(rec.Paths, ", ")), true
 }
 
 func anchorBasedEditTool(name string) bool {
 	switch name {
-	case "edit_file", "delete_range":
+	// edit_file synchronously reads the current file, requires a unique exact
+	// or narrowly fuzzy match, and returns the actual applied diff. Let it try
+	// optimistically; a stale old_string fails without writing and tells the
+	// model to re-read. delete_range remains guarded because two independently
+	// resolved anchors can otherwise select an unintended destructive span.
+	case "delete_range":
 		return true
 	default:
 		return false
