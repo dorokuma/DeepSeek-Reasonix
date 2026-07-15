@@ -124,6 +124,9 @@ func loadForRoot(root string, migrateOnDisk bool) (*Config, error) {
 	if err != nil {
 		return nil, err
 	}
+	for i := range entries {
+		entries[i] = restrictProjectMCPApprovalPolicy(entries[i])
+	}
 	cfg.mergeMCPJSON(entries)
 
 	// Lowest priority before the one-time v1.9.1 MCP migration: the v0.x
@@ -381,6 +384,7 @@ func normalizeLegacyEffort(c *Config) {
 func mergeTOMLPlugins(paths []string) ([]PluginEntry, error) {
 	var merged []PluginEntry
 	index := map[string]int{}
+	userApprovalPolicies := map[string]PluginEntry{}
 	for _, path := range paths {
 		if _, err := os.Stat(path); err != nil {
 			continue
@@ -391,6 +395,14 @@ func mergeTOMLPlugins(paths []string) ([]PluginEntry, error) {
 		}
 		for _, p := range f.Plugins {
 			p, _ = NormalizePluginCommandLine(p)
+			if isUserConfigPath(path) {
+				userApprovalPolicies[p.Name] = p
+			} else {
+				p = restrictProjectMCPApprovalPolicy(p)
+				if userPolicy, ok := userApprovalPolicies[p.Name]; ok {
+					p = inheritUserMCPApprovalPolicy(p, userPolicy)
+				}
+			}
 			if i, ok := index[p.Name]; ok {
 				merged[i] = p
 				continue
@@ -400,6 +412,47 @@ func mergeTOMLPlugins(paths []string) ([]PluginEntry, error) {
 		}
 	}
 	return merged, nil
+}
+
+func inheritUserMCPApprovalPolicy(project, user PluginEntry) PluginEntry {
+	project.DefaultToolsApprovalMode = user.DefaultToolsApprovalMode
+	project.Tools = cloneMCPToolPolicies(user.Tools)
+	project.ApprovalsReviewer = user.ApprovalsReviewer
+	return project
+}
+
+// restrictProjectMCPApprovalPolicy keeps repository-controlled configuration
+// monotonic with the user's global permission posture. Project files may make
+// MCP calls stricter, but cannot silently auto-approve writers or route a human
+// prompt to an automated reviewer.
+func restrictProjectMCPApprovalPolicy(p PluginEntry) PluginEntry {
+	if strings.EqualFold(strings.TrimSpace(p.DefaultToolsApprovalMode), "approve") {
+		p.DefaultToolsApprovalMode = "auto"
+	}
+	if len(p.Tools) > 0 {
+		p.Tools = cloneMCPToolPolicies(p.Tools)
+		for name, policy := range p.Tools {
+			if strings.EqualFold(strings.TrimSpace(policy.ApprovalMode), "approve") {
+				policy.ApprovalMode = "auto"
+				p.Tools[name] = policy
+			}
+		}
+	}
+	if strings.EqualFold(strings.TrimSpace(p.ApprovalsReviewer), "auto_review") {
+		p.ApprovalsReviewer = "user"
+	}
+	return p
+}
+
+func cloneMCPToolPolicies(in map[string]MCPToolPolicy) map[string]MCPToolPolicy {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[string]MCPToolPolicy, len(in))
+	for name, policy := range in {
+		out[name] = policy
+	}
+	return out
 }
 
 // mergeTOMLProviders merges [[providers]] across TOML sources by provider name.

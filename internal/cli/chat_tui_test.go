@@ -2568,6 +2568,25 @@ func TestFreshApprovalBannerUsesConventionalDenyChoice(t *testing.T) {
 	}
 }
 
+func TestDynamicMCPFreshApprovalHidesRememberedChoices(t *testing.T) {
+	i18n.DetectLanguage("en")
+	m := newTestChatTUI()
+	m.width = 120
+	m.pendingApproval = &event.Approval{
+		ID:      "approval-mcp-1",
+		Tool:    "mcp__srv__wipe",
+		Subject: "MCP srv/wipe declares destructive side effects",
+		Fresh:   true,
+	}
+	banner := m.renderApprovalBanner()
+	if !strings.Contains(banner, "1. Allow once") || !strings.Contains(banner, "2. Deny") {
+		t.Fatalf("approval banner = %q, want fresh two-choice prompt", banner)
+	}
+	if strings.Contains(banner, "for this session") || strings.Contains(banner, "Always allow") {
+		t.Fatalf("approval banner offers remembered grant for destructive MCP: %q", banner)
+	}
+}
+
 func TestFreshApprovalSessionChoiceIsLimitedToSandboxEscape(t *testing.T) {
 	if !freshApprovalAllowsSession(control.SandboxEscapeApprovalTool) {
 		t.Fatal("sandbox escape should allow an explicit session choice")

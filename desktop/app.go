@@ -41,13 +41,16 @@ import (
 	"reasonix/internal/fileref"
 	fileenc "reasonix/internal/fileutil/encoding"
 	"reasonix/internal/i18n"
+	"reasonix/internal/mcpcatalog"
 	"reasonix/internal/mcpdiag"
+	"reasonix/internal/mcptrust"
 	"reasonix/internal/memory"
 	"reasonix/internal/notify"
 	"reasonix/internal/plugin"
 	"reasonix/internal/pluginpkg"
 	"reasonix/internal/provider"
 	"reasonix/internal/repair"
+	"reasonix/internal/sandbox"
 	"reasonix/internal/skill"
 	"reasonix/internal/store"
 	"reasonix/internal/tool"
@@ -1423,15 +1426,18 @@ func (a *App) ReplayPendingPrompts() {
 	}
 }
 
-// SetPlanMode toggles the read-only plan axis while preserving the current
-// tool-auto-approval axis.
+// SetPlanMode toggles the plan-first workflow while preserving the current
+// tool-approval posture and sandbox settings.
 func (a *App) SetPlanMode(on bool) {
 	a.setPlanModeForTab("", on)
 }
 
 func (a *App) setPlanModeForTab(tabID string, on bool) {
-	current := a.currentModeForTab(tabID)
-	a.SetModeForTab(tabID, tabModeFromAxes(on, tabModeHasAutoApproveTools(current)))
+	if on {
+		a.SetCollaborationModeForTab(tabID, "plan")
+		return
+	}
+	a.SetCollaborationModeForTab(tabID, "normal")
 }
 
 // SetMode applies a composer gating mode ("plan" | "yolo" | "plan-yolo" |
@@ -1523,17 +1529,6 @@ func applyTabToolApprovalModeToController(ctrl control.SessionAPI, mode string) 
 	return nil
 }
 
-func (a *App) currentModeForTab(tabID string) string {
-	a.mu.RLock()
-	tab := a.tabByIDLocked(tabID)
-	mode := "normal"
-	if tab != nil {
-		mode = currentTabMode(tab)
-	}
-	a.mu.RUnlock()
-	return mode
-}
-
 func normalizeCollaborationMode(mode string) string {
 	switch strings.ToLower(strings.TrimSpace(mode)) {
 	case "plan":
@@ -1557,12 +1552,12 @@ func (a *App) SetCollaborationModeForTab(tabID, mode string) {
 	tab.turnStartMu.Lock()
 	defer tab.turnStartMu.Unlock()
 	mode = normalizeCollaborationMode(mode)
+	approvalMode := a.tabRuntimeSnapshot(tab).currentToolApprovalMode()
 	a.mu.Lock()
 	if a.tabs[tab.ID] != tab {
 		a.mu.Unlock()
 		return
 	}
-	approvalMode := currentTabToolApprovalMode(tab)
 	switch mode {
 	case "plan":
 		tab.mode = tabModeFromAxes(true, approvalMode == control.ToolApprovalYolo)
@@ -5643,6 +5638,7 @@ func (a *App) SetGoalForTab(tabID, goal string) {
 	tab.turnStartMu.Lock()
 	defer tab.turnStartMu.Unlock()
 	goal = strings.TrimSpace(goal)
+	approvalMode := a.tabRuntimeSnapshot(tab).currentToolApprovalMode()
 	a.mu.Lock()
 	if a.tabs[tab.ID] != tab {
 		a.mu.Unlock()
@@ -5650,7 +5646,7 @@ func (a *App) SetGoalForTab(tabID, goal string) {
 	}
 	tab.goal = goal
 	if goal != "" {
-		tab.mode = tabModeFromAxes(false, currentTabToolApprovalMode(tab) == control.ToolApprovalYolo)
+		tab.mode = tabModeFromAxes(false, approvalMode == control.ToolApprovalYolo)
 	}
 	ctrl := tab.Ctrl
 	plan := tabModeHasPlan(tab.mode)
@@ -5742,13 +5738,14 @@ func (a *App) SetToolApprovalModeForTab(tabID, mode string) []string {
 	tab.turnStartMu.Lock()
 	defer tab.turnStartMu.Unlock()
 	mode = normalizeToolApprovalMode(mode)
+	plan := tabModeHasPlan(a.tabRuntimeSnapshot(tab).currentMode())
 	a.mu.Lock()
 	if a.tabs[tab.ID] != tab {
 		a.mu.Unlock()
 		return nil
 	}
 	tab.toolApprovalMode = mode
-	tab.mode = tabModeFromAxes(tabModeHasPlan(currentTabMode(tab)), mode == control.ToolApprovalYolo)
+	tab.mode = tabModeFromAxes(plan, mode == control.ToolApprovalYolo)
 	ctrl := tab.Ctrl
 	tabIDForSave := tab.ID
 	a.mu.Unlock()
@@ -5915,38 +5912,82 @@ type SkillsSettingsView struct {
 // the connection error), "initializing" (background startup in progress), or
 // "disabled".
 type ServerView struct {
-	Name                 string     `json:"name"`
-	Transport            string     `json:"transport"`
-	Status               string     `json:"status"`
-	StartIntent          string     `json:"startIntent,omitempty"`
-	RuntimeState         string     `json:"runtimeState,omitempty"`
-	BuiltIn              bool       `json:"builtIn,omitempty"`
-	Configured           bool       `json:"configured,omitempty"`
-	AutoStart            bool       `json:"autoStart"`
-	Tier                 string     `json:"tier,omitempty"`
-	Command              string     `json:"command,omitempty"`
-	Args                 []string   `json:"args,omitempty"`
-	URL                  string     `json:"url,omitempty"`
-	EnvKeys              []string   `json:"envKeys,omitempty"`
-	HeaderKeys           []string   `json:"headerKeys,omitempty"`
-	Tools                int        `json:"tools"`
-	Prompts              int        `json:"prompts"`
-	Resources            int        `json:"resources"`
-	HasTools             bool       `json:"hasTools,omitempty"`
-	Error                string     `json:"error,omitempty"`
-	ToolList             []ToolView `json:"toolList,omitempty"`
-	TrustedReadOnlyTools []string   `json:"trustedReadOnlyTools,omitempty"`
-	AuthStatus           string     `json:"authStatus,omitempty"`
-	AuthURL              string     `json:"authUrl,omitempty"`
-	AuthConfigured       bool       `json:"authConfigured,omitempty"`
-	ManagedByPlugin      string     `json:"managedByPlugin,omitempty"`
+	Name                     string                          `json:"name"`
+	Transport                string                          `json:"transport"`
+	Status                   string                          `json:"status"`
+	StartIntent              string                          `json:"startIntent,omitempty"`
+	RuntimeState             string                          `json:"runtimeState,omitempty"`
+	BuiltIn                  bool                            `json:"builtIn,omitempty"`
+	Configured               bool                            `json:"configured,omitempty"`
+	AutoStart                bool                            `json:"autoStart"`
+	Tier                     string                          `json:"tier,omitempty"`
+	Command                  string                          `json:"command,omitempty"`
+	Args                     []string                        `json:"args,omitempty"`
+	URL                      string                          `json:"url,omitempty"`
+	EnvKeys                  []string                        `json:"envKeys,omitempty"`
+	HeaderKeys               []string                        `json:"headerKeys,omitempty"`
+	Tools                    int                             `json:"tools"`
+	Prompts                  int                             `json:"prompts"`
+	Resources                int                             `json:"resources"`
+	HasTools                 bool                            `json:"hasTools,omitempty"`
+	Error                    string                          `json:"error,omitempty"`
+	ToolList                 []ToolView                      `json:"toolList,omitempty"`
+	TrustedReadOnlyTools     []string                        `json:"trustedReadOnlyTools,omitempty"`
+	CallTimeoutSeconds       int                             `json:"callTimeoutSeconds,omitempty"`
+	ToolTimeoutSeconds       map[string]int                  `json:"toolTimeoutSeconds,omitempty"`
+	DefaultToolsApprovalMode string                          `json:"defaultToolsApprovalMode,omitempty"`
+	ToolPolicies             map[string]config.MCPToolPolicy `json:"toolPolicies,omitempty"`
+	ApprovalsReviewer        string                          `json:"approvalsReviewer,omitempty"`
+	AuthStatus               string                          `json:"authStatus,omitempty"`
+	AuthURL                  string                          `json:"authUrl,omitempty"`
+	AuthConfigured           bool                            `json:"authConfigured,omitempty"`
+	ManagedByPlugin          string                          `json:"managedByPlugin,omitempty"`
+	TrustState               string                          `json:"trustState"`
+	TrustSource              string                          `json:"trustSource,omitempty"`
+	TrustScope               string                          `json:"trustScope,omitempty"`
+	IsolationState           string                          `json:"isolationState"`
+	IsolationReason          string                          `json:"isolationReason,omitempty"`
+	IdentityChanged          bool                            `json:"identityChanged,omitempty"`
+	ChangedTools             []string                        `json:"changedTools"`
+	ToolChanges              []MCPToolTrustChangeView        `json:"toolChanges"`
+	CatalogSequence          uint64                          `json:"catalogSequence,omitempty"`
+	VerifiedVersion          string                          `json:"verifiedVersion,omitempty"`
 }
 
 type ToolView struct {
-	Name         string `json:"name"`
-	Description  string `json:"description"`
-	ReadOnlyHint bool   `json:"readOnlyHint,omitempty"`
-	SchemaError  string `json:"schemaError,omitempty"`
+	Name            string `json:"name"`
+	Description     string `json:"description"`
+	ReadOnlyHint    bool   `json:"readOnlyHint,omitempty"`
+	DestructiveHint bool   `json:"destructiveHint,omitempty"`
+	SchemaError     string `json:"schemaError,omitempty"`
+	TrustedReader   bool   `json:"trustedReader,omitempty"`
+}
+
+type MCPTrustInspectionView struct {
+	Name            string                   `json:"name"`
+	TrustState      string                   `json:"trustState"`
+	TrustSource     string                   `json:"trustSource,omitempty"`
+	TrustScope      string                   `json:"trustScope,omitempty"`
+	IsolationState  string                   `json:"isolationState"`
+	IsolationReason string                   `json:"isolationReason,omitempty"`
+	IdentityChanged bool                     `json:"identityChanged,omitempty"`
+	ChangedTools    []string                 `json:"changedTools"`
+	ToolChanges     []MCPToolTrustChangeView `json:"toolChanges"`
+	Readers         []string                 `json:"readers"`
+	Writers         []string                 `json:"writers"`
+	Destructive     []string                 `json:"destructive"`
+}
+
+type MCPToolTrustChangeView struct {
+	Name string `json:"name"`
+	Kind string `json:"kind"`
+}
+
+type MCPCatalogRefreshView struct {
+	Source   string `json:"source"`
+	Sequence uint64 `json:"sequence"`
+	Offline  bool   `json:"offline"`
+	Stale    bool   `json:"stale"`
 }
 
 // SkillView is one discoverable skill for the drawer. Also backs the
@@ -6021,6 +6062,290 @@ func (a *App) Capabilities() CapabilitiesView {
 // skill discovery.
 func (a *App) MCPServers() []ServerView {
 	return a.mcpServersView()
+}
+
+// InspectMCPTrust performs only initialize/tools-list when the server is not
+// already connected. No MCP tool is invoked.
+func (a *App) InspectMCPTrust(name string) (MCPTrustInspectionView, error) {
+	ctrl := a.activeCtrl()
+	if ctrl == nil {
+		return MCPTrustInspectionView{}, fmt.Errorf("no active session")
+	}
+	var inspection plugin.TrustInspection
+	var err error
+	if host := ctrl.Host(); host != nil && host.HasClient(name) {
+		inspection, err = host.InspectTrust(name)
+	} else {
+		var spec plugin.Spec
+		spec, err = a.mcpTrustSpec(name)
+		if err == nil {
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			inspection, err = plugin.InspectSpec(ctx, spec)
+		}
+	}
+	if err != nil {
+		return MCPTrustInspectionView{}, err
+	}
+	a.recordMCPSecurityMetric("mcp_trust_prompt", "total")
+	if inspection.Security.IdentityChanged {
+		a.recordMCPSecurityMetric("mcp_trust_drift", "identity")
+	} else if len(inspection.Security.ChangedTools) > 0 {
+		a.recordMCPSecurityMetric("mcp_trust_drift", "capability")
+	}
+	if inspection.Security.IsolationState == mcptrust.IsolationUnavailableUnconfined {
+		a.recordMCPSecurityMetric("mcp_isolation", "unavailable_unconfined")
+	}
+	return mcpTrustInspectionView(inspection), nil
+}
+
+// SetMCPTrust grants session/workspace trust or revokes it. The receipt remains
+// host-local and never modifies the project MCP configuration.
+func (a *App) SetMCPTrust(name, decision string) error {
+	a.runtimeRebuildMu.Lock()
+	defer a.runtimeRebuildMu.Unlock()
+
+	ctrl := a.activeCtrl()
+	if ctrl == nil {
+		return fmt.Errorf("no active session")
+	}
+	decision = strings.ToLower(strings.TrimSpace(decision))
+	host := ctrl.Host()
+	controllers := a.mcpControllersSharingHost(host, name, ctrl)
+	for _, target := range controllers {
+		if controllerHasActiveRuntimeWork(target.ctrl) {
+			return rebuildControllerActiveWorkError("MCP trust")
+		}
+	}
+	if decision != "workspace" && host != nil && host.HasClient(name) {
+		if err := host.SetTrust(name, decision); err != nil {
+			return err
+		}
+		a.recordMCPSecurityMetric("mcp_trust_source", decision)
+		return nil
+	}
+	spec, err := a.mcpTrustSpec(name)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := plugin.SetSpecTrust(ctx, spec, decision); err != nil {
+		return err
+	}
+	if decision != "workspace" || host == nil || !host.HasClient(name) {
+		a.recordMCPSecurityMetric("mcp_trust_source", decision)
+		return nil
+	}
+	entry, found, err := a.desktopMCPServerForEdit(name)
+	if err != nil {
+		return err
+	}
+	if !found {
+		return fmt.Errorf("trusted MCP server %q but could not reload its configuration", name)
+	}
+	// Every controller sharing this Host has its own provider-visible Registry.
+	// Hide the old tools in all of them before replacing the one shared client;
+	// otherwise sibling tabs keep remoteTool values backed by the closed client.
+	for _, target := range controllers {
+		target.ctrl.UnregisterMCPServerTools(name)
+	}
+	ctrl.DisconnectMCPServer(name)
+
+	// Establish the exact locked server once, then have every enabled sibling
+	// attach to that shared client and refresh its own Registry. Per-tab disabled
+	// state is preserved: those registries remain suspended.
+	var startErrors []error
+	connectedTarget := -1
+	for i, target := range controllers {
+		if !target.enabled {
+			continue
+		}
+		if _, err := target.ctrl.ConnectMCPServer(entry); err != nil {
+			startErrors = append(startErrors, err)
+			continue
+		}
+		connectedTarget = i
+		break
+	}
+	if connectedTarget < 0 {
+		if len(startErrors) == 0 {
+			// All tabs disabled this server. Keeping it disconnected preserves
+			// their explicit UI state; enabling a tab will reconnect on demand.
+			a.recordMCPSecurityMetric("mcp_trust_source", decision)
+			return nil
+		}
+		err := errors.Join(startErrors...)
+		recordMCPFailure(ctrl, entry, err)
+		return fmt.Errorf("MCP trust was saved, but reconnecting the exact locked server failed: %w", err)
+	}
+
+	var refreshErrors []error
+	for i, target := range controllers {
+		if !target.enabled || i == connectedTarget {
+			continue
+		}
+		if _, err := target.ctrl.ConnectMCPServer(entry); err != nil {
+			refreshErrors = append(refreshErrors, err)
+		}
+	}
+	if len(refreshErrors) > 0 {
+		err := errors.Join(refreshErrors...)
+		recordMCPFailure(ctrl, entry, err)
+		return fmt.Errorf("MCP trust was saved, but refreshing one or more tabs failed: %w", err)
+	}
+	a.recordMCPSecurityMetric("mcp_trust_source", decision)
+	return nil
+}
+
+type mcpControllerTarget struct {
+	ctrl    control.SessionAPI
+	enabled bool
+}
+
+// mcpControllersSharingHost snapshots visible and detached runtimes before
+// calling controller methods. App.mu is never held across Host/controller
+// locks or network work. preferred (normally the active tab) is returned first.
+func (a *App) mcpControllersSharingHost(host *plugin.Host, name string, preferred control.SessionAPI) []mcpControllerTarget {
+	if host == nil {
+		return []mcpControllerTarget{{ctrl: preferred, enabled: true}}
+	}
+	a.mu.RLock()
+	candidates := make([]mcpControllerTarget, 0, len(a.tabs)+len(a.detachedSessions))
+	for _, tab := range a.runtimeTabsLocked() {
+		if tab == nil || tab.Ctrl == nil {
+			continue
+		}
+		_, disabled := tab.disabledMCP[name]
+		candidates = append(candidates, mcpControllerTarget{ctrl: tab.Ctrl, enabled: !disabled})
+	}
+	a.mu.RUnlock()
+
+	byController := make(map[control.SessionAPI]int, len(candidates))
+	targets := make([]mcpControllerTarget, 0, len(candidates))
+	for _, candidate := range candidates {
+		if candidate.ctrl.Host() != host {
+			continue
+		}
+		if idx, ok := byController[candidate.ctrl]; ok {
+			targets[idx].enabled = targets[idx].enabled || candidate.enabled
+			continue
+		}
+		byController[candidate.ctrl] = len(targets)
+		targets = append(targets, candidate)
+	}
+	if len(targets) == 0 {
+		return []mcpControllerTarget{{ctrl: preferred, enabled: true}}
+	}
+	if idx, ok := byController[preferred]; ok && idx > 0 {
+		targets[0], targets[idx] = targets[idx], targets[0]
+	}
+	return targets
+}
+
+func (a *App) RefreshMCPCatalog() (MCPCatalogRefreshView, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	result, err := (mcpcatalog.Loader{CacheDir: config.CacheDir()}).Load(ctx, true)
+	if err != nil {
+		a.recordMCPSecurityMetric("mcp_catalog_verify", "failed")
+		return MCPCatalogRefreshView{}, err
+	}
+	if result.Source == mcpcatalog.SourceRemote {
+		a.recordMCPSecurityMetric("mcp_catalog_verify", "remote_valid")
+	} else {
+		a.recordMCPSecurityMetric("mcp_catalog_verify", "offline_snapshot")
+	}
+	// A manual refresh is an explicit security action, so apply newly fetched
+	// revocations to every live shared host immediately instead of waiting for a
+	// restart or the six-hour background refresh window.
+	a.mu.RLock()
+	controllers := make([]control.SessionAPI, 0, len(a.tabs)+len(a.detachedSessions))
+	for _, tab := range a.runtimeTabsLocked() {
+		if tab != nil && tab.Ctrl != nil {
+			controllers = append(controllers, tab.Ctrl)
+		}
+	}
+	a.mu.RUnlock()
+	hosts := map[*plugin.Host]struct{}{}
+	for _, ctrl := range controllers {
+		if host := ctrl.Host(); host != nil {
+			hosts[host] = struct{}{}
+		}
+	}
+	revoked := result.Index.RevokedEntryIDs()
+	for host := range hosts {
+		host.ApplyCatalogRevocations(revoked)
+	}
+	return MCPCatalogRefreshView{Source: string(result.Source), Sequence: result.Index.Sequence, Offline: result.Offline, Stale: result.Stale}, nil
+}
+
+func (a *App) recordMCPSecurityMetric(signal, bucket string) {
+	if version == "dev" {
+		return
+	}
+	if metrics := a.metrics.Load(); metrics != nil {
+		metrics.inc(signal, bucket)
+		metrics.persist()
+	}
+}
+
+func (a *App) mcpTrustSpec(name string) (plugin.Spec, error) {
+	a.mu.RLock()
+	tab := a.activeTabLocked()
+	root := ""
+	if tab != nil {
+		root = tab.WorkspaceRoot
+	}
+	a.mu.RUnlock()
+	if tab == nil {
+		return plugin.Spec{}, fmt.Errorf("no active workspace")
+	}
+	cfg, err := config.LoadForRoot(root)
+	if err != nil {
+		return plugin.Spec{}, err
+	}
+	var entry *config.PluginEntry
+	for i := range cfg.Plugins {
+		if cfg.Plugins[i].Name == name {
+			entry = &cfg.Plugins[i]
+			break
+		}
+	}
+	if entry == nil {
+		return plugin.Spec{}, fmt.Errorf("no configured MCP server named %q", name)
+	}
+	specs := boot.PluginSpecsForRootWithOptions([]config.PluginEntry{*entry}, root, boot.PluginSpecOptions{
+		DefaultCallTimeout: time.Duration(cfg.MCPCallTimeoutSeconds()) * time.Second,
+		TrustManager:       mcptrust.ForWorkspace(config.ReasonixHomeDir(), root),
+		ConfigSource:       "workspace_config", StateHome: config.ReasonixHomeDir(),
+		WriterRoots: cfg.WriteRootsForRoot(root), ForbidReadRoots: cfg.ForbidReadRootsForRoot(root),
+		Network:         cfg.Sandbox.Network,
+		OfficialServers: boot.LoadOfficialMCPTrust(context.Background(), cfg),
+	})
+	if len(specs) != 1 {
+		return plugin.Spec{}, fmt.Errorf("failed to build MCP server %q", name)
+	}
+	return specs[0], nil
+}
+
+func mcpTrustInspectionView(in plugin.TrustInspection) MCPTrustInspectionView {
+	return MCPTrustInspectionView{
+		Name: in.Security.Name, TrustState: string(in.Security.TrustState),
+		TrustSource: string(in.Security.TrustSource), TrustScope: string(in.Security.TrustScope),
+		IsolationState: string(in.Security.IsolationState), IsolationReason: in.Security.IsolationReason, IdentityChanged: in.Security.IdentityChanged,
+		ChangedTools: append([]string{}, in.Security.ChangedTools...), Readers: append([]string{}, in.Readers...),
+		ToolChanges: mcpToolTrustChangeViews(in.Security.ToolChanges),
+		Writers:     append([]string{}, in.Writers...), Destructive: append([]string{}, in.Destructive...),
+	}
+}
+
+func mcpToolTrustChangeViews(changes []mcptrust.ToolChange) []MCPToolTrustChangeView {
+	out := make([]MCPToolTrustChangeView, 0, len(changes))
+	for _, change := range changes {
+		out = append(out, MCPToolTrustChangeView{Name: change.Name, Kind: change.Kind})
+	}
+	return out
 }
 
 // SkillsSettings returns the skills management snapshot without MCP status.
@@ -6152,6 +6477,10 @@ func (a *App) mcpServersView() []ServerView {
 		}
 	}
 	if h := ctrl.Host(); h != nil {
+		securityByName := map[string]plugin.SecurityStatus{}
+		for _, status := range h.SecurityStatuses() {
+			securityByName[status.Name] = status
+		}
 		for _, s := range h.Servers() {
 			if disabledView, ok := disabled[s.Name]; ok {
 				disabledView.Status = "disabled"
@@ -6175,6 +6504,7 @@ func (a *App) mcpServersView() []ServerView {
 				HasTools: s.HasTools,
 				ToolList: pluginToolsToView(s.ToolList),
 			}
+			applyMCPTrustStatus(&view, securityByName[s.Name])
 			if p, ok := configured[s.Name]; ok {
 				view = withPluginConfig(view, p)
 			}
@@ -6185,6 +6515,7 @@ func (a *App) mcpServersView() []ServerView {
 			view := ServerView{
 				Name: f.Name, Transport: f.Transport, Status: "failed", RuntimeState: "issue", Error: f.Error,
 			}
+			applyMCPTrustStatus(&view, securityByName[f.Name])
 			if p, ok := configured[f.Name]; ok {
 				view = withPluginConfig(view, p)
 			}
@@ -6234,6 +6565,24 @@ func (a *App) mcpServersView() []ServerView {
 	out = orderServerViews(out, order)
 	for i := range out {
 		out[i].ManagedByPlugin = managedByPlugin[out[i].Name]
+		if out[i].TrustState == "" {
+			out[i].TrustState = string(mcptrust.TrustUntrusted)
+		}
+		if out[i].IsolationState == "" {
+			if out[i].Transport == "http" || out[i].Transport == "streamable-http" || out[i].Transport == "streamable_http" {
+				out[i].IsolationState = string(mcptrust.IsolationNotApplicable)
+			} else if sandbox.Available() {
+				out[i].IsolationState = string(mcptrust.IsolationEnforced)
+			} else {
+				out[i].IsolationState = string(mcptrust.IsolationUnavailableUnconfined)
+			}
+		}
+		if out[i].ChangedTools == nil {
+			out[i].ChangedTools = []string{}
+		}
+		if out[i].ToolChanges == nil {
+			out[i].ToolChanges = []MCPToolTrustChangeView{}
+		}
 	}
 
 	a.mu.Lock()
@@ -6246,6 +6595,25 @@ func (a *App) mcpServersView() []ServerView {
 	}
 	a.mu.Unlock()
 	return out
+}
+
+func applyMCPTrustStatus(view *ServerView, status plugin.SecurityStatus) {
+	if view == nil || status.Name == "" {
+		return
+	}
+	view.TrustState = string(status.TrustState)
+	view.TrustSource = string(status.TrustSource)
+	view.TrustScope = string(status.TrustScope)
+	view.IsolationState = string(status.IsolationState)
+	view.IsolationReason = status.IsolationReason
+	view.IdentityChanged = status.IdentityChanged
+	view.ChangedTools = append([]string{}, status.ChangedTools...)
+	view.ToolChanges = mcpToolTrustChangeViews(status.ToolChanges)
+	view.CatalogSequence = status.CatalogSequence
+	view.VerifiedVersion = status.VerifiedVersion
+	if status.TrustError != "" && view.Error == "" {
+		view.Error = status.TrustError
+	}
 }
 
 func mcpStartIntent(p config.PluginEntry) string {
@@ -6290,6 +6658,11 @@ func withPluginConfig(v ServerView, p config.PluginEntry) ServerView {
 	v.Args = append([]string(nil), p.Args...)
 	v.URL = p.URL
 	v.TrustedReadOnlyTools = uniqueStrings(p.TrustedReadOnlyTools)
+	v.CallTimeoutSeconds = p.CallTimeoutSeconds
+	v.ToolTimeoutSeconds = cloneStringIntMap(p.ToolTimeoutSeconds)
+	v.DefaultToolsApprovalMode = p.DefaultToolsApprovalMode
+	v.ToolPolicies = cloneMCPToolPolicies(p.Tools)
+	v.ApprovalsReviewer = p.ApprovalsReviewer
 	v.AuthConfigured = mcpdiag.HasAuthConfig(p.Headers, p.Env, p.URL)
 	v.EnvKeys = nil
 	v.HeaderKeys = nil
@@ -6713,14 +7086,20 @@ func skillDisplayRoot(sk skill.Skill, roots []skill.Root) string {
 // MCPServerInput is the drawer's "add server" form. Transport is "stdio" (Command
 // + Args + Env) or "http"/"sse" (URL). Mirrors config.PluginEntry's writable shape.
 type MCPServerInput struct {
-	Name                 string            `json:"name"`
-	Transport            string            `json:"transport"`
-	Command              string            `json:"command"`
-	Args                 []string          `json:"args"`
-	URL                  string            `json:"url"`
-	Env                  map[string]string `json:"env"`
-	Headers              map[string]string `json:"headers"`
-	TrustedReadOnlyTools []string          `json:"trustedReadOnlyTools"`
+	Name                     string                          `json:"name"`
+	Transport                string                          `json:"transport"`
+	Command                  string                          `json:"command"`
+	Args                     []string                        `json:"args"`
+	URL                      string                          `json:"url"`
+	Env                      map[string]string               `json:"env"`
+	Headers                  map[string]string               `json:"headers"`
+	AutoStart                *bool                           `json:"autoStart"`
+	CallTimeoutSeconds       *int                            `json:"callTimeoutSeconds"`
+	ToolTimeoutSeconds       map[string]int                  `json:"toolTimeoutSeconds"`
+	TrustedReadOnlyTools     []string                        `json:"trustedReadOnlyTools"`
+	DefaultToolsApprovalMode *string                         `json:"defaultToolsApprovalMode"`
+	ToolPolicies             map[string]config.MCPToolPolicy `json:"tools"`
+	ApprovalsReviewer        *string                         `json:"approvalsReviewer"`
 }
 
 // AddMCPServer connects a server live and persists it to config (Customize → MCP →
@@ -6734,14 +7113,20 @@ func (a *App) AddMCPServer(in MCPServerInput) (int, error) {
 		return 0, rebuildControllerActiveWorkError("MCP server")
 	}
 	entry := config.PluginEntry{
-		Name:                 in.Name,
-		Type:                 normalizeMCPTransport(in.Transport),
-		Command:              in.Command,
-		Args:                 in.Args,
-		URL:                  in.URL,
-		Env:                  in.Env,
-		Headers:              in.Headers,
-		TrustedReadOnlyTools: uniqueStrings(in.TrustedReadOnlyTools),
+		Name:                     in.Name,
+		Type:                     normalizeMCPTransport(in.Transport),
+		Command:                  in.Command,
+		Args:                     in.Args,
+		URL:                      in.URL,
+		Env:                      in.Env,
+		Headers:                  in.Headers,
+		TrustedReadOnlyTools:     nil,
+		AutoStart:                in.AutoStart,
+		CallTimeoutSeconds:       mcpIntValue(in.CallTimeoutSeconds),
+		ToolTimeoutSeconds:       cloneStringIntMap(in.ToolTimeoutSeconds),
+		DefaultToolsApprovalMode: mcpStringValue(in.DefaultToolsApprovalMode),
+		Tools:                    cloneMCPToolPolicies(in.ToolPolicies),
+		ApprovalsReviewer:        mcpStringValue(in.ApprovalsReviewer),
 	}
 	entry, _ = config.NormalizePluginCommandLine(entry)
 	if err := a.saveDesktopMCPServer(entry); err != nil {
@@ -6781,8 +7166,24 @@ func (a *App) UpdateMCPServer(name string, in MCPServerInput) error {
 	if in.Headers != nil {
 		updated.Headers = in.Headers
 	}
-	if in.TrustedReadOnlyTools != nil {
-		updated.TrustedReadOnlyTools = uniqueStrings(in.TrustedReadOnlyTools)
+	if in.AutoStart != nil {
+		value := *in.AutoStart
+		updated.AutoStart = &value
+	}
+	if in.CallTimeoutSeconds != nil {
+		updated.CallTimeoutSeconds = *in.CallTimeoutSeconds
+	}
+	if in.ToolTimeoutSeconds != nil {
+		updated.ToolTimeoutSeconds = cloneStringIntMap(in.ToolTimeoutSeconds)
+	}
+	if in.DefaultToolsApprovalMode != nil {
+		updated.DefaultToolsApprovalMode = strings.TrimSpace(*in.DefaultToolsApprovalMode)
+	}
+	if in.ToolPolicies != nil {
+		updated.Tools = cloneMCPToolPolicies(in.ToolPolicies)
+	}
+	if in.ApprovalsReviewer != nil {
+		updated.ApprovalsReviewer = strings.TrimSpace(*in.ApprovalsReviewer)
 	}
 	updated, _ = config.NormalizePluginCommandLine(updated)
 	if updated.Type == "stdio" {
@@ -6903,94 +7304,6 @@ func (a *App) ClearMCPServerAuthentication(name string) error {
 		h.ClearFailure(name)
 	}
 	return nil
-}
-
-func (a *App) updateMCPServerTrustedReadOnlyTools(name string, update func([]string) []string) error {
-	ctrl := a.activeCtrl()
-	if ctrl == nil {
-		return fmt.Errorf("no active session")
-	}
-	if controllerHasActiveRuntimeWork(ctrl) {
-		return rebuildControllerActiveWorkError("MCP server")
-	}
-	name = strings.TrimSpace(name)
-	if name == "" {
-		return fmt.Errorf("MCP server name is required")
-	}
-	updated, found, err := a.desktopMCPServerForEdit(name)
-	if err != nil {
-		return err
-	}
-	if !found {
-		return fmt.Errorf("no configured MCP server named %q", name)
-	}
-	trusted := uniqueStrings(updated.TrustedReadOnlyTools)
-	next := uniqueStrings(update(trusted))
-	if sameStringList(trusted, next) {
-		updated.TrustedReadOnlyTools = trusted
-		return nil
-	}
-	updated.TrustedReadOnlyTools = next
-	if err := a.saveDesktopMCPServer(updated); err != nil {
-		return err
-	}
-
-	a.mu.RLock()
-	tab := a.activeTabLocked()
-	sessionDisabled := false
-	if tab != nil {
-		_, sessionDisabled = tab.disabledMCP[name]
-	}
-	a.mu.RUnlock()
-	if !mcpConnected(ctrl, name) {
-		return nil
-	}
-	ctrl.DisconnectMCPServer(name)
-	if h := ctrl.Host(); h != nil {
-		h.ClearFailure(name)
-	}
-	if !sessionDisabled {
-		if _, err := ctrl.ConnectMCPServer(updated); err != nil {
-			recordMCPFailure(ctrl, updated, err)
-			return nil
-		}
-	}
-	return nil
-}
-
-// TrustMCPServerTool marks one raw MCP tool name as trusted read-only and
-// refreshes the live connection so plan mode can use the updated trust boundary.
-func (a *App) TrustMCPServerTool(name, toolName string) error {
-	toolName = strings.TrimSpace(toolName)
-	if toolName == "" {
-		return fmt.Errorf("MCP tool name is required")
-	}
-	return a.updateMCPServerTrustedReadOnlyTools(name, func(trusted []string) []string {
-		return append(trusted, toolName)
-	})
-}
-
-// TrustMCPServerTools marks multiple raw MCP tool names as trusted read-only in
-// one config write and one live reconnect.
-func (a *App) TrustMCPServerTools(name string, toolNames []string) error {
-	if len(uniqueStrings(toolNames)) == 0 {
-		return fmt.Errorf("at least one MCP tool name is required")
-	}
-	return a.updateMCPServerTrustedReadOnlyTools(name, func(trusted []string) []string {
-		return append(trusted, toolNames...)
-	})
-}
-
-// UntrustMCPServerTool removes one raw MCP tool name from the trusted read-only
-// list and refreshes the live connection.
-func (a *App) UntrustMCPServerTool(name, toolName string) error {
-	toolName = strings.TrimSpace(toolName)
-	if toolName == "" {
-		return fmt.Errorf("MCP tool name is required")
-	}
-	return a.updateMCPServerTrustedReadOnlyTools(name, func(trusted []string) []string {
-		return removeString(trusted, toolName)
-	})
 }
 
 // SetMCPServerEnabled is the connector toggle: on reconnects a configured server
@@ -7253,9 +7566,47 @@ func normalizeMCPTransport(transport string) string {
 		return "http"
 	case "sse":
 		return "sse"
-	default:
+	case "", "stdio":
 		return "stdio"
+	default:
+		return strings.ToLower(strings.TrimSpace(transport))
 	}
+}
+
+func mcpIntValue(value *int) int {
+	if value == nil {
+		return 0
+	}
+	return *value
+}
+
+func mcpStringValue(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return strings.TrimSpace(*value)
+}
+
+func cloneStringIntMap(values map[string]int) map[string]int {
+	if values == nil {
+		return nil
+	}
+	out := make(map[string]int, len(values))
+	for key, value := range values {
+		out[key] = value
+	}
+	return out
+}
+
+func cloneMCPToolPolicies(values map[string]config.MCPToolPolicy) map[string]config.MCPToolPolicy {
+	if values == nil {
+		return nil
+	}
+	out := make(map[string]config.MCPToolPolicy, len(values))
+	for key, value := range values {
+		out[key] = value
+	}
+	return out
 }
 
 func mcpConnected(ctrl control.SessionAPI, name string) bool {
@@ -7304,12 +7655,20 @@ func findMCPServerView(ctrl control.SessionAPI, name string) (ServerView, bool) 
 	}
 	for _, s := range ctrl.Host().Servers() {
 		if s.Name == name {
-			return ServerView{
+			view := ServerView{
 				Name: s.Name, Transport: s.Transport, Status: "connected",
 				Tools: s.Tools, Prompts: s.Prompts, Resources: s.Resources,
-				HasTools: s.HasTools,
-				ToolList: pluginToolsToView(s.ToolList),
-			}, true
+				HasTools:     s.HasTools,
+				ToolList:     pluginToolsToView(s.ToolList),
+				ChangedTools: []string{},
+			}
+			for _, status := range ctrl.Host().SecurityStatuses() {
+				if status.Name == name {
+					applyMCPTrustStatus(&view, status)
+					break
+				}
+			}
+			return view, true
 		}
 	}
 	for _, f := range ctrl.Host().Failures() {
@@ -7322,12 +7681,12 @@ func findMCPServerView(ctrl control.SessionAPI, name string) (ServerView, bool) 
 
 func pluginToolsToView(tools []plugin.ToolInfo) []ToolView {
 	if len(tools) == 0 {
-		return nil
+		return []ToolView{}
 	}
 	out := make([]ToolView, 0, len(tools))
 	for _, t := range tools {
 		out = append(out, ToolView{
-			Name: t.Name, Description: t.Description, ReadOnlyHint: t.ReadOnlyHint, SchemaError: t.SchemaError,
+			Name: t.Name, Description: t.Description, ReadOnlyHint: t.ReadOnlyHint, DestructiveHint: t.DestructiveHint, SchemaError: t.SchemaError, TrustedReader: t.TrustedReader,
 		})
 	}
 	return out
@@ -7644,6 +8003,7 @@ func (a *App) SetModelForTab(tabID, name string) error {
 	// event sink write these fields under the lock while this rebuild runs
 	// off-lock.
 	snap := a.tabRuntimeSnapshot(tab)
+	runtime := snap.normalizedRuntime()
 	cfg, err := config.LoadForRoot(snap.workspaceRoot)
 	if err != nil {
 		return err
@@ -7693,7 +8053,7 @@ func (a *App) SetModelForTab(tabID, name string) error {
 		WorkspaceRoot:            snap.workspaceRoot,
 		SessionDir:               sessionDirForSnapshot(snap),
 		EffortOverride:           cloneStringPtr(effortOverride),
-		TokenMode:                snap.currentTokenMode(),
+		TokenMode:                runtime.tokenMode,
 		SharedHost:               sharedHost,
 		CleanupPendingReconciler: reconcileDesktopCleanupPending,
 		SessionRecoveryMeta:      a.tabSessionRecoveryMeta(tab),
@@ -7703,22 +8063,18 @@ func (a *App) SetModelForTab(tabID, name string) error {
 		return err
 	}
 	a.bindControllerDisplayRecorder(newCtrl)
-	newCtrl.EnableInteractiveApproval()
-	applyTabModeToController(newCtrl, snap.mode)
-	applyTabToolApprovalModeToController(newCtrl, snap.toolApprovalMode)
-	// A rebuild must not force the user to re-approve tools already granted
-	// this session, or re-trust Plan-mode read-only commands already trusted
-	// this session.
-	if prev, ok := oldCtrl.(*control.Controller); ok {
-		newCtrl.RestoreSessionAuthorizations(prev.SessionAuthorizations())
-	}
+	configureControllerRuntime(newCtrl, oldCtrl, runtime)
 
 	path := agent.ContinueSessionPath(prevPath, newCtrl.SessionDir(), newCtrl.Label())
 	if err := a.ensureTabSessionLeaseForRebuild(tab, path, "model"); err != nil {
 		newCtrl.Close()
 		return err
 	}
-	resumeWithFreshSystemPromptAndGoal(newCtrl, carried, path, snap.goal)
+	restoredRuntime, err := resumeControllerRuntimeWithMessages(newCtrl, carried, path, runtime)
+	if err != nil {
+		newCtrl.Close()
+		return err
+	}
 	a.mu.Lock()
 	if current := a.tabs[tab.ID]; current != tab {
 		// The tab was closed/replaced while we built the new controller off-lock;
@@ -7733,6 +8089,7 @@ func (a *App) SetModelForTab(tabID, name string) error {
 	tab.model = name
 	tab.effort = cloneStringPtr(effortOverride)
 	tab.Label = newCtrl.Label()
+	applyNormalizedRuntimeToTabLocked(tab, restoredRuntime)
 	// Supersede any in-flight startup build: it would otherwise finish later,
 	// overwrite this controller, and release/steal the tab's session lease.
 	a.supersedeTabBuildLocked(tab)
@@ -7824,6 +8181,7 @@ func (a *App) SetEffortForTab(tabID, level string) error {
 		}
 	}
 	snap := a.tabRuntimeSnapshot(tab)
+	runtime := snap.normalizedRuntime()
 	entry, err := a.currentProviderEntryForTab(tabID)
 	if err != nil {
 		return err
@@ -7856,7 +8214,7 @@ func (a *App) SetEffortForTab(tabID, level string) error {
 		WorkspaceRoot:            snap.workspaceRoot,
 		SessionDir:               sessionDirForSnapshot(snap),
 		EffortOverride:           &effort,
-		TokenMode:                snap.currentTokenMode(),
+		TokenMode:                runtime.tokenMode,
 		SharedHost:               sharedHost,
 		CleanupPendingReconciler: reconcileDesktopCleanupPending,
 		SessionRecoveryMeta:      a.tabSessionRecoveryMeta(tab),
@@ -7866,21 +8224,17 @@ func (a *App) SetEffortForTab(tabID, level string) error {
 		return err
 	}
 	a.bindControllerDisplayRecorder(newCtrl)
-	newCtrl.EnableInteractiveApproval()
-	applyTabModeToController(newCtrl, snap.mode)
-	applyTabToolApprovalModeToController(newCtrl, snap.toolApprovalMode)
-	// A rebuild must not force the user to re-approve tools already granted
-	// this session, or re-trust Plan-mode read-only commands already trusted
-	// this session.
-	if prev, ok := oldCtrl.(*control.Controller); ok {
-		newCtrl.RestoreSessionAuthorizations(prev.SessionAuthorizations())
-	}
+	configureControllerRuntime(newCtrl, oldCtrl, runtime)
 	path := agent.ContinueSessionPath(prevPath, newCtrl.SessionDir(), newCtrl.Label())
 	if err := a.ensureTabSessionLeaseForRebuild(tab, path, "effort"); err != nil {
 		newCtrl.Close()
 		return err
 	}
-	resumeWithFreshSystemPromptAndGoal(newCtrl, carried, path, snap.goal)
+	restoredRuntime, err := resumeControllerRuntimeWithMessages(newCtrl, carried, path, runtime)
+	if err != nil {
+		newCtrl.Close()
+		return err
+	}
 	a.mu.Lock()
 	if current := a.tabs[tab.ID]; current != tab {
 		a.mu.Unlock()
@@ -7892,6 +8246,7 @@ func (a *App) SetEffortForTab(tabID, level string) error {
 	tab.model = modelRef
 	tab.effort = &effort
 	tab.Label = newCtrl.Label()
+	applyNormalizedRuntimeToTabLocked(tab, restoredRuntime)
 	clearTabStartupError(tab)
 	tab.Ready = true
 	a.supersedeTabBuildLocked(tab)
@@ -7964,6 +8319,8 @@ func (a *App) SetTokenModeForTab(tabID, mode string) error {
 		return err
 	}
 	snap := a.tabRuntimeSnapshot(tab)
+	runtime := snap.normalizedRuntime()
+	runtime.tokenMode = mode
 	if fallback && strings.TrimSpace(snap.model) != "" {
 		a.noticeForTab(tab.ID, fmt.Sprintf("model %q is no longer available; switched to %s", snap.model, modelRef))
 	}
@@ -8001,21 +8358,17 @@ func (a *App) SetTokenModeForTab(tabID, mode string) error {
 		return err
 	}
 	a.bindControllerDisplayRecorder(newCtrl)
-	newCtrl.EnableInteractiveApproval()
-	applyTabModeToController(newCtrl, snap.mode)
-	applyTabToolApprovalModeToController(newCtrl, snap.toolApprovalMode)
-	// A rebuild must not force the user to re-approve tools already granted
-	// this session, or re-trust Plan-mode read-only commands already trusted
-	// this session.
-	if prev, ok := oldCtrl.(*control.Controller); ok {
-		newCtrl.RestoreSessionAuthorizations(prev.SessionAuthorizations())
-	}
+	configureControllerRuntime(newCtrl, oldCtrl, runtime)
 	path := agent.ContinueSessionPath(prevPath, newCtrl.SessionDir(), newCtrl.Label())
 	if err := a.ensureTabSessionLeaseForRebuild(tab, path, "token mode"); err != nil {
 		newCtrl.Close()
 		return err
 	}
-	resumeWithFreshSystemPromptAndGoal(newCtrl, carried, path, snap.goal)
+	restoredRuntime, err := resumeControllerRuntimeWithMessages(newCtrl, carried, path, runtime)
+	if err != nil {
+		newCtrl.Close()
+		return err
+	}
 	a.mu.Lock()
 	if current := a.tabs[tab.ID]; current != tab {
 		a.mu.Unlock()
@@ -8025,8 +8378,8 @@ func (a *App) SetTokenModeForTab(tabID, mode string) error {
 	}
 	tab.Ctrl = newCtrl
 	tab.model = modelRef
-	tab.tokenMode = mode
 	tab.Label = newCtrl.Label()
+	applyNormalizedRuntimeToTabLocked(tab, restoredRuntime)
 	clearTabStartupError(tab)
 	tab.Ready = true
 	a.supersedeTabBuildLocked(tab)

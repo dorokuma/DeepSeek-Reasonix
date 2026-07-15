@@ -78,7 +78,7 @@ type Skill struct {
 	Model        string // optional model override for runAs=subagent (frontmatter `model:`)
 	Effort       string // optional effort for runAs=subagent (frontmatter `effort:`)
 	// ReadOnly, when true, runs a subagent skill against the read-only tool
-	// registry: writer tools are stripped and bash enforces the plan-mode safe
+	// registry: writer tools are stripped and bash enforces the read-only
 	// command policy at execution time (frontmatter `read-only:`). This is a
 	// tool-boundary contract, not a prompt promise.
 	ReadOnly bool

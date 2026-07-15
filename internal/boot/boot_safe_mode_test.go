@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"reasonix/internal/config"
 	"reasonix/internal/event"
 	"reasonix/internal/plugin"
 )
@@ -104,7 +105,8 @@ func TestBuildNormalModeKeepsSourceConnectorAndSkillTools(t *testing.T) {
 
 // TestBuildSafeModeDropsExtraPlugins proves a recovery boot never starts
 // host-supplied MCP servers (e.g. ACP session servers): the sentinel command
-// writes a marker file when spawned, and Safe Mode must never run it. The
+// writes a marker inside its sandbox-approved private state directory when
+// spawned, and Safe Mode must never run it. The
 // normal-mode half proves the fixture actually exercises the spawn path, so
 // the safe-mode half cannot pass vacuously.
 func TestBuildSafeModeDropsExtraPlugins(t *testing.T) {
@@ -130,9 +132,10 @@ func TestBuildSafeModeDropsExtraPlugins(t *testing.T) {
 
 	t.Run("safe mode never spawns the server", func(t *testing.T) {
 		isolateConfigHome(t)
-		t.Chdir(robustTempDir(t))
+		workspace := robustTempDir(t)
+		t.Chdir(workspace)
 		t.Setenv("REASONIX_SAFE_MODE", "1")
-		marker := filepath.Join(t.TempDir(), "started")
+		marker := filepath.Join(plugin.MCPStateDir(config.ReasonixHomeDir(), workspace, "acp-extra"), "started")
 		build(t, marker)
 		if _, err := os.Stat(marker); !os.IsNotExist(err) {
 			t.Fatalf("safe mode spawned the host-supplied MCP server (stat err=%v)", err)
@@ -141,9 +144,10 @@ func TestBuildSafeModeDropsExtraPlugins(t *testing.T) {
 
 	t.Run("normal mode exercises the spawn path", func(t *testing.T) {
 		isolateConfigHome(t)
-		t.Chdir(robustTempDir(t))
+		workspace := robustTempDir(t)
+		t.Chdir(workspace)
 		t.Setenv("REASONIX_SAFE_MODE", "")
-		marker := filepath.Join(t.TempDir(), "started")
+		marker := filepath.Join(plugin.MCPStateDir(config.ReasonixHomeDir(), workspace, "acp-extra"), "started")
 		build(t, marker)
 		deadline := time.Now().Add(5 * time.Second)
 		for {

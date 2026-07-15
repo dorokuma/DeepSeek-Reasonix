@@ -1,7 +1,9 @@
 package sandbox
 
 import (
+	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
@@ -329,8 +331,28 @@ func TestAvailableNonDarwin(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("windows has its own helper-backed sandbox availability")
 	}
-	_, err := exec.LookPath("bwrap")
-	if Available() != (err == nil) {
-		t.Errorf("Available() = %v, bwrap err = %v", Available(), err)
+	if Available() {
+		if _, err := exec.LookPath("bwrap"); err != nil {
+			t.Errorf("Available() = true, but bwrap lookup failed: %v", err)
+		}
+	}
+}
+
+func TestInstalledButUnusableBwrapIsUnavailable(t *testing.T) {
+	if runtime.GOOS == "darwin" || runtime.GOOS == "windows" {
+		t.Skip("bubblewrap-only test")
+	}
+	dir := t.TempDir()
+	bwrap := filepath.Join(dir, "bwrap")
+	if err := os.WriteFile(bwrap, []byte("#!/bin/sh\nexit 1\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir)
+	if Available() {
+		t.Fatal("non-functional bwrap binary was reported available")
+	}
+	argv, wrapped := Command(Spec{Mode: "enforce"}, Shell{Kind: ShellBash, Path: "sh"}, "true")
+	if wrapped || len(argv) == 0 || argv[0] != "sh" {
+		t.Fatalf("Command with unusable bwrap = %v, wrapped=%v; want unwrapped shell for caller fail-closed", argv, wrapped)
 	}
 }

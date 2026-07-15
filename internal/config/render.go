@@ -239,14 +239,14 @@ func RenderTOMLForScope(c *Config, scope RenderScope) string {
 	}
 	fmt.Fprintf(&b, "cold_resume_prune   = %v   # elide stale tool results when reopening a session past the provider cache window\n", c.ColdResumePruneEnabled())
 	if len(c.Agent.PlanModeAllowedTools) > 0 {
-		fmt.Fprintf(&b, "plan_mode_allowed_tools = %s   # extra read-only declarations for custom tools; cannot unlock known blocked tools or unsafe bash\n", renderStringArray(c.Agent.PlanModeAllowedTools))
+		fmt.Fprintf(&b, "plan_mode_allowed_tools = %s   # legacy MCP read-only trust aliases; does not change Plan availability\n", renderStringArray(c.Agent.PlanModeAllowedTools))
 	} else {
-		b.WriteString("# plan_mode_allowed_tools = [\"custom_reader\"]   # extra read-only declarations; cannot unlock known blocked tools or unsafe bash\n")
+		b.WriteString("# plan_mode_allowed_tools = [\"mcp__legacy__reader\"]   # legacy MCP read-only trust alias; does not change Plan availability\n")
 	}
 	if len(c.Agent.PlanModeReadOnlyCommands) > 0 {
-		fmt.Fprintf(&b, "plan_mode_read_only_commands = %s   # concrete read-only shell prefixes available while planning\n", renderStringArray(c.Agent.PlanModeReadOnlyCommands))
+		fmt.Fprintf(&b, "plan_mode_read_only_commands = %s   # legacy compatibility only; Plan bash uses Permissions\n", renderStringArray(c.Agent.PlanModeReadOnlyCommands))
 	} else {
-		b.WriteString("# plan_mode_read_only_commands = [\"gh issue view\", \"gh pr diff\"]   # concrete read-only shell prefixes; does not allow shell operators or shell interpreters\n")
+		b.WriteString("# plan_mode_read_only_commands = [\"gh issue view\"]   # legacy compatibility only; Plan bash uses Permissions\n")
 	}
 	if c.Agent.PlannerModel != "" {
 		fmt.Fprintf(&b, "planner_model = %q   # low-frequency planner (two-model collaboration)\n", c.Agent.PlannerModel)
@@ -664,7 +664,9 @@ func RenderTOMLForScope(c *Config, scope RenderScope) string {
 		b.WriteString("# command = \"reasonix-plugin-example\"\n")
 		b.WriteString("# call_timeout_seconds = 600       # optional per-server MCP call timeout\n")
 		b.WriteString("# tool_timeout_seconds = { \"generate_video\" = 1800 }   # raw MCP tool names\n")
-		b.WriteString("# trusted_read_only_tools = [\"search\"]   # optional pre-seeded MCP read-only trust\n")
+		b.WriteString("# default_tools_approval_mode = \"auto\"   # auto|prompt|writes|approve\n")
+		b.WriteString("# tools = { \"delete_all\" = { approval_mode = \"prompt\" } }\n")
+		b.WriteString("# approvals_reviewer = \"user\"   # user|auto_review\n")
 		b.WriteString("# [[plugins]]                                  # a remote server over Streamable HTTP\n")
 		b.WriteString("# name    = \"stripe\"\n")
 		b.WriteString("# type    = \"http\"\n")
@@ -701,8 +703,17 @@ func RenderTOMLForScope(c *Config, scope RenderScope) string {
 				fmt.Fprintf(&b, "tool_timeout_seconds = %s\n", renderIntMap(pl.ToolTimeoutSeconds))
 			}
 			if len(pl.TrustedReadOnlyTools) > 0 {
-				b.WriteString("# optional pre-seeded MCP read-only trust; the approval prompt can also remember this\n")
+				b.WriteString("# local Plan/read-only-research trust for audited raw MCP reader names\n")
 				fmt.Fprintf(&b, "trusted_read_only_tools = %s\n", renderStringArray(pl.TrustedReadOnlyTools))
+			}
+			if strings.TrimSpace(pl.DefaultToolsApprovalMode) != "" {
+				fmt.Fprintf(&b, "default_tools_approval_mode = %q\n", pl.DefaultToolsApprovalMode)
+			}
+			if len(pl.Tools) > 0 {
+				fmt.Fprintf(&b, "tools = %s\n", renderMCPToolPolicies(pl.Tools))
+			}
+			if strings.TrimSpace(pl.ApprovalsReviewer) != "" {
+				fmt.Fprintf(&b, "approvals_reviewer = %q\n", pl.ApprovalsReviewer)
 			}
 			if pl.AutoStart != nil {
 				fmt.Fprintf(&b, "auto_start = %v\n", *pl.AutoStart)
@@ -1124,8 +1135,17 @@ func RenderTOMLProjectDelta(c *Config) string {
 			fmt.Fprintf(&b, "tool_timeout_seconds = %s\n", renderIntMap(pl.ToolTimeoutSeconds))
 		}
 		if len(pl.TrustedReadOnlyTools) > 0 {
-			b.WriteString("# optional pre-seeded MCP read-only trust; the approval prompt can also remember this\n")
+			b.WriteString("# local Plan/read-only-research trust for audited raw MCP reader names\n")
 			fmt.Fprintf(&b, "trusted_read_only_tools = %s\n", renderStringArray(pl.TrustedReadOnlyTools))
+		}
+		if strings.TrimSpace(pl.DefaultToolsApprovalMode) != "" {
+			fmt.Fprintf(&b, "default_tools_approval_mode = %q\n", pl.DefaultToolsApprovalMode)
+		}
+		if len(pl.Tools) > 0 {
+			fmt.Fprintf(&b, "tools = %s\n", renderMCPToolPolicies(pl.Tools))
+		}
+		if strings.TrimSpace(pl.ApprovalsReviewer) != "" {
+			fmt.Fprintf(&b, "approvals_reviewer = %q\n", pl.ApprovalsReviewer)
 		}
 		if pl.AutoStart != nil {
 			fmt.Fprintf(&b, "auto_start = %v\n", *pl.AutoStart)
@@ -1358,6 +1378,26 @@ func renderStringMap(m map[string]string) string {
 			b.WriteString(", ")
 		}
 		fmt.Fprintf(&b, "%s = %q", renderTOMLKeyPart(k), m[k])
+	}
+	b.WriteString(" }")
+	return b.String()
+}
+
+func renderMCPToolPolicies(policies map[string]MCPToolPolicy) string {
+	keys := make([]string, 0, len(policies))
+	for name := range policies {
+		if strings.TrimSpace(name) != "" {
+			keys = append(keys, name)
+		}
+	}
+	sort.Strings(keys)
+	var b strings.Builder
+	b.WriteString("{ ")
+	for i, name := range keys {
+		if i > 0 {
+			b.WriteString(", ")
+		}
+		fmt.Fprintf(&b, "%s = { approval_mode = %q }", renderTOMLKeyPart(name), policies[name].ApprovalMode)
 	}
 	b.WriteString(" }")
 	return b.String()

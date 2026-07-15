@@ -156,8 +156,8 @@ type readOnlySkillTool struct {
 	profileResolver ProfileResolver
 }
 
-// NewReadOnlySkillTool builds a plan-mode-safe skill entry point. Inline skills
-// are rendered like read_skill; subagent skills run through a host-provided
+// NewReadOnlySkillTool builds an explicitly read-only skill entry point. Inline
+// skills are rendered like read_skill; subagent skills run through a host-provided
 // read-only subagent runner with no continuation/fork controls.
 func NewReadOnlySkillTool(store *Store, runner SubagentRunner, profileResolver ...ProfileResolver) tool.Tool {
 	var pr ProfileResolver
@@ -171,9 +171,8 @@ func (*readOnlySkillTool) Name() string { return "read_only_skill" }
 
 func (*readOnlySkillTool) ReadOnly() bool { return true }
 
-// PlanModeSafe reports true: read_only_skill delegates to a skill sub-agent
-// restricted to read-only research tools and plan-mode-safe foreground bash, so
-// it is safe to run while planning.
+// PlanModeSafe reports true because this explicit read-only capability is also
+// semantically valid during the planning phase.
 func (*readOnlySkillTool) PlanModeSafe() bool { return true }
 
 func (*readOnlySkillTool) Description() string {
@@ -263,18 +262,18 @@ type readSkillTool struct {
 	store *Store
 }
 
-// NewReadSkillTool builds a read-only inline-skill loader. Unlike run_skill it
-// stays available in plan mode, so a plan can consult inline playbooks.
+// NewReadSkillTool builds a read-only inline-skill loader so a plan can consult
+// playbooks without starting a subagent.
 func NewReadSkillTool(store *Store) tool.Tool { return &readSkillTool{store: store} }
 
 func (*readSkillTool) Name() string { return "read_skill" }
 
-// ReadOnly is true: read_skill only renders an inline skill body (no subagent,
-// no side effects), so it is allowed in plan mode where run_skill is not.
+// ReadOnly is true: read_skill only renders an inline skill body, with no
+// subagent or side effects.
 func (*readSkillTool) ReadOnly() bool { return true }
 
 func (*readSkillTool) Description() string {
-	return "Load an inline playbook from the Skills index into your context WITHOUT running anything — the skill body returns as a tool result you read and follow. Read-only, so it works in plan mode (unlike run_skill). Pass `name` as the BARE identifier (e.g. 'commit'), NOT the `[🧬 subagent]` tag. Subagent-tagged skills are rejected: use run_skill (or the dedicated tool) for those, since they execute work."
+	return "Load an inline playbook from the Skills index into your context WITHOUT running anything — the skill body returns as a tool result you read and follow. This is the read-only alternative when no subagent execution is needed. Pass `name` as the BARE identifier (e.g. 'commit'), NOT the `[🧬 subagent]` tag. Subagent-tagged skills are rejected: use run_skill (or the dedicated tool) for those, since they execute work."
 }
 
 func (*readSkillTool) Schema() json.RawMessage {

@@ -28,6 +28,18 @@ type Spec struct {
 	// plus any configured extras). Platforms may add command-scoped temp/cache
 	// roots so builds and package managers keep working without broad writes.
 	WriteRoots []string
+	// ReadRoots are explicit host paths a Windows AppContainer may read. The
+	// macOS/Linux profiles already mount the host read-only by default.
+	ReadRoots []string
+	// AppContainerWriteRoots are the small subset of WriteRoots that a
+	// read-only Windows AppContainer may write (for MCP this is only its
+	// private state/temp tree). macOS and Linux already enforce this through
+	// WriteRoots and ignore this platform-specific distinction.
+	AppContainerWriteRoots []string
+	// DirectWrites marks a raw-argv launch as a write-capable command. On
+	// Windows this selects the low-integrity writer lane; it is deliberately
+	// false for ordinary read-only helpers such as rg.
+	DirectWrites bool
 	// ForbidReadRoots are directories the command may not read from when
 	// confined. The OS sandbox denies access to these paths (macOS Seatbelt
 	// deny file-read* rules, Linux bubblewrap --tmpfs overlays); on other
@@ -37,6 +49,10 @@ type Spec struct {
 	// command cannot exfiltrate or fetch; many dev commands (module/package
 	// downloads) need it, so it defaults on at the config layer.
 	Network bool
+	// MinimalWrites omits the broad build-tool cache write allowances used by
+	// the bash sandbox. MCP profiles set it and explicitly provide only their
+	// private state/temp directories (plus approved writer roots).
+	MinimalWrites bool
 	// Shell is the interpreter the bash tool runs under. A zero value (empty
 	// Path) means the tool resolves one itself; the composition root sets it from
 	// [tools.shell] so the configured choice rides along with the spec.
@@ -64,5 +80,20 @@ func UnavailableRemediation() string {
 		return "Windows does not currently provide a Reasonix OS-level Bash sandbox; the effective setting is fixed to \"off\" and shell commands run unconfined."
 	default:
 		return "Set [sandbox] bash = \"off\" in config.toml / Settings -> Sandbox to run shell commands unconfined on this platform."
+	}
+}
+
+// BackendUnavailableReason is safe diagnostic copy for subsystems such as MCP
+// that intentionally continue unconfined when the OS backend is missing.
+func BackendUnavailableReason() string {
+	switch runtime.GOOS {
+	case "linux":
+		return "bubblewrap (bwrap) is unavailable on PATH"
+	case "darwin":
+		return "sandbox-exec is unavailable on PATH"
+	case "windows":
+		return "the AppContainer helper or required Windows sandbox APIs are unavailable"
+	default:
+		return "this platform has no supported Reasonix sandbox backend"
 	}
 }

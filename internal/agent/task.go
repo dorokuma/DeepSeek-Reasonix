@@ -16,6 +16,7 @@ import (
 	"reasonix/internal/event"
 	"reasonix/internal/evidence"
 	"reasonix/internal/jobs"
+	"reasonix/internal/permission"
 	"reasonix/internal/planmode"
 	"reasonix/internal/provider"
 	"reasonix/internal/tool"
@@ -180,17 +181,16 @@ func (b readOnlyBash) Description() string {
 		desc = "Execute a command in the shell and return combined stdout/stderr."
 	}
 	desc = strings.Replace(desc, "Execute a command in the shell", "Execute a foreground read-only command in the shell", 1)
-	return desc + " Only plan-mode safe read-only commands are allowed; shell operators, background execution, process preservation, and write-capable arguments are blocked."
+	return desc + " Only permission-classified read-only commands are allowed; shell operators, background execution, process preservation, and write-capable arguments are blocked."
 }
 
 func (readOnlyBash) Schema() json.RawMessage {
-	return json.RawMessage(`{"type":"object","properties":{"command":{"type":"string","description":"Read-only shell command to execute in the foreground. Must match the plan-mode safe bash policy."}},"required":["command"]}`)
+	return json.RawMessage(`{"type":"object","properties":{"command":{"type":"string","description":"Read-only shell command to execute in the foreground. Must match the permission-layer read-only command policy."}},"required":["command"]}`)
 }
 
 func (b readOnlyBash) Execute(ctx context.Context, args json.RawMessage) (string, error) {
-	decision := planmode.Policy{}.Decide(planmode.Call{Name: "bash", Args: args})
-	if decision.Blocked {
-		return decision.Message, nil
+	if !permission.BashCommandIsReadOnly(args) {
+		return "blocked: read-only subagents can run only permission-classified foreground read-only commands", nil
 	}
 	return b.inner.Execute(ctx, args)
 }
@@ -355,7 +355,7 @@ func NewReadOnlyTaskTool(task *TaskTool) *ReadOnlyTaskTool {
 func (*ReadOnlyTaskTool) Name() string { return "read_only_task" }
 
 func (*ReadOnlyTaskTool) Description() string {
-	return "Spawn a read-only research sub-agent for a focused investigation. The sub-agent runs in an isolated, ephemeral session with read-only tools only; bash is wrapped to allow only plan-mode safe foreground commands. It cannot write files, install capabilities, mutate memory, run background jobs, continue/fork transcripts, or delegate to writer-capable agents. Read-only nested delegation may be available until max_subagent_depth is reached. Only its final answer is returned."
+	return "Spawn a read-only research sub-agent for a focused investigation. The sub-agent runs in an isolated, ephemeral session with read-only tools only; bash is wrapped to allow only permission-classified foreground read-only commands. It cannot write files, install capabilities, mutate memory, run background jobs, continue/fork transcripts, or delegate to writer-capable agents. Read-only nested delegation may be available until max_subagent_depth is reached. Only its final answer is returned."
 }
 
 func (*ReadOnlyTaskTool) Schema() json.RawMessage {
@@ -421,7 +421,7 @@ func (r *ReadOnlyTaskTool) Execute(ctx context.Context, args json.RawMessage) (s
 	if err != nil {
 		return "", fmt.Errorf("read-only sub-agent profile: %w", err)
 	}
-	answer, err := r.task.runSubSession(ctx, p.Prompt, subReg, subSink(ctx), maxSteps, prov, pricing, ctxWin, NewSession(DefaultReadOnlyTaskSystemPrompt), childDepth)
+	answer, err := r.task.runReadOnlySubSession(ctx, p.Prompt, subReg, subSink(ctx), maxSteps, prov, pricing, ctxWin, NewSession(DefaultReadOnlyTaskSystemPrompt), childDepth)
 	if err != nil {
 		return "", err
 	}
@@ -716,7 +716,7 @@ func PlannerToolRegistry(parent *tool.Registry) *tool.Registry {
 
 // ReadOnlySubagentToolRegistry returns the tool set exposed to read-only
 // sub-agents: read-only research tools plus a bash wrapper that enforces the
-// plan-mode safe command policy at execution time. Workflow/meta tools are
+// permission-layer read-only command policy at execution time. Workflow/meta tools are
 // excluded even when their Tool.ReadOnly contract is true.
 func ReadOnlySubagentToolRegistry(parent *tool.Registry, names []string) *tool.Registry {
 	return ReadOnlySubagentToolRegistryForDepth(parent, names, 1, 1)
@@ -765,8 +765,6 @@ func ReadOnlySubagentToolRegistryForDepth(parent *tool.Registry, names []string,
 			continue
 		}
 		if u, ok := tl.(tool.PlanModeUntrustedReadOnly); ok && u.PlanModeUntrustedReadOnly() {
-			// An external tool's self-reported readOnlyHint isn't trusted for a
-			// read-only research sub-agent; exclude it like a writer.
 			continue
 		}
 		sub.Add(tl)
@@ -843,7 +841,16 @@ func (t *TaskTool) resolveSubSessionRuntime(modelRef, effort string) (provider.P
 }
 
 func (t *TaskTool) runSubSession(ctx context.Context, prompt string, subReg *tool.Registry, sink event.Sink, maxSteps int, prov provider.Provider, pricing *provider.Pricing, ctxWin int, sess *Session, childDepth int) (string, error) {
+	return t.runSubSessionWithReadOnly(ctx, prompt, subReg, sink, maxSteps, prov, pricing, ctxWin, sess, childDepth, false)
+}
+
+func (t *TaskTool) runReadOnlySubSession(ctx context.Context, prompt string, subReg *tool.Registry, sink event.Sink, maxSteps int, prov provider.Provider, pricing *provider.Pricing, ctxWin int, sess *Session, childDepth int) (string, error) {
+	return t.runSubSessionWithReadOnly(ctx, prompt, subReg, sink, maxSteps, prov, pricing, ctxWin, sess, childDepth, true)
+}
+
+func (t *TaskTool) runSubSessionWithReadOnly(ctx context.Context, prompt string, subReg *tool.Registry, sink event.Sink, maxSteps int, prov provider.Provider, pricing *provider.Pricing, ctxWin int, sess *Session, childDepth int, readOnly bool) (string, error) {
 	opts := t.subagentOptions(ctx, maxSteps, pricing, ctxWin, childDepth)
+	opts.ReadOnlyExecution = readOnly
 	// Capture the pristine task before host framing is prepended: delivery
 	// intent classification must judge the task, not the wrapper.
 	opts.ClassifierTaskText = prompt
@@ -979,13 +986,18 @@ func RunSubAgentWithSession(ctx context.Context, prov provider.Provider, reg *to
 	if strings.TrimSpace(opts.ClassifierTaskText) == "" {
 		opts.ClassifierTaskText = prompt
 	}
+	planWorkflow := PlanModeFromContext(ctx)
 	if opts.SubagentDepth > 0 && isFreshSubagentSession(sess) {
 		prompt = subagentStartContext + "\n\n" + prompt
+	}
+	if planWorkflow && !strings.Contains(prompt, planmode.Marker) {
+		prompt = planmode.Marker + "\n\n" + prompt
 	}
 	if kind := opts.RequireReviewReportKind; kind != "" {
 		prompt = prompt + "\n\n" + reviewReportTaskContract(kind)
 	}
 	sub := New(prov, reg, sess, opts, sink)
+	sub.SetPlanMode(planWorkflow)
 	if err := sub.Run(ctx, prompt); err != nil {
 		// Still merge any partial child evidence so parent gates see real writes.
 		mergeChildEvidence(ctx, sub)

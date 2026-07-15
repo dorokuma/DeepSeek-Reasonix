@@ -1006,8 +1006,8 @@ func chatREPL(args []string) int {
 	// task tool) keep their headless gate from setup — no UI to prompt through.
 	ctrl.EnableInteractiveApproval()
 	applyPermissionMode(ctrl, permissions)
-	// YOLO: skip every tool approval request for the session (deny rules still
-	// apply; ask questions and plan approvals still wait for the user).
+	// YOLO: skip ordinary tool approval requests for the session (deny rules and
+	// fresh reviews still apply; ask questions and plan approvals still wait).
 	if *yolo {
 		ctrl.SetAutoApproveTools(true)
 	}

@@ -536,8 +536,8 @@ func TestRenderTOMLDocumentsPlanModeAllowedTools(t *testing.T) {
 	if !strings.Contains(rendered, `plan_mode_allowed_tools = ["custom_reader"]`) {
 		t.Fatalf("rendered config should preserve plan_mode_allowed_tools:\n%s", rendered)
 	}
-	if !strings.Contains(rendered, "extra read-only declarations") || !strings.Contains(rendered, "cannot unlock known blocked tools or unsafe bash") {
-		t.Fatalf("rendered config should document tightened plan_mode_allowed_tools semantics:\n%s", rendered)
+	if !strings.Contains(rendered, "legacy MCP read-only trust aliases") || !strings.Contains(rendered, "does not change Plan availability") {
+		t.Fatalf("rendered config should document legacy plan_mode_allowed_tools semantics:\n%s", rendered)
 	}
 
 	var got Config
@@ -550,15 +550,15 @@ func TestRenderTOMLDocumentsPlanModeAllowedTools(t *testing.T) {
 	if !strings.Contains(rendered, `plan_mode_read_only_commands = ["gh issue view"]`) {
 		t.Fatalf("rendered config should preserve plan_mode_read_only_commands:\n%s", rendered)
 	}
-	if !strings.Contains(rendered, "concrete read-only shell prefixes") {
-		t.Fatalf("rendered config should document plan_mode_read_only_commands semantics:\n%s", rendered)
+	if !strings.Contains(rendered, "legacy compatibility only") || !strings.Contains(rendered, "Plan bash uses Permissions") {
+		t.Fatalf("rendered config should document legacy plan_mode_read_only_commands semantics:\n%s", rendered)
 	}
 	if !reflect.DeepEqual(got.Agent.PlanModeReadOnlyCommands, cfg.Agent.PlanModeReadOnlyCommands) {
 		t.Fatalf("PlanModeReadOnlyCommands round trip = %v, want %v", got.Agent.PlanModeReadOnlyCommands, cfg.Agent.PlanModeReadOnlyCommands)
 	}
 }
 
-func TestRenderTOMLDocumentsPluginTrustedReadOnlyTools(t *testing.T) {
+func TestRenderTOMLPreservesLegacyPluginReadOnlyOverrides(t *testing.T) {
 	cfg := Default()
 	cfg.Plugins = []PluginEntry{{
 		Name:                 "github",
@@ -570,8 +570,8 @@ func TestRenderTOMLDocumentsPluginTrustedReadOnlyTools(t *testing.T) {
 	if !strings.Contains(rendered, `trusted_read_only_tools = ["issue_read", "pull_request_read"]`) {
 		t.Fatalf("rendered config should preserve trusted_read_only_tools:\n%s", rendered)
 	}
-	if !strings.Contains(rendered, "optional pre-seeded MCP read-only trust") {
-		t.Fatalf("rendered config should document trusted_read_only_tools semantics:\n%s", rendered)
+	if !strings.Contains(rendered, "local Plan/read-only-research trust for audited raw MCP reader names") {
+		t.Fatalf("rendered config should document the legacy trusted_read_only_tools semantics:\n%s", rendered)
 	}
 
 	var got Config
@@ -620,6 +620,39 @@ func TestRenderTOMLPreservesMCPCallTimeouts(t *testing.T) {
 	}
 	if !reflect.DeepEqual(got.Plugins[0].ToolTimeoutSeconds, cfg.Plugins[0].ToolTimeoutSeconds) {
 		t.Fatalf("ToolTimeoutSeconds round trip = %v, want %v", got.Plugins[0].ToolTimeoutSeconds, cfg.Plugins[0].ToolTimeoutSeconds)
+	}
+}
+
+func TestRenderTOMLPreservesMCPApprovalPolicy(t *testing.T) {
+	cfg := Default()
+	cfg.Plugins = []PluginEntry{{
+		Name:                     "admin",
+		Command:                  "admin-mcp",
+		DefaultToolsApprovalMode: "writes",
+		Tools: map[string]MCPToolPolicy{
+			"delete/all": {ApprovalMode: "prompt"},
+			"status":     {ApprovalMode: "approve"},
+		},
+		ApprovalsReviewer: "auto_review",
+	}}
+
+	rendered := RenderTOML(cfg)
+	for _, want := range []string{
+		`default_tools_approval_mode = "writes"`,
+		`tools = { "delete/all" = { approval_mode = "prompt" }, status = { approval_mode = "approve" } }`,
+		`approvals_reviewer = "auto_review"`,
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("rendered config missing %q:\n%s", want, rendered)
+		}
+	}
+	var got Config
+	if _, err := toml.Decode(rendered, &got); err != nil {
+		t.Fatalf("rendered TOML does not parse: %v\n%s", err, rendered)
+	}
+	if got.Plugins[0].DefaultToolsApprovalMode != "writes" || got.Plugins[0].ApprovalsReviewer != "auto_review" ||
+		!reflect.DeepEqual(got.Plugins[0].Tools, cfg.Plugins[0].Tools) {
+		t.Fatalf("approval policy round trip = %+v", got.Plugins[0])
 	}
 }
 

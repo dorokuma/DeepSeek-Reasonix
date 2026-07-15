@@ -94,7 +94,7 @@ type chatTUI struct {
 	// Persists across turns until the work completes or a new session starts.
 	todoArgs string
 
-	// planMode mirrors the agent's read-only gate (Shift+Tab toggles it). The
+	// planMode mirrors the agent's plan-first workflow (Shift+Tab toggles it). The
 	// marker rides in outgoing user messages so the cache-stable prompt prefix is
 	// left untouched.
 	planMode bool
@@ -2453,12 +2453,13 @@ func approvalChoices(a *event.Approval) []approvalChoice {
 		return nil
 	}
 	var decisions []approvalChoice
+	fresh := a.Fresh || control.RequiresFreshHumanApprovalTool(a.Tool)
 	switch {
 	case a.Tool == planApprovalTool:
 		decisions = []approvalChoice{{allow: true}, {}}
-	case control.RequiresFreshHumanApprovalTool(a.Tool) && freshApprovalAllowsSession(a.Tool):
+	case fresh && freshApprovalAllowsSession(a.Tool):
 		decisions = []approvalChoice{{allow: true}, {allow: true, allowForSession: true}, {}}
-	case control.RequiresFreshHumanApprovalTool(a.Tool):
+	case fresh:
 		decisions = []approvalChoice{{allow: true}, {}}
 	default:
 		decisions = []approvalChoice{
@@ -2479,9 +2480,10 @@ func approvalChoices(a *event.Approval) []approvalChoice {
 
 func approvalChoiceLabels(a *event.Approval) []string {
 	choices := i18n.M.FreshHumanApprovalChoices
+	fresh := a.Fresh || control.RequiresFreshHumanApprovalTool(a.Tool)
 	if a.Tool == planApprovalTool {
 		choices = i18n.M.FreshHumanApprovalChoices
-	} else if !control.RequiresFreshHumanApprovalTool(a.Tool) {
+	} else if !fresh {
 		exactSessionRule := permission.SessionGrantRuleForScope(a.Tool, a.Subject)
 		exactPersistentRule := permission.RememberRuleForScope(a.Tool, a.Subject)
 		choices = fmt.Sprintf(i18n.M.ToolApprovalChoices, exactSessionRule, exactPersistentRule)
@@ -2495,7 +2497,7 @@ func approvalChoiceLabels(a *event.Approval) []string {
 	if a.Tool == agent.PlanModeReadOnlyCommandApprovalTool {
 		choices = i18n.M.PlanModeReadOnlyCommandChoices
 	}
-	if !control.RequiresFreshHumanApprovalTool(a.Tool) && a.Tool == "bash" && permission.BashCommandPrefix(a.Subject) != "" {
+	if !fresh && a.Tool == "bash" && permission.BashCommandPrefix(a.Subject) != "" {
 		prefixRule := permission.RememberRuleForScope(a.Tool, a.Subject)
 		choices = fmt.Sprintf(i18n.M.BashPrefixChoices, prefixRule, prefixRule)
 	}

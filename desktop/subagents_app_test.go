@@ -387,7 +387,7 @@ func TestTrySubagentRegistryBashEnforcesReadOnlyPolicy(t *testing.T) {
 		t.Fatalf("try registry should keep bash; got %v", reg.Names())
 	}
 	if !bash.ReadOnly() {
-		t.Fatal("try bash should report ReadOnly=true (plan-mode-safe wrapper)")
+		t.Fatal("try bash should report ReadOnly=true (restricted read-only wrapper)")
 	}
 	out, err := bash.Execute(context.Background(), json.RawMessage(`{"command":"rm -rf /tmp/x"}`))
 	if err != nil {

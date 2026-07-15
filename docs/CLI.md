@@ -163,7 +163,7 @@ reasonix --allowed-tools "Bash(go test ./...)" --allowed-tools read_file
 | `auto` | Automatically approve normal fallback operations while preserving explicit ask and deny rules. |
 | `acceptEdits` | Allow file-editing tools; this is not full Auto mode. |
 | `dontAsk` | Deny unapproved requests without opening an approval prompt. |
-| `plan` | Start an interactive session in read-only Plan mode. |
+| `plan` | Start the plan-first workflow; tool calls still use the active permissions and sandbox. |
 | `bypassPermissions` | Bypass approval prompts; equivalent to YOLO. |
 
 `--allowed-tools` is a session permission override, not a provider tool-schema
@@ -207,9 +207,9 @@ single-key shortcuts.
 | `Esc` | Cancel the current picker or approval. |
 | `y` / `a` / `p` / `n`, number keys | Use the matching approval action. |
 | `Shift+Tab` | Cycle `Ask → Auto → Plan → Ask`. |
-| `Ctrl+Y` | Toggle YOLO independently of the safe-mode cycle. |
+| `Ctrl+Y` | Toggle YOLO independently of the composer-mode cycle. |
 
-The footer shows the active permission mode. See
+The footer shows the active composer mode. See
 [Keyboard shortcuts](./GUIDE.md#keyboard-shortcuts) for transcript navigation,
 multiline input, rewind, and clipboard controls.
 

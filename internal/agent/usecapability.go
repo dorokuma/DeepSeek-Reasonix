@@ -125,21 +125,27 @@ func (t *UseCapabilityTool) ResolveCall(ctx context.Context, args json.RawMessag
 		if reason == "" {
 			return tool.ResolvedCall{}, fmt.Errorf("reason is required for action=decline")
 		}
-		// Decline must not skip require.
+		// Decline must not skip require. The mutation itself is delayed until the
+		// agent has applied its post-resolution host boundary.
 		if t.ledger != nil {
 			if e, ok := t.ledger.Get(id); ok && e.Policy == capability.AutoUseRequire {
 				return tool.ResolvedCall{}, fmt.Errorf("cannot decline a require capability %q", id)
 			}
-			if err := t.ledger.MarkDeclined(id, reason); err != nil {
-				return tool.ResolvedCall{}, err
-			}
-		}
-		if t.audit != nil {
-			t.audit.RecordDecline()
 		}
 		base.SkipExecute = true
 		base.Result = fmt.Sprintf("declined capability %s: %s", id, reason)
 		base.ReadOnly = true
+		base.Commit = func() error {
+			if t.ledger != nil {
+				if err := t.ledger.MarkDeclined(id, reason); err != nil {
+					return err
+				}
+			}
+			if t.audit != nil {
+				t.audit.RecordDecline()
+			}
+			return nil
+		}
 		return base, nil
 	case "call":
 		return t.resolveCall(ctx, id, p.Arguments, base)
@@ -154,6 +160,11 @@ func (t *UseCapabilityTool) Execute(ctx context.Context, args json.RawMessage) (
 		return "", err
 	}
 	if resolved.SkipExecute {
+		if resolved.Commit != nil {
+			if err := resolved.Commit(); err != nil {
+				return "", err
+			}
+		}
 		if resolved.ProxyAction == "call" && !resolved.Unavailable {
 			if t.ledger != nil {
 				t.ledger.MarkSucceeded(resolved.CapabilityID)
@@ -231,7 +242,7 @@ func (t *UseCapabilityTool) inspect(ctx context.Context, id string) (string, err
 					return string(b) + "\n\nTools:\n" + inspectToolListJSON(server, tools), nil
 				}
 				if spec, ok := t.specFor(server); ok {
-					if cs, ok := plugin.LoadCachedSchema(server, plugin.SpecFingerprint(spec)); ok && len(cs.Tools) > 0 {
+					if cs, ok := plugin.LoadCachedSchemaForSpec(spec); ok && len(cs.Tools) > 0 {
 						var list []inspectToolInfo
 						for _, ct := range cs.Tools {
 							list = append(list, inspectToolInfo{
@@ -347,7 +358,13 @@ func (t *UseCapabilityTool) resolveCall(ctx context.Context, id string, args jso
 	if !ok {
 		return t.resolveUnavailable(base, id, modelName, fmt.Sprintf("MCP server %q is not configured", server)), nil
 	}
-	lazy := &onDemandMCPTool{proxy: t, spec: spec, server: server, raw: raw, modelName: modelName}
+	destructive := false
+	if t.catalog != nil {
+		if entry, found := t.catalog().Lookup(id); found {
+			destructive = entry.Destructive
+		}
+	}
+	lazy := &onDemandMCPTool{proxy: t, spec: spec, server: server, raw: raw, modelName: modelName, destructive: destructive}
 	base.Target = lazy
 	base.TargetName = modelName
 	// Conservative: an unstarted tool counts as a writer unless the user
@@ -371,11 +388,14 @@ func (t *UseCapabilityTool) resolveUnavailable(base tool.ResolvedCall, id, model
 	base.Result = "capability unavailable: " + reason
 	base.TargetName = modelName
 	base.ReadOnly = false
-	if t.ledger != nil {
-		t.ledger.MarkUnavailable(id, reason)
-	}
-	if t.audit != nil {
-		t.audit.RecordMCPProxy(false, true, true)
+	base.Commit = func() error {
+		if t.ledger != nil {
+			t.ledger.MarkUnavailable(id, reason)
+		}
+		if t.audit != nil {
+			t.audit.RecordMCPProxy(false, true, true)
+		}
+		return nil
 	}
 	return base
 }
@@ -395,16 +415,18 @@ func findMCPTool(tools []tool.Tool, raw, modelName string) tool.Tool {
 }
 
 // onDemandMCPTool defers MCP server startup to Execute so permission and hook
-// gates always run before any subprocess or network side effect. It reports
-// itself read-only only under config-level trust; everything else is treated
-// as a writer until the live handshake proves otherwise, so plan mode and
-// permission prompts see the conservative classification.
+// gates always run before any subprocess or network side effect. Before the live
+// handshake it can only use a backward-compatible local read-only override;
+// otherwise it remains write-capable until the resolved MCP tool is classified.
 type onDemandMCPTool struct {
 	proxy     *UseCapabilityTool
 	spec      plugin.Spec
 	server    string
 	raw       string
 	modelName string
+	// destructive comes from the schema cache when available. A live promotion
+	// is detected in Execute and deferred to a fresh-approved retry.
+	destructive bool
 }
 
 func (o *onDemandMCPTool) Name() string { return o.modelName }
@@ -424,10 +446,26 @@ func (o *onDemandMCPTool) ReadOnly() bool {
 // hint — there is no server yet.
 func (o *onDemandMCPTool) PlanModeUntrustedReadOnly() bool { return false }
 
+func (o *onDemandMCPTool) ReadOnlyExecutionHostMutation() bool { return true }
+
 // MCPServerName/MCPRawToolName expose the deferred target for audit and
-// plan-mode trust prompts (tool.MCPMetadata).
+// diagnostics (tool.MCPMetadata).
 func (o *onDemandMCPTool) MCPServerName() string  { return o.server }
 func (o *onDemandMCPTool) MCPRawToolName() string { return o.raw }
+func (o *onDemandMCPTool) MCPDestructiveHint() bool {
+	return o.destructive
+}
+
+func (o *onDemandMCPTool) MCPApprovalMode() string {
+	if mode := strings.TrimSpace(o.spec.ToolApprovalModes[o.raw]); mode != "" {
+		return tool.NormalizeMCPApprovalMode(mode)
+	}
+	return tool.NormalizeMCPApprovalMode(o.spec.DefaultToolsApprovalMode)
+}
+
+func (o *onDemandMCPTool) MCPApprovalReviewer() string {
+	return tool.NormalizeMCPApprovalReviewer(o.spec.ApprovalsReviewer)
+}
 
 func (o *onDemandMCPTool) Execute(ctx context.Context, args json.RawMessage) (string, error) {
 	tools, err := o.proxy.ensureServerTools(ctx, o.server)
@@ -447,7 +485,14 @@ func (o *onDemandMCPTool) Execute(ctx context.Context, args json.RawMessage) (st
 		}
 		return "", fmt.Errorf("%s", msg)
 	}
+	if annotations, ok := target.(tool.MCPAnnotations); ok && annotations.MCPDestructiveHint() && !o.destructive {
+		return "", destructiveMCPDiscoveryError(o.server, o.raw)
+	}
 	return target.Execute(ctx, args)
+}
+
+func destructiveMCPDiscoveryError(server, rawTool string) error {
+	return fmt.Errorf("MCP server %q marks tool %q as destructive; retry so Reasonix can request fresh approval before execution", server, rawTool)
 }
 
 func (t *UseCapabilityTool) ensureServerTools(ctx context.Context, server string) ([]tool.Tool, error) {
@@ -511,6 +556,7 @@ func (t *UseCapabilityTool) serverTools(ctx context.Context, server string) ([]t
 			Description: tl.Description(),
 			Schema:      tl.Schema(),
 			ReadOnly:    tl.ReadOnly(),
+			Destructive: mcpDestructiveHint(tl),
 		})
 	}
 	t.mu.Lock()
@@ -594,8 +640,9 @@ func (t *UseCapabilityTool) resolveServerConnect(ctx context.Context, server str
 	// rules. It cannot collide with a real mcp__ tool, and rules do not need to
 	// rely on unsupported tool-name glob matching.
 	base.TargetName = connect.Name()
-	// Connecting spawns a subprocess — never a read-only fast path; plan mode
-	// blocks it and Ask-style gates prompt before any process starts.
+	// Connecting spawns a subprocess, so it is never a read-only fast path.
+	// The active Permissions gate decides before any process starts, including
+	// while the parent is in Plan.
 	base.ReadOnly = false
 	base.Args = json.RawMessage(`{}`)
 	return base, nil

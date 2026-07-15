@@ -28,6 +28,20 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      - name: Install and verify Linux sandbox backend
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bubblewrap
+          if sysctl -n kernel.unprivileged_userns_clone >/dev/null 2>&1; then
+            sudo sysctl -w kernel.unprivileged_userns_clone=1
+          fi
+          if sysctl -n kernel.apparmor_restrict_unprivileged_userns >/dev/null 2>&1; then
+            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          fi
+          bwrap --ro-bind / / --dev /dev --proc /proc -- true || \
+            echo "::warning::bubblewrap is installed but this runner denies user namespaces; unavailable-backend tests will run fail-closed"
+
       # Skipped on Windows: the runner checks out CRLF, so gofmt -l flags every
       # file. gofmt output is OS-independent, so the Unix legs already cover it.
       - name: gofmt
@@ -78,6 +92,19 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+
+      - name: Install and verify Linux sandbox backend
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bubblewrap
+          if sysctl -n kernel.unprivileged_userns_clone >/dev/null 2>&1; then
+            sudo sysctl -w kernel.unprivileged_userns_clone=1
+          fi
+          if sysctl -n kernel.apparmor_restrict_unprivileged_userns >/dev/null 2>&1; then
+            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          fi
+          bwrap --ro-bind / / --dev /dev --proc /proc -- true || \
+            echo "::warning::bubblewrap is installed but this runner denies user namespaces; unavailable-backend tests will run fail-closed"
 
       # The matrix never runs -race (it needs cgo); the project's concurrency
       # (plugin fan-out, background phase B, jobs Kill/Wait) would otherwise

@@ -59,9 +59,8 @@ default_model = "deepseek-flash"   # executor; set [agent].planner_model to add 
 
 [agent]
 reasoning_language = "auto"      # visible reasoning text: auto|zh|en
-# plan_mode_allowed_tools = ["custom_reader"]   # extra read-only custom tools only;
-#                                                # does not unlock blocked tools or unsafe bash
-# plan_mode_read_only_commands = ["gh issue view", "gh pr diff"]   # extra read-only shell prefixes for planning
+# plan_mode_allowed_tools = ["mcp__legacy__reader"]   # legacy MCP read-only trust alias; does not change Plan availability
+# plan_mode_read_only_commands = ["gh issue view"]   # legacy compatibility only; Plan bash now uses Permissions
 # planner_model = "deepseek-pro"      # optional low-frequency planner
 # subagent_model = "deepseek-pro"     # optional default for runAs=subagent skills
 # subagent_models = { review = "deepseek-pro", security_review = "deepseek-pro" }
@@ -118,27 +117,18 @@ tool_timeout_seconds = { "generate_video" = 1800 }   # optional raw MCP tool nam
 
 For the full schema and every field's contract, see [`SPEC.md` §5](./SPEC.md#5-configuration-toml).
 
-`[agent].plan_mode_allowed_tools` is an extra read-only declaration for custom or
-external tools Reasonix cannot classify itself. For MCP/plugin tools, a concrete
-model-visible name such as `mcp__github__issue_read` also promotes that tool to a
-trusted read-only reader for planner and read-only research surfaces. Prefer the
-one-time MCP read-only trust prompt, or plugin-level `trusted_read_only_tools`
-when you want to pre-seed audited tools; keep `plan_mode_allowed_tools` as the
-compatibility escape valve. It never unlocks known blocked plan-mode tools such
-as `bash`, `task`, writers, installers, or memory mutation tools, and it never
-bypasses bash's plan-mode safety checks.
+The legacy `[agent].plan_mode_allowed_tools` field is still decoded and rendered
+for old configs. Concrete `mcp__<server>__<tool>` entries continue to act as a
+local read-only trust alias, but prefer each server's `trusted_read_only_tools`
+with raw MCP names. The field never grants or revokes calls in the main Plan
+workflow.
 
-Use `[agent].plan_mode_read_only_commands` when plan-mode research needs a
-specific shell command that Reasonix cannot classify but you know is read-only,
-such as `gh issue view` or an internal query CLI. Entries are concrete command
-prefixes, not tool names: `["gh issue view"]` permits `gh issue view 4572`, while
-`bash`, `sh`, and other shell interpreters are ignored. Shell operators,
-redirection, command substitution, background execution, and unsafe built-in
-command flags remain blocked while planning. In interactive plan mode, Reasonix
-can also ask you to trust a concrete unknown query prefix the first time it is
-needed; the persistent choice writes the same
-`[agent].plan_mode_read_only_commands` entry. Auto/YOLO approval never answers
-this trust prompt.
+`[agent].plan_mode_read_only_commands` is also retained for config round trips,
+but the main Plan workflow no longer has a separate bash allowlist or trust
+prompt. Bash classification and approval use the same Permissions rules in Plan
+and Standard mode; the Sandbox remains the filesystem, process, and network
+boundary. Dedicated planner and read-only subagent runners keep their own strict
+read-only tool registry and foreground-command classifier.
 
 ### Environment variables
 
@@ -403,7 +393,7 @@ Composer shortcuts:
 | --- | --- | --- |
 | `Enter` | Sends the current message | IME composition confirmation is left alone. |
 | `Shift+Enter` | Inserts a newline | The composer keeps focus. |
-| `Shift+Tab` | Toggles Plan on/off | Plan is read-only planning and does not cycle Ask/Auto/YOLO. |
+| `Shift+Tab` | Toggles Plan on/off | Plan changes the workflow instruction; built-in writers keep the active Ask/Auto/YOLO and Sandbox boundary, while MCP writer/destructive targets stay blocked until the plan is approved. |
 | `Cmd+Y` / `Ctrl+Y` | Toggles YOLO on/off | Turning YOLO off restores the previous Ask/Auto base when known. |
 | `Cmd+V` on macOS, `Ctrl+V` on Windows/Linux | Pastes clipboard content | Clipboard images are attached; images can also be dropped into the composer. |
 | Plain `Up` / `Down` at the prompt boundary | Recalls older or newer submitted prompts | Modified arrows and native text navigation stay with the textarea. |
@@ -448,7 +438,7 @@ Mode and display shortcuts:
 
 | Key or command | What it does | Notes |
 | --- | --- | --- |
-| `Shift+Tab` | Cycles Ask → Auto → Plan → Ask | YOLO remains outside this safe-mode cycle; the footer shows the active mode. |
+| `Shift+Tab` | Cycles Ask → Auto → Plan → Ask | YOLO remains outside this composer-mode cycle; the footer shows the active mode. |
 | `Ctrl+Y` | Toggles YOLO on/off | Turning YOLO off restores the previous Ask/Auto base when known. Terminals that forward Command/Super may also send `Cmd+Y`, but `Ctrl+Y` is the reliable terminal shortcut. |
 | `--yolo`, `--dangerously-skip-permissions` | Starts chat in YOLO | Same runtime mode as `Ctrl+Y`. |
 | `/work-mode [economy|balanced|delivery]` | Shows or switches the current session's work mode | `/profile` is a compatibility alias. Switching rebuilds the runtime atomically, preserves the conversation and approval posture, and is blocked while work is active. |
@@ -476,8 +466,8 @@ Mode meanings:
 | --- | --- |
 | Ask | Prompts for fallback writer approvals. |
 | Auto | Auto-allows fallback approvals; explicit `ask` / `deny` rules still apply. |
-| YOLO | Skips ordinary tool approval prompts; `deny`, user `ask` questions, plan approval prompts, and MCP read-only trust prompts still wait. |
-| Plan | Keeps the next work read-only until a plan is approved or Plan is turned off. |
+| YOLO | Skips ordinary tool approval prompts; `deny`, user `ask` questions, and plan approval prompts still wait. |
+| Plan | Directs the model to plan first — a plan-first workflow, not an all-tools read-only mode. Built-in writers still follow the active Ask/Auto/YOLO rules and Sandbox; installed MCP writers, destructive targets, and untrusted readers are blocked before approval, and explicit phase-only tools such as `complete_step` wait until approval. |
 | Goal | Pursues a saved objective until complete, blocked, or cleared. |
 
 ## Permissions & sandbox
@@ -490,6 +480,9 @@ for example `Bash(npm run build)`, `Bash(npm run test:*)`, and `Edit(docs/**)`.
 prefix (for example `Bash(go test:*)`), while file-editing tools share session
 edit grants and persist path-scoped rules such as `Edit(src/app.go)`.
 `reasonix run` stays autonomous but still honours `deny`.
+
+Ask is not read-only: after approval, a writer can still run. Permissions decide
+whether to allow or prompt; the Sandbox is the enforced capability boundary.
 
 Permissions are *policy* (which calls to allow / prompt). The **sandbox** is
 *enforcement*: the file-writers (`write_file` / `edit_file` / `multi_edit` / `move_file`)
@@ -565,31 +558,61 @@ Reasonix is an MCP client. A `[[plugins]]` entry's `type` selects the transport:
 (Streamable HTTP) connects to a remote `url` with optional static `headers`
 (`${VAR}` / `${VAR:-default}` expanded from the environment, so tokens stay out
 of the file). Tools surface to the model as `mcp__<server>__<tool>`; a tool
-declaring MCP's `readOnlyHint: true` joins parallel dispatch and the permission
-reader-default, but planner / read-only research confirms third-party read-only
-hints before relying on them. In interactive sessions, approve the first trust
-prompt once, or choose the persistent option to remember the raw MCP tool name.
-This trust prompt is a user decision, so Auto/YOLO tool approval does not answer
-it; allowing for the session or persisting trust prevents repeat prompts for the
-same MCP tool.
-Advanced users can also pre-seed audited third-party readers on the plugin:
+declaring MCP's `readOnlyHint: true` joins parallel dispatch and the ordinary
+permission reader-default. Because the annotation is supplied by a third-party
+server, it is accepted by the main Plan workflow only as ordinary permission
+classification; it does not grant access to the dedicated planner or read-only
+research sub-agents. Use the local `trusted_read_only_tools` override for a
+reader you have audited. Tools without the hint remain write-capable. While planning, built-in
+writers keep the ordinary permission posture; installed MCP and proxy-resolved
+MCP writers, destructive targets, and untrusted readers are hard-blocked before
+any approval and return to their normal approval flow once Plan exits.
+
+MCP `destructiveHint: true` is stricter than both classifications. Every call
+requires a fresh human approval, even if the tool also reports `readOnlyHint`,
+the current posture is Auto/YOLO, or an allow rule was saved — Guardian,
+`auto_review`, and session grants can never authorize a destructive call.
+
+`approvals_reviewer = "auto_review"` routes the calls that actually need a
+review — `prompt` mode, writer hits under `writes`, and `auto` calls the global
+posture would Ask about — to the session Guardian, and a successful verdict
+(allow or deny) is final. When the reviewer is missing, times out, fails, or
+returns no verdict, the call falls back to fresh human approval: a prompt that
+Auto/YOLO, the approved-plan window, and session grants cannot answer.
+Non-interactive runs and sub-agents fail closed in every reviewer-required
+case.
+
+Server and raw-tool approval policy stays local and never changes the schema
+sent to the model:
 
 ```toml
 [[plugins]]
 name = "github"
 command = "github-mcp"
+default_tools_approval_mode = "writes" # auto|prompt|writes|approve
+tools = { "delete_repository" = { approval_mode = "prompt" } }
+approvals_reviewer = "auto_review"     # user|auto_review
 trusted_read_only_tools = ["issue_read", "pull_request_read"]
 ```
 
-The desktop MCP panel keeps this as an advanced management surface: expand a
-configured server and open its tools list, then use **Pre-trust read-only** or a
-per-tool **Pre-trust** button only when you want to approve tools before they are
-needed. Use **Untrust** to remove a remembered reader. The desktop writes the raw
-MCP tool names to `trusted_read_only_tools` in the owning config source: project
-`.mcp.json` servers are updated under
-`mcpServers.<server>.trusted_read_only_tools`, while ordinary Reasonix plugins
-are updated in the user's Reasonix config. Trust only side-effect-free readers;
-create/update/delete tools should remain untrusted.
+`auto` delegates to the global Ask/Auto/YOLO permission posture; `prompt`
+reviews every call; `writes` reviews only writer-classified calls; and `approve`
+allows ordinary calls. Explicit deny rules always win, and `destructiveHint`
+always forces a new review. A raw-tool `tools` entry overrides the server
+default. `trusted_read_only_tools` remains a compatibility and local-trust
+override for audited readers on servers that omit or cannot be trusted to
+maintain annotations.
+
+Two boundaries are worth knowing. `writes` trusts the server's read-only
+classification, so a server that mislabels a writer as `readOnlyHint` escapes
+that review — use `prompt` for servers you do not trust to maintain
+annotations. And when Guardian is enabled with no `approvals_reviewer`
+configured, `prompt`/`writes` reviews keep the legacy routing: Guardian
+pre-screens the call and may allow it without a human prompt; set
+`approvals_reviewer = "user"` when every review must reach a person. A
+project's `.mcp.json` merges these fields into the session, so review
+`approve`/`writes` policies in a repository you did not author like any other
+code — explicit deny rules and `destructiveHint` reviews still apply.
 
 A server's **prompts** surface as `/mcp__<server>__<prompt>` slash commands
 (positional args after the command); its **resources** are pulled in by writing
@@ -876,10 +899,11 @@ best expressed through an existing skill. Both run ephemeral read-only
 subagents with only read-only research tools plus safe foreground bash, return
 only the final answer, and do not create resumable subagent transcripts.
 Read-only nested delegation may be available until `max_subagent_depth` is
-reached, but writer-capable `task` / `run_skill` remain unavailable. In
-token economy mode, connect only this narrow surface with
-`connect_tool_source(source="read_only_skill")`; the full `skills` source still
-enables writer-capable skill tools and remains blocked in plan mode.
+reached, but writer-capable `task` / `run_skill` remain unavailable inside these
+read-only child registries. In token economy mode, connect this narrow surface
+with `connect_tool_source(source="read_only_skill")` when that isolation is
+required; loading the full `skills` source in Plan is allowed, and subsequent
+writer calls still pass through Permissions/Sandbox.
 
 Choose the startup runtime profile with
 `--profile economy|balanced|delivery` (for example, `reasonix run --profile
@@ -919,8 +943,9 @@ legacy empty/`full` values remain Balanced.
 
 For interactive frontends, plan mode is manual by default. Set
 `agent.auto_plan = "on"` to make complex-looking tasks enter plan mode
-automatically: Reasonix first drafts a read-only plan, then waits for approval
-before editing or running side-effecting commands. `auto_plan_classifier` can
+automatically: Reasonix first drafts a plan, then waits for approval before the
+workflow switches to implementation. Tool calls made while drafting still use
+the current Permissions and Sandbox. `auto_plan_classifier` can
 name a cheap provider such as `deepseek-flash`; it is only called for borderline
 inputs and falls back to the heuristic if classification fails. Use
 `/auto-plan off|on` inside `reasonix` to change the user-level setting, or

@@ -107,10 +107,11 @@ type Messages struct {
 	MemoryApprovalSaveUpdate               string // subject prefix for remember approval
 	MemoryApprovalBodyLabel                string // label before the body excerpt in remember approval
 	MemoryApprovalArchiveFmt               string // subject for forget approval, %q = memory name
-	PlanModeMCPTrustMetadataMissing        string // denial when MCP trust metadata is incomplete
-	PlanModeMCPTrustSubjectFmt             string // subject for MCP read-only trust approval, server/tool
-	PlanModeMCPTrustReason                 string // reason for MCP read-only trust approval
-	PlanModeMCPTrustDeclined               string // model-facing denial after MCP read-only trust rejection
+	MCPDestructiveSubjectFmt               string // subject for destructive MCP approval, target
+	MCPDestructiveReason                   string // reason for destructive MCP approval
+	MCPDestructiveDeclined                 string // model-facing denial after destructive MCP rejection
+	MCPReviewerUnavailableReason           string // reason for fresh approval when auto_review is unavailable
+	MCPReviewerUnavailableDeclined         string // model-facing denial after reviewer-unavailable rejection
 	PlanModeBashTrustSubjectFmt            string // subject for bash read-only prefix trust approval, prefix + command
 	PlanModeBashTrustReason                string // reason for bash read-only prefix trust approval
 	PlanModeBashTrustDeclined              string // model-facing denial after bash read-only prefix rejection
@@ -127,9 +128,6 @@ type Messages struct {
 	PermissionSavedFmt                     string // permission rule saved notice: path, rule
 	PermissionAlreadyAllowedFmt            string // permission rule already covered notice: path, rule
 	PermissionSaveFailedFmt                string // permission rule save failure notice: rule, error
-	MCPReadOnlyTrustSavedFmt               string // MCP trusted read-only saved notice: path, server, tool
-	MCPReadOnlyTrustAlreadyFmt             string // MCP trusted read-only already covered notice: path, server, tool
-	MCPReadOnlyTrustFailedFmt              string // MCP trusted read-only save failure notice: server, tool, error
 	PlanModeReadOnlyCommandTrustSavedFmt   string // plan-mode bash read-only prefix saved notice: path, prefix
 	PlanModeReadOnlyCommandTrustAlreadyFmt string // plan-mode bash read-only prefix already covered notice: path, prefix
 	PlanModeReadOnlyCommandTrustFailedFmt  string // plan-mode bash read-only prefix save failure notice: prefix, error

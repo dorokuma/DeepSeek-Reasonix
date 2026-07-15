@@ -254,7 +254,7 @@ func (s *updateSink) requestPermission(ctx context.Context, a event.Approval) {
 	if a.Subject != "" {
 		title = a.Tool + " " + a.Subject
 	}
-	options := approvalOptions(a.Tool, a.Subject)
+	options := approvalOptions(a.Tool, a.Subject, a.Fresh)
 	params := PermissionRequestParams{
 		SessionID: s.sessionID,
 		ToolCall: PermissionToolCall{
@@ -361,8 +361,8 @@ func approvalSessionOptionName(tool, subject string) string {
 	return "Allow " + sessionRule + " for this session"
 }
 
-func approvalOptions(tool, subject string) []PermissionOption {
-	if control.RequiresFreshHumanApprovalTool(tool) {
+func approvalOptions(tool, subject string, fresh bool) []PermissionOption {
+	if fresh || control.RequiresFreshHumanApprovalTool(tool) {
 		if tool == control.SandboxEscapeApprovalTool {
 			return []PermissionOption{
 				{OptionID: string(OptAllowOnce), Name: "Allow", Kind: OptAllowOnce},

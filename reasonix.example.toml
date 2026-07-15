@@ -32,8 +32,8 @@ auto_plan         = "off"   # user-level only; ignored in project reasonix.toml
 memory_compiler = { enabled = true }   # user-level only; Memory v5 execution compiler
 # reasoning_language = "auto"   # visible reasoning text: auto|zh|en
 # auto_plan_classifier = "deepseek-flash"   # optional; only used for borderline tasks
-# plan_mode_allowed_tools = ["custom_reader"]   # extra read-only custom tools; cannot unlock bash/task/run_skill
-# plan_mode_read_only_commands = ["gh issue view", "gh pr diff"]   # extra read-only shell prefixes for plan mode
+# plan_mode_allowed_tools = ["mcp__legacy__reader"]   # legacy MCP read-only trust alias; does not change Plan availability
+# plan_mode_read_only_commands = ["gh issue view"]   # legacy compatibility only; Plan bash uses Permissions
 soft_compact_ratio  = 0.5   # notice only; keeps the cache-first prefix intact
 tool_result_snip_ratio = 0.6   # snip stale tool results before summary compaction
 compact_ratio       = 0.8   # try compacting when prompt reaches this fraction
@@ -166,9 +166,14 @@ stalled_warning_seconds = 900   # warn once per background job after this many q
 # # call_timeout_seconds = 600
 # # Raw MCP tool names with per-tool call timeouts.
 # # tool_timeout_seconds = { "generate_video" = 1800 }
-# # Optional pre-seeded read-only trust. Interactive sessions can also remember
-# # audited third-party readers when you choose "always allow" from the trust prompt.
+# # Locally audited Plan/read-only-research readers (raw MCP tool names).
 # # trusted_read_only_tools = ["search"]
+# # Local approval policy for this server's tools: auto|prompt|writes|approve.
+# # default_tools_approval_mode = "auto"
+# # Raw-tool overrides of the server default.
+# # tools = { "delete_all" = { approval_mode = "prompt" } }
+# # Who resolves prompt/writes/destructive reviews: user|auto_review.
+# # approvals_reviewer = "user"
 # # Enabled MCP servers connect automatically in the background after session
 # # start. Use /mcp or the desktop MCP panel to refresh, reconnect, or disable.
 

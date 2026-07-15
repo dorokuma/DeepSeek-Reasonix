@@ -143,7 +143,8 @@ func buildReviewSubagentRegistry(reviewSk skill.Skill, cfg *config.Config, root 
 	if reviewSk.ReadOnly {
 		// The built-in review skill declares read-only; enforce it here exactly
 		// like the in-session runner does (writer tools stripped, bash under the
-		// plan-mode safe policy) so `reasonix review` is not a writable backdoor.
+		// permission-classified read-only policy) so `reasonix review` is not a
+		// writable backdoor.
 		return agent.ReadOnlySubagentToolRegistry(parentReg, reviewSk.AllowedTools)
 	}
 	return agent.SubagentToolRegistry(parentReg, reviewSk.AllowedTools)

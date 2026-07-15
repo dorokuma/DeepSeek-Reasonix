@@ -44,6 +44,8 @@ import type {
   HooksSettingsView,
   JobView,
   MCPServerInput,
+  MCPTrustInspectionView,
+  MCPCatalogRefreshView,
   MCPToolView,
   MemorySuggestion,
   MemorySuggestionsView,
@@ -230,6 +232,9 @@ export interface AppBindings {
   Commands(): Promise<CommandInfo[]>;
   Capabilities(): Promise<CapabilitiesView>;
   MCPServers(): Promise<ServerView[]>;
+  InspectMCPTrust(name: string): Promise<MCPTrustInspectionView>;
+  SetMCPTrust(name: string, decision: "session" | "workspace" | "revoke"): Promise<void>;
+  RefreshMCPCatalog(): Promise<MCPCatalogRefreshView>;
   SkillsSettings(): Promise<SkillsSettingsView>;
   CapabilityDiagnostics(includeSessionRuntime: boolean): Promise<CapabilityDiagnosticsReport>;
   Plugins(): Promise<PluginView[]>;
@@ -244,9 +249,6 @@ export interface AppBindings {
   RemoveMCPServer(name: string): Promise<void>;
   ReconnectMCPServer(name: string): Promise<void>;
   ClearMCPServerAuthentication(name: string): Promise<void>;
-  TrustMCPServerTool(name: string, toolName: string): Promise<void>;
-  TrustMCPServerTools(name: string, toolNames: string[]): Promise<void>;
-  UntrustMCPServerTool(name: string, toolName: string): Promise<void>;
   PickSkillFolder(): Promise<string>;
   PickPluginFolder(): Promise<string>;
   AddSkillPath(path: string): Promise<void>;
@@ -664,7 +666,7 @@ function bridgeBreadcrumb(method: string): string {
   if (/^(SaveProvider|AddOfficialProviderAccess|AddProviderPresetAccess|ResetProviderPresetAccess|RemoveProviderAccess|DeleteProvider|SaveProviderKey|SetProviderKey|ClearProviderKey|FetchProviderModels|ConnectKey)/.test(method))
     return `provider ${method}`;
   if (/^(CheckUpdate|DownloadUpdate|InstallUpdate|ApplyUpdate|OpenDownloadPage)/.test(method)) return `update ${method}`;
-  if (/^(AddMCPServer|UpdateMCPServer|RemoveMCPServer|ReconnectMCPServer|ClearMCPServerAuthentication|TrustMCPServerTool|TrustMCPServerTools|UntrustMCPServerTool|SetMCPServer)/.test(method))
+  if (/^(AddMCPServer|UpdateMCPServer|RemoveMCPServer|ReconnectMCPServer|ClearMCPServerAuthentication|SetMCPServer)/.test(method))
     return `mcp ${method}`;
   if (/^(AddSkillPath|RemoveSkillPath|RefreshSkills|SetSkillEnabled|AcceptSkillSuggestion|AvailableSubagentTools|CreateSubagentProfile|UpdateSubagentProfile|DeleteSubagentProfile|SetSubagentProfileModel|SetSubagentProfileEffort|TrySubagentProfile|CancelTrySubagentProfile)/.test(method))
     return `skill ${method}`;
@@ -2668,6 +2670,33 @@ function makeMockApp(): AppBindings {
     async MCPServers() {
       return capServers.map((s) => ({ ...s }));
     },
+    async InspectMCPTrust(name: string) {
+      const server = capServers.find((s) => s.name === name);
+      if (!server) throw new Error(`MCP server ${name} not found`);
+      return {
+        name, trustState: server.trustState || "untrusted",
+        trustSource: server.trustSource, trustScope: server.trustScope,
+        isolationState: server.isolationState || (server.transport === "stdio" ? "enforced" : "not_applicable"),
+        isolationReason: server.isolationReason,
+        identityChanged: server.identityChanged, changedTools: [...(server.changedTools || [])],
+        readers: (server.toolList || []).filter((tool) => tool.readOnlyHint).map((tool) => tool.name),
+        writers: (server.toolList || []).filter((tool) => !tool.readOnlyHint && !tool.destructiveHint).map((tool) => tool.name),
+        destructive: (server.toolList || []).filter((tool) => tool.destructiveHint).map((tool) => tool.name),
+      };
+    },
+    async SetMCPTrust(name: string, decision: "session" | "workspace" | "revoke") {
+      capServers = capServers.map((server) => server.name === name ? {
+        ...server,
+        trustState: decision === "revoke" ? "untrusted" : decision,
+        trustSource: decision === "revoke" ? undefined : "user",
+        trustScope: decision === "revoke" ? undefined : decision,
+        identityChanged: false,
+        changedTools: [],
+      } : server);
+    },
+    async RefreshMCPCatalog() {
+      return { source: "bundled", sequence: 0, offline: false, stale: false };
+    },
     async SkillsSettings() {
       return {
         skills: capSkills.map((s) => ({ ...s })),
@@ -2823,6 +2852,9 @@ function makeMockApp(): AppBindings {
         tools,
         prompts: 0,
         resources: 0,
+        trustState: "untrusted",
+        isolationState: input.transport === "stdio" ? "enforced" : "not_applicable",
+        changedTools: [],
         toolList: Array.from({ length: tools }, (_, i) => ({
           name: `${input.name}_tool_${i + 1}`,
           description: `Mock tool ${i + 1} exposed by ${input.name}.`,
@@ -2881,33 +2913,6 @@ function makeMockApp(): AppBindings {
             }
           : s,
       );
-    },
-    async TrustMCPServerTool(name: string, toolName: string) {
-      const normalizedTool = toolName.trim();
-      if (!normalizedTool) return;
-      capServers = capServers.map((s) => {
-        if (s.name !== name) return s;
-        const trusted = Array.from(new Set([...(s.trustedReadOnlyTools ?? []), normalizedTool]));
-        return { ...s, trustedReadOnlyTools: trusted };
-      });
-    },
-    async TrustMCPServerTools(name: string, toolNames: string[]) {
-      const normalizedTools = toolNames.map((tool) => tool.trim()).filter(Boolean);
-      if (normalizedTools.length === 0) return;
-      capServers = capServers.map((s) => {
-        if (s.name !== name) return s;
-        const trusted = Array.from(new Set([...(s.trustedReadOnlyTools ?? []), ...normalizedTools]));
-        return { ...s, trustedReadOnlyTools: trusted };
-      });
-    },
-    async UntrustMCPServerTool(name: string, toolName: string) {
-      const normalizedTool = toolName.trim();
-      if (!normalizedTool) return;
-      capServers = capServers.map((s) => {
-        if (s.name !== name) return s;
-        const trusted = (s.trustedReadOnlyTools ?? []).filter((tool) => tool !== normalizedTool);
-        return { ...s, trustedReadOnlyTools: trusted };
-      });
     },
     async PickSkillFolder() {
       return "~/my-skills";

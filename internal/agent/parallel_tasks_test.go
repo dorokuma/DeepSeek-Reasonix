@@ -21,7 +21,7 @@ func TestParallelTasksToolIsReadOnly(t *testing.T) {
 		t.Fatal("parallel_tasks must be read-only because spawned sub-agents receive only read-only tools")
 	}
 	if !p.PlanModeSafe() {
-		t.Fatal("parallel_tasks must be plan-mode safe because spawned sub-agents receive only read-only tools")
+		t.Fatal("parallel_tasks must explicitly allow the planning phase")
 	}
 }
 

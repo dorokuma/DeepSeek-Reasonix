@@ -19,6 +19,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"reasonix/internal/agent"
@@ -35,14 +36,16 @@ import (
 	"reasonix/internal/instruction"
 	"reasonix/internal/jobs"
 	"reasonix/internal/lsp"
+	"reasonix/internal/mcpcatalog"
+	"reasonix/internal/mcptrust"
 	"reasonix/internal/memory"
 	"reasonix/internal/memorycompiler"
 	"reasonix/internal/migration"
 	"reasonix/internal/netclient"
 	"reasonix/internal/outputstyle"
 	"reasonix/internal/permission"
-	"reasonix/internal/planmode"
 	"reasonix/internal/plugin"
+	"reasonix/internal/pluginpkg"
 	"reasonix/internal/provider"
 	"reasonix/internal/sandbox"
 	"reasonix/internal/secrets"
@@ -227,28 +230,6 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	// outlive a turn and are cancelled by Controller.Close.
 	sink := event.Sync(opts.Sink)
 
-	planModePolicy := planmode.Policy{
-		AllowedTools:     cfg.Agent.PlanModeAllowedTools,
-		ReadOnlyCommands: cfg.Agent.PlanModeReadOnlyCommands,
-	}
-	if ignored := planModePolicy.IgnoredAllowedTools(); len(ignored) > 0 {
-		detail := fmt.Sprintf("plan_mode_allowed_tools ignored known blocked entries: %s; this setting only declares extra read-only custom tools and cannot unlock known blocked tools or unsafe bash. For shell exploration, declare concrete read-only prefixes in plan_mode_read_only_commands (for example \"gh issue view\"); use read_only_task/read_only_skill instead of task/run_skill while planning.", strings.Join(ignored, ", "))
-		sink.Emit(event.Event{
-			Kind:   event.Notice,
-			Level:  event.LevelWarn,
-			Text:   "Some plan-mode tool settings were ignored.",
-			Detail: detail,
-		})
-	}
-	if ignored := planModePolicy.IgnoredReadOnlyCommands(); len(ignored) > 0 {
-		detail := fmt.Sprintf("plan_mode_read_only_commands ignored unsafe entries: %s; declare concrete read-only commands such as \"gh issue view\", not shell interpreters, overly broad prefixes, malformed prefixes, or writer-capable command verbs", strings.Join(ignored, ", "))
-		sink.Emit(event.Event{
-			Kind:   event.Notice,
-			Level:  event.LevelWarn,
-			Text:   "Some plan-mode command settings were ignored.",
-			Detail: detail,
-		})
-	}
 	if migErr != nil {
 		sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelWarn, Text: "Config migration did not complete.", Detail: "config migration from ~/.reasonix failed: " + migErr.Error()})
 	} else if migrated != nil {
@@ -455,6 +436,13 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	pluginSpecOptions := PluginSpecOptions{
 		DefaultCallTimeout:   time.Duration(cfg.MCPCallTimeoutSeconds()) * time.Second,
 		PlanModeAllowedTools: cfg.Agent.PlanModeAllowedTools,
+		TrustManager:         mcptrust.ForWorkspace(config.ReasonixHomeDir(), root),
+		ConfigSource:         "workspace_config",
+		StateHome:            config.ReasonixHomeDir(),
+		WriterRoots:          writeRoots,
+		ForbidReadRoots:      forbidReadRoots,
+		Network:              cfg.Sandbox.Network,
+		OfficialServers:      LoadOfficialMCPTrust(ctx, cfg),
 	}
 	autoStartEntries := cfg.AutoStartPlugins()
 	eagerEntries, bgEntries := partitionByTier(autoStartEntries)
@@ -469,6 +457,15 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 		applyPlanModeAllowedMCPToolTrust(applyKnownPluginOverrides(extraPlugins, root), cfg.Agent.PlanModeAllowedTools),
 		pluginSpecOptions.DefaultCallTimeout,
 	)
+	for i := range extraSpecs {
+		if extraSpecs[i].TrustManager == nil {
+			extraSpecs[i].TrustManager = pluginSpecOptions.TrustManager
+		}
+		if strings.TrimSpace(extraSpecs[i].ConfigSource) == "" {
+			extraSpecs[i].ConfigSource = "host_session"
+		}
+		applyMCPIsolation(&extraSpecs[i], root, pluginSpecOptions)
+	}
 	onDemandMCPSpecs := map[string]plugin.Spec{}
 	onDemandMCPNames := []string{}
 	if tokenEconomy {
@@ -484,8 +481,6 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 		}
 		eagerEntries, bgEntries = nil, nil
 	}
-	trustedMCPServers := planModeTrustedMCPServers(onDemandMCPSpecs)
-
 	// Auto-demote: any eager plugin that has been chronically slow (recent
 	// samples repeatedly hit the blocking startup budget) drops to background
 	// for this session. The user keeps eager intent, just doesn't pay for it
@@ -597,12 +592,12 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 			if opts.SharedHost != nil {
 				// Shared host relies on Host's spawn guard to avoid duplicate
 				// processes across tabs for the same workspace root.
-				cs, _ := plugin.LoadCachedSchema(s.Name, plugin.SpecFingerprint(s))
+				cs, _ := plugin.LoadCachedSchemaForSpec(s)
 				for _, t := range plugin.LazyToolset(s, cs, pluginHost, reg, ctx, true) {
 					reg.Add(t)
 				}
 			} else {
-				cs, _ := plugin.LoadCachedSchema(s.Name, plugin.SpecFingerprint(s))
+				cs, _ := plugin.LoadCachedSchemaForSpec(s)
 				for _, t := range plugin.LazyToolset(s, cs, pluginHost, reg, ctx, true) {
 					reg.Add(t)
 				}
@@ -809,7 +804,7 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	// has none, so ask resolves to "decide for yourself".
 	reg.Add(agent.NewAskTool())
 
-	// Skill tools: read_only_skill is a narrow plan-mode-safe entry point; the
+	// Skill tools: read_only_skill is a narrow explicitly read-only entry point; the
 	// full skills source adds run_skill / install_skill plus the dedicated
 	// subagent wrappers (explore / research / review / security_review). Read-only
 	// subagent skills run ephemerally with the same registry boundary as
@@ -876,6 +871,7 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 		}
 		sysPrompt := agent.DefaultReadOnlyTaskSystemPrompt + "\n\nSkill instructions:\n" + sk.Body
 		runOptions := subagentSkillOptions(sctx, steps, price, ctxWin, childDepth)
+		runOptions.ReadOnlyExecution = true
 		// Delivery risk gates consume typed reports; outside Delivery a casual
 		// /review run may finish with prose only.
 		if runOptions.DeliveryProfile {
@@ -907,7 +903,7 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 		}
 		// A read-only skill (builtin review/security-review, or frontmatter
 		// `read-only: true`) gets its promise enforced at the tool boundary:
-		// writer tools are stripped and bash runs under the plan-mode safe
+		// writer tools are stripped and bash runs under the read-only
 		// command policy. Transcripts recorded against the writer-capable
 		// registry stop matching on continue_from (schema-hash check reports
 		// the mismatch).
@@ -976,6 +972,7 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 			}
 		}
 		runOptions := subagentSkillOptions(sctx, steps, price, ctxWin, childDepth)
+		runOptions.ReadOnlyExecution = sk.ReadOnly
 		// Delivery risk gates consume typed reports; outside Delivery a casual
 		// /review run may finish with prose only.
 		if runOptions.DeliveryProfile {
@@ -1209,9 +1206,9 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 				return addBuiltinSourceTools("files", "delete_range", "delete_symbol", "move_file", "multi_edit", "notebook_edit"), nil
 			},
 			workflow: func(ctx context.Context) (string, error) {
-				// Plan mode narrows workflow to its read-only planning subset:
-				// todo_write stays available (planmode.Marker promises it),
-				// while complete_step joins via a fresh connect after approval.
+				// complete_step is explicitly execution-phase-only. Keep todo_write
+				// available while planning, then expose complete_step on a fresh
+				// workflow connect after approval.
 				if agent.PlanModeFromContext(ctx) {
 					return addBuiltinSourceTools("workflow", "todo_write") +
 						" complete_step stays blocked in plan mode; connect workflow again after plan approval to enable it.", nil
@@ -1252,9 +1249,7 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 				}
 				return fmt.Sprintf("enabled MCP server %q tools: %s.", spec.Name, strings.Join(names, ", ")), nil
 			},
-			mcpNames:                 onDemandMCPNames,
-			planModeAllowedTools:     cfg.Agent.PlanModeAllowedTools,
-			planModeTrustedMCPServer: trustedMCPServers,
+			mcpNames: onDemandMCPNames,
 		})
 	}
 
@@ -1427,33 +1422,43 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	}
 
 	ctrlOpts := control.Options{
-		Runner:                 runner,
-		Executor:               executor,
-		Sink:                   sink,
-		Policy:                 policy,
-		SubagentGate:           headlessGate,
-		Label:                  label,
-		ModelRef:               modelRef,
-		SystemPrompt:           sysPrompt,
-		SessionDir:             sessionDir,
-		Host:                   pluginHost,
-		Commands:               cmds,
-		Skills:                 skills,
-		AllSkills:              allSkills,
-		SkillStore:             skillStore,
-		AllSkillStore:          allSkillStore,
-		SkillRunner:            skillRunner,
-		ReadOnlySkillRunner:    readOnlySkillRunner,
-		SkillProfile:           skillProfile,
-		Hooks:                  hookRunner,
-		Memory:                 mem,
-		Cleanup:                cleanup,
-		BalanceURL:             entry.BalanceURL,
-		BalanceKey:             entry.APIKey(),
-		BalanceClient:          balanceClient,
-		Jobs:                   jm,
-		Registry:               reg,
-		PluginCtx:              ctx,
+		Runner:                runner,
+		Executor:              executor,
+		Sink:                  sink,
+		Policy:                policy,
+		SubagentGate:          headlessGate,
+		Label:                 label,
+		ModelRef:              modelRef,
+		SystemPrompt:          sysPrompt,
+		SessionDir:            sessionDir,
+		Host:                  pluginHost,
+		Commands:              cmds,
+		Skills:                skills,
+		AllSkills:             allSkills,
+		SkillStore:            skillStore,
+		AllSkillStore:         allSkillStore,
+		SkillRunner:           skillRunner,
+		ReadOnlySkillRunner:   readOnlySkillRunner,
+		SkillProfile:          skillProfile,
+		Hooks:                 hookRunner,
+		Memory:                mem,
+		Cleanup:               cleanup,
+		BalanceURL:            entry.BalanceURL,
+		BalanceKey:            entry.APIKey(),
+		BalanceClient:         balanceClient,
+		Jobs:                  jm,
+		Registry:              reg,
+		PluginCtx:             ctx,
+		MCPDefaultCallTimeout: pluginSpecOptions.DefaultCallTimeout,
+		MCPConfigureSpec: func(spec *plugin.Spec) {
+			if spec == nil {
+				return
+			}
+			spec.TrustManager = pluginSpecOptions.TrustManager
+			spec.ConfigSource = pluginSpecOptions.ConfigSource
+			applyMCPIsolation(spec, root, pluginSpecOptions)
+			applyOfficialMCPTrust(spec, pluginSpecOptions)
+		},
 		WorkspaceRoot:          root,
 		ExternalFolderToolRefs: readPathResolver,
 		AutoPlan:               cfg.Agent.AutoPlan,
@@ -1466,9 +1471,6 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 		RuntimeProfile:         runtimeProfile,
 		OnRemember: func(rule string) control.RememberResult {
 			return rememberPermissionRule(root, rule)
-		},
-		OnRememberMCPReadOnlyTrust: func(serverName, rawToolName string) control.MCPReadOnlyTrustResult {
-			return rememberMCPReadOnlyTrust(root, serverName, rawToolName)
 		},
 		OnRememberPlanModeReadOnlyCommand: func(prefix string) control.PlanModeReadOnlyCommandTrustResult {
 			return rememberPlanModeReadOnlyCommand(root, prefix)
@@ -1500,6 +1502,7 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 		ctrlOpts.Classifier = classifier
 	}
 	ctrl := control.New(ctrlOpts)
+	refreshMCPCatalogInBackground(pluginHost)
 	if tokenDelivery {
 		var router *capability.SemanticRouter
 		// Prefer agent.subagent_models["capability-router"] when configured.
@@ -1518,6 +1521,59 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 		ctrl.WireCapabilityRouting(cfg.Plugins, capSpecs, nil, nil)
 	}
 	return ctrl, nil
+}
+
+var mcpCatalogRefreshState struct {
+	sync.Mutex
+	running bool
+	last    time.Time
+	index   mcpcatalog.Index
+	hosts   map[*plugin.Host]struct{}
+}
+
+func refreshMCPCatalogInBackground(host *plugin.Host) {
+	if host == nil {
+		return
+	}
+	mcpCatalogRefreshState.Lock()
+	if !mcpCatalogRefreshState.last.IsZero() && time.Since(mcpCatalogRefreshState.last) < 6*time.Hour {
+		index := mcpCatalogRefreshState.index
+		mcpCatalogRefreshState.Unlock()
+		host.ApplyCatalogRevocations(index.RevokedEntryIDs())
+		return
+	}
+	if mcpCatalogRefreshState.hosts == nil {
+		mcpCatalogRefreshState.hosts = map[*plugin.Host]struct{}{}
+	}
+	mcpCatalogRefreshState.hosts[host] = struct{}{}
+	if mcpCatalogRefreshState.running {
+		mcpCatalogRefreshState.Unlock()
+		return
+	}
+	mcpCatalogRefreshState.running = true
+	mcpCatalogRefreshState.Unlock()
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		result, err := (mcpcatalog.Loader{CacheDir: config.CacheDir()}).Load(ctx, true)
+		mcpCatalogRefreshState.Lock()
+		hosts := mcpCatalogRefreshState.hosts
+		mcpCatalogRefreshState.hosts = map[*plugin.Host]struct{}{}
+		mcpCatalogRefreshState.running = false
+		if err == nil {
+			mcpCatalogRefreshState.last = time.Now()
+			mcpCatalogRefreshState.index = result.Index
+		}
+		mcpCatalogRefreshState.Unlock()
+		if err != nil {
+			slog.Warn("refresh signed MCP catalog", "err", err)
+			return
+		}
+		revoked := result.Index.RevokedEntryIDs()
+		for target := range hosts {
+			target.ApplyCatalogRevocations(revoked)
+		}
+	}()
 }
 
 func rememberPermissionRule(workspaceRoot, rule string) control.RememberResult {
@@ -1553,25 +1609,6 @@ func rememberPermissionConfigPath(workspaceRoot string) string {
 		path = "reasonix.toml" // match Config.Save() fallback
 	}
 	return path
-}
-
-func rememberMCPReadOnlyTrust(workspaceRoot, serverName, rawToolName string) control.MCPReadOnlyTrustResult {
-	serverName = strings.TrimSpace(serverName)
-	rawToolName = strings.TrimSpace(rawToolName)
-	result := control.MCPReadOnlyTrustResult{Server: serverName, Tool: rawToolName}
-	_, changed, path, err := config.TrustPluginReadOnlyToolInSourceForRoot(workspaceRoot, serverName, rawToolName)
-	result.Path = path
-	if err != nil {
-		slog.Warn("persist MCP read-only trust", "server", serverName, "tool", rawToolName, "err", err)
-		result.Err = err
-		return result
-	}
-	if changed {
-		result.Saved = true
-		return result
-	}
-	result.CoveredBy = rawToolName
-	return result
 }
 
 func rememberPlanModeReadOnlyCommand(workspaceRoot, prefix string) control.PlanModeReadOnlyCommandTrustResult {
@@ -2021,12 +2058,30 @@ func PluginSpecsForRoot(entries []config.PluginEntry, workspaceRoot string) []pl
 type PluginSpecOptions struct {
 	DefaultCallTimeout   time.Duration
 	PlanModeAllowedTools []string
+	TrustManager         *mcptrust.Manager
+	ConfigSource         string
+	StateHome            string
+	WriterRoots          []string
+	ForbidReadRoots      []string
+	Network              bool
+	OfficialServers      map[string]OfficialMCPTrust
 }
 
-// PluginSpecsForRootWithPlanModeAllowedTools also promotes model-visible MCP
-// names declared in agent.plan_mode_allowed_tools to trusted read-only model
-// names for their matching server. This keeps the planner/read-only research
-// trust path aligned with the plan-mode execution escape valve.
+type OfficialMCPTrust struct {
+	CatalogEntryID  string
+	Readers         []string
+	PackageDigest   string
+	PackageRoot     string
+	Version         string
+	CatalogSequence uint64
+	Network         bool
+	Transport       string
+}
+
+// PluginSpecsForRootWithPlanModeAllowedTools promotes legacy model-visible MCP
+// names from agent.plan_mode_allowed_tools to trusted read-only names for their
+// matching server. The alias remains useful to planner/read-only research
+// registries but does not control the main Plan workflow.
 func PluginSpecsForRootWithPlanModeAllowedTools(entries []config.PluginEntry, workspaceRoot string, allowedTools []string) []plugin.Spec {
 	return PluginSpecsForRootWithOptions(entries, workspaceRoot, PluginSpecOptions{
 		PlanModeAllowedTools: allowedTools,
@@ -2045,19 +2100,144 @@ func PluginSpecsForRootWithOptions(entries []config.PluginEntry, workspaceRoot s
 
 func pluginSpecFromEntryWithOptions(e config.PluginEntry, workspaceRoot string, opts PluginSpecOptions) plugin.Spec {
 	e = e.ExpandedPlugin() // resolve ${VAR} / ${VAR:-default} from the environment
-	return plugin.ApplyKnownOverrides(plugin.Spec{
-		Name:               e.Name,
-		Type:               e.Type,
-		Command:            e.Command,
-		Args:               e.Args,
-		Env:                e.Env,
-		URL:                e.URL,
-		Headers:            e.Headers,
-		DefaultCallTimeout: opts.DefaultCallTimeout,
-		CallTimeout:        secondsDuration(e.CallTimeoutSeconds),
-		ToolTimeouts:       toolTimeoutDurations(e.ToolTimeoutSeconds),
-		ReadOnlyToolNames:  trustedRawReadOnlyToolNames(e.TrustedReadOnlyTools),
+	spec := plugin.ApplyKnownOverrides(plugin.Spec{
+		Name:                     e.Name,
+		Type:                     e.Type,
+		Command:                  e.Command,
+		Args:                     e.Args,
+		Env:                      e.Env,
+		URL:                      e.URL,
+		Headers:                  e.Headers,
+		DefaultCallTimeout:       opts.DefaultCallTimeout,
+		CallTimeout:              secondsDuration(e.CallTimeoutSeconds),
+		ToolTimeouts:             toolTimeoutDurations(e.ToolTimeoutSeconds),
+		ReadOnlyToolNames:        legacyRawReadOnlyToolNames(e.TrustedReadOnlyTools),
+		DefaultToolsApprovalMode: e.DefaultToolsApprovalMode,
+		ToolApprovalModes:        mcpToolApprovalModes(e.Tools),
+		ApprovalsReviewer:        e.ApprovalsReviewer,
+		TrustManager:             opts.TrustManager,
+		ConfigSource:             opts.ConfigSource,
 	}, workspaceRoot)
+	applyMCPIsolation(&spec, workspaceRoot, opts)
+	applyOfficialMCPTrust(&spec, opts)
+	return spec
+}
+
+func applyOfficialMCPTrust(spec *plugin.Spec, opts PluginSpecOptions) {
+	if spec == nil {
+		return
+	}
+	if official, ok := opts.OfficialServers[spec.Name]; ok {
+		if normalizeMCPTransport(spec.Type) != normalizeMCPTransport(official.Transport) {
+			return
+		}
+		spec.OfficialCatalogEntryID = official.CatalogEntryID
+		spec.OfficialReaderNames = append([]string(nil), official.Readers...)
+		spec.PackageDigest = official.PackageDigest
+		spec.PackageRoot = official.PackageRoot
+		spec.VerifiedVersion = official.Version
+		spec.CatalogSequence = official.CatalogSequence
+		spec.ReaderSandbox.Network = official.Network
+		spec.WriterSandbox.Network = official.Network
+	}
+}
+
+// LoadOfficialMCPTrust resolves verified installed package metadata against the
+// signed catalog. Frontends use the same helper as boot so inspect/revoke never
+// silently downgrade an official server to an unrelated custom-server spec.
+func LoadOfficialMCPTrust(ctx context.Context, cfg *config.Config) map[string]OfficialMCPTrust {
+	out := map[string]OfficialMCPTrust{}
+	if cfg == nil {
+		return out
+	}
+	home := config.ReasonixHomeDir()
+	result, err := (mcpcatalog.Loader{CacheDir: config.CacheDir()}).Load(ctx, false)
+	if err != nil {
+		return out
+	}
+	for _, configured := range cfg.Plugins {
+		owner, ok := cfg.PluginPackageOwner(configured.Name)
+		if !ok {
+			continue
+		}
+		installed, ok, err := pluginpkg.FindInstalled(home, owner)
+		if err != nil || !ok || installed.Verification == nil || !pluginpkg.VerificationValid(home, installed) {
+			continue
+		}
+		for _, entry := range result.Index.Entries {
+			if entry.ID != installed.Verification.CatalogEntryID || result.Index.IsRevoked(entry.ID) ||
+				entry.Name != installed.Name || entry.Version != installed.Version || entry.Source != installed.Source ||
+				!strings.EqualFold(entry.Commit, installed.Commit) || !strings.EqualFold(entry.PackageSHA256, installed.Verification.PackageSHA256) {
+				continue
+			}
+			for _, server := range entry.Servers {
+				if server.Name != configured.Name {
+					continue
+				}
+				out[configured.Name] = OfficialMCPTrust{
+					CatalogEntryID: entry.ID, Readers: append([]string(nil), server.Readers...),
+					PackageDigest: entry.PackageSHA256, PackageRoot: pluginpkg.ResolveRoot(home, installed.Root), Version: entry.Version,
+					CatalogSequence: result.Index.Sequence, Network: server.Network, Transport: server.Transport,
+				}
+			}
+		}
+	}
+	return out
+}
+
+func normalizeMCPTransport(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "", "stdio":
+		return "stdio"
+	case "http", "streamable-http", "streamable_http":
+		return "http"
+	default:
+		return strings.ToLower(strings.TrimSpace(value))
+	}
+}
+
+func applyMCPIsolation(spec *plugin.Spec, workspaceRoot string, opts PluginSpecOptions) {
+	if spec == nil || strings.TrimSpace(opts.StateHome) == "" {
+		return
+	}
+	stateDir := plugin.MCPStateDir(opts.StateHome, workspaceRoot, spec.Name)
+	writerRoots := appendUniquePaths([]string{stateDir}, opts.WriterRoots...)
+	readerRoots := []string{workspaceRoot}
+	if home, err := os.UserHomeDir(); err == nil {
+		readerRoots = appendUniquePaths(readerRoots, home)
+	}
+	spec.StateDir = stateDir
+	spec.ReaderSandbox = sandbox.Spec{
+		Mode: "enforce", WriteRoots: []string{stateDir},
+		ReadRoots:              readerRoots,
+		AppContainerWriteRoots: []string{stateDir},
+		ForbidReadRoots:        append([]string(nil), opts.ForbidReadRoots...),
+		Network:                opts.Network, MinimalWrites: true,
+	}
+	spec.WriterSandbox = sandbox.Spec{
+		Mode: "enforce", WriteRoots: writerRoots,
+		ReadRoots:              readerRoots,
+		AppContainerWriteRoots: append([]string(nil), writerRoots...),
+		ForbidReadRoots:        append([]string(nil), opts.ForbidReadRoots...),
+		Network:                opts.Network, MinimalWrites: true,
+	}
+}
+
+func mcpToolApprovalModes(policies map[string]config.MCPToolPolicy) map[string]string {
+	if len(policies) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(policies))
+	for name, policy := range policies {
+		name = strings.TrimSpace(name)
+		if name != "" {
+			out[name] = policy.ApprovalMode
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 func secondsDuration(seconds int) time.Duration {
@@ -2134,7 +2314,7 @@ func applyPlanModeAllowedMCPToolTrust(specs []plugin.Spec, allowedTools []string
 	return out
 }
 
-func trustedRawReadOnlyToolNames(names []string) map[string]bool {
+func legacyRawReadOnlyToolNames(names []string) map[string]bool {
 	if len(names) == 0 {
 		return nil
 	}
@@ -2142,22 +2322,6 @@ func trustedRawReadOnlyToolNames(names []string) map[string]bool {
 	for _, name := range names {
 		name = strings.TrimSpace(name)
 		if name != "" {
-			out[name] = true
-		}
-	}
-	if len(out) == 0 {
-		return nil
-	}
-	return out
-}
-
-func planModeTrustedMCPServers(specs map[string]plugin.Spec) map[string]bool {
-	if len(specs) == 0 {
-		return nil
-	}
-	out := map[string]bool{}
-	for name, spec := range specs {
-		if len(spec.ReadOnlyToolNames) > 0 || len(spec.ReadOnlyModelToolNames) > 0 {
 			out[name] = true
 		}
 	}

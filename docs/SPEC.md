@@ -302,50 +302,48 @@ func (p Policy) Decide(toolName string, readOnly bool, args json.RawMessage) Dec
   it resolves `Ask` to **allow** — preserving autonomous behaviour. A `Deny` is a
   hard block in *every* mode: the tool never executes and the model receives a
   "blocked" result it can adapt to (the same shape as a plan-mode refusal).
-- **Relationship to plan mode.** Plan mode (§3.4) is an orthogonal, coarser gate
-  checked before the permission layer. Its boundary is fail-closed for untrusted
-  tools: while planning, a tool runs only if it reports a *trustworthy*
-  `ReadOnly()==true` — a built-in, a first-party MCP `ReadOnlyToolNames`
-  override, a plugin-level `trusted_read_only_tools` declaration, or a concrete
-  MCP name listed in `[agent].plan_mode_allowed_tools` — or self-reports
-  plan-safe via `tool.PlanModeClassifier`. An MCP tool's `ReadOnly()` may
-  instead come from the server's self-reported `readOnlyHint`, which plan mode
-  treats as untrusted (`tool.PlanModeUntrustedReadOnly`): interactive
-  controllers may ask once before executing it and may remember a persistent
-  approval as `trusted_read_only_tools`. This trust prompt is a fresh user
-  decision: `auto`, `yolo`, and the approved-plan execution window do not answer
-  it, but an explicit session grant still prevents repeat prompts for the same
-  tool. Non-interactive sessions and declined approvals remain fail-closed.
-  Bash is gated separately: built-in read-only commands and concrete prefixes
-  declared in `[agent].plan_mode_read_only_commands` may run. Interactive
-  controllers may also ask once before running an unknown query-shaped prefix
-  and may remember a persistent approval as the same
-  `plan_mode_read_only_commands` entry. This bash trust prompt is also a fresh
-  user decision: `auto`, `yolo`, and the approved-plan execution window do not
-  answer it, while explicit session/persistent trust prevents repeat prompts for
-  that prefix. Shell operators, background execution, shell interpreters, and
-  unsafe arguments stay blocked while planning. Writers, installers, memory
-  mutation, process control, and `complete_step` (read-only yet post-approval only, so it
-  self-reports plan-unsafe) are refused; the enforced invariant is
-  PlanSafe ⇒ ReadOnly. An untrusted read-only MCP/plugin tool is therefore
-  blocked until the user approves or pre-trusts it, and it is excluded from
-  planner/read-only research sub-agents until the tool is part of the trusted
-  read-only registry. Plan mode still allows `read_only_task` and
-  `read_only_skill`, whose sub-agents receive only read-only research tools and
-  safe foreground bash; writer-capable `task` delegation and full skill execution
-  remain blocked. The desktop MCP panel writes the same
-  `trusted_read_only_tools` raw-name list as an advanced management surface:
-  **Pre-trust read-only** adds currently listed `readOnlyHint` tools, per-tool
-  **Pre-trust** adds an audited reader manually, and **Untrust** removes it
-  again. These UI actions do not make MCP `readOnlyHint` globally trusted by
-  default.
+- **MCP approval policy.** Installed MCP tools may set a server default and raw
+  tool overrides using `auto|prompt|writes|approve`. Precedence is explicit deny,
+  `destructiveHint`, raw-tool mode, server default, then global Ask/Auto/YOLO.
+  `auto` delegates to the ordinary permission decision; `prompt` reviews every
+  call; `writes` reviews writers only; and `approve` allows ordinary calls.
+  `approvals_reviewer = "user"` uses the interactive user, while `auto_review`
+  sends the calls that need review (`prompt`, writer hits under `writes`, and
+  `auto` calls the global posture would Ask about) to the session Guardian; a
+  successful allow/deny verdict is final. A missing, timed-out, failed, or
+  indeterminate reviewer degrades to fresh human approval — a prompt that
+  Auto/YOLO, the approved-plan window, and session grants cannot answer — and
+  non-interactive sessions fail closed. A destructive call always requires a
+  fresh human approval on every invocation: no reviewer, session grant, or
+  Auto/YOLO posture can authorize it. All of this is local metadata and is
+  absent from provider-visible tool schemas.
+- **Relationship to plan mode.** Plan mode (§3.4) is a plan-first collaboration
+  workflow, not an all-tools read-only mode. Before Permissions/Sandbox, the
+  host enforces explicit phase opt-outs (`complete_step` is read-only but
+  belongs to the post-approval execution phase, so it self-reports plan-unsafe
+  and is refused) and hard-blocks installed MCP and proxy-resolved MCP
+  writer/destructive targets plus untrusted readers until the plan is approved.
+  Ordinary built-in and Bash calls then use the same Ask/Auto/YOLO, explicit
+  `ask`/`deny`, and Sandbox path as Standard mode; blocked MCP writers regain
+  their normal approval flow after Plan exits. A third-party MCP `readOnlyHint` affects ordinary permission and dispatch
+  classification, but it does not grant trust to the dedicated planner or
+  read-only sub-agent registries; use a locally audited
+  `trusted_read_only_tools` entry for those. The legacy
+  `[agent].plan_mode_allowed_tools` field is still decoded and can act as a
+  concrete MCP read-only trust alias, while `plan_mode_read_only_commands` is
+  retained for config/session round trips. Neither field grants or revokes calls
+  in the main Plan workflow. `read_only_task` and `read_only_skill` remain strict
+  read-only capabilities with their own tool registry and safe foreground Bash;
+  writer-capable `task` and skill execution remain permission-gated instead of
+  Plan-blocked, and their child turns inherit the Plan workflow marker and
+  explicit phase opt-outs.
 - **User decisions are separate from tool approvals.** Runtime tool approval has
   three user-facing postures: `ask` ("需要批准"), `auto` ("自动批准"), and
   `yolo` ("Yolo批准"). `auto` lets the permission policy auto-approve the writer
-  fallback while preserving explicit ask/deny rules; `yolo` skips all tool
-  permission approvals for approval-gated tools such as writers and Bash.
-  Neither posture answers `ask` questions, approves `exit_plan_mode` plans, or
-  confirms MCP read-only trust prompts for the user.
+  fallback while preserving explicit ask/deny rules; `yolo` skips ordinary tool
+  permission prompts for approval-gated tools such as writers and Bash. Explicit
+  deny rules and forced fresh reviews still apply.
+  Neither posture answers `ask` questions or approves `exit_plan_mode` plans.
   Auto-plan is also a separate feature flag: when enabled, a complex task may
   still enter plan mode in any tool approval posture. After a user approves a
   plan, the controller opens a short `approvedPlanAutoApproveTools` execution
@@ -390,12 +388,12 @@ func (p Policy) Decide(toolName string, readOnly bool, args json.RawMessage) Dec
   desktop UI so the collaboration mode remains one of the three choices, while
   the underlying tool approval posture is preserved.
 
-| Tool approval posture | Tool approvals | Plan approval | MCP read-only trust | `ask` questions |
-| --- | --- | --- | --- | --- |
-| Need approval / `ask` | Follow permission policy (`Ask` prompts interactively) | Waits for user | Waits for user unless session-granted | Waits for user |
-| Auto approve / `auto` | Writer fallback auto-allowed; explicit ask/deny rules still apply | Waits for user | Waits for user unless session-granted | Waits for user |
-| YOLO approval / `yolo` | Approval prompts auto-allowed unless denied | Waits for user | Waits for user unless session-granted | Waits for user |
-| Approved-plan execution window | Approved plan's tool calls auto-allowed unless denied | Future plans still wait | Waits for user unless session-granted | Waits for user |
+| Tool approval posture | Tool approvals | Plan approval | `ask` questions |
+| --- | --- | --- | --- |
+| Need approval / `ask` | Follow permission policy (`Ask` prompts interactively) | Waits for user | Waits for user |
+| Auto approve / `auto` | Writer fallback auto-allowed; explicit ask/deny rules still apply | Waits for user | Waits for user |
+| YOLO approval / `yolo` | Ordinary prompts auto-allowed; deny rules and fresh reviews remain | Waits for user | Waits for user |
+| Approved-plan execution window | Approved plan's writer fallback is auto-allowed; explicit `ask` / `deny`, MCP `prompt` / `writes`, and fresh reviews remain | Future plans still wait | Waits for user |
 
 Out of the box (`mode = "ask"`, no rules) `reasonix run` behaves exactly as before
 (writers resolve `Ask`→allow with no TTY), while `reasonix` now prompts before
@@ -566,9 +564,8 @@ system_prompt = "You are Reasonix, a coding agent..."  # or system_prompt_file =
 temperature       = 0.0
 memory_compiler = { enabled = true, verbosity = "observe" }   # user/global only; observe|compact; CLI: reasonix config memory-v5 off|observe|compact|on|status
 reasoning_language = "auto"       # visible reasoning text: auto|zh|en
-# plan_mode_allowed_tools = ["custom_reader"]   # extra read-only declarations for custom tools;
-#                                                # cannot unlock known blocked tools or unsafe bash
-# plan_mode_read_only_commands = ["gh issue view", "gh pr diff"]   # extra read-only shell prefixes for plan mode
+# plan_mode_allowed_tools = ["mcp__legacy__reader"]   # legacy MCP read-only trust alias; does not change Plan availability
+# plan_mode_read_only_commands = ["gh issue view"]   # legacy compatibility only; Plan bash uses Permissions
 # planner_model = "deepseek-pro"   # optional: two-model collaboration (low-frequency planner)
 # subagent_model = "deepseek-pro"   # optional default for runAs=subagent skills
 # subagent_effort = "high"           # optional default reasoning effort for subagents
@@ -635,7 +632,10 @@ args    = []
 # env   = { FOO = "bar" }
 # call_timeout_seconds = 600            # per-server MCP call timeout; 0 = global/default cap
 # tool_timeout_seconds = { "generate_video" = 1800 }   # raw MCP tool names
-# trusted_read_only_tools = ["search"]   # optional pre-seeded MCP read-only trust
+# trusted_read_only_tools = ["search"]   # locally audited Plan/read-only-research readers
+# default_tools_approval_mode = "auto"   # auto|prompt|writes|approve
+# tools = { "delete_all" = { approval_mode = "prompt" } }
+# approvals_reviewer = "user"            # user|auto_review
 
 # [[plugins]]                   # a remote MCP server over Streamable HTTP
 # name    = "stripe"

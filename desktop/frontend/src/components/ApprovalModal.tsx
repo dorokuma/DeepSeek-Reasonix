@@ -74,7 +74,6 @@ export function approvalToolLabel(tool: string, t: Translator): string {
 const sandboxEscapeEnglishSubjectFallback = "run shell command unconfined once";
 const sandboxEscapeEnglishSubjectPrefix = "run unconfined once: ";
 const configWriteEnglishSubjectPrefix = "write Reasonix config: ";
-const planModeMcpEnglishSubject = /^MCP (.+) as read-only for planning and research$/;
 const planModeBashEnglishSubject = /^Trust (.+) as a read-only command prefix while planning\r?\nCommand: ([\s\S]+)$/;
 
 function localizeApprovalSubject(tool: string, subject: string, t: Translator): string {
@@ -99,10 +98,6 @@ function localizeApprovalSubject(tool: string, subject: string, t: Translator): 
   }
   if (tool === "forget" && trimmed.startsWith("Archive memory ")) {
     return `${t("approval.memoryArchivePrefix")}${trimmed.slice("Archive memory ".length)}`;
-  }
-  const mcpTrust = trimmed.match(planModeMcpEnglishSubject);
-  if (mcpTrust) {
-    return t("approval.planModeMcpTrustSubject", { target: mcpTrust[1] ?? "" });
   }
   const bashTrust = trimmed.match(planModeBashEnglishSubject);
   if (bashTrust) {
@@ -134,9 +129,6 @@ function localizeApprovalReason(tool: string, reason: string | undefined, t: Tra
 function localizePlanModeApprovalReason(tool: string, reason: string, t: Translator): string {
   if (tool === "plan_mode_read_only_command" && reason.includes("built-in read-only set")) {
     return t("approval.planModeBashTrustReason");
-  }
-  if (reason.includes("external read-only hints need your confirmation")) {
-    return t("approval.planModeMcpTrustReason");
   }
   return reason;
 }
@@ -179,7 +171,7 @@ export function ApprovalModal({
   const t = useT();
   const isPlanApproval = approval.tool === "exit_plan_mode";
   const toolLabel = approvalToolLabel(approval.tool, t);
-  const isFreshHumanApproval = requiresFreshHumanApproval(approval.tool);
+  const isFreshHumanApproval = approval.fresh === true || requiresFreshHumanApproval(approval.tool);
   const hasFreshSessionGrant = approval.tool === "sandbox_escape" || approval.tool === "config_write";
   // Switching the approval segmented control to a more permissive mode does not
   // resolve an already-pending request; say so on the card instead of leaving

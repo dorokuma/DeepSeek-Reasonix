@@ -852,7 +852,7 @@ func (s *Server) autoApproveTools(w http.ResponseWriter, r *http.Request) {
 }
 
 // toolApprovalMode selects ask, auto, or yolo approval behavior for interactive
-// frontends. Plan remains a separate read-only gate.
+// frontends. Plan remains a separate workflow governed by the selected mode.
 func (s *Server) toolApprovalMode(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Mode string `json:"mode"`

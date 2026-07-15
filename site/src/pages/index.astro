@@ -133,8 +133,8 @@ const ld = {
         <div class="feat reveal" style="--d:0.1s">
           <span class="tag">04 / plan + sandbox</span>
           <h3><span class="l-en">Plan mode &amp; sandbox</span><span class="l-zh">计划模式 + 沙箱</span></h3>
-          <p><span class="l-en">Writers are jailed to the workspace; <code>/plan</code> gates the session read-only until you approve.</span><span class="l-zh">写工具被关进工作区;<code>/plan</code> 进只读门,批准前不写盘。</span></p>
-          <code class="feat-chip">$ /plan → read-only until approved</code>
+          <p><span class="l-en"><code>/plan</code> asks the model to plan first; Permissions and the workspace sandbox still govern every tool call.</span><span class="l-zh"><code>/plan</code> 要求模型先规划；每次工具调用仍由权限与工作区沙箱控制。</span></p>
+          <code class="feat-chip">$ /plan → plan first · permissions still apply</code>
         </div>
         <div class="feat reveal" style="--d:0.06s">
           <span class="tag">05 / subagents</span>

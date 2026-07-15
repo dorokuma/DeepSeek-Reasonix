@@ -127,6 +127,7 @@ func NewCoordinator(planner provider.Provider, plannerSession *Session, plannerP
 		plannerOptions.Temperature = temperature
 		plannerOptions.Pricing = plannerPricing
 		plannerOptions.UsageSource = event.UsageSourcePlanner
+		plannerOptions.ReadOnlyExecution = true
 		plannerAgent = New(planner, plannerTools, plannerSession, plannerOptions, plannerSink(sink))
 	}
 	if executor != nil {
@@ -204,7 +205,7 @@ func (c *Coordinator) SetResponseLanguage(lang string) {
 	}
 }
 
-// SetPlanMode propagates the read-only gate to both planner and executor agents
+// SetPlanMode propagates the plan-first workflow flag to both planner and executor agents
 // in two-model mode. Callers that only set the controller's executor would miss
 // the planner agent inside the Coordinator, causing stale plan-mode state after
 // approvals or manual mode switches.
@@ -220,8 +221,8 @@ func (c *Coordinator) SetPlanMode(v bool) {
 	}
 }
 
-// SetPlanModeReadOnlyTrustGate propagates MCP read-only trust approvals to both
-// tool-using agents in two-model mode.
+// SetPlanModeReadOnlyTrustGate propagates plan-mode bash read-only command
+// approvals to both tool-using agents in two-model mode.
 func (c *Coordinator) SetPlanModeReadOnlyTrustGate(g PlanModeReadOnlyTrustGate) {
 	if c == nil {
 		return

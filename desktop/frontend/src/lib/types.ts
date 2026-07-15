@@ -90,6 +90,23 @@ export interface WireApproval {
   tool: string;
   subject: string;
   reason?: string;
+  fresh?: boolean;
+  mcpTrust?: WireMCPTrust;
+}
+
+export interface WireMCPTrust {
+  server: string;
+  trustState: string;
+  trustSource?: string;
+  trustScope?: string;
+  isolationState: string;
+  isolationReason?: string;
+  identityChanged?: boolean;
+  changedTools: string[];
+  toolChanges: MCPToolTrustChangeView[];
+  readers: string[];
+  writers: string[];
+  destructive: string[];
 }
 
 export interface WireGuardian {
@@ -558,7 +575,7 @@ export function normalizeTokenMode(mode?: string): TokenMode {
 }
 
 // Mode is the compatibility string for two independent composer axes:
-// plan (read-only/user-plan gate) and yolo/full access (tool auto-approval).
+// plan (plan-first workflow) and yolo (tool auto-approval).
 export type Mode = "normal" | "plan" | "yolo" | "plan-yolo";
 
 export function normalizeMode(mode?: string): Mode {
@@ -688,16 +705,65 @@ export interface ServerView {
   error?: string;
   toolList?: MCPToolView[];
   trustedReadOnlyTools?: string[];
+  callTimeoutSeconds?: number;
+  toolTimeoutSeconds?: Record<string, number>;
+  defaultToolsApprovalMode?: MCPApprovalMode;
+  toolPolicies?: Record<string, MCPToolPolicy>;
+  approvalsReviewer?: MCPApprovalsReviewer;
   authStatus?: "none" | "possible" | "required" | string;
   authUrl?: string;
   authConfigured?: boolean;
   managedByPlugin?: string;
+  trustState?: "official" | "workspace" | "session" | "changed" | "untrusted" | string;
+  trustSource?: "user" | "official_catalog" | "legacy_import" | string;
+  trustScope?: "session" | "workspace" | "global" | string;
+  isolationState?: "enforced" | "unavailable_unconfined" | "not_applicable" | string;
+  isolationReason?: string;
+  identityChanged?: boolean;
+  changedTools?: string[];
+  toolChanges?: MCPToolTrustChangeView[];
+  catalogSequence?: number;
+  verifiedVersion?: string;
+}
+export type MCPApprovalMode = "auto" | "prompt" | "writes" | "approve";
+export type MCPApprovalsReviewer = "user" | "auto_review";
+export interface MCPToolPolicy {
+  approval_mode: MCPApprovalMode;
 }
 export interface MCPToolView {
   name: string;
   description: string;
   readOnlyHint?: boolean;
+  destructiveHint?: boolean;
   schemaError?: string;
+  trustedReader?: boolean;
+}
+
+export interface MCPToolTrustChangeView {
+  name: string;
+  kind: "added" | "reader_to_writer" | "reader_to_destructive" | "writer_to_reader" | "safety_changed" | "name_changed" | "schema_changed" | string;
+}
+
+export interface MCPTrustInspectionView {
+  name: string;
+  trustState: string;
+  trustSource?: string;
+  trustScope?: string;
+  isolationState: string;
+  isolationReason?: string;
+  identityChanged?: boolean;
+  changedTools: string[];
+  toolChanges?: MCPToolTrustChangeView[];
+  readers: string[];
+  writers: string[];
+  destructive: string[];
+}
+
+export interface MCPCatalogRefreshView {
+  source: string;
+  sequence: number;
+  offline: boolean;
+  stale?: boolean;
 }
 export interface SkillView {
   name: string;
@@ -782,6 +848,13 @@ export interface PluginView {
   mcpServerDetails?: PluginMCPServerView[];
   warnings?: string[];
   error?: string;
+  verification?: {
+    catalogEntryId: string;
+    commit: string;
+    packageSha256: string;
+    verifiedAt: string;
+    catalogSequence: number;
+  };
 }
 export interface PluginCompatibilityIssue {
   capability: string;
@@ -843,6 +916,12 @@ export interface MCPServerInput {
   env?: Record<string, string> | null;
   headers?: Record<string, string> | null;
   trustedReadOnlyTools?: string[];
+  autoStart?: boolean | null;
+  callTimeoutSeconds?: number | null;
+  toolTimeoutSeconds?: Record<string, number> | null;
+  defaultToolsApprovalMode?: MCPApprovalMode | "" | null;
+  tools?: Record<string, MCPToolPolicy> | null;
+  approvalsReviewer?: MCPApprovalsReviewer | "" | null;
 }
 
 export interface ModelInfo {

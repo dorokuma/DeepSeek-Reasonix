@@ -26,6 +26,7 @@ import (
 	"reasonix/internal/control"
 	"reasonix/internal/event"
 	"reasonix/internal/jobs"
+	"reasonix/internal/mcptrust"
 	"reasonix/internal/memory"
 	"reasonix/internal/plugin"
 	"reasonix/internal/pluginpkg"
@@ -82,6 +83,47 @@ func desktopMCPHTTPServer(t *testing.T) *httptest.Server {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(resp)
 	}))
+}
+
+func TestDesktopMCPHelperProcess(t *testing.T) {
+	if os.Getenv("GO_WANT_DESKTOP_MCP_HELPER") != "1" {
+		return
+	}
+	dec := json.NewDecoder(os.Stdin)
+	enc := json.NewEncoder(os.Stdout)
+	for {
+		var req struct {
+			ID     *int   `json:"id"`
+			Method string `json:"method"`
+		}
+		if err := dec.Decode(&req); err != nil {
+			if errors.Is(err, io.EOF) {
+				return
+			}
+			t.Fatalf("decode helper request: %v", err)
+		}
+		if req.ID == nil {
+			continue
+		}
+		var result any
+		switch req.Method {
+		case "initialize":
+			result = map[string]any{
+				"protocolVersion": "2024-11-05",
+				"serverInfo":      map[string]any{"name": "desktop-helper", "version": "0"},
+			}
+		case "tools/list":
+			result = map[string]any{"tools": []map[string]any{{
+				"name": "greet", "description": "Greet someone.",
+				"inputSchema": map[string]any{"type": "object"},
+			}}}
+		default:
+			result = map[string]any{}
+		}
+		if err := enc.Encode(map[string]any{"jsonrpc": "2.0", "id": *req.ID, "result": result}); err != nil {
+			t.Fatalf("encode helper response: %v", err)
+		}
+	}
 }
 
 // setTestCtrl creates a minimal workspace tab (if needed) and sets its
@@ -6971,6 +7013,126 @@ url = %q
 	}
 }
 
+func TestSetMCPTrustWorkspaceRefreshesEverySharedHostRegistry(t *testing.T) {
+	isolateDesktopUserDirs(t)
+	dir := robustTempDir(t)
+	t.Chdir(dir)
+
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	helperArgs := []string{"-test.run=TestDesktopMCPHelperProcess", "--"}
+	if err := os.WriteFile(filepath.Join(dir, "reasonix.toml"), []byte(fmt.Sprintf(`
+[[plugins]]
+name = "h"
+command = %q
+args = ["-test.run=TestDesktopMCPHelperProcess", "--"]
+
+[plugins.env]
+GO_WANT_DESKTOP_MCP_HELPER = "1"
+`, exe)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	manager := mcptrust.ForWorkspace(config.ReasonixHomeDir(), dir)
+	entry := config.PluginEntry{
+		Name: "h", Command: exe, Args: helperArgs,
+		Env: map[string]string{"GO_WANT_DESKTOP_MCP_HELPER": "1"},
+	}
+	cfg, err := config.LoadForRoot(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtimeSpecs := boot.PluginSpecsForRootWithOptions([]config.PluginEntry{entry}, dir, boot.PluginSpecOptions{
+		DefaultCallTimeout: time.Duration(cfg.MCPCallTimeoutSeconds()) * time.Second,
+		TrustManager:       manager,
+		ConfigSource:       "workspace_config",
+		StateHome:          config.ReasonixHomeDir(),
+		WriterRoots:        cfg.WriteRootsForRoot(dir),
+		ForbidReadRoots:    cfg.ForbidReadRootsForRoot(dir),
+		Network:            cfg.Sandbox.Network,
+	})
+	if len(runtimeSpecs) != 1 {
+		t.Fatalf("runtime specs = %d, want 1", len(runtimeSpecs))
+	}
+	runtimeSpec := runtimeSpecs[0]
+	configure := func(spec *plugin.Spec) {
+		*spec = runtimeSpec
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	sharedHost := plugin.NewHost()
+	defer sharedHost.Close()
+	tools, err := sharedHost.Add(ctx, runtimeSpec)
+	if err != nil {
+		t.Fatalf("sharedHost.Add: %v", err)
+	}
+
+	activeRegistry := tool.NewRegistry()
+	siblingRegistry := tool.NewRegistry()
+	disabledRegistry := tool.NewRegistry()
+	for _, mt := range tools {
+		activeRegistry.Add(mt)
+		siblingRegistry.Add(mt)
+		disabledRegistry.Add(mt)
+	}
+	oldSiblingTool, found := siblingRegistry.Get("mcp__h__greet")
+	if !found {
+		t.Fatal("sibling registry missing initial h tool")
+	}
+	activeCtrl := control.New(control.Options{
+		Host: sharedHost, Registry: activeRegistry, PluginCtx: context.Background(),
+		MCPConfigureSpec: configure, WorkspaceRoot: dir,
+	})
+	siblingCtrl := control.New(control.Options{
+		Host: sharedHost, Registry: siblingRegistry, PluginCtx: context.Background(),
+		MCPConfigureSpec: configure, WorkspaceRoot: dir,
+	})
+	disabledCtrl := control.New(control.Options{
+		Host: sharedHost, Registry: disabledRegistry, PluginCtx: context.Background(),
+		MCPConfigureSpec: configure, WorkspaceRoot: dir,
+	})
+	disabledCtrl.UnregisterMCPServerTools("h")
+	app := NewApp()
+	app.tabs = map[string]*WorkspaceTab{
+		"active": {
+			ID: "active", Scope: "global", WorkspaceRoot: dir, Ready: true,
+			Ctrl: activeCtrl, SharedHostKey: dir, disabledMCP: map[string]ServerView{},
+		},
+		"sibling": {
+			ID: "sibling", Scope: "global", WorkspaceRoot: dir, Ready: true,
+			Ctrl: siblingCtrl, SharedHostKey: dir, disabledMCP: map[string]ServerView{},
+		},
+		"disabled": {
+			ID: "disabled", Scope: "global", WorkspaceRoot: dir, Ready: true,
+			Ctrl: disabledCtrl, SharedHostKey: dir,
+			disabledMCP: map[string]ServerView{"h": {Name: "h", Status: "disabled"}},
+		},
+	}
+	app.activeTabID = "active"
+
+	if err := app.SetMCPTrust("h", "workspace"); err != nil {
+		t.Fatalf("SetMCPTrust(h,workspace): %v", err)
+	}
+	if !sharedHost.HasClient("h") {
+		t.Fatal("shared host did not reconnect h after workspace trust")
+	}
+	if _, found := activeRegistry.Get("mcp__h__greet"); !found {
+		t.Fatal("active registry was not refreshed after workspace trust")
+	}
+	newSiblingTool, found := siblingRegistry.Get("mcp__h__greet")
+	if !found {
+		t.Fatal("sibling registry was not refreshed after workspace trust")
+	}
+	if newSiblingTool == oldSiblingTool {
+		t.Fatal("sibling registry retained a tool backed by the disconnected client")
+	}
+	if _, found := disabledRegistry.Get("mcp__h__greet"); found {
+		t.Fatal("workspace trust re-enabled h in a tab where the user disabled it")
+	}
+}
+
 func TestSetMCPServerEnabledRejectsBackgroundJobs(t *testing.T) {
 	isolateDesktopUserDirs(t)
 
@@ -7159,7 +7321,6 @@ func TestRemoveMCPServerRejectsPluginManagedServerWithoutDisconnecting(t *testin
 		t.Fatal("plugin-managed MCP was disconnected despite rejected removal")
 	}
 	for action, actionErr := range map[string]error{
-		"trust tool": app.TrustMCPServerTool("helper", "echo"),
 		"clear auth": app.ClearMCPServerAuthentication("helper"),
 		"update":     app.UpdateMCPServer("helper", MCPServerInput{Name: "helper", Transport: "http", URL: srv.URL}),
 	} {
@@ -7250,103 +7411,6 @@ func TestUpdateMCPServerEditsProjectMCPJSONEntry(t *testing.T) {
 	}
 }
 
-func TestTrustMCPServerToolPersistsTrustedReadOnlyTools(t *testing.T) {
-	isolateDesktopUserDirs(t)
-	dir := robustTempDir(t)
-	t.Chdir(dir)
-	if err := os.WriteFile(filepath.Join(dir, "reasonix.toml"), []byte(`
-[[plugins]]
-name = "github"
-command = "npx"
-args = ["-y", "@modelcontextprotocol/server-github"]
-trusted_read_only_tools = ["pull_request_read"]
-`), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	app := NewApp()
-	app.setTestCtrl(control.New(control.Options{Host: plugin.NewHost()}), "")
-	defer app.activeCtrl().Close()
-
-	if err := app.TrustMCPServerTool("github", " issue_read "); err != nil {
-		t.Fatalf("TrustMCPServerTool(github, issue_read): %v", err)
-	}
-	if err := app.TrustMCPServerTool("github", "issue_read"); err != nil {
-		t.Fatalf("TrustMCPServerTool duplicate: %v", err)
-	}
-	if err := app.TrustMCPServerTools("github", []string{" search_issues ", "issue_read", ""}); err != nil {
-		t.Fatalf("TrustMCPServerTools(github): %v", err)
-	}
-	if err := app.UntrustMCPServerTool("github", " pull_request_read "); err != nil {
-		t.Fatalf("UntrustMCPServerTool(github, pull_request_read): %v", err)
-	}
-	cfg, err := config.LoadForRoot(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	updated, ok := findPluginEntry(cfg.Plugins, "github")
-	if !ok {
-		t.Fatalf("github plugin missing: %+v", cfg.Plugins)
-	}
-	if !reflect.DeepEqual(updated.TrustedReadOnlyTools, []string{"issue_read", "search_issues"}) {
-		t.Fatalf("trusted read-only tools = %+v", updated.TrustedReadOnlyTools)
-	}
-	for _, s := range app.MCPServers() {
-		if s.Name == "github" {
-			if !reflect.DeepEqual(s.TrustedReadOnlyTools, []string{"issue_read", "search_issues"}) {
-				t.Fatalf("view trusted read-only tools = %+v", s.TrustedReadOnlyTools)
-			}
-			return
-		}
-	}
-	t.Fatalf("github MCP missing from view")
-}
-
-func TestTrustMCPServerToolPersistsProjectMCPJSONEntry(t *testing.T) {
-	isolateDesktopUserDirs(t)
-	dir := robustTempDir(t)
-	t.Chdir(dir)
-	if err := os.WriteFile(filepath.Join(dir, ".mcp.json"), []byte(`{
-  "mcpServers": {
-    "codegraph": { "command": "codegraph", "args": ["serve", "--mcp"] }
-  }
-}`), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	app := NewApp()
-	app.setTestCtrl(control.New(control.Options{Host: plugin.NewHost()}), "")
-	defer app.activeCtrl().Close()
-
-	if err := app.TrustMCPServerTool("codegraph", "codegraph_context"); err != nil {
-		t.Fatalf("TrustMCPServerTool(.mcp.json codegraph): %v", err)
-	}
-
-	raw, err := os.ReadFile(filepath.Join(dir, ".mcp.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	var doc struct {
-		MCPServers map[string]struct {
-			TrustedReadOnlyTools []string `json:"trusted_read_only_tools"`
-		} `json:"mcpServers"`
-	}
-	if err := json.Unmarshal(raw, &doc); err != nil {
-		t.Fatal(err)
-	}
-	if !reflect.DeepEqual(doc.MCPServers["codegraph"].TrustedReadOnlyTools, []string{"codegraph_context"}) {
-		t.Fatalf(".mcp.json trusted_read_only_tools = %+v", doc.MCPServers["codegraph"].TrustedReadOnlyTools)
-	}
-	cfg, err := config.LoadForRoot(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	updated, ok := findPluginEntry(cfg.Plugins, "codegraph")
-	if !ok || !reflect.DeepEqual(updated.TrustedReadOnlyTools, []string{"codegraph_context"}) {
-		t.Fatalf("merged codegraph trusted_read_only_tools = %+v, found=%v", updated.TrustedReadOnlyTools, ok)
-	}
-}
-
 func TestAddMCPServerPersistsRemoteHeaders(t *testing.T) {
 	isolateDesktopUserDirs(t)
 	dir := robustTempDir(t)
@@ -7400,6 +7464,134 @@ func TestAddMCPServerPersistsRemoteHeaders(t *testing.T) {
 		}
 	}
 	t.Fatalf("stripe MCP missing from view: %+v", view)
+}
+
+func TestAddMCPServerPersistsCompleteAdvancedConfiguration(t *testing.T) {
+	isolateDesktopUserDirs(t)
+	dir := robustTempDir(t)
+	t.Chdir(dir)
+	srv := desktopMCPHTTPServer(t)
+	defer srv.Close()
+
+	app := NewApp()
+	app.setTestCtrl(control.New(control.Options{Host: plugin.NewHost()}), "")
+	defer app.activeCtrl().Close()
+	autoStart := false
+	callTimeout := 45
+	defaultMode := "writes"
+	reviewer := "auto_review"
+	_, err := app.AddMCPServer(MCPServerInput{
+		Name:               "admin",
+		Transport:          "streamable-http",
+		URL:                srv.URL,
+		AutoStart:          &autoStart,
+		CallTimeoutSeconds: &callTimeout,
+		ToolTimeoutSeconds: map[string]int{
+			"wipe": 120,
+		},
+		TrustedReadOnlyTools:     []string{"status"},
+		DefaultToolsApprovalMode: &defaultMode,
+		ToolPolicies: map[string]config.MCPToolPolicy{
+			"wipe": {ApprovalMode: "prompt"},
+		},
+		ApprovalsReviewer: &reviewer,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := config.LoadForRoot(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry, ok := findPluginEntry(cfg.Plugins, "admin")
+	if !ok || entry.Type != "http" || entry.AutoStart == nil || *entry.AutoStart ||
+		entry.CallTimeoutSeconds != 45 || entry.ToolTimeoutSeconds["wipe"] != 120 ||
+		entry.DefaultToolsApprovalMode != "writes" || entry.Tools["wipe"].ApprovalMode != "prompt" ||
+		entry.ApprovalsReviewer != "auto_review" || len(entry.TrustedReadOnlyTools) != 0 {
+		t.Fatalf("persisted advanced MCP entry = %+v, found=%v", entry, ok)
+	}
+
+	views := app.MCPServers()
+	if len(views) != 1 || views[0].Transport != "http" || views[0].AutoStart ||
+		views[0].CallTimeoutSeconds != 45 || views[0].ToolTimeoutSeconds["wipe"] != 120 ||
+		views[0].DefaultToolsApprovalMode != "writes" || views[0].ToolPolicies["wipe"].ApprovalMode != "prompt" ||
+		views[0].ApprovalsReviewer != "auto_review" {
+		t.Fatalf("advanced MCP ServerView = %+v", views)
+	}
+}
+
+func TestUpdateMCPServerPreservesAbsentFieldsAndClearsExplicitOnes(t *testing.T) {
+	isolateDesktopUserDirs(t)
+	dir := robustTempDir(t)
+	t.Chdir(dir)
+	srv := desktopMCPHTTPServer(t)
+	defer srv.Close()
+
+	app := NewApp()
+	app.setTestCtrl(control.New(control.Options{Host: plugin.NewHost()}), "")
+	defer app.activeCtrl().Close()
+	callTimeout := 45
+	defaultMode := "writes"
+	reviewer := "auto_review"
+	if _, err := app.AddMCPServer(MCPServerInput{
+		Name:                     "admin",
+		Transport:                "http",
+		URL:                      srv.URL,
+		CallTimeoutSeconds:       &callTimeout,
+		ToolTimeoutSeconds:       map[string]int{"wipe": 120},
+		TrustedReadOnlyTools:     []string{"status"},
+		DefaultToolsApprovalMode: &defaultMode,
+		ToolPolicies:             map[string]config.MCPToolPolicy{"wipe": {ApprovalMode: "prompt"}},
+		ApprovalsReviewer:        &reviewer,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// An old frontend (or a partial payload) omits the new fields entirely:
+	// approval settings survive, while legacy trusted_read_only_tools input is
+	// intentionally not generated by new saves.
+	if err := app.UpdateMCPServer("admin", MCPServerInput{Name: "admin", Transport: "http", URL: srv.URL}); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := config.LoadForRoot(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry, ok := findPluginEntry(cfg.Plugins, "admin")
+	if !ok || entry.CallTimeoutSeconds != 45 || entry.ToolTimeoutSeconds["wipe"] != 120 ||
+		entry.DefaultToolsApprovalMode != "writes" || entry.Tools["wipe"].ApprovalMode != "prompt" ||
+		entry.ApprovalsReviewer != "auto_review" || len(entry.TrustedReadOnlyTools) != 0 {
+		t.Fatalf("absent input fields must preserve persisted values, entry = %+v, found=%v", entry, ok)
+	}
+
+	// Explicit zero values are the editor's clear semantics.
+	cleared := 0
+	emptyMode := ""
+	emptyReviewer := ""
+	if err := app.UpdateMCPServer("admin", MCPServerInput{
+		Name:                     "admin",
+		Transport:                "http",
+		URL:                      srv.URL,
+		CallTimeoutSeconds:       &cleared,
+		ToolTimeoutSeconds:       map[string]int{},
+		TrustedReadOnlyTools:     []string{},
+		DefaultToolsApprovalMode: &emptyMode,
+		ToolPolicies:             map[string]config.MCPToolPolicy{},
+		ApprovalsReviewer:        &emptyReviewer,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err = config.LoadForRoot(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry, ok = findPluginEntry(cfg.Plugins, "admin")
+	if !ok || entry.CallTimeoutSeconds != 0 || len(entry.ToolTimeoutSeconds) != 0 ||
+		entry.DefaultToolsApprovalMode != "" || len(entry.Tools) != 0 ||
+		entry.ApprovalsReviewer != "" || len(entry.TrustedReadOnlyTools) != 0 {
+		t.Fatalf("explicit empty fields must clear persisted values, entry = %+v, found=%v", entry, ok)
+	}
 }
 
 func TestCapabilitiesMarksBackgroundRemoteMCPAuthPossible(t *testing.T) {

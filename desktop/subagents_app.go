@@ -273,7 +273,7 @@ func (a *App) DeleteSubagentProfile(name, scope string) error {
 // A try run is deliberately READ-ONLY regardless of the profile's tool scope:
 // it is a settings-page preview, not a real work session, and it has no UI to
 // answer approval prompts. ReadOnlySubagentToolRegistry strips writer tools
-// and wraps bash in the plan-mode safe command policy; the confined reader/
+// and wraps bash in the permission-classified read-only command policy; the confined reader/
 // search/fetch instances below enforce the same workspace boundaries the real
 // boot path installs (boot.go addBuiltins), and the headless permission gate
 // applies the user's configured deny rules.

@@ -81,8 +81,8 @@ func (completeStep) ReadOnly() bool { return true }
 
 // PlanModeSafe reports false: although complete_step is read-only, it signs off a
 // completed execution step, which is meaningful only after plan approval — not
-// during planning. This self-report backs up its knownBlockedTools entry so the
-// gate refuses it even if the classifier wiring regresses.
+// during planning. This explicit phase opt-out is the Plan gate's enforced
+// exception to the ordinary Permissions/Sandbox path.
 func (completeStep) PlanModeSafe() bool { return false }
 
 func (completeStep) Execute(ctx context.Context, args json.RawMessage) (string, error) {

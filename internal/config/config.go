@@ -1088,12 +1088,12 @@ type AgentConfig struct {
 	// ColdResumePrune elides stale tool results when a session reopens past the
 	// provider cache window. nil = default enabled.
 	ColdResumePrune *bool `toml:"cold_resume_prune"`
-	// PlanModeAllowedTools names extra custom tools the plan-mode policy may treat
-	// as read-only. It cannot unlock known blocked tools or unsafe bash commands.
+	// PlanModeAllowedTools is a legacy compatibility field. Concrete MCP names may
+	// still become local read-only trust aliases, but this field does not control
+	// main Plan workflow availability.
 	PlanModeAllowedTools []string `toml:"plan_mode_allowed_tools"`
-	// PlanModeReadOnlyCommands names concrete shell command prefixes that plan mode
-	// may treat as read-only. Shell operators, background execution, and shell
-	// interpreter prefixes remain blocked.
+	// PlanModeReadOnlyCommands is retained for old config/session round trips. Main
+	// Plan bash calls now use the ordinary Permissions classifier and Sandbox.
 	PlanModeReadOnlyCommands []string `toml:"plan_mode_read_only_commands"`
 	// MemoryCompiler controls the v5 execution-memory compiler. Missing configs
 	// default to enabled so users get the self-improving planner unless they opt
@@ -1477,6 +1477,12 @@ type PermissionsConfig struct {
 	Deny  []string `toml:"deny"`
 }
 
+// MCPToolPolicy is local execution policy for one raw server tool name. It is
+// intentionally absent from provider-visible tool schemas.
+type MCPToolPolicy struct {
+	ApprovalMode string `toml:"approval_mode" json:"approval_mode"`
+}
+
 // PluginEntry declares an external MCP server. Type selects the transport:
 // "stdio" (default) launches Command/Args/Env as a subprocess; "http"
 // (a.k.a. streamable-http) and "sse" connect to a remote URL with optional
@@ -1499,10 +1505,16 @@ type PluginEntry struct {
 	// from this server. Keys are server-local tool names, not model-visible
 	// mcp__server__tool names.
 	ToolTimeoutSeconds map[string]int `toml:"tool_timeout_seconds"`
-	// TrustedReadOnlyTools names raw MCP tool names that Reasonix should treat as
-	// trusted read-only for planner / plan-mode / read-only research surfaces.
-	// Use this only for tools whose semantics are known to be side-effect free.
+	// TrustedReadOnlyTools is a local trust and compatibility override for
+	// audited readers. Third-party readOnlyHint alone is not a Plan-mode trust
+	// boundary.
 	TrustedReadOnlyTools []string `toml:"trusted_read_only_tools"`
+	// DefaultToolsApprovalMode is auto|prompt|writes|approve. Empty is auto.
+	DefaultToolsApprovalMode string `toml:"default_tools_approval_mode"`
+	// Tools overrides approval policy by raw server-local tool name.
+	Tools map[string]MCPToolPolicy `toml:"tools"`
+	// ApprovalsReviewer is user|auto_review. Empty preserves legacy routing.
+	ApprovalsReviewer string `toml:"approvals_reviewer"`
 	// AutoStart controls whether the server connects during session startup.
 	// Nil preserves historical behavior: configured servers start automatically.
 	AutoStart *bool `toml:"auto_start"`

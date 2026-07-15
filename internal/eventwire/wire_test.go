@@ -288,6 +288,27 @@ func TestToWireInteractionAndLifecyclePayloads(t *testing.T) {
 			want: []string{`"kind":"approval_request"`, `"approval":{"id":"a1","tool":"bash","subject":"rm"}`},
 		},
 		{
+			name: "fresh approval",
+			in:   event.Event{Kind: event.ApprovalRequest, Approval: event.Approval{ID: "a2", Tool: "mcp__srv__wipe", Subject: "srv/wipe", Fresh: true}},
+			want: []string{`"kind":"approval_request"`, `"tool":"mcp__srv__wipe"`, `"fresh":true`},
+		},
+		{
+			name: "MCP trust approval payload",
+			in: event.Event{Kind: event.ApprovalRequest, Approval: event.Approval{
+				ID: "a3", Tool: "mcp__srv__write", Subject: "srv/write",
+				MCPTrust: &event.MCPTrust{
+					Server: "srv", TrustState: "workspace", TrustSource: "user", TrustScope: "workspace",
+					IsolationState: "unavailable_unconfined", IsolationReason: "sandbox backend unavailable",
+					ChangedTools: []string{"write"}, ToolChanges: []event.MCPToolChange{{Name: "write", Kind: "schema_changed"}},
+					Readers: []string{"search"}, Writers: []string{"write"}, Destructive: []string{},
+				},
+			}},
+			want: []string{`"mcpTrust":{"server":"srv"`, `"trustState":"workspace"`, `"trustSource":"user"`,
+				`"isolationState":"unavailable_unconfined"`, `"changedTools":["write"]`,
+				`"toolChanges":[{"name":"write","kind":"schema_changed"}]`, `"readers":["search"]`,
+				`"writers":["write"]`, `"destructive":[]`},
+		},
+		{
 			name: "ask",
 			in: event.Event{Kind: event.AskRequest, Ask: event.Ask{
 				ID: "ask-1",
