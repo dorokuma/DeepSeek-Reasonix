@@ -87,6 +87,12 @@ func (layeredReadOnlyMCPBoundaryTarget) MCPApprovalMode() string     { return "a
 func (layeredReadOnlyMCPBoundaryTarget) MCPApprovalReviewer() string { return "user" }
 func (t layeredReadOnlyMCPBoundaryTarget) MCPDestructiveHint() bool  { return t.destructive }
 
+// The fake models a receipt-backed reader: a real trust store stands behind
+// its classification unless the case is explicitly the untrusted server hint.
+func (t layeredReadOnlyMCPBoundaryTarget) ReadOnlyExecutionTrustAuthority() bool {
+	return !t.untrusted
+}
+
 func executeReadOnlyBoundaryCall(t *testing.T, resolved tool.ResolvedCall) toolOutcome {
 	t.Helper()
 	reg := tool.NewRegistry()
@@ -864,5 +870,37 @@ func TestCapabilityGateAppliesToReadOnlyTasks(t *testing.T) {
 	check := a.finalReadinessCheck()
 	if !strings.Contains(check.reason, "required capabilities") {
 		t.Fatalf("read-only answer must not skip the require gate; reason = %q", check.reason)
+	}
+}
+
+func TestStrictReadOnlyFailsClosedWithoutTrustAuthority(t *testing.T) {
+	host := plugin.NewHost()
+	defer host.Close()
+	// No TrustManager: the compatibility path still classifies the config
+	// reader for ordinary permissions, but it carries no receipt authority.
+	specs := []plugin.Spec{{
+		Name:              "lazy",
+		Type:              "stdio",
+		Command:           "reasonix-test-definitely-missing-binary",
+		ReadOnlyToolNames: map[string]bool{"read_thing": true},
+	}}
+	tl := NewUseCapabilityTool(context.Background(), host, specs, tool.NewRegistry(), capability.NewLedger(), nil, nil)
+	resolved, err := tl.ResolveCall(context.Background(), json.RawMessage(`{"action":"call","capability_id":"mcp-tool:lazy/read_thing"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !resolved.ReadOnly {
+		t.Fatal("compatibility classification should still resolve read-only for ordinary sessions")
+	}
+	if readOnlyExecutionAllowsTrustedMCPStartup(resolved.Target) {
+		t.Fatal("hint/config-classified reader without a trust store must not start hosts in strict mode")
+	}
+	reg := tool.NewRegistry()
+	reg.Add(resolved.Target)
+	if names := strictReadOnlyExecutionRegistry(reg).Names(); len(names) != 0 {
+		t.Fatalf("strict registry admitted an authority-less MCP reader: %v", names)
+	}
+	if host.HasClient("lazy") {
+		t.Fatal("strict evaluation must not start the MCP server")
 	}
 }

@@ -131,6 +131,40 @@ type MCPCapabilityFingerprint interface {
 	MCPCapabilityFingerprint() string
 }
 
+// ReadOnlyExecutionTrustAuthority reports whether an MCP-backed tool's reader
+// classification is backed by a real host trust store (receipts), rather than
+// a server hint or legacy config compatibility. Strict read-only execution
+// requires positive authority; direct library embedders without a TrustManager
+// keep their historical behavior outside that boundary.
+type ReadOnlyExecutionTrustAuthority interface {
+	ReadOnlyExecutionTrustAuthority() bool
+}
+
+// readerExecutionIntentKey carries a per-call, immutable authorization basis:
+// the call was approved as a non-destructive reader. The MCP dispatcher makes
+// the final, linearizable check against live security state and must never
+// promote such a call into a writer lane; drift after authorization returns an
+// error instead of executing.
+type readerExecutionIntentKey struct{}
+
+// ReaderExecutionIntent pins what the authorization decision saw.
+type ReaderExecutionIntent struct {
+	// CapabilityFingerprint, when non-empty, must still match the live tool's
+	// security fingerprint at dispatch time.
+	CapabilityFingerprint string
+}
+
+// WithReaderExecutionIntent marks ctx as a reader-authorized MCP invocation.
+func WithReaderExecutionIntent(ctx context.Context, capabilityFingerprint string) context.Context {
+	return context.WithValue(ctx, readerExecutionIntentKey{}, ReaderExecutionIntent{CapabilityFingerprint: capabilityFingerprint})
+}
+
+// ReaderExecutionIntentFrom returns the pinned reader authorization, if any.
+func ReaderExecutionIntentFrom(ctx context.Context) (ReaderExecutionIntent, bool) {
+	intent, ok := ctx.Value(readerExecutionIntentKey{}).(ReaderExecutionIntent)
+	return intent, ok
+}
+
 const (
 	MCPApprovalAuto    = "auto"
 	MCPApprovalPrompt  = "prompt"

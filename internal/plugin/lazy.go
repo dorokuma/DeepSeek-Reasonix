@@ -233,6 +233,13 @@ func (lt *lazyTool) MCPServerName() string {
 	return lt.shared.spec.Name
 }
 func (lt *lazyTool) MCPRawToolName() string { return lt.rawName }
+
+// ReadOnlyExecutionTrustAuthority mirrors remoteTool: reader classification
+// counts for strict read-only execution only when a host trust store exists.
+func (lt *lazyTool) ReadOnlyExecutionTrustAuthority() bool {
+	return lt.shared != nil && lt.shared.spec.TrustManager != nil
+}
+
 func (lt *lazyTool) MCPCapabilityFingerprint() string {
 	if lt.shared == nil {
 		return lt.capabilityFingerprint

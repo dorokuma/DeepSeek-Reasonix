@@ -1035,13 +1035,30 @@ func RunSubAgentWithSession(ctx context.Context, prov provider.Provider, reg *to
 	return "", fmt.Errorf("sub-agent finished without producing a final answer")
 }
 
+// readOnlyAgentConstruction is the single pairing every strictly read-only
+// loop shares: the permanent ReadOnlyExecution flag plus the final registry
+// filter. Batch children (RunReadOnlySubAgentWithSession) and the interactive
+// two-model planner (NewReadOnlyAgent) both build through it, so a missed call
+// site cannot set only half the boundary.
+func readOnlyAgentConstruction(reg *tool.Registry, opts Options) (*tool.Registry, Options) {
+	opts.ReadOnlyExecution = true
+	return strictReadOnlyExecutionRegistry(reg), opts
+}
+
+// NewReadOnlyAgent constructs a long-lived, strictly read-only agent (the
+// two-model planner) through the shared construction boundary.
+func NewReadOnlyAgent(prov provider.Provider, reg *tool.Registry, sess *Session, opts Options, sink event.Sink) *Agent {
+	reg, opts = readOnlyAgentConstruction(reg, opts)
+	return New(prov, reg, sess, opts, sink)
+}
+
 // RunReadOnlySubAgentWithSession is the construction boundary for every
 // strictly read-only child loop. Registry filtering limits the visible surface;
 // this permanent execution flag also re-checks targets resolved dynamically by
 // proxy tools such as use_capability.
 func RunReadOnlySubAgentWithSession(ctx context.Context, prov provider.Provider, reg *tool.Registry, sess *Session, prompt string, opts Options, sink event.Sink) (string, error) {
-	opts.ReadOnlyExecution = true
-	return RunSubAgentWithSession(ctx, prov, strictReadOnlyExecutionRegistry(reg), sess, prompt, opts, sink)
+	reg, opts = readOnlyAgentConstruction(reg, opts)
+	return RunSubAgentWithSession(ctx, prov, reg, sess, prompt, opts, sink)
 }
 
 // strictReadOnlyExecutionRegistry is the final construction-time filter shared
@@ -1058,6 +1075,14 @@ func strictReadOnlyExecutionRegistry(reg *tool.Registry) *tool.Registry {
 		target, ok := reg.Get(name)
 		if !ok || !target.ReadOnly() || planModeUntrustedReadOnly(target) || mcpDestructiveHint(target) {
 			continue
+		}
+		// An installed MCP reader needs a positive trust authority (receipts),
+		// not a server hint carried through the no-TrustManager compatibility
+		// path: strict children fail closed without a trust store.
+		if isInstalledMCPTool(target) {
+			if authority, ok := target.(tool.ReadOnlyExecutionTrustAuthority); !ok || !authority.ReadOnlyExecutionTrustAuthority() {
+				continue
+			}
 		}
 		if mutation, ok := target.(tool.ReadOnlyExecutionHostMutation); ok && mutation.ReadOnlyExecutionHostMutation() && !readOnlyExecutionAllowsTrustedMCPStartup(target) {
 			continue

@@ -382,6 +382,10 @@ func (t *UseCapabilityTool) resolveCall(ctx context.Context, id string, args jso
 	lazy.readOnlyTrusted = trustedReader
 	lazy.capabilityFingerprint = capabilityFingerprint
 	lazy.trustReason = trustReason
+	// Strict read-only execution requires a positive receipt authority: the
+	// hint/legacy compatibility path above keeps its historical classification
+	// for ordinary sessions but cannot admit tools into a strict child.
+	lazy.trustAuthority = spec.TrustManager != nil
 	base.Target = lazy
 	base.TargetName = modelName
 	// Conservative: an unstarted tool counts as a writer unless the user
@@ -447,6 +451,7 @@ type onDemandMCPTool struct {
 	readOnlyTrusted       bool
 	capabilityFingerprint string
 	trustReason           string
+	trustAuthority        bool
 }
 
 func (o *onDemandMCPTool) Name() string { return o.modelName }
@@ -466,6 +471,8 @@ func (o *onDemandMCPTool) ReadOnly() bool {
 func (o *onDemandMCPTool) PlanModeUntrustedReadOnly() bool { return false }
 
 func (o *onDemandMCPTool) ReadOnlyExecutionHostMutation() bool { return true }
+
+func (o *onDemandMCPTool) ReadOnlyExecutionTrustAuthority() bool { return o.trustAuthority }
 
 func (o *onDemandMCPTool) ReadOnlyExecutionBlockReason() string {
 	reason := "start this MCP capability; ask the parent session to trust, re-review, or execute it"

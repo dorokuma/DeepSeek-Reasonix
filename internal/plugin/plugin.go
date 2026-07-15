@@ -1832,6 +1832,15 @@ func (t *remoteTool) MCPServerName() string {
 	return t.client.name
 }
 func (t *remoteTool) MCPRawToolName() string { return t.rawName }
+
+// ReadOnlyExecutionTrustAuthority reports whether this adapter's reader
+// classification comes from a real trust store. Without a TrustManager the
+// compatibility path derives readers from server hints, which must never
+// satisfy the strict read-only boundary.
+func (t *remoteTool) ReadOnlyExecutionTrustAuthority() bool {
+	return t.client != nil && t.client.spec.TrustManager != nil
+}
+
 func (t *remoteTool) MCPCapabilityFingerprint() string {
 	return t.capabilityFingerprint
 }
@@ -1899,8 +1908,18 @@ func (t *remoteTool) ExecuteWithImages(ctx context.Context, args json.RawMessage
 			return "", nil, fmt.Errorf("invalid args: %w", err)
 		}
 	}
-	_, readOnly, _, destructive, _ := t.securitySnapshot()
-	if t.client != nil && t.client.usesOneShotWriterLane() && (!readOnly || destructive) {
+	_, readOnly, _, destructive, fingerprint := t.securitySnapshot()
+	if intent, ok := tool.ReaderExecutionIntentFrom(ctx); ok {
+		// Final, linearizable check for a reader-authorized call: the snapshot
+		// above and every trust mutation (catalog revocations, live security
+		// reconciliation) serialize on the owning client's toolsMu. A call that
+		// was approved as a non-destructive reader must never promote itself
+		// into the one-shot writer lane or execute after trust changed — state
+		// drift here returns an actionable error instead of dispatching.
+		if !readOnly || destructive || (intent.CapabilityFingerprint != "" && fingerprint != "" && fingerprint != intent.CapabilityFingerprint) {
+			return "", nil, fmt.Errorf("MCP server %q no longer classifies tool %q as a trusted reader; the call was blocked before dispatch — re-verify the server and request fresh approval before retrying", t.client.name, t.rawName)
+		}
+	} else if t.client != nil && t.client.usesOneShotWriterLane() && (!readOnly || destructive) {
 		return t.client.callOneShotTool(ctx, t, argMap)
 	}
 	res, err := t.client.call(ctx, "tools/call", map[string]any{

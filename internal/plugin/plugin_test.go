@@ -1655,3 +1655,92 @@ func TestReadOnlyOverrideDoesNotChangeModelVisibleSchema(t *testing.T) {
 		t.Fatal("overridden echo should be marked read-only")
 	}
 }
+
+func TestReaderIntentRefusesWriterLanePromotionAfterRevocation(t *testing.T) {
+	stateDir := t.TempDir()
+	startCount := filepath.Join(t.TempDir(), "starts")
+	callCount := filepath.Join(t.TempDir(), "calls")
+	spec := Spec{
+		Name: "reader-revoked", Command: os.Args[0], Args: []string{"-test.run=TestHelperProcess", "--"},
+		Env: map[string]string{
+			"GO_WANT_HELPER_PROCESS":     "1",
+			"GO_WANT_HELPER_START_COUNT": startCount,
+			"GO_WANT_HELPER_CALL_COUNT":  callCount,
+		},
+		StateDir: stateDir,
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	host, tools, err := StartAll(ctx, []Spec{spec})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer host.Close()
+	target := findToolByName(tools, "mcp__reader-revoked__echo")
+	if target == nil {
+		t.Fatalf("tool missing from %v", toolNames(tools))
+	}
+	rt, ok := target.(*remoteTool)
+	if !ok {
+		t.Fatalf("expected remoteTool adapter, got %T", target)
+	}
+
+	// The tool is authorized as a trusted reader.
+	rt.client.toolsMu.Lock()
+	rt.readOnly, rt.readOnlyTrusted = true, true
+	rt.client.toolsMu.Unlock()
+	readerCtx := tool.WithReaderExecutionIntent(ctx, rt.MCPCapabilityFingerprint())
+	if _, _, err := rt.ExecuteWithImages(readerCtx, json.RawMessage(`{"msg":"ok","z":"ok"}`)); err != nil {
+		t.Fatalf("trusted reader call failed: %v", err)
+	}
+	if got := readHelperCounter(t, startCount); got != 1 {
+		t.Fatalf("reader call spawned extra processes: starts=%d", got)
+	}
+	if got := readHelperCounter(t, callCount); got != 1 {
+		t.Fatalf("reader call count = %d, want 1", got)
+	}
+
+	// A concurrent revocation (catalog refresh, trust re-evaluation) lands
+	// after the authorization: the reader-authorized call must refuse instead
+	// of promoting itself into the one-shot writer lane or issuing tools/call.
+	rt.client.toolsMu.Lock()
+	rt.readOnly, rt.readOnlyTrusted = false, false
+	rt.client.toolsMu.Unlock()
+	if _, _, err := rt.ExecuteWithImages(readerCtx, json.RawMessage(`{"msg":"blocked","z":"ok"}`)); err == nil || !strings.Contains(err.Error(), "no longer classifies") {
+		t.Fatalf("revoked reader call = %v, want trusted-reader refusal", err)
+	}
+	if got := readHelperCounter(t, startCount); got != 1 {
+		t.Fatalf("revoked reader call started a writer process: starts=%d", got)
+	}
+	if got := readHelperCounter(t, callCount); got != 1 {
+		t.Fatalf("revoked reader call reached tools/call: calls=%d", got)
+	}
+
+	// A stale capability fingerprint pinned at authorization time is refused
+	// even when the tool is still a reader.
+	rt.client.toolsMu.Lock()
+	rt.readOnly, rt.readOnlyTrusted = true, true
+	rt.client.toolsMu.Unlock()
+	staleCtx := tool.WithReaderExecutionIntent(ctx, "stale-fingerprint")
+	if _, _, err := rt.ExecuteWithImages(staleCtx, json.RawMessage(`{"msg":"stale","z":"ok"}`)); err == nil || !strings.Contains(err.Error(), "no longer classifies") {
+		t.Fatalf("stale fingerprint call = %v, want refusal", err)
+	}
+	if got := readHelperCounter(t, callCount); got != 1 {
+		t.Fatalf("stale fingerprint call reached tools/call: calls=%d", got)
+	}
+
+	// Without reader intent the ordinary writer path is unchanged: the
+	// approved writer spawns its one-shot lane exactly as before.
+	rt.client.toolsMu.Lock()
+	rt.readOnly, rt.readOnlyTrusted = false, false
+	rt.client.toolsMu.Unlock()
+	if _, _, err := rt.ExecuteWithImages(ctx, json.RawMessage(`{"msg":"writer","z":"ok"}`)); err != nil {
+		t.Fatalf("approved writer call failed: %v", err)
+	}
+	if got := readHelperCounter(t, startCount); got != 2 {
+		t.Fatalf("writer call starts = %d, want reader process plus one one-shot writer", got)
+	}
+	if got := readHelperCounter(t, callCount); got != 2 {
+		t.Fatalf("writer call count = %d, want 2", got)
+	}
+}

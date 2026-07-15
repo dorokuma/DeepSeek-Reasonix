@@ -3269,6 +3269,17 @@ func (a *Agent) executeOne(ctx context.Context, call provider.ToolCall) toolOutc
 			runArgs = json.RawMessage(`{}`)
 		}
 	}
+	// A call that was authorized under reader classification carries that
+	// basis into dispatch: the MCP execution layer re-verifies it linearizably
+	// against live trust state and refuses to promote it into a writer lane if
+	// a concurrent revocation or reclassification landed after the gate.
+	if readOnly && isInstalledMCPTool(runTool) && !mcpDestructiveHint(runTool) {
+		fingerprint := ""
+		if fp, ok := runTool.(tool.MCPCapabilityFingerprint); ok {
+			fingerprint = fp.MCPCapabilityFingerprint()
+		}
+		cctx = tool.WithReaderExecutionIntent(cctx, fingerprint)
+	}
 	if it, ok := runTool.(tool.ImageTool); ok {
 		result, images, err = it.ExecuteWithImages(cctx, runArgs)
 	} else {
@@ -3412,6 +3423,12 @@ func readOnlyExecutionAllowsTrustedMCPStartup(t tool.Tool) bool {
 	}
 	meta, ok := t.(tool.MCPMetadata)
 	if !ok || strings.TrimSpace(meta.MCPServerName()) == "" || strings.TrimSpace(meta.MCPRawToolName()) == "" {
+		return false
+	}
+	// A reader classification only admits a host start when it is backed by a
+	// real trust store: the hint/legacy compatibility paths used by direct
+	// library embedders never satisfy the strict boundary.
+	if authority, ok := t.(tool.ReadOnlyExecutionTrustAuthority); !ok || !authority.ReadOnlyExecutionTrustAuthority() {
 		return false
 	}
 	_, governed := t.(tool.MCPApprovalPolicy)
