@@ -563,8 +563,21 @@ func TestWindowsAppContainerLockRootsAreProfileScoped(t *testing.T) {
 	specB := Spec{ReadableRoots: []string{home}, AppContainerWritableRoots: []string{stateB}, ForbidReadRoots: []string{forbid}}
 	keysA := windowsAppContainerLockRootsForRun(specA, "")
 	keysB := windowsAppContainerLockRootsForRun(specB, "")
-	homeKeyA := windowsAppContainerProfileLockKey(windowsAppContainerName(specA), home)
-	homeKeyB := windowsAppContainerProfileLockKey(windowsAppContainerName(specB), home)
+	profileRoot := func(spec Spec) string {
+		for _, root := range windowsWritableRoots(spec) {
+			if sameWindowsPath(root, home) {
+				return root
+			}
+		}
+		return ""
+	}
+	homeRootA := profileRoot(specA)
+	homeRootB := profileRoot(specB)
+	if homeRootA == "" || homeRootB == "" {
+		t.Fatalf("normalized home root missing: A=%q B=%q", homeRootA, homeRootB)
+	}
+	homeKeyA := windowsAppContainerProfileLockKey(windowsAppContainerName(specA), homeRootA)
+	homeKeyB := windowsAppContainerProfileLockKey(windowsAppContainerName(specB), homeRootB)
 	if !contains(keysA, homeKeyA) || !contains(keysB, homeKeyB) {
 		t.Fatalf("profile lock keys missing: A=%v B=%v", keysA, keysB)
 	}

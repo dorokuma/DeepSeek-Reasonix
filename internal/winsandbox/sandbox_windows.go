@@ -81,14 +81,48 @@ func lockWaitNotice(opts RunOptions) io.Writer {
 	return opts.Stderr
 }
 
+// prepareWindowsSandboxACLs keeps all setup and cleanup icacls mutations inside
+// one short cross-process critical section. Inherited ACE propagation from a
+// parent such as the user profile can otherwise race a concurrent sandbox's
+// workspace grant and silently replace it. The returned cleanup reacquires the
+// same mutex; the child process runs after setup releases it.
+func prepareWindowsSandboxACLs(residueRun *windowsResidueRun, sid *windows.SID, profileName string, spec Spec, exe string, extraWritableRoots ...string) (func(), error) {
+	mutationLock, err := lockWindowsACLMutation()
+	if err != nil {
+		return nil, err
+	}
+	cleanupFS, err := grantAppContainerFilesystem(residueRun, sid, profileName, spec, extraWritableRoots...)
+	if err != nil {
+		mutationLock.release()
+		return nil, err
+	}
+	cleanupExe, err := grantAppContainerExecutable(residueRun, sid, profileName, exe)
+	if err != nil {
+		cleanupFS()
+		mutationLock.release()
+		return nil, err
+	}
+	mutationLock.release()
+
+	return func() {
+		cleanupLock, lockErr := lockWindowsACLMutation()
+		cleanupExe()
+		cleanupFS()
+		if lockErr == nil {
+			cleanupLock.release()
+		}
+	}, nil
+}
+
 func runWindowsSandboxed(spec Spec, argv []string, opts RunOptions) (int, error) {
 	if spec.Writable {
 		return runWindowsRestrictedSandboxed(spec, argv, opts)
 	}
 	// Hold profile-scoped lifetime locks for additive package-SID grants and
-	// global lifetime locks for forbid_read paths. Individual ACL updates also
-	// take a short real-path lock so different profiles cannot lose each other's
-	// ACE in a read-modify-write race.
+	// global lifetime locks for forbid_read paths. A short global ACL-mutation
+	// lock prevents parent inheritance updates and exact-path grants from losing
+	// each other's ACEs; setup and cleanup hold it, but the sandboxed command does
+	// not hold it while running.
 	lock, err := lockWindowsRoots(windowsAppContainerLockRootsForRun(spec, argv[0]), lockWaitNotice(opts), lockHolderLabel(argv), spec.LockWait)
 	if err != nil {
 		return 0, err
@@ -110,16 +144,11 @@ func runWindowsSandboxed(spec Spec, argv []string, opts RunOptions) (int, error)
 		return 0, err
 	}
 	defer cleanupTemp()
-	cleanupFS, err := grantAppContainerFilesystem(residueRun, ac.sid, ac.name, spec, tempRoot)
+	cleanupACLs, err := prepareWindowsSandboxACLs(residueRun, ac.sid, ac.name, spec, argv[0], tempRoot)
 	if err != nil {
 		return 0, err
 	}
-	defer cleanupFS()
-	cleanupExe, err := grantAppContainerExecutable(residueRun, ac.sid, ac.name, argv[0])
-	if err != nil {
-		return 0, err
-	}
-	defer cleanupExe()
+	defer cleanupACLs()
 
 	job, err := sandboxJobObject()
 	if err != nil {
@@ -189,16 +218,11 @@ func runWindowsRestrictedSandboxed(spec Spec, argv []string, opts RunOptions) (i
 	if err != nil {
 		return 0, err
 	}
-	cleanupFS, err := grantAppContainerFilesystem(residueRun, userSID, "", spec, tempRoot)
+	cleanupACLs, err := prepareWindowsSandboxACLs(residueRun, userSID, "", spec, argv[0], tempRoot)
 	if err != nil {
 		return 0, err
 	}
-	defer cleanupFS()
-	cleanupExe, err := grantAppContainerExecutable(residueRun, userSID, "", argv[0])
-	if err != nil {
-		return 0, err
-	}
-	defer cleanupExe()
+	defer cleanupACLs()
 
 	token, err := createLowIntegrityPrimaryToken()
 	if err != nil {
@@ -809,25 +833,14 @@ func grantExactAppContainerExecutableFile(residueRun *windowsResidueRun, profile
 }
 
 func grantExactAppContainerPath(residueRun *windowsResidueRun, profileName, path string, sidStrs []string, perm string) (func(), error) {
-	mutationLock, err := lockWindowsRoots([]string{path}, nil, "AppContainer ACL update", 0)
-	if err != nil {
-		return nil, err
-	}
 	if err := residueRun.recordProfileGrantBeforeApply(profileName, path); err != nil {
-		mutationLock.release()
 		return nil, err
 	}
 	if err := grantAppContainerSIDs(path, sidStrs, perm); err != nil {
-		mutationLock.release()
 		return nil, err
 	}
-	mutationLock.release()
 	return func() {
-		cleanupLock, err := lockWindowsRoots([]string{path}, nil, "AppContainer ACL cleanup", 0)
 		removeGrantedAppContainerSIDs(path, sidStrs)
-		if err == nil {
-			cleanupLock.release()
-		}
 	}, nil
 }
 

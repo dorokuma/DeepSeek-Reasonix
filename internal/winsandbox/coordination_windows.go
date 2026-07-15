@@ -31,8 +31,10 @@ import (
 // still relies on. Those runs must be serialized for their whole lifetime.
 // Read-only AppContainer grants are different: each deterministic profile adds
 // only its own package SID and removes only that SID, so different profiles may
-// coexist. They use a profile-scoped lifetime lock plus a short real-path lock
-// around each ACL read-modify-write.
+// coexist. They use a profile-scoped lifetime lock plus one short global mutex
+// around ACL setup and cleanup. The short mutex also protects descendant ACLs
+// while a parent grant propagates inheritance, without serializing the commands
+// for their whole runtime.
 //
 // windowsRootLock takes a per-root named mutex for the lifetime of a run. The
 // mutex lives in the session-local namespace and the OS releases it
@@ -97,6 +99,15 @@ func lockWindowsRoots(roots []string, notice io.Writer, holderLabel string, lock
 		writeWindowsLockHolder(name, holderLabel)
 	}
 	return lock, nil
+}
+
+// lockWindowsACLMutation serializes only the setup and cleanup phases that run
+// icacls. A parent-directory inheritance update may rewrite descendants that a
+// concurrent sandbox is also preparing, so locking just the exact command path
+// is insufficient. Callers release this lock before starting the child process;
+// normal sandbox execution therefore remains concurrent.
+func lockWindowsACLMutation() (*windowsRootLock, error) {
+	return lockWindowsRoots([]string{"reasonix-windows-acl-mutation-v1"}, nil, "Windows sandbox ACL update", 0)
 }
 
 func (l *windowsRootLock) release() {
