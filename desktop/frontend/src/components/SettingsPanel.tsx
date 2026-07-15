@@ -6512,11 +6512,12 @@ function SandboxSection({ s, busy, apply, windows }: SectionProps & { windows: b
       <SettingsField label={t("settings.effectiveShell")}>
         <div className="settings-readonly-field">{effectiveShell}</div>
       </SettingsField>
-      <SettingsField label={t("settings.bashSandbox")}>
-        {/* Windows force-resolves bash to "off" (see config.BashModeForGOOS), so
-            offering enforce there would silently snap back on save. */}
-        <select className="mem-select set-grow" value={sb.bash} disabled={busy || windows} onChange={(e) => void set({ bash: e.target.value })}>
-          <option value="enforce" disabled={windows}>{t("settings.bashEnforce")}</option>
+      <SettingsField label={t("settings.bashSandbox")} hint={windows ? t("settings.bashUnavailableWindows") : undefined}>
+        {/* Windows has no OS-level Bash backend and config.BashModeForGOOS fixes
+            the effective value to off. Keep the control visibly immutable and
+            omit enforce so the UI cannot imply a dormant capability. */}
+        <select className="mem-select set-grow" value={windows ? "off" : sb.bash} disabled={busy || windows} onChange={(e) => void set({ bash: e.target.value })}>
+          {!windows && <option value="enforce">{t("settings.bashEnforce")}</option>}
           <option value="off">{t("settings.bashOff")}</option>
         </select>
       </SettingsField>

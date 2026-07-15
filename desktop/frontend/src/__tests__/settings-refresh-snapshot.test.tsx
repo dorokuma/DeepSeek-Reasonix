@@ -306,6 +306,51 @@ await act(async () => {
   retryRoot.unmount();
 });
 
+const windowsSandboxRootEl = document.createElement("div");
+document.body.appendChild(windowsSandboxRootEl);
+const windowsSandboxRoot = createRoot(windowsSandboxRootEl);
+let windowsSetSandboxCalls = 0;
+window.go = {
+  main: {
+    App: {
+      // Deliberately return a stale enforce value: the Windows UI must still
+      // render the effective immutable off state.
+      Settings: async () => baseSettings("standard"),
+      SetSandbox: async () => {
+        windowsSetSandboxCalls += 1;
+      },
+    } as Partial<AppBindings> as AppBindings,
+  },
+};
+
+await act(async () => {
+  windowsSandboxRoot.render(
+    <LocaleProvider>
+      <SettingsPanel
+        initialTab="sandbox"
+        desktopPlatform="windows"
+        onClose={() => {}}
+        onChanged={() => {}}
+      />
+    </LocaleProvider>,
+  );
+  await flushPromises();
+});
+await waitFor("Windows Bash sandbox control", () => document.body.textContent?.includes("This setting is fixed to off.") === true);
+
+const windowsBashSelect = Array.from(windowsSandboxRootEl.querySelectorAll("select")).find((select) =>
+  Array.from(select.options).some((option) => option.value === "off"),
+);
+if (!windowsBashSelect) throw new Error("Windows Bash sandbox select did not render");
+ok(windowsBashSelect.disabled, "Windows Bash sandbox selector is disabled");
+eq(windowsBashSelect.value, "off", "Windows Bash sandbox selector is fixed to off");
+ok(!Array.from(windowsBashSelect.options).some((option) => option.value === "enforce"), "Windows Bash sandbox selector omits enforce");
+eq(windowsSetSandboxCalls, 0, "Windows immutable Bash sandbox state does not save enforce");
+
+await act(async () => {
+  windowsSandboxRoot.unmount();
+});
+
 const zoomRootEl = document.createElement("div");
 document.body.appendChild(zoomRootEl);
 const zoomRoot = createRoot(zoomRootEl);

@@ -33,7 +33,6 @@ import (
 	"reasonix/internal/notify"
 	"reasonix/internal/provider"
 	"reasonix/internal/provider/openai"
-	"reasonix/internal/sandbox"
 	"reasonix/internal/serve"
 
 	tea "charm.land/bubbletea/v2"
@@ -48,12 +47,6 @@ var (
 
 // Run is the CLI entry point; it returns a process exit code.
 func Run(args []string, version string) int {
-	// This binary routes the hidden Windows sandbox helper subcommand below;
-	// registering that fact is what lets sandbox.Available() report true.
-	sandbox.RegisterHelperDispatch()
-	if len(args) > 0 && args[0] == sandbox.WindowsHelperCommand {
-		return sandbox.RunWindowsSandboxHelper(args[1:], os.Stdin, os.Stdout, os.Stderr)
-	}
 	// Pick the UI language up front so even pre-config paths (the first-run
 	// welcome banner) come through localized. Env-only first; if a config
 	// exists and pins a language, that wins.

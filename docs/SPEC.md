@@ -698,36 +698,17 @@ update its own global config. `forbid_read` lists directories the agent should
 not read, list, or search; entries support `${VAR}` / `${VAR:-default}` expansion
 and should be absolute, or use `${HOME}` for home-relative secrets such as
 `${HOME}/.ssh`. `bash` is itself jailed by default when an OS sandbox is
-available (`[sandbox] bash = "enforce"`: Seatbelt on macOS, bubblewrap on
-Linux, and a native helper on Windows): each command is allowed to write only
+available (`[sandbox] bash = "enforce"`: Seatbelt on macOS and bubblewrap on
+Linux): each command is allowed to write only
 the same roots plus platform-specific command temp/cache roots, denied reads
 under `forbid_read`, and allowed to reach the network only when
 `network = true`.
-**Current status:** stable builds force the effective Bash sandbox mode to
-`off` on Windows — even an explicit `bash = "enforce"` resolves to `off` (and
-`reasonix doctor` flags the ignored setting) — because the native backend
-described below still breaks common Git Bash/MSYS2, Docker, and git workflows.
-The description is kept as the design of record until the backend is reliable
-enough to re-enable.
-The native Windows helper uses Reasonix's bundled Windows sandbox backend:
-AppContainer for read-only commands and a low-integrity token for writable
-commands, with temporary ACL grants for
-writable roots and tool executables, a per-command temp root instead of mutating
-the global Temp directory, temporary deny ACEs for `forbid_read` (files and
-directories), best-effort restoration from pre-run DACL snapshots for touched
-directories, and a kill-on-close Job Object. Because the sandbox works by
-temporarily mutating shared-path ACLs and integrity labels, concurrent commands
-against the same root are serialized with a per-root lock, and residue from a
-force-killed command (a lingering low-integrity label or `forbid_read` deny ACE)
-is swept by the next run so a crash cannot durably lower a workspace's integrity
-or lock the user out of a `forbid_read` path. A writable command runs under a
-low-integrity token, so beyond the configured roots it retains write access to
-the narrow set of locations Windows leaves writable to any low-integrity process
-(e.g. `AppData\LocalLow`); the workspace boundary and `forbid_read` denials are
-unaffected. Read-only AppContainer commands omit network capabilities when
-networking is disabled; writable Windows commands fail closed when
-`network = false` because the low-integrity token does not provide a reliable
-per-process network block without elevated firewall/WFP setup.
+**Windows status:** Reasonix does not ship an OS-level Bash sandbox on Windows.
+The effective mode is fixed to `off`; an older config containing
+`bash = "enforce"` remains readable but resolves to `off`, `reasonix doctor`
+reports the ignored value, and the desktop control is read-only. Bash therefore
+runs unconfined on Windows. The in-process file tools continue to enforce
+`workspace_root`, `allow_write`, and `forbid_read`.
 When no OS sandbox is available, `bash = "enforce"` refuses bash execution
 instead of running unconfined. Install the platform sandbox backend
 (bubblewrap/`bwrap` on Linux, `sandbox-exec` on macOS) or set
@@ -760,16 +741,12 @@ behavior. The escape-prompt and broader OS support are Phase 1's remainder (§9)
 
 - Sandbox Phase 1: an OS-level jail for `bash` so commands — not just the
   file-writer built-ins (Phase 0) — are confined to the workspace. **Seatbelt on
-  macOS, bubblewrap on Linux, and a native Windows helper ship, on by default
-  when available** (see §5).
-  Remaining: (a)
-  the escape-prompt — detect sandbox-unavailable or sandbox-denied failures and
+  macOS and bubblewrap on Linux ship, on by default when available** (see §5).
+  Remaining: the escape-prompt — detect sandbox-unavailable or sandbox-denied failures and
   offer an explicit, permission-gated unconfined rerun (in `reasonix run`, the
   command just fails and the model adapts), which completes the "allow inside the
-  box, prompt at its edge" model; (b) an optional elevated Windows backend with a
-  dedicated sandbox user for enterprise hardening. Shells out to OS tooling so
-  the binary stays dependency-free. With this in
-  place, "always allow" rule persistence becomes optional rather than load-bearing.
+  box, prompt at its edge" model. With this in place, "always allow" rule
+  persistence becomes optional rather than load-bearing.
 - MCP long tail (deferred deliberately — no consumer / no foundation yet): OAuth
   2.0 + `headersHelper` auth for remote servers; the remaining `.mcp.json` scopes
   (local / user — project scope shipped, see §5); tool-search deferral;

@@ -1019,10 +1019,9 @@ func (c *Config) BashMode() string {
 }
 
 // BashModeForGOOS normalises the bash-sandbox mode for tests and cross-platform
-// rendering. Windows currently forces bash sandboxing off, even when older
-// configs explicitly requested "enforce", because the native backend still
-// breaks common Git Bash/MSYS2, Docker, and git workflows. macOS/Linux keep the
-// existing explicit-mode behavior.
+// rendering. Windows has no OS-level Bash sandbox and forces the effective mode
+// off, even when older configs explicitly requested "enforce". macOS/Linux keep
+// the existing explicit-mode behavior.
 func (c *Config) BashModeForGOOS(goos string) string {
 	if goos == "windows" {
 		return "off"
@@ -1604,7 +1603,7 @@ func Default() *Config {
 		// deny/allow rules to harden or quiet specific tools.
 		Permissions: PermissionsConfig{Mode: "ask"},
 		// Sandbox uses platform defaults: macOS/Linux jail bash by default;
-		// Windows forces bash off until the native sandbox backend is reliable.
+		// Windows has no OS-level Bash sandbox and always forces bash off.
 		// Network=true here so an absent [sandbox] in a user's file keeps egress
 		// (zero value would wrongly deny it).
 		Sandbox: SandboxConfig{Network: true},

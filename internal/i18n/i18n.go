@@ -87,7 +87,7 @@ type Messages struct {
 	BashPrefixChoices                      string // approval choice list when a bash prefix can be granted
 	PlanModeReadOnlyCommandChoices         string // approval choice list for plan-mode read-only command trust
 	FreshHumanApprovalChoices              string // approval choice list for prompts that cannot be remembered
-	SandboxEscapeApprovalChoices           string // approval choice list for Windows sandbox escape prompts
+	SandboxEscapeApprovalChoices           string // approval choice list for OS sandbox escape prompts
 	ApprovalNeededFmt                      string // notification text for a pending approval, tool only
 	ApprovalNeededWithSubjectFmt           string // notification text for a pending approval with subject
 	ToolApprovalSourceFmt                  string // "Source: %s" / "来源: %s"
@@ -102,7 +102,7 @@ type Messages struct {
 	ApprovalToolLabelRunSkill              string // user-facing label for run_skill approvals
 	ApprovalToolLabelRemember              string // user-facing label for remember approvals
 	ApprovalToolLabelForget                string // user-facing label for forget approvals
-	ApprovalToolLabelSandboxEscape         string // user-facing label for Windows sandbox escape approvals
+	ApprovalToolLabelSandboxEscape         string // user-facing label for OS sandbox escape approvals
 	ApprovalToolLabelPlanModeReadOnly      string // user-facing label for plan-mode read-only command trust approvals
 	MemoryApprovalSaveUpdate               string // subject prefix for remember approval
 	MemoryApprovalBodyLabel                string // label before the body excerpt in remember approval
@@ -114,10 +114,10 @@ type Messages struct {
 	PlanModeBashTrustSubjectFmt            string // subject for bash read-only prefix trust approval, prefix + command
 	PlanModeBashTrustReason                string // reason for bash read-only prefix trust approval
 	PlanModeBashTrustDeclined              string // model-facing denial after bash read-only prefix rejection
-	SandboxEscapeSubjectFallback           string // fallback subject for one-shot unconfined Windows sandbox escape approval
+	SandboxEscapeSubjectFallback           string // fallback subject for a one-shot unconfined sandbox escape approval
 	SandboxEscapeSubjectPrefix             string // subject prefix before the shell command for one-shot unconfined escape approval
-	SandboxEscapeWrapReason                string // reason when the Windows sandbox cannot wrap the command
-	SandboxEscapeRuntimeReason             string // reason when the Windows sandbox helper fails while starting the command
+	SandboxEscapeWrapReason                string // reason when no OS sandbox can wrap the command
+	SandboxEscapeRuntimeReason             string // fallback reason when an OS sandbox cannot start the command
 	SandboxEscapeDeclined                  string // model-facing denial when the user declines a one-shot unconfined retry
 	ApprovalToolLabelConfigWrite           string // user-facing label for Reasonix-managed config write approvals
 	ConfigWriteSubjectPrefix               string // subject prefix before the config file path for managed config write approval

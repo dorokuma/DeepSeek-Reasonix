@@ -441,7 +441,7 @@ func RenderTOMLForScope(c *Config, scope RenderScope) string {
 	b.WriteString("# may only write under workspace_root (empty = current dir) and allow_write extras.\n")
 	b.WriteString("# bash = \"enforce\" jails each command in an OS sandbox when available;\n")
 	b.WriteString("# without one, bash execution is refused. Empty defaults to enforce on macOS/Linux.\n")
-	b.WriteString("# Windows currently forces bash = \"off\" to restore pre-1.16 unconfined shell execution.\n")
+	b.WriteString("# Windows has no OS-level Bash sandbox and fixes bash = \"off\".\n")
 	b.WriteString("# network allows sandboxed bash egress.\n")
 	if c.Sandbox.WorkspaceRoot != "" {
 		fmt.Fprintf(&b, "workspace_root = %q\n", c.Sandbox.WorkspaceRoot)

@@ -499,58 +499,22 @@ out. `forbid_read` optionally hides sensitive directories from the agent's
 read/list/search tools; use absolute paths or `${HOME}` / `${VAR}` references,
 not `~`, because config expansion is environment-variable based. `bash` is
 itself jailed by default when an OS sandbox is available (`[sandbox] bash`,
-Seatbelt on macOS, bubblewrap on Linux, and a native helper on Windows):
+Seatbelt on macOS and bubblewrap on Linux):
 commands may write only those same roots plus platform-specific command
 temp/cache roots, cannot read configured `forbid_read` roots while the OS
 sandbox is active, and reach the network only when `[sandbox] network` is set.
-The native Windows helper uses Reasonix's bundled Windows sandbox backend:
-AppContainer for read-only commands and a low-integrity token for writable
-commands, temporarily grants
-access to the workspace, a per-command temp root, and the target executable,
-applies deny ACEs for `forbid_read` (files as well as directories), snapshots
-touched DACLs before editing them, and restores those snapshots best-effort
-after the command exits. Concurrent commands touching the same workspace are
-serialized so their ACL edits cannot corrupt each other, and residue from a
-force-killed command (a lingering low-integrity label or `forbid_read` deny) is
-cleaned up by the next run. Because a writable command runs under a
-low-integrity token, it can still write the few locations Windows leaves
-writable to any low-integrity process (for example `%USERPROFILE%\AppData\LocalLow`)
-in addition to the configured roots; the workspace boundary and `forbid_read`
-denials still hold. Read-only AppContainer commands omit network capabilities
-when networking is disabled; writable Windows commands fail closed when
-`[sandbox] network = false`.
-**Windows note:** stable builds currently force the effective Bash sandbox
-mode to `off` on Windows — even an explicit `bash = "enforce"` resolves to
-`off`, and `reasonix doctor` flags the ignored setting — because the native
-Windows backend still breaks common Git Bash/MSYS2, Docker, and git workflows.
-The Windows sandbox description here is the design of record for when the
-backend is re-enabled.
+**Windows note:** Reasonix does not ship an OS-level Bash sandbox on Windows.
+The effective mode is fixed to `off`; even an older config containing
+`bash = "enforce"` resolves to `off`, `reasonix doctor` flags the ignored value,
+and the desktop selector is read-only. Bash commands therefore run unconfined,
+while the dedicated file tools still enforce `workspace_root`, `allow_write`,
+and `forbid_read` in process.
 
 When no OS sandbox backend is available, `bash = "enforce"` refuses bash
 execution instead of running unconfined. Install the platform sandbox backend
 (bubblewrap/`bwrap` on Linux, `sandbox-exec` on macOS) or set
 `[sandbox] bash = "off"` to explicitly restore the pre-1.16 unconfined shell
-behavior (see
-[`SPEC.md` §9](./SPEC.md#9-roadmap-not-in-current-scope) for the escape-prompt
-and optional elevated Windows hardening still to come).
-
-Windows sandbox troubleshooting: the sandbox relaunches the Reasonix
-executable as a hidden helper, and both the CLI and the desktop app embed that
-helper entry point — if enforce is requested in a build that lacks it, bash
-refuses with a clear error instead of returning empty output. A command that
-queues behind another sandboxed command on the same workspace prints a
-one-line "waiting for another sandboxed command" notice that names the holding
-command and its PID when known. A foreground command gives up after 1 minute
-with the same holder detail (a queued turn should fail fast, not hang);
-background jobs wait up to 10 minutes, and `WINDOWS_SANDBOX_LOCK_MS` overrides
-both. Stop the named command first; raising the wait cap only makes later
-commands wait longer. If sandboxed commands fail
-only under Git-for-Windows/MSYS2 bash, try `[tools.shell] prefer =
-"powershell"` — the MSYS runtime is fragile under a low-integrity token. Run
-`reasonix doctor` to see the resolved shell, sandbox availability, and whether
-a project `reasonix.toml` pins `[sandbox]` (a project file overrides
-Settings/user-config edits, and sandbox changes take effect after a session
-config reload or a new session).
+behavior. On Windows the compatible value is always `off`.
 
 For coding-quality reports, run `reasonix doctor quality <branch-id-or-path>`
 (add `--json` for structured output). This reads the selected session but emits
