@@ -271,7 +271,7 @@ export const zh: Record<DictKey, string> = {
   "caps.pluginServersHint": "由对应插件管理；可进入服务器详情查看工具。",
   "caps.serverToolSummary": "{tools} 个工具",
   "caps.backToServers": "返回 MCP 列表",
-  "caps.serverDetailsHint": "查看连接信息、诊断、工具和只读信任。",
+  "caps.serverDetailsHint": "查看连接信息、诊断和工具。",
   "caps.addServerTitle": "添加 MCP 服务器",
   "caps.addServerHint": "配置本地命令或远程 MCP 地址。",
   "caps.editServerTitle": "编辑 {name}",

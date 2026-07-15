@@ -6627,7 +6627,7 @@ body > .mermaid-diagram--fullscreen {
   }
 }
 
-@container (max-width: 460px) {
+@container (max-width: 560px) {
   .composer-meta {
     gap: 6px;
     padding-inline: 8px;

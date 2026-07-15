@@ -270,7 +270,7 @@ export const en = {
   "caps.pluginServersHint": "Managed by their plugins. Open a server to inspect its tools.",
   "caps.serverToolSummary": "{tools} tools",
   "caps.backToServers": "Back to MCP servers",
-  "caps.serverDetailsHint": "Connection details, diagnostics, tools, and read-only trust.",
+  "caps.serverDetailsHint": "Connection details, diagnostics, and tools.",
   "caps.addServerTitle": "Add MCP server",
   "caps.addServerHint": "Configure a local command or remote MCP endpoint.",
   "caps.editServerTitle": "Edit {name}",

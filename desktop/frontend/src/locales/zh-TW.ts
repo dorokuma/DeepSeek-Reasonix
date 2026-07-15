@@ -182,7 +182,7 @@ export const zhTW: Record<DictKey, string> = {
   "caps.pluginServersHint": "由對應插件管理；可進入伺服器詳情檢視工具。",
   "caps.serverToolSummary": "{tools} 個工具",
   "caps.backToServers": "返回 MCP 清單",
-  "caps.serverDetailsHint": "檢視連線資訊、診斷、工具和唯讀信任。",
+  "caps.serverDetailsHint": "檢視連線資訊、診斷和工具。",
   "caps.addServerTitle": "新增 MCP 伺服器",
   "caps.addServerHint": "設定本機命令或遠端 MCP 位址。",
   "caps.editServerTitle": "編輯 {name}",

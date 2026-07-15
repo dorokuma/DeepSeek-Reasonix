@@ -295,6 +295,7 @@ console.log("capabilities panel MCP actions");
   ok(!findButton("Pre-trust"), "MCP details do not expose per-tool pre-trust actions");
   ok(!findButton("Untrust"), "MCP details do not expose an untrust action");
   ok(!document.querySelector(".cap-tool-trust"), "MCP details do not expose a separate trust state");
+  ok(!document.body.textContent?.includes("read-only trust"), "MCP details do not describe the removed trust workflow");
 
   await act(async () => {
     root.unmount();
