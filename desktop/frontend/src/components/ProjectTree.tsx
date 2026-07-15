@@ -300,7 +300,7 @@ type CollapseSnapshot = {
   manuallyCollapsed: Set<string>;
 };
 
-type WorkbenchTreeSections = {
+type PinnedTreeSections = {
   pinned: ProjectNode[];
   projects: ProjectNode[];
 };
@@ -485,7 +485,11 @@ export function classicTopicWindow(children: ProjectNode[], showAll: boolean): {
   };
 }
 
-function splitWorkbenchPinnedTree(nodes: ProjectNode[], sortMode: WorkbenchSortMode): WorkbenchTreeSections {
+export function splitPinnedProjectTree(
+  nodes: ProjectNode[],
+  sortMode: WorkbenchSortMode,
+  includePinnedProjects = true,
+): PinnedTreeSections {
   const pinnedTopics: ProjectNode[] = [];
   const pinnedProjects: ProjectNode[] = [];
   const projects: ProjectNode[] = [];
@@ -499,7 +503,7 @@ function splitWorkbenchPinnedTree(nodes: ProjectNode[], sortMode: WorkbenchSortM
       continue;
     }
 
-    if (node.pinned && node.kind === "project") {
+    if (includePinnedProjects && node.pinned && node.kind === "project") {
       pinnedProjects.push(node);
       continue;
     }
@@ -1146,10 +1150,10 @@ export function ProjectTree({
     return arrangeClassicProjectTree(filtered, workbenchSortMode);
   }, [compactTopics, creationTopics, query, tree, timeFilter, workbenchOrganizeMode, workbenchSortMode]);
 
-  const workbenchTreeSections = useMemo<WorkbenchTreeSections>(() => {
-    if (!compactTopics) return { pinned: [], projects: visibleTree };
-    return splitWorkbenchPinnedTree(visibleTree, workbenchSortMode);
-  }, [compactTopics, visibleTree, workbenchSortMode]);
+  const pinnedTreeSections = useMemo<PinnedTreeSections>(() => {
+    if (creationTopics) return { pinned: [], projects: visibleTree };
+    return splitPinnedProjectTree(visibleTree, workbenchSortMode, compactTopics);
+  }, [compactTopics, creationTopics, visibleTree, workbenchSortMode]);
 
   const classicTopics = !compactTopics && !creationTopics;
   const classicTruncationActive = classicTopics && query.trim() === "" && timeFilter === "all";
@@ -2255,7 +2259,7 @@ export function ProjectTree({
     );
   };
 
-  const hasWorkbenchRows = workbenchTreeSections.pinned.length > 0 || workbenchTreeSections.projects.length > 0;
+  const hasTreeRows = pinnedTreeSections.pinned.length > 0 || pinnedTreeSections.projects.length > 0;
 
   // Report visible topics to parent after render so shortcuts match sidebar order.
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -2284,18 +2288,18 @@ export function ProjectTree({
         <>
           {renderProjectHeader("workbench")}
           <div className="project-tree__list project-tree__list--workbench">
-            {!hasWorkbenchRows ? (
+            {!hasTreeRows ? (
               renderEmptyState()
             ) : (
               <>
-                {workbenchTreeSections.pinned.length > 0 && (
+                {pinnedTreeSections.pinned.length > 0 && (
                   <div className="project-tree__section project-tree__section--pinned">
                     <div className="project-tree__section-title">{t("projectTree.pinnedTitle")}</div>
-                    {workbenchTreeSections.pinned.map((node) => renderNode(node, 0, "pinned"))}
+                    {pinnedTreeSections.pinned.map((node) => renderNode(node, 0, "pinned"))}
                   </div>
                 )}
                 <div className="project-tree__section project-tree__section--projects">
-                  {workbenchTreeSections.projects.map((node) => renderNode(node, 0, "projects"))}
+                  {pinnedTreeSections.projects.map((node) => renderNode(node, 0, "projects"))}
                 </div>
               </>
             )}
@@ -2305,7 +2309,21 @@ export function ProjectTree({
         <>
           {renderProjectHeader("classic")}
           <div className="project-tree__list" onScroll={cancelHoverCard}>
-            {visibleTree.length === 0 ? renderEmptyState() : visibleTree.map((node) => renderNode(node, 0))}
+            {!hasTreeRows ? (
+              renderEmptyState()
+            ) : (
+              <>
+                {pinnedTreeSections.pinned.length > 0 && (
+                  <div className="project-tree__section project-tree__section--pinned">
+                    <div className="project-tree__section-title">{t("projectTree.pinnedTitle")}</div>
+                    {pinnedTreeSections.pinned.map((node) => renderNode(node, 1, "pinned"))}
+                  </div>
+                )}
+                <div className="project-tree__section project-tree__section--projects">
+                  {pinnedTreeSections.projects.map((node) => renderNode(node, 0, "projects"))}
+                </div>
+              </>
+            )}
           </div>
         </>
       )}
