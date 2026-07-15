@@ -298,6 +298,7 @@ func TestWindowsResidueMarkerSkipsMalformedLines(t *testing.T) {
 	content := "deny\tC:\\Users\\me\\.ssh\n" + // valid
 		"garbage-no-tab\n" + // no separator
 		"boguskind\tC:\\x\n" + // unknown kind
+		"grant_loader\tC:\\Users\\me\\tool.exe\n" + // valid executable-loader grant
 		"grant_profile\tOtherApp.0123456789abcdef0123\tC:\\wrong\n" + // untrusted profile
 		"deny_profile\tWinSandbox.0123456789abcdef0123\tC:\\Users\\me\\secret\n" + // valid profile deny
 		"grant_profile\tWinSandbox.abcdef0123456789abcd\tC:\\Users\\me\\profile tools\n" + // valid profile grant
@@ -309,6 +310,7 @@ func TestWindowsResidueMarkerSkipsMalformedLines(t *testing.T) {
 	got := readResidueMarker(marker)
 	want := []residueEntry{
 		{kind: residueDeny, path: `C:\Users\me\.ssh`},
+		{kind: residueGrantLoader, path: `C:\Users\me\tool.exe`},
 		{kind: residueDenyProfile, profile: "WinSandbox.0123456789abcdef0123", path: `C:\Users\me\secret`},
 		{kind: residueGrantProfile, profile: "WinSandbox.abcdef0123456789abcd", path: `C:\Users\me\profile tools`},
 		{kind: residueGrant, path: `C:\Users\me\my tools`},
@@ -512,10 +514,10 @@ func TestSweepableResidueRefusesSystemPaths(t *testing.T) {
 	}
 }
 
-func TestWindowsMutatedRootsForRunLocksNonSystemExeDirOnly(t *testing.T) {
+func TestWindowsMutatedRootsForRunLocksNonSystemExePaths(t *testing.T) {
 	workspace := t.TempDir()
-	// A non-system tool directory must join the lock set; a Windows system
-	// directory must not, or commands sharing the system shell would needlessly
+	// A non-system tool and its directory must join the lock set; Windows system
+	// paths must not, or commands sharing the system shell would needlessly
 	// serialize. Membership is by path, not by a write probe, so this holds even
 	// when the test process is elevated (as CI's runner is).
 	toolDir := t.TempDir()
@@ -531,6 +533,9 @@ func TestWindowsMutatedRootsForRunLocksNonSystemExeDirOnly(t *testing.T) {
 	if !containsWindowsPath(got, toolDir) {
 		t.Fatalf("mutated roots = %v, want tool dir %s", got, toolDir)
 	}
+	if !containsWindowsPath(got, toolExe) {
+		t.Fatalf("mutated roots = %v, want exact tool executable %s", got, toolExe)
+	}
 
 	// A system executable's directory (System32) must be excluded regardless of
 	// the process's integrity level. Resolve a real system tool to avoid
@@ -543,15 +548,17 @@ func TestWindowsMutatedRootsForRunLocksNonSystemExeDirOnly(t *testing.T) {
 	if containsWindowsPath(sysRoots, filepath.Dir(sysExe)) {
 		t.Fatalf("system exe dir %s must not join the lock set: %v", filepath.Dir(sysExe), sysRoots)
 	}
+	if containsWindowsPath(sysRoots, sysExe) {
+		t.Fatalf("system exe %s must not join the lock set: %v", sysExe, sysRoots)
+	}
 }
 
 func TestWindowsMutableExecutableGrantRootsExcludesSystemDirs(t *testing.T) {
-	// The grant loop (grantAppContainerExecutable) and the per-root lock both draw
-	// their executable roots from windowsMutableExecutableGrantRoots, so it is the
-	// single guard that keeps system directories from being snapshotted, granted,
-	// or recorded as crash residue. A residue entry on System32 would let a later
-	// sweep run icacls /remove:g for the broad built-in package SIDs and strip the
-	// directory's factory ACEs, so a system tool dir must never appear here.
+	// The directory-grant loop draws its roots from
+	// windowsMutableExecutableGrantRoots. It keeps system directories from being
+	// snapshotted, granted, or recorded as crash residue;
+	// windowsMutableExecutableGrantFile applies the same exclusion to the exact
+	// executable. A system tool dir must never appear here.
 	toolDir := t.TempDir()
 	toolExe := filepath.Join(toolDir, "mytool.exe")
 	if err := os.WriteFile(toolExe, []byte("not really an exe"), 0o644); err != nil {

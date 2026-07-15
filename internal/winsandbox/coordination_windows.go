@@ -265,18 +265,18 @@ func windowsMutatedRoots(spec Spec) []string {
 }
 
 // windowsMutatedRootsForRun extends windowsMutatedRoots with the executable
-// directories the run will actually mutate ACLs on: the non-system ones. A run
-// snapshots/grants/restores argv[0]'s directory (and a Git install root), so two
-// runs in different workspaces that share one tool directory would otherwise
-// interleave their ACL snapshots and corrupt each other. System tool directories
-// (System32, Program Files) are never mutated (grantAppContainerExecutable skips
-// them), so they must stay out of the lock too — both sets draw from the same
-// windowsMutableExecutableGrantRoots so the locked paths and the mutated paths
-// cannot drift apart, and every command sharing the system shell is spared a
-// needless serialization.
+// paths the run will actually mutate ACLs on: the non-system executable itself,
+// its directory, and (for Git) its install root. A run snapshots/grants/restores
+// those paths, so two runs in different workspaces that share one tool would
+// otherwise interleave their ACL snapshots and corrupt each other. System tool
+// paths (System32, Program Files) are never mutated
+// (grantAppContainerExecutable skips them), so they must stay out of the lock
+// too — both sets draw from windowsMutableExecutableGrantPaths so the locked
+// paths and the mutated paths cannot drift apart, and every command sharing the
+// system shell is spared needless serialization.
 func windowsMutatedRootsForRun(spec Spec, exe string) []string {
 	roots := windowsMutatedRoots(spec)
-	return append(roots, windowsMutableExecutableGrantRoots(exe)...)
+	return append(roots, windowsMutableExecutableGrantPaths(exe)...)
 }
 
 // isWindowsSystemRoot reports whether path is inside a Windows system location
@@ -324,6 +324,7 @@ type residueKind string
 const (
 	residueDeny         residueKind = "deny"
 	residueGrant        residueKind = "grant"
+	residueGrantLoader  residueKind = "grant_loader"
 	residueDenyProfile  residueKind = "deny_profile"
 	residueGrantProfile residueKind = "grant_profile"
 )
@@ -558,6 +559,8 @@ func sweepResidueMarkerFile(markerPath string, sandboxSIDs []string) {
 			removeDeniedAppContainerSIDs(e.path, sandboxSIDs)
 		case residueGrant:
 			removeGrantedAppContainerSIDs(e.path, sandboxSIDs)
+		case residueGrantLoader:
+			removeGrantedAppContainerSIDs(e.path, appContainerExecutableLoaderSIDStrings())
 		case residueGrantProfile:
 			sid, err := deriveAppContainerSIDFromName(e.profile)
 			if err == nil && sid != nil {
@@ -615,9 +618,9 @@ func readResidueMarker(path string) []residueEntry {
 			if fields[1] != "" {
 				out = append(out, residueEntry{kind: residueDeny, path: fields[1]})
 			}
-		case residueGrant:
+		case residueGrant, residueGrantLoader:
 			if fields[1] != "" {
-				out = append(out, residueEntry{kind: residueGrant, path: fields[1]})
+				out = append(out, residueEntry{kind: residueKind(fields[0]), path: fields[1]})
 			}
 		case residueDenyProfile, residueGrantProfile:
 			if len(fields) == 3 && validWindowsSandboxProfileName(fields[1]) && fields[2] != "" {

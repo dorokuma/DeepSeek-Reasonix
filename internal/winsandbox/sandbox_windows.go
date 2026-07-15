@@ -763,8 +763,57 @@ func grantAppContainerExecutable(residueRun *windowsResidueRun, sid *windows.SID
 		removeAdded := func() { removeGrantedAppContainerSIDs(dir, objectSIDStrs) }
 		cleanup = append(cleanup, cleanupPathSecurity(restore, removeAdded, nil))
 	}
+	// A package-specific SID is sufficient for data-path access, but Windows'
+	// image loader also evaluates the built-in AppContainer execute trustees for
+	// a non-system executable. Grant those broad trustees only on the resolved
+	// executable file itself — never recursively on its directory, workspace, or
+	// home — while keeping the directory traversal grant package-specific. This
+	// preserves custom MCP executable startup without exposing neighboring files
+	// to unrelated AppContainers.
+	if fileCleanup, ok := grantExactAppContainerExecutableFile(residueRun, profileName, exe, objectSIDStrs); ok {
+		cleanup = append(cleanup, fileCleanup)
+	}
 	// The residue marker is cleared centrally by the run after all cleanups.
 	return runCleanup(cleanup), nil
+}
+
+func grantExactAppContainerExecutableFile(residueRun *windowsResidueRun, profileName, exe string, packageSIDStrs []string) (cleanup func(), ok bool) {
+	if profileName == "" {
+		return nil, false
+	}
+	resolved := windowsMutableExecutableGrantFile(exe)
+	if resolved == "" {
+		return nil, false
+	}
+	restore, _, err := snapshotPathSecurity(resolved, false)
+	if err != nil {
+		return nil, false
+	}
+	var granted []string
+	defer func() {
+		if ok {
+			return
+		}
+		removeGrantedAppContainerSIDs(resolved, granted)
+		restore()
+	}()
+	if err := residueRun.recordProfileGrantBeforeApply(profileName, resolved); err != nil {
+		return nil, false
+	}
+	if err := grantAppContainerSIDs(resolved, packageSIDStrs, "RX"); err != nil {
+		return nil, false
+	}
+	granted = append(granted, packageSIDStrs...)
+	broadSIDStrs := appContainerExecutableLoaderSIDStrings()
+	if err := residueRun.recordBeforeApply(residueGrantLoader, resolved); err != nil {
+		return nil, false
+	}
+	if err := grantAppContainerSIDs(resolved, broadSIDStrs, "RX"); err != nil {
+		return nil, false
+	}
+	granted = append(granted, broadSIDStrs...)
+	removeAdded := func() { removeGrantedAppContainerSIDs(resolved, granted) }
+	return cleanupPathSecurity(restore, removeAdded, nil), true
 }
 
 func windowsExecutableGrantDir(exe string) string {
@@ -801,12 +850,11 @@ func windowsExecutableGrantRoots(exe string) []string {
 // are deliberately excluded so the sandbox never snapshots, grants, or records
 // crash-residue for them: a residue entry on a system directory would let a later
 // sweep run icacls /remove:g for the broad built-in package SIDs and strip the
-// directory's factory ACEs. This is the single source of truth shared by both the
-// per-root lock set (windowsMutatedRootsForRun) and the grant loop
-// (grantAppContainerExecutable), so the paths that are locked and the paths that
-// are mutated can never drift apart. Membership is by path, not a write probe, so
-// it stays stable when the process is elevated (an admin can create a file under
-// System32, which a probe would misread as writable and wrongly pull in).
+// directory's factory ACEs. windowsMutableExecutableGrantPaths combines these
+// roots with the exact executable file and is shared by the per-path lock set;
+// the grant loop mutates that same set. Membership is by path, not a write probe,
+// so it stays stable when the process is elevated (an admin can create a file
+// under System32, which a probe would misread as writable and wrongly pull in).
 func windowsMutableExecutableGrantRoots(exe string) []string {
 	roots := windowsExecutableGrantRoots(exe)
 	out := make([]string, 0, len(roots))
@@ -816,6 +864,25 @@ func windowsMutableExecutableGrantRoots(exe string) []string {
 		}
 	}
 	return out
+}
+
+func windowsMutableExecutableGrantFile(exe string) string {
+	if strings.TrimSpace(exe) == "" {
+		return ""
+	}
+	resolved, err := resolveWindowsExecutable(exe)
+	if err != nil || !pathExists(resolved) || isWindowsSystemRoot(resolved) {
+		return ""
+	}
+	return resolved
+}
+
+func windowsMutableExecutableGrantPaths(exe string) []string {
+	paths := windowsMutableExecutableGrantRoots(exe)
+	if file := windowsMutableExecutableGrantFile(exe); file != "" {
+		paths = append(paths, file)
+	}
+	return paths
 }
 
 func windowsGitInstallRoot(exe string) string {
@@ -845,6 +912,10 @@ func appContainerObjectAccessSIDStrings(sid *windows.SID) []string {
 	// groups here would expose a workspace (or the user's home) to every other
 	// AppContainer for the lifetime of a long-running MCP server.
 	return appContainerPackageSIDStrings(sid)
+}
+
+func appContainerExecutableLoaderSIDStrings() []string {
+	return []string{allApplicationPackagesSID, allRestrictedApplicationPackagesSID}
 }
 
 func currentProcessUserSIDString() (string, error) {

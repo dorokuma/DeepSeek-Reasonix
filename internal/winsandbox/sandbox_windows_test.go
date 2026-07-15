@@ -341,8 +341,59 @@ func TestWindowsAppContainerAllowsOnlyPrivateStateWrites(t *testing.T) {
 	profileSIDText := profileSID.String()
 	_ = windows.FreeSid(profileSID)
 	for _, path := range []string{workspace, state} {
-		if sddl := pathDACLSDDLForTest(t, path); strings.Contains(sddl, profileSIDText) {
+		if sddl := pathDACLSDDLForTest(t, path); sddlContainsSID(sddl, profileSIDText) {
 			t.Fatalf("%s still contains profile SID %s: %s", path, profileSIDText, sddl)
+		}
+	}
+}
+
+func TestWindowsAppContainerRunsExactNonSystemExecutable(t *testing.T) {
+	if !Available() {
+		t.Skip("windows sandbox APIs unavailable")
+	}
+	systemCmd := systemRootTool("cmd.exe")
+	if !filepath.IsAbs(systemCmd) {
+		t.Skip("cmd.exe not found under System32")
+	}
+	toolDir := t.TempDir()
+	toolExe := filepath.Join(toolDir, "appcontainer-tool.exe")
+	if err := copyFileForTest(t, systemCmd, toolExe); err != nil {
+		t.Skipf("cannot stage non-system executable: %v", err)
+	}
+	workspace := t.TempDir()
+	state := t.TempDir()
+	input := filepath.Join(workspace, "input.txt")
+	output := filepath.Join(state, "output.txt")
+	if err := os.WriteFile(input, []byte("readable"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	spec := Spec{
+		WritableRoots: []string{state}, ReadableRoots: []string{workspace}, AppContainerWritableRoots: []string{state},
+		Network: false, Writable: false, TempPrefix: "windows-sandbox-test-",
+	}
+	command := "type " + windows.ComposeCommandLine([]string{input}) + " >nul && echo ok> " + windows.ComposeCommandLine([]string{output})
+	result, err := Run(spec, []string{toolExe, "/d", "/c", command}, RunOptions{Stdin: os.Stdin, Stdout: os.Stdout, Stderr: os.Stderr})
+	if err != nil {
+		t.Fatalf("sandboxed non-system executable failed: %v", err)
+	}
+	if result.ExitCode != 0 {
+		t.Fatalf("sandboxed non-system executable exit = %d", result.ExitCode)
+	}
+	if body, err := os.ReadFile(output); err != nil || !strings.Contains(string(body), "ok") {
+		t.Fatalf("private output = %q, %v", body, err)
+	}
+	profileSID, err := deriveAppContainerSIDFromName(windowsAppContainerName(spec))
+	if err != nil {
+		t.Fatalf("derive test AppContainer SID: %v", err)
+	}
+	profileSIDText := profileSID.String()
+	_ = windows.FreeSid(profileSID)
+	for _, path := range []string{toolExe, toolDir} {
+		sddl := pathDACLSDDLForTest(t, path)
+		for _, forbidden := range append([]string{profileSIDText}, appContainerExecutableLoaderSIDStrings()...) {
+			if sddlContainsSID(sddl, forbidden) {
+				t.Fatalf("%s still contains executable grant SID %s: %s", path, forbidden, sddl)
+			}
 		}
 	}
 }
@@ -693,7 +744,7 @@ func assertNoWindowsSandboxACEForTest(t *testing.T, path string) {
 		allApplicationPackagesSID,
 		allRestrictedApplicationPackagesSID,
 	} {
-		if strings.Contains(sddl, forbidden) {
+		if sddlContainsSID(sddl, forbidden) {
 			t.Fatalf("%s still contains sandbox SID %s: %s", path, forbidden, sddl)
 		}
 	}
@@ -701,9 +752,13 @@ func assertNoWindowsSandboxACEForTest(t *testing.T, path string) {
 	if err != nil {
 		t.Fatalf("current user SID: %v", err)
 	}
-	if strings.Contains(sddl, "(D") && strings.Contains(sddl, userSID) {
+	if strings.Contains(sddl, "(D") && sddlContainsSID(sddl, userSID) {
 		t.Fatalf("%s still contains current-user deny ACE: %s", path, sddl)
 	}
+}
+
+func sddlContainsSID(sddl, sid string) bool {
+	return strings.Contains(sddl, ";;;"+sid+")")
 }
 
 func sameWindowsPath(a, b string) bool {
