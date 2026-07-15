@@ -11,6 +11,7 @@ import {
   projectTreeShouldRenderTopicActions,
   projectTreeTopicMetaLine,
   arrangeClassicProjectTree,
+  splitPinnedProjectTree,
   classicTopicWindow,
   projectTreeTopicHoverCardModel,
   projectTreeTopicMenuOffersPin,
@@ -349,6 +350,88 @@ eq(
   ).map((node) => (node.children ?? []).map((child) => child.topicId)),
   [["pinned-old", "recent"]],
   "classic sorting keeps pinned topics above unpinned ones",
+);
+
+const classicPinnedSections = splitPinnedProjectTree(
+  [
+    {
+      key: "project_/repo/a",
+      kind: "project",
+      label: "a",
+      root: "/repo/a",
+      children: [
+        classicTopic("pinned-old", { lastActivityAt: 100, pinned: true }),
+        classicTopic("recent", { lastActivityAt: 900 }),
+      ],
+    },
+    {
+      key: "project_/repo/b",
+      kind: "project",
+      label: "b",
+      root: "/repo/b",
+      pinned: true,
+      children: [classicTopic("pinned-new", { root: "/repo/b", lastActivityAt: 500, pinned: true })],
+    },
+  ],
+  "updated",
+  false,
+);
+
+eq(
+  classicPinnedSections.pinned.map((node) => node.topicId),
+  ["pinned-new", "pinned-old"],
+  "classic pinned section collects topics across projects by activity",
+);
+
+eq(
+  classicPinnedSections.projects.map((node) => ({
+    root: node.root,
+    pinned: Boolean(node.pinned),
+    topics: (node.children ?? []).map((child) => child.topicId),
+  })),
+  [
+    { root: "/repo/a", pinned: false, topics: ["recent"] },
+    { root: "/repo/b", pinned: true, topics: [] },
+  ],
+  "classic pinned topics appear once while pinned projects stay in project order",
+);
+
+eq(
+  splitPinnedProjectTree(
+    [
+      {
+        key: "project_/repo/a",
+        kind: "project",
+        label: "a",
+        root: "/repo/a",
+        children: [classicTopic("unpinned-again", { lastActivityAt: 100 })],
+      },
+    ],
+    "updated",
+    false,
+  ),
+  {
+    pinned: [],
+    projects: [
+      {
+        key: "project_/repo/a",
+        kind: "project",
+        label: "a",
+        root: "/repo/a",
+        children: [classicTopic("unpinned-again", { lastActivityAt: 100 })],
+      },
+    ],
+  },
+  "unpinning returns a topic to its original project",
+);
+
+eq(
+  splitPinnedProjectTree(
+    [{ key: "project_/repo/a", kind: "project", label: "a", root: "/repo/a", pinned: true, children: [] }],
+    "updated",
+  ).pinned.map((node) => node.root),
+  ["/repo/a"],
+  "workbench pinned section still extracts pinned projects",
 );
 
 console.log("\nclassic topic window and hover card");
