@@ -251,3 +251,89 @@ func capabilityFingerprint(cap mcptrust.Capability) string {
 	fp, _ := mcptrust.CapabilityFingerprint(cap)
 	return fp
 }
+
+// CachedToolTrust is the host-local safety classification for one tool in an
+// identity-matched schema cache. It is used by strict read-only sessions to
+// decide whether an unconnected MCP reader may start without granting trust or
+// invoking the server during resolution.
+type CachedToolTrust struct {
+	TrustedReader         bool
+	Destructive           bool
+	CapabilityFingerprint string
+	TrustState            mcptrust.TrustState
+}
+
+// CachedToolTrustForSpec evaluates an already-established receipt against the
+// exact cached server identity and capability snapshot. It never creates or
+// upgrades trust: first trust and drift review remain parent-session actions.
+func CachedToolTrustForSpec(ctx context.Context, s Spec, rawName string) (CachedToolTrust, bool, error) {
+	cs, ok := LoadCachedSchema(s.Name, SpecFingerprint(s))
+	if !ok {
+		return CachedToolTrust{}, false, nil
+	}
+	caps := make([]mcptrust.Capability, 0, len(cs.Tools))
+	var target *mcptrust.Capability
+	for _, cached := range cs.Tools {
+		visible := cached.Name
+		if s.StripRawPrefix != "" {
+			visible = strings.TrimPrefix(visible, s.StripRawPrefix)
+		}
+		cap := mcptrust.Capability{
+			RawName: cached.Name, ModelName: toolName(s.Name, visible),
+			InputSchema: cached.Schema, OutputSchema: cached.OutputSchema,
+			ReadOnly:    cached.ReadOnly || s.toolReadOnlyOverride(cached.Name, visible),
+			Destructive: cached.Destructive,
+		}
+		caps = append(caps, cap)
+		if cached.Name == rawName {
+			copy := cap
+			target = &copy
+		}
+	}
+	if target == nil {
+		return CachedToolTrust{}, false, nil
+	}
+	result := CachedToolTrust{
+		Destructive:           target.Destructive,
+		CapabilityFingerprint: capabilityFingerprint(*target),
+		TrustState:            mcptrust.TrustUntrusted,
+	}
+	if s.TrustManager == nil {
+		result.TrustedReader = target.ReadOnly && !target.Destructive
+		return result, true, nil
+	}
+	if s.OfficialCatalogEntryID != "" && mcpcatalog.RuntimeEntryRevoked(s.OfficialCatalogEntryID) {
+		return result, true, nil
+	}
+	if s.OfficialCatalogEntryID != "" {
+		denied, err := s.TrustManager.OfficialDenied(s.OfficialCatalogEntryID)
+		if err != nil {
+			return result, true, err
+		}
+		if denied {
+			return result, true, nil
+		}
+	}
+	hasReceipt, err := s.TrustManager.HasReceipt(s.Name, trustConfigSource(s))
+	if err != nil {
+		return result, true, err
+	}
+	if !hasReceipt {
+		return result, true, nil
+	}
+	locked, err := applyStoredLauncherLock(s)
+	if err != nil {
+		return result, true, err
+	}
+	identity, err := specIdentityFingerprint(ctx, locked)
+	if err != nil {
+		return result, true, err
+	}
+	eval, err := s.TrustManager.Evaluate(s.Name, trustConfigSource(s), identity, caps)
+	if err != nil {
+		return result, true, err
+	}
+	result.TrustState = eval.State
+	result.TrustedReader = eval.TrustedReaders[target.RawName] && !target.Destructive
+	return result, true, nil
+}

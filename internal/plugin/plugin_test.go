@@ -1425,6 +1425,30 @@ func TestPersistentHTTPTrustRequiresHTTPSBeforePreflight(t *testing.T) {
 	}
 }
 
+func TestSetSpecTrustCachesPreflightForStrictReadOnlyRetry(t *testing.T) {
+	redirectCache(t)
+	manager := mcptrust.NewManager(filepath.Join(t.TempDir(), mcptrust.StateFilename), t.TempDir())
+	spec := Spec{
+		Name: "trust-preflight-cache", Command: os.Args[0], Args: []string{"-test.run=TestHelperProcess", "--"},
+		Env:               map[string]string{"GO_WANT_HELPER_PROCESS": "1"},
+		ReadOnlyToolNames: map[string]bool{"echo": true},
+		TrustManager:      manager, ConfigSource: "workspace_config",
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := SetSpecTrust(ctx, spec, "session"); err != nil {
+		t.Fatal(err)
+	}
+	cached, ok := LoadCachedSchema(spec.Name, SpecFingerprint(spec))
+	if !ok || len(cached.Tools) != 2 {
+		t.Fatalf("trust preflight cache = (%+v,%v), want two tools", cached, ok)
+	}
+	status, found, err := CachedToolTrustForSpec(ctx, spec, "echo")
+	if err != nil || !found || !status.TrustedReader {
+		t.Fatalf("cached trusted reader = (%+v,%v,%v)", status, found, err)
+	}
+}
+
 func TestIdentityDriftBlocksBeforeProcessStart(t *testing.T) {
 	startCount := filepath.Join(t.TempDir(), "starts")
 	manager := mcptrust.NewManager(filepath.Join(t.TempDir(), mcptrust.StateFilename), "/workspace")

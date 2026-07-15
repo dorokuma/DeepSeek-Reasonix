@@ -1,6 +1,7 @@
 package plugin
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -90,6 +91,52 @@ func TestCachePersistsDeclaredReaderIndependentlyOfLocalTrust(t *testing.T) {
 	}})
 	if len(cached) != 1 || !cached[0].ReadOnly {
 		t.Fatalf("cached tool = %+v, want the server-declared reader snapshot", cached)
+	}
+}
+
+func TestCachedToolTrustForSpecRequiresMatchingExistingReceipt(t *testing.T) {
+	redirectCache(t)
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager := mcptrust.NewManager(filepath.Join(t.TempDir(), mcptrust.StateFilename), t.TempDir())
+	spec := Spec{
+		Name: "cached-reader", Type: "stdio", Command: exe,
+		ConfigSource: "workspace_config", TrustManager: manager,
+	}
+	reader := CachedTool{
+		Name: "search", Schema: json.RawMessage(`{"type":"object","properties":{"q":{"type":"string"}}}`), ReadOnly: true,
+	}
+	if err := SaveCachedSchema(spec.Name, CachedSchema{SpecHash: SpecFingerprint(spec), Tools: []CachedTool{reader}}); err != nil {
+		t.Fatal(err)
+	}
+	before, found, err := CachedToolTrustForSpec(context.Background(), spec, "search")
+	if err != nil || !found || before.TrustedReader {
+		t.Fatalf("before receipt = (%+v,%v,%v), want found but untrusted", before, found, err)
+	}
+	identity, err := specIdentityFingerprint(context.Background(), spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	capability := mcptrust.Capability{
+		RawName: "search", ModelName: toolName(spec.Name, "search"), InputSchema: reader.Schema, ReadOnly: true,
+	}
+	if err := manager.Trust(mcptrust.ScopeSession, mcptrust.SourceUser, spec.Name, trustConfigSource(spec), identity, "", []mcptrust.Capability{capability}); err != nil {
+		t.Fatal(err)
+	}
+	after, found, err := CachedToolTrustForSpec(context.Background(), spec, "search")
+	if err != nil || !found || !after.TrustedReader {
+		t.Fatalf("matching receipt = (%+v,%v,%v), want trusted reader", after, found, err)
+	}
+
+	reader.Schema = json.RawMessage(`{"type":"object","properties":{"q":{"type":"number"}}}`)
+	if err := SaveCachedSchema(spec.Name, CachedSchema{SpecHash: SpecFingerprint(spec), Tools: []CachedTool{reader}}); err != nil {
+		t.Fatal(err)
+	}
+	drifted, found, err := CachedToolTrustForSpec(context.Background(), spec, "search")
+	if err != nil || !found || drifted.TrustedReader || drifted.TrustState != mcptrust.TrustChanged {
+		t.Fatalf("schema drift = (%+v,%v,%v), want changed and untrusted", drifted, found, err)
 	}
 }
 

@@ -790,13 +790,27 @@ func SetSpecTrust(ctx context.Context, spec Spec, decision string) error {
 		return err
 	}
 	defer client.close()
-	if _, err := client.listTools(ctx); err != nil {
+	tools, err := client.listTools(ctx)
+	if err != nil {
 		return err
 	}
 	client.toolsMu.Lock()
 	identity := client.identityFingerprint
 	capabilities := append([]mcptrust.Capability(nil), client.capabilities...)
+	cache := CachedSchema{
+		SpecHash: SpecFingerprint(spec),
+		Capabilities: map[string]bool{
+			"tools": client.hasTools, "prompts": client.hasPrompts, "resources": client.hasResources,
+		},
+		Tools: cacheableToolsOf(tools),
+	}
 	client.toolsMu.Unlock()
+	// Persist the exact preflight snapshot before granting trust. A cache without
+	// a receipt is inert, while a receipt without its schema would force a strict
+	// read-only child to start the process merely to rediscover classification.
+	if err := SaveCachedSchema(spec.Name, cache); err != nil {
+		return fmt.Errorf("cache MCP trust preflight: %w", err)
+	}
 	if launcherLock != nil {
 		if err := manager.PutLauncherLock(*launcherLock); err != nil {
 			return err
