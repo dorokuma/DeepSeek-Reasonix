@@ -254,6 +254,30 @@ console.log("\napproval modal file references");
   });
   const { root } = await renderApproval({
     approval: {
+      id: "sandbox-escape-runtime-approval-zh",
+      tool: "sandbox_escape",
+      subject: "run unconfined once: go test ./...",
+      reason: "The OS sandbox could not start this command. Run it unconfined one time? This bypasses OS isolation for this command only.",
+    },
+  });
+
+  const text = document.body.textContent ?? "";
+  ok(text.includes("OS 沙箱无法启动这条命令"), "sandbox escape approval localizes the runtime failure reason in Chinese UI");
+
+  await act(async () => {
+    root.unmount();
+  });
+  dom.window.close();
+}
+
+{
+  const dom = installDom("zh-CN");
+  mockApp({
+    ListDir: async () => [],
+    SearchFileRefs: async () => [],
+  });
+  const { root } = await renderApproval({
+    approval: {
       id: "memory-approval-zh",
       tool: "remember",
       subject: "Save/update memory \"prefers-vitest\" [user]: Preferred test framework | body: Use Vitest for frontend tests.",
