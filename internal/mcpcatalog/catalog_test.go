@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -125,7 +126,7 @@ func TestCachedCatalogUsesOneAtomicEnvelope(t *testing.T) {
 	if _, err := loader.Refresh(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if info, err := os.Stat(cacheEnvelopePath(cache)); err != nil || info.Mode().Perm() != 0o600 {
+	if info, err := os.Stat(cacheEnvelopePath(cache)); err != nil || (runtime.GOOS != "windows" && info.Mode().Perm() != 0o600) {
 		t.Fatalf("atomic LKG envelope = %v, %v", info, err)
 	}
 	dataPath, sigPath := CachePaths(cache)

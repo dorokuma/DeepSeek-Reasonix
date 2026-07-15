@@ -298,6 +298,9 @@ func TestWindowsResidueMarkerSkipsMalformedLines(t *testing.T) {
 	content := "deny\tC:\\Users\\me\\.ssh\n" + // valid
 		"garbage-no-tab\n" + // no separator
 		"boguskind\tC:\\x\n" + // unknown kind
+		"grant_profile\tOtherApp.0123456789abcdef0123\tC:\\wrong\n" + // untrusted profile
+		"deny_profile\tWinSandbox.0123456789abcdef0123\tC:\\Users\\me\\secret\n" + // valid profile deny
+		"grant_profile\tWinSandbox.abcdef0123456789abcd\tC:\\Users\\me\\profile tools\n" + // valid profile grant
 		"grant\t\n" + // empty path
 		"grant\tC:\\Users\\me\\my tools\n" // valid, path with a space
 	if err := os.WriteFile(marker, []byte(content), 0o600); err != nil {
@@ -306,6 +309,8 @@ func TestWindowsResidueMarkerSkipsMalformedLines(t *testing.T) {
 	got := readResidueMarker(marker)
 	want := []residueEntry{
 		{kind: residueDeny, path: `C:\Users\me\.ssh`},
+		{kind: residueDenyProfile, profile: "WinSandbox.0123456789abcdef0123", path: `C:\Users\me\secret`},
+		{kind: residueGrantProfile, profile: "WinSandbox.abcdef0123456789abcd", path: `C:\Users\me\profile tools`},
 		{kind: residueGrant, path: `C:\Users\me\my tools`},
 	}
 	if len(got) != len(want) {

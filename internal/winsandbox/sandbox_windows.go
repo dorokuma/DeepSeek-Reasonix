@@ -108,12 +108,12 @@ func runWindowsSandboxed(spec Spec, argv []string, opts RunOptions) (int, error)
 		return 0, err
 	}
 	defer cleanupTemp()
-	cleanupFS, err := grantAppContainerFilesystem(residueRun, ac.sid, spec, tempRoot)
+	cleanupFS, err := grantAppContainerFilesystem(residueRun, ac.sid, ac.name, spec, tempRoot)
 	if err != nil {
 		return 0, err
 	}
 	defer cleanupFS()
-	cleanupExe, err := grantAppContainerExecutable(residueRun, ac.sid, argv[0])
+	cleanupExe, err := grantAppContainerExecutable(residueRun, ac.sid, ac.name, argv[0])
 	if err != nil {
 		return 0, err
 	}
@@ -187,12 +187,12 @@ func runWindowsRestrictedSandboxed(spec Spec, argv []string, opts RunOptions) (i
 	if err != nil {
 		return 0, err
 	}
-	cleanupFS, err := grantAppContainerFilesystem(residueRun, userSID, spec, tempRoot)
+	cleanupFS, err := grantAppContainerFilesystem(residueRun, userSID, "", spec, tempRoot)
 	if err != nil {
 		return 0, err
 	}
 	defer cleanupFS()
-	cleanupExe, err := grantAppContainerExecutable(residueRun, userSID, argv[0])
+	cleanupExe, err := grantAppContainerExecutable(residueRun, userSID, "", argv[0])
 	if err != nil {
 		return 0, err
 	}
@@ -247,6 +247,7 @@ func runWindowsRestrictedSandboxed(spec Spec, argv []string, opts RunOptions) (i
 }
 
 type appContainerLaunch struct {
+	name         string
 	sid          *windows.SID
 	capabilities []windows.SIDAndAttributes
 }
@@ -266,7 +267,7 @@ func prepareAppContainer(spec Spec) (*appContainerLaunch, error) {
 	if err != nil {
 		return nil, err
 	}
-	ac := &appContainerLaunch{sid: sid}
+	ac := &appContainerLaunch{name: name, sid: sid}
 	if spec.Network {
 		for _, sidType := range []windows.WELL_KNOWN_SID_TYPE{
 			windows.WinCapabilityInternetClientSid,
@@ -330,7 +331,20 @@ func createOrDeriveAppContainer(name string) (*windows.SID, error) {
 	if uint32(hr) != hresultAlreadyExists {
 		return nil, fmt.Errorf("create appcontainer profile %q: HRESULT 0x%08x", name, uint32(hr))
 	}
-	hr, _, _ = procDeriveAppContainerSidFromName.Call(
+	derived, deriveErr := deriveAppContainerSIDFromName(name)
+	if deriveErr != nil {
+		return nil, deriveErr
+	}
+	return derived, nil
+}
+
+func deriveAppContainerSIDFromName(name string) (*windows.SID, error) {
+	name16, err := windows.UTF16PtrFromString(name)
+	if err != nil {
+		return nil, err
+	}
+	var sid *windows.SID
+	hr, _, _ := procDeriveAppContainerSidFromName.Call(
 		uintptr(unsafe.Pointer(name16)),
 		uintptr(unsafe.Pointer(&sid)),
 	)
@@ -619,9 +633,8 @@ func uniqueNonZeroHandles(handles []windows.Handle) []windows.Handle {
 	return out
 }
 
-func grantAppContainerFilesystem(residueRun *windowsResidueRun, sid *windows.SID, spec Spec, extraWritableRoots ...string) (func(), error) {
+func grantAppContainerFilesystem(residueRun *windowsResidueRun, sid *windows.SID, profileName string, spec Spec, extraWritableRoots ...string) (func(), error) {
 	objectSIDStrs := appContainerObjectAccessSIDStrings(sid)
-	writableSIDStrs := appContainerWritableAccessSIDStrings(sid)
 	appContainerWritable := map[string]bool{}
 	for _, root := range normalizedWindowsRoots(spec.AppContainerWritableRoots) {
 		appContainerWritable[strings.ToLower(filepath.Clean(root))] = true
@@ -632,7 +645,7 @@ func grantAppContainerFilesystem(residueRun *windowsResidueRun, sid *windows.SID
 	var cleanup []func()
 	for _, root := range windowsWritableRoots(spec, extraWritableRoots...) {
 		rootWritable := spec.Writable || appContainerWritable[strings.ToLower(filepath.Clean(root))]
-		restore, _, err := snapshotPathSecurity(root, rootWritable)
+		restore, _, err := snapshotPathSecurity(root, spec.Writable)
 		if err != nil {
 			runCleanup(cleanup)()
 			return func() {}, err
@@ -643,7 +656,11 @@ func grantAppContainerFilesystem(residueRun *windowsResidueRun, sid *windows.SID
 		if rootWritable {
 			perm = "F"
 		}
-		if err := grantAppContainerSIDs(root, writableSIDStrs, perm); err != nil {
+		if err := recordGrantBeforeApply(residueRun, profileName, root); err != nil {
+			runCleanup(cleanup)()
+			return func() {}, err
+		}
+		if err := grantAppContainerSIDs(root, objectSIDStrs, perm); err != nil {
 			runCleanup(cleanup)()
 			return func() {}, err
 		}
@@ -665,7 +682,7 @@ func grantAppContainerFilesystem(residueRun *windowsResidueRun, sid *windows.SID
 			// for user files.
 			restoreLabel = func() { _ = icacls(root, "/setintegritylevel", "(OI)(CI)M", "/T", "/C") }
 		}
-		removeAdded := func() { removeGrantedAppContainerSIDs(root, writableSIDStrs) }
+		removeAdded := func() { removeGrantedAppContainerSIDs(root, objectSIDStrs) }
 		cleanup[restoreIndex] = cleanupPathSecurity(restore, removeAdded, restoreLabel)
 	}
 	for _, root := range normalizedWindowsRoots(spec.ForbidReadRoots) {
@@ -690,7 +707,7 @@ func grantAppContainerFilesystem(residueRun *windowsResidueRun, sid *windows.SID
 		// applying the deny and recording it — or a silent marker write failure —
 		// would leave the user's SID denied on this path with no marker for the
 		// next run to sweep, locking them out of e.g. ~/.ssh permanently.
-		if err := residueRun.recordBeforeApply(residueDeny, root); err != nil {
+		if err := recordDenyBeforeApply(residueRun, profileName, root); err != nil {
 			runCleanup(cleanup)()
 			return func() {}, err
 		}
@@ -717,7 +734,7 @@ func forbidReadDenySIDStrings(base []string) []string {
 	return dedupeSIDStrings(out)
 }
 
-func grantAppContainerExecutable(residueRun *windowsResidueRun, sid *windows.SID, exe string) (func(), error) {
+func grantAppContainerExecutable(residueRun *windowsResidueRun, sid *windows.SID, profileName, exe string) (func(), error) {
 	objectSIDStrs := appContainerObjectAccessSIDStrings(sid)
 	var cleanup []func()
 	for _, dir := range windowsMutableExecutableGrantRoots(exe) {
@@ -735,7 +752,7 @@ func grantAppContainerExecutable(residueRun *windowsResidueRun, sid *windows.SID
 		// tool-directory ACL with no marker for the next run to sweep. A marker
 		// write failure aborts this dir's grant (restore and skip) rather than
 		// applying an untracked grant.
-		if err := residueRun.recordBeforeApply(residueGrant, dir); err != nil {
+		if err := recordGrantBeforeApply(residueRun, profileName, dir); err != nil {
 			restore()
 			continue
 		}
@@ -822,23 +839,12 @@ func appContainerPackageSIDStrings(sid *windows.SID) []string {
 }
 
 func appContainerObjectAccessSIDStrings(sid *windows.SID) []string {
-	out := appContainerPackageSIDStrings(sid)
-	if len(out) == 0 {
-		return nil
-	}
-	// AppContainer file access is evaluated with the package SID plus Windows'
-	// built-in app package groups. Grant the broad groups only on paths whose
-	// descriptors we snapshot and restore; ancestor traversal stays package-SID
-	// only to avoid disturbing existing system directory ACLs.
-	return append(out, allApplicationPackagesSID, allRestrictedApplicationPackagesSID)
-}
-
-func appContainerWritableAccessSIDStrings(sid *windows.SID) []string {
-	out := append([]string(nil), appContainerObjectAccessSIDStrings(sid)...)
-	if userSID, err := currentProcessUserSIDString(); err == nil && userSID != "" {
-		out = append(out, userSID)
-	}
-	return dedupeSIDStrings(out)
+	// Grant only the exact package SID. The AppContainer token already carries
+	// the user's normal access; its package SID satisfies the restricted-token
+	// side of the access check. Granting the built-in ALL APPLICATION PACKAGES
+	// groups here would expose a workspace (or the user's home) to every other
+	// AppContainer for the lifetime of a long-running MCP server.
+	return appContainerPackageSIDStrings(sid)
 }
 
 func currentProcessUserSIDString() (string, error) {

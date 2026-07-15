@@ -308,15 +308,20 @@ func TestWindowsAppContainerAllowsOnlyPrivateStateWrites(t *testing.T) {
 	}
 	workspace := t.TempDir()
 	state := t.TempDir()
+	workspaceRead := filepath.Join(workspace, "readable.txt")
+	if err := os.WriteFile(workspaceRead, []byte("readable"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	workspaceFile := filepath.Join(workspace, "blocked.txt")
 	stateFile := filepath.Join(state, "allowed.txt")
-	script := "$ErrorActionPreference='Stop'; " +
+	script := "$ErrorActionPreference='Stop'; Get-Content -LiteralPath " + psQuote(workspaceRead) + " | Out-Null; " +
 		"Set-Content -LiteralPath " + psQuote(stateFile) + " -Value ok; " +
 		"try { Set-Content -LiteralPath " + psQuote(workspaceFile) + " -Value nope; exit 9 } catch { exit 0 }"
-	result, err := Run(Spec{
+	spec := Spec{
 		WritableRoots: []string{state}, ReadableRoots: []string{workspace}, AppContainerWritableRoots: []string{state},
 		Network: false, Writable: false, TempPrefix: "windows-sandbox-test-",
-	}, append(sh, script), RunOptions{Stdin: os.Stdin, Stdout: os.Stdout, Stderr: os.Stderr})
+	}
+	result, err := Run(spec, append(sh, script), RunOptions{Stdin: os.Stdin, Stdout: os.Stdout, Stderr: os.Stderr})
 	if err != nil {
 		t.Fatalf("sandbox run failed: %v", err)
 	}
@@ -328,6 +333,17 @@ func TestWindowsAppContainerAllowsOnlyPrivateStateWrites(t *testing.T) {
 	}
 	if _, err := os.Stat(workspaceFile); !os.IsNotExist(err) {
 		t.Fatalf("AppContainer unexpectedly wrote workspace: %v", err)
+	}
+	profileSID, err := deriveAppContainerSIDFromName(windowsAppContainerName(spec))
+	if err != nil {
+		t.Fatalf("derive test AppContainer SID: %v", err)
+	}
+	profileSIDText := profileSID.String()
+	_ = windows.FreeSid(profileSID)
+	for _, path := range []string{workspace, state} {
+		if sddl := pathDACLSDDLForTest(t, path); strings.Contains(sddl, profileSIDText) {
+			t.Fatalf("%s still contains profile SID %s: %s", path, profileSIDText, sddl)
+		}
 	}
 }
 

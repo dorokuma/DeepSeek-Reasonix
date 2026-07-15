@@ -309,24 +309,29 @@ func isWindowsSystemRoot(path string) bool {
 // access to a tool directory. The residue tracker records each mutated path in a
 // per-PID marker *before* the ACE is applied, so any crash point leaves a marker
 // the next run can sweep; the next run removes the residue for markers whose
-// owning process is gone. Only the stable, sandbox-applied trustees are removed,
-// so legitimate ACLs are left untouched.
+// owning process is gone. Stable user/group trustees use the legacy marker
+// shape; exact AppContainer trustees are recorded by a validated Reasonix
+// profile name and re-derived during cleanup, so unrelated package ACLs cannot
+// be removed.
 //
-// Each marker line is "<kind> <path>", where kind is "deny" or "grant". Lines
-// are appended and fsync'd one at a time, and a write failure aborts the run
-// before the corresponding ACE is applied, so the marker can never lag behind
-// the on-disk ACLs.
+// Legacy marker lines are "<kind>\t<path>". Exact-package lines are
+// "<kind>\t<WinSandbox.profile>\t<path>". Lines are appended and fsync'd one
+// at a time, and a write failure aborts the run before the corresponding ACE is
+// applied, so the marker can never lag behind the on-disk ACLs.
 
 type residueKind string
 
 const (
-	residueDeny  residueKind = "deny"
-	residueGrant residueKind = "grant"
+	residueDeny         residueKind = "deny"
+	residueGrant        residueKind = "grant"
+	residueDenyProfile  residueKind = "deny_profile"
+	residueGrantProfile residueKind = "grant_profile"
 )
 
 type residueEntry struct {
-	kind residueKind
-	path string
+	kind    residueKind
+	path    string
+	profile string
 }
 
 func windowsDenyMarkerDir() string {
@@ -403,6 +408,21 @@ func newWindowsDenyResidueRun() *windowsResidueRun {
 // closed. A tab separates the fields because Windows paths never contain one, so
 // the path is recovered unambiguously regardless of spaces in it.
 func (r *windowsResidueRun) recordBeforeApply(kind residueKind, path string) error {
+	return r.recordLine(string(kind) + "\t" + path + "\n")
+}
+
+func (r *windowsResidueRun) recordProfileGrantBeforeApply(profile, path string) error {
+	return r.recordProfileBeforeApply(residueGrantProfile, profile, path)
+}
+
+func (r *windowsResidueRun) recordProfileBeforeApply(kind residueKind, profile, path string) error {
+	if !validWindowsSandboxProfileName(profile) {
+		return fmt.Errorf("invalid AppContainer profile name %q", profile)
+	}
+	return r.recordLine(string(kind) + "\t" + profile + "\t" + path + "\n")
+}
+
+func (r *windowsResidueRun) recordLine(line string) error {
 	if r == nil {
 		return fmt.Errorf("residue marker is required")
 	}
@@ -416,13 +436,47 @@ func (r *windowsResidueRun) recordBeforeApply(kind residueKind, path string) err
 	}
 	defer f.Close()
 	r.owned.Store(true)
-	if _, err := f.WriteString(string(kind) + "\t" + path + "\n"); err != nil {
+	if _, err := f.WriteString(line); err != nil {
 		return fmt.Errorf("write residue marker: %w", err)
 	}
 	if err := f.Sync(); err != nil {
 		return fmt.Errorf("sync residue marker: %w", err)
 	}
 	return nil
+}
+
+func recordGrantBeforeApply(run *windowsResidueRun, profileName, path string) error {
+	if profileName == "" {
+		return run.recordBeforeApply(residueGrant, path)
+	}
+	return run.recordProfileGrantBeforeApply(profileName, path)
+}
+
+func recordDenyBeforeApply(run *windowsResidueRun, profileName, path string) error {
+	// The low-integrity/user SID is stable and remains compatible with legacy
+	// two-field markers. An AppContainer deny also includes its exact package
+	// SID, recorded separately by validated profile name so a crash sweep can
+	// derive and remove only that Reasonix-owned trustee.
+	if err := run.recordBeforeApply(residueDeny, path); err != nil {
+		return err
+	}
+	if profileName == "" {
+		return nil
+	}
+	return run.recordProfileBeforeApply(residueDenyProfile, profileName, path)
+}
+
+func validWindowsSandboxProfileName(name string) bool {
+	const prefix = "WinSandbox."
+	if len(name) != len(prefix)+20 || !strings.HasPrefix(name, prefix) {
+		return false
+	}
+	for _, c := range name[len(prefix):] {
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+			return false
+		}
+	}
+	return true
 }
 
 // clear drops this run's marker after its own cleanup has removed every
@@ -480,9 +534,9 @@ func sweepWindowsDenyResidue() {
 	}
 }
 
-// sandboxResidueSIDs is the trustee set the sweep removes. The sandbox only
-// ever applies these trustees, for both grants and denies, so removing exactly
-// them cannot disturb a legitimate ACL.
+// sandboxResidueSIDs is the stable trustee set used by legacy two-field
+// markers. Exact AppContainer package SIDs are handled separately by validated
+// profile markers in sweepResidueMarkerFile.
 func sandboxResidueSIDs() []string {
 	userSID, _ := currentProcessUserSIDString()
 	return dedupeSIDStrings([]string{
@@ -504,6 +558,18 @@ func sweepResidueMarkerFile(markerPath string, sandboxSIDs []string) {
 			removeDeniedAppContainerSIDs(e.path, sandboxSIDs)
 		case residueGrant:
 			removeGrantedAppContainerSIDs(e.path, sandboxSIDs)
+		case residueGrantProfile:
+			sid, err := deriveAppContainerSIDFromName(e.profile)
+			if err == nil && sid != nil {
+				removeGrantedAppContainerSIDs(e.path, []string{sid.String()})
+				_ = windows.FreeSid(sid)
+			}
+		case residueDenyProfile:
+			sid, err := deriveAppContainerSIDFromName(e.profile)
+			if err == nil && sid != nil {
+				removeDeniedAppContainerSIDs(e.path, []string{sid.String()})
+				_ = windows.FreeSid(sid)
+			}
 		}
 	}
 	_ = os.Remove(markerPath)
@@ -523,9 +589,10 @@ func sweepableResidue(e residueEntry) bool {
 	return !isWindowsSystemRoot(e.path)
 }
 
-// readResidueMarker parses "<kind>\t<path>" lines. A tab splits the fields so a
-// path containing spaces is preserved intact. An unrecognized line is skipped
-// rather than guessed at, so a corrupt marker cannot cause a wrong ACE removal.
+// readResidueMarker parses legacy "<kind>\t<path>" and exact-package
+// "<kind>\t<profile>\t<path>" lines. Tabs preserve paths containing spaces.
+// An unrecognized line or non-Reasonix profile is skipped rather than guessed
+// at, so a corrupt marker cannot cause a wrong ACE removal.
 func readResidueMarker(path string) []residueEntry {
 	f, err := os.Open(path)
 	if err != nil {
@@ -539,15 +606,23 @@ func readResidueMarker(path string) []residueEntry {
 		if line == "" {
 			continue
 		}
-		kindStr, p, ok := strings.Cut(line, "\t")
-		if !ok || p == "" {
+		fields := strings.SplitN(line, "\t", 3)
+		if len(fields) < 2 {
 			continue
 		}
-		switch residueKind(kindStr) {
+		switch residueKind(fields[0]) {
 		case residueDeny:
-			out = append(out, residueEntry{kind: residueDeny, path: p})
+			if fields[1] != "" {
+				out = append(out, residueEntry{kind: residueDeny, path: fields[1]})
+			}
 		case residueGrant:
-			out = append(out, residueEntry{kind: residueGrant, path: p})
+			if fields[1] != "" {
+				out = append(out, residueEntry{kind: residueGrant, path: fields[1]})
+			}
+		case residueDenyProfile, residueGrantProfile:
+			if len(fields) == 3 && validWindowsSandboxProfileName(fields[1]) && fields[2] != "" {
+				out = append(out, residueEntry{kind: residueKind(fields[0]), profile: fields[1], path: fields[2]})
+			}
 		}
 	}
 	return out
