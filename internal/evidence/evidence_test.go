@@ -3,6 +3,7 @@ package evidence
 import (
 	"context"
 	"encoding/json"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -551,6 +552,181 @@ func TestNormalizeSerialTodosRepairsLegacyOutOfOrderState(t *testing.T) {
 	for i := range want {
 		if got[i].Status != want[i] {
 			t.Fatalf("todo %d status = %q, want %q: %+v", i+1, got[i].Status, want[i], got)
+		}
+	}
+}
+
+func TestValidateSerialTodosAcceptsPhaseChains(t *testing.T) {
+	tests := []struct {
+		name  string
+		todos []TodoItem
+	}{
+		{
+			name: "entered phase with pending sub-steps",
+			todos: []TodoItem{
+				{Content: "Phase", Status: "in_progress"},
+				{Content: "sub one", Status: "pending", Level: 1},
+			},
+		},
+		{
+			name: "one current chain",
+			todos: []TodoItem{
+				{Content: "Phase", Status: "in_progress"},
+				{Content: "sub one", Status: "completed", Level: 1},
+				{Content: "sub two", Status: "in_progress", Level: 1},
+				{Content: "sub three", Status: "pending", Level: 1},
+				{Content: "Later phase", Status: "pending"},
+				{Content: "later sub", Status: "pending", Level: 1},
+			},
+		},
+		{
+			name: "phase awaiting sign-off after its sub-steps",
+			todos: []TodoItem{
+				{Content: "Phase", Status: "in_progress"},
+				{Content: "sub one", Status: "completed", Level: 1},
+				{Content: "sub two", Status: "completed", Level: 1},
+				{Content: "next", Status: "pending"},
+			},
+		},
+		{
+			name: "completed phase segment before the current one",
+			todos: []TodoItem{
+				{Content: "Phase", Status: "completed"},
+				{Content: "sub one", Status: "completed", Level: 1},
+				{Content: "Second phase", Status: "in_progress"},
+				{Content: "sub two", Status: "in_progress", Level: 1},
+			},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := ValidateSerialTodos(tc.todos); err != nil {
+				t.Fatalf("valid phase chain rejected: %v", err)
+			}
+		})
+	}
+}
+
+func TestValidateSerialTodosRejectsInvalidPhaseChains(t *testing.T) {
+	tests := []struct {
+		name  string
+		todos []TodoItem
+		want  string
+	}{
+		{
+			name: "phase completed before its sub-steps",
+			todos: []TodoItem{
+				{Content: "Phase", Status: "completed"},
+				{Content: "sub one", Status: "in_progress", Level: 1},
+			},
+			want: "sub-step 2 \"sub one\" is unfinished",
+		},
+		{
+			name: "active sub-step under a pending phase",
+			todos: []TodoItem{
+				{Content: "Phase", Status: "pending"},
+				{Content: "sub one", Status: "in_progress", Level: 1},
+			},
+			want: "keep the active phase in_progress",
+		},
+		{
+			name: "two current sub-steps in one phase",
+			todos: []TodoItem{
+				{Content: "Phase", Status: "in_progress"},
+				{Content: "sub one", Status: "in_progress", Level: 1},
+				{Content: "sub two", Status: "in_progress", Level: 1},
+			},
+			want: "second in_progress sub-step",
+		},
+		{
+			name: "two current chains",
+			todos: []TodoItem{
+				{Content: "Phase", Status: "in_progress"},
+				{Content: "sub one", Status: "in_progress", Level: 1},
+				{Content: "Second phase", Status: "in_progress"},
+				{Content: "sub two", Status: "pending", Level: 1},
+			},
+			want: "second in_progress item",
+		},
+		{
+			name: "completed segment after the current chain",
+			todos: []TodoItem{
+				{Content: "Phase", Status: "in_progress"},
+				{Content: "sub one", Status: "pending", Level: 1},
+				{Content: "Second phase", Status: "completed"},
+				{Content: "sub two", Status: "completed", Level: 1},
+			},
+			want: "completed after unfinished",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := ValidateSerialTodos(tc.todos); err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("ValidateSerialTodos() error = %v, want %q", err, tc.want)
+			}
+		})
+	}
+}
+
+func TestNormalizeSerialTodosRepairsPhaseChains(t *testing.T) {
+	got := NormalizeSerialTodos([]TodoItem{
+		{Content: "Phase", Status: "completed"},
+		{Content: "sub one", Status: "completed", Level: 1},
+		{Content: "sub two", Status: "pending", Level: 1},
+		{Content: "Second phase", Status: "completed"},
+		{Content: "sub three", Status: "completed", Level: 1},
+	})
+	want := []string{"in_progress", "completed", "in_progress", "pending", "pending"}
+	for i := range want {
+		if got[i].Status != want[i] {
+			t.Fatalf("todo %d status = %q, want %q: %+v", i+1, got[i].Status, want[i], got)
+		}
+	}
+}
+
+func TestAdvanceSerialTodoWalksPhaseChain(t *testing.T) {
+	todos := []TodoItem{
+		{Content: "Phase", Status: "in_progress"},
+		{Content: "sub one", Status: "in_progress", Level: 1},
+		{Content: "sub two", Status: "pending", Level: 1},
+		{Content: "Second phase", Status: "pending"},
+		{Content: "sub three", Status: "pending", Level: 1},
+	}
+	statuses := func() []string {
+		out := make([]string, len(todos))
+		for i, todo := range todos {
+			out[i] = todo.Status
+		}
+		return out
+	}
+
+	if AdvanceSerialTodo(todos, 0) {
+		t.Fatalf("phase with unfinished sub-steps completed: %v", statuses())
+	}
+	if !AdvanceSerialTodo(todos, 1) {
+		t.Fatal("current sub-step did not complete")
+	}
+	if got, want := statuses(), []string{"in_progress", "completed", "in_progress", "pending", "pending"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("after first sub-step statuses = %v, want %v", got, want)
+	}
+	if !AdvanceSerialTodo(todos, 2) {
+		t.Fatal("last sub-step did not complete")
+	}
+	if got := todos[0].Status; got != "in_progress" {
+		t.Fatalf("phase status after its sub-steps = %q, want in_progress for sign-off", got)
+	}
+	if !AdvanceSerialTodo(todos, 0) {
+		t.Fatal("phase with completed sub-steps did not complete")
+	}
+	if got, want := statuses(), []string{"completed", "completed", "completed", "in_progress", "in_progress"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("after phase sign-off statuses = %v, want next phase and first sub-step promoted: %v", got, want)
+	}
+	if !AdvanceSerialTodo(todos, 4) || !AdvanceSerialTodo(todos, 3) {
+		t.Fatal("second chain did not complete")
+	}
+	for i, todo := range todos {
+		if todo.Status != "completed" {
+			t.Fatalf("todo %d = %+v, want completed", i+1, todo)
 		}
 	}
 }

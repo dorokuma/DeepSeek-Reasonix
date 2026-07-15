@@ -648,7 +648,10 @@ The executor tracks an adaptive progress lease while a todo is active. A new
 completion, unique successful read, command, or mutation renews the lease;
 exact repeats do not. After 8 no-progress tool-call rounds the host appends a
 one-shot reassessment nudge. After 16 it pauses and preserves work for a later
-user turn. Retired `[agent].max_steps` and `planner_max_steps` keys remain
+user turn. The serial contract is level-aware: a two-level list forms one
+current chain — the active level-0 phase is `in_progress` together with at
+most one of its level-1 sub-steps, sub-steps complete in order, and the phase
+completes only after all of its sub-steps. Retired `[agent].max_steps` and `planner_max_steps` keys remain
 parseable for upgrade compatibility, but are ignored and removed by a one-time
 migration. The CLI `--max-steps` flag and `[bot].max_steps` remain separate,
 explicit controls for one-off and unattended execution.

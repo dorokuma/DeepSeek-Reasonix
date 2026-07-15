@@ -107,6 +107,8 @@ func verifyTodoCurrentContinuity(ctx context.Context, todos []todoItem) error {
 	if len(previous) == 0 {
 		return nil
 	}
+	// The current chain may hold two in_progress items — a phase header and
+	// one of its sub-steps — and each must survive the rewrite.
 	for i, todo := range previous {
 		if strings.TrimSpace(todo.Status) != "in_progress" {
 			continue
@@ -118,7 +120,6 @@ func verifyTodoCurrentContinuity(ctx context.Context, todos []todoItem) error {
 		if match.Status == "pending" || match.Status == "" {
 			return fmt.Errorf("current todo %d %q cannot move back to pending; keep it in_progress or complete it with complete_step", i+1, todo.Content)
 		}
-		return nil
 	}
 	return nil
 }

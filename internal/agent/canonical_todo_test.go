@@ -234,3 +234,33 @@ func TestSeedTodoStateAllowsAdvanceAfterSeed(t *testing.T) {
 		t.Fatalf("advance after seed: item 1 status = %q, want in_progress", a.todoState[1].Status)
 	}
 }
+
+func TestAdvanceCanonicalTodoWalksPhaseChain(t *testing.T) {
+	a := &Agent{sink: event.Discard, todoState: []evidence.TodoItem{
+		{Content: "Port the parser", Status: "in_progress"},
+		{Content: "move files", Status: "in_progress", Level: 1},
+		{Content: "fix imports", Status: "pending", Level: 1},
+		{Content: "Ship it", Status: "pending"},
+		{Content: "run tests", Status: "pending", Level: 1},
+	}}
+
+	a.advanceCanonicalTodo("Port the parser")
+	if a.todoState[0].Status != "in_progress" {
+		t.Fatalf("phase completed before its sub-steps: %+v", a.todoState)
+	}
+
+	a.advanceCanonicalTodo("move files")
+	if a.todoState[1].Status != "completed" || a.todoState[2].Status != "in_progress" {
+		t.Fatalf("completing a sub-step should promote its sibling: %+v", a.todoState)
+	}
+
+	a.advanceCanonicalTodo("fix imports")
+	if a.todoState[2].Status != "completed" || a.todoState[0].Status != "in_progress" {
+		t.Fatalf("after the last sub-step the phase should stay current: %+v", a.todoState)
+	}
+
+	a.advanceCanonicalTodo("Port the parser")
+	if a.todoState[0].Status != "completed" || a.todoState[3].Status != "in_progress" || a.todoState[4].Status != "in_progress" {
+		t.Fatalf("phase sign-off should promote the next phase with its first sub-step: %+v", a.todoState)
+	}
+}

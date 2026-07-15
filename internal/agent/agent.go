@@ -2058,12 +2058,10 @@ func (a *Agent) advanceCanonicalTodo(step string) {
 		return
 	}
 	m, ok := evidence.MatchStep(step, a.todoState)
-	if !ok || canonicalTodoStatus(a.todoState[m.Index-1].Status) != "in_progress" {
+	if !ok || !evidence.AdvanceSerialTodo(a.todoState, m.Index-1) {
 		a.todoMu.Unlock()
 		return
 	}
-	a.todoState[m.Index-1].Status = "completed"
-	promoteNextPendingTodo(a.todoState)
 	snapshot := append([]evidence.TodoItem(nil), a.todoState...)
 	a.todoMu.Unlock()
 	a.recordTodoState(snapshot)
@@ -2084,20 +2082,6 @@ func (a *Agent) recordTodoState(todos []evidence.TodoItem) {
 		return
 	}
 	a.evidence.Record(evidence.ReceiptFromToolCall("todo_write", json.RawMessage(args), true, true))
-}
-
-func promoteNextPendingTodo(todos []evidence.TodoItem) {
-	for _, t := range todos {
-		if canonicalTodoStatus(t.Status) == "in_progress" {
-			return
-		}
-	}
-	for i := range todos {
-		if canonicalTodoStatus(todos[i].Status) == "pending" {
-			todos[i].Status = "in_progress"
-			return
-		}
-	}
 }
 
 func canonicalTodoStatus(s string) string {
@@ -2161,9 +2145,8 @@ func (a *Agent) rebuildTodoState(msgs []provider.Message) {
 				continue
 			}
 			rec := evidence.ReceiptFromToolCall(tc.Name, json.RawMessage(tc.Arguments), true, true)
-			if m, ok := evidence.MatchStep(rec.Step, todos); ok && canonicalTodoStatus(todos[m.Index-1].Status) == "in_progress" {
-				todos[m.Index-1].Status = "completed"
-				promoteNextPendingTodo(todos)
+			if m, ok := evidence.MatchStep(rec.Step, todos); ok {
+				evidence.AdvanceSerialTodo(todos, m.Index-1)
 			}
 		}
 	}

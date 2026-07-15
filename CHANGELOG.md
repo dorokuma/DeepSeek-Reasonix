@@ -31,6 +31,9 @@ branch.
   stalled current item receives a recovery nudge after 8 tool-call rounds with
   no new completion, unique read, command, or mutation, and pauses with saved
   work after 16. Exact repeats do not renew the progress lease; real work does.
+  Two-level task lists keep one current chain: the active phase stays
+  in_progress with at most one active sub-step, and a phase signs off only
+  after all of its sub-steps are completed.
   Executor and planner rounds now use automatic progress management. Retired
   `[agent].max_steps` and `planner_max_steps` keys remain parseable for upgrades,
   but are ignored and removed by a one-time migration so stale hidden limits

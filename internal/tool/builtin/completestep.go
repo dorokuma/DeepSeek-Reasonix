@@ -275,13 +275,23 @@ func verifyTodoStep(ctx context.Context, step string) (evidence.TodoStepMatch, b
 		return evidence.TodoStepMatch{}, true, fmt.Errorf("step %q has no matching todo_write item in the current task list; cite a todo verbatim or by number: %s", step, todoListInventory(todos))
 	}
 	switch match.Status {
-	case "in_progress", "completed":
+	case "in_progress":
+		if unfinished, ok := evidence.FirstUnfinishedSubStep(todos, match.Index-1); ok && unfinished >= 0 {
+			return evidence.TodoStepMatch{}, true, fmt.Errorf("step %q matches phase %d %q whose sub-steps are unfinished; complete sub-step %d %q first, then sign the phase off", step, match.Index, match.Content, unfinished+1, todos[unfinished].Content)
+		}
+		return match, true, nil
+	case "completed":
 		return match, true, nil
 	case "", "pending":
 		current := ""
 		for i, todo := range todos {
-			if strings.TrimSpace(todo.Status) == "in_progress" {
-				current = fmt.Sprintf("; finish todo %d %q first", i+1, todo.Content)
+			if strings.TrimSpace(todo.Status) != "in_progress" {
+				continue
+			}
+			// The deepest in_progress item is the signable end of the current
+			// chain: prefer an active sub-step over its phase header.
+			current = fmt.Sprintf("; finish todo %d %q first", i+1, todo.Content)
+			if todo.Level == 1 {
 				break
 			}
 		}

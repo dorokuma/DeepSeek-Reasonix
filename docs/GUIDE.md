@@ -881,7 +881,10 @@ normal execution automatically: if an active todo produces no new completion,
 unique read, command, or mutation for 8 tool-call rounds, the host asks the
 executor to reassess. After 16 no-progress rounds it pauses with saved work that
 can be resumed in the next user turn. Exact repeats do not count as progress;
-new host-observed work renews the lease.
+new host-observed work renews the lease. Two-level task lists follow the same
+serial contract as one chain: the current level-0 phase stays `in_progress`
+while exactly one of its level-1 sub-steps is worked and signed off in order,
+and the phase itself signs off last, after every sub-step has completed.
 
 Existing `[agent].max_steps` and `planner_max_steps` keys remain syntactically
 accepted during upgrades, but their values are ignored and removed with a

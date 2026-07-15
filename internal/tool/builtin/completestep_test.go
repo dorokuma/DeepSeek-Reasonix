@@ -644,3 +644,75 @@ func TestCompleteStepSessionFallbackSkipsFailedWrite(t *testing.T) {
 		t.Fatal("a failed write must not satisfy cross-turn diff evidence")
 	}
 }
+
+func TestCompleteStepRejectsPhaseWithUnfinishedSubSteps(t *testing.T) {
+	ledger := evidence.NewLedger()
+	ledger.Record(evidence.Receipt{
+		ToolName: "todo_write",
+		Success:  true,
+		Todos: []evidence.TodoItem{
+			{Content: "Port the parser", Status: "in_progress"},
+			{Content: "move files", Status: "completed", Level: 1},
+			{Content: "fix imports", Status: "in_progress", Level: 1},
+		},
+	})
+	ctx := evidence.WithLedger(context.Background(), ledger)
+
+	_, err := (completeStep{}).Execute(ctx, json.RawMessage(`{
+		"step":"Port the parser",
+		"result":"parser ported",
+		"evidence":[{"kind":"manual","summary":"checked manually"}]}`))
+	if err == nil || !strings.Contains(err.Error(), "sub-steps are unfinished") {
+		t.Fatalf("phase with unfinished sub-steps should be rejected, got %v", err)
+	}
+	if !strings.Contains(err.Error(), `sub-step 3 "fix imports"`) {
+		t.Fatalf("phase rejection should name the first unfinished sub-step, got %v", err)
+	}
+}
+
+func TestCompleteStepSignsPhaseAfterSubStepsComplete(t *testing.T) {
+	ledger := evidence.NewLedger()
+	ledger.Record(evidence.Receipt{
+		ToolName: "todo_write",
+		Success:  true,
+		Todos: []evidence.TodoItem{
+			{Content: "Port the parser", Status: "in_progress"},
+			{Content: "move files", Status: "completed", Level: 1},
+			{Content: "fix imports", Status: "completed", Level: 1},
+		},
+	})
+	ctx := evidence.WithLedger(context.Background(), ledger)
+
+	out, err := (completeStep{}).Execute(ctx, json.RawMessage(`{
+		"step":"Port the parser",
+		"result":"parser ported",
+		"evidence":[{"kind":"manual","summary":"checked manually"}]}`))
+	if err != nil {
+		t.Fatalf("phase with completed sub-steps should sign off: %v", err)
+	}
+	if !strings.Contains(out, "signed off") {
+		t.Fatalf("phase sign-off output = %q, want signed off", out)
+	}
+}
+
+func TestCompleteStepPendingHintNamesActiveSubStep(t *testing.T) {
+	ledger := evidence.NewLedger()
+	ledger.Record(evidence.Receipt{
+		ToolName: "todo_write",
+		Success:  true,
+		Todos: []evidence.TodoItem{
+			{Content: "Port the parser", Status: "in_progress"},
+			{Content: "move files", Status: "in_progress", Level: 1},
+			{Content: "fix imports", Status: "pending", Level: 1},
+		},
+	})
+	ctx := evidence.WithLedger(context.Background(), ledger)
+
+	_, err := (completeStep{}).Execute(ctx, json.RawMessage(`{
+		"step":"fix imports",
+		"result":"imports fixed",
+		"evidence":[{"kind":"manual","summary":"checked manually"}]}`))
+	if err == nil || !strings.Contains(err.Error(), `finish todo 2 "move files" first`) {
+		t.Fatalf("pending hint should point at the active sub-step, got %v", err)
+	}
+}

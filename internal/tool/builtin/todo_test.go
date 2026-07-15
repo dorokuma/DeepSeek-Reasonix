@@ -335,3 +335,58 @@ func TestTodoWriteRejectsRecoveryWhenProgressIsAfterFailedCompleteStep(t *testin
 		t.Fatalf("progress after a failed complete_step should not authorize recovery, got %v", err)
 	}
 }
+
+func TestTodoWriteAcceptsPhaseChainProgress(t *testing.T) {
+	ledger := evidence.NewLedger()
+	ledger.Record(evidence.Receipt{
+		ToolName: "todo_write",
+		Success:  true,
+		Todos: []evidence.TodoItem{
+			{Content: "Port the parser", Status: "in_progress"},
+			{Content: "move files", Status: "pending", Level: 1},
+			{Content: "fix imports", Status: "pending", Level: 1},
+		},
+	})
+	ctx := evidence.WithLedger(context.Background(), ledger)
+
+	out, err := (todoWrite{}).Execute(ctx, json.RawMessage(`{"todos":[
+		{"content":"Port the parser","status":"in_progress"},
+		{"content":"move files","status":"in_progress","level":1},
+		{"content":"fix imports","status":"pending","level":1}]}`))
+	if err != nil {
+		t.Fatalf("starting a sub-step under the current phase should be accepted: %v", err)
+	}
+	if !strings.Contains(out, "1 in progress") && !strings.Contains(out, "in progress") {
+		t.Fatalf("unexpected todo_write output: %q", out)
+	}
+}
+
+func TestTodoWriteRejectsPhaseCompletedBeforeSubSteps(t *testing.T) {
+	_, err := (todoWrite{}).Execute(context.Background(), json.RawMessage(`{"todos":[
+		{"content":"Port the parser","status":"completed"},
+		{"content":"move files","status":"in_progress","level":1}]}`))
+	if err == nil || !strings.Contains(err.Error(), "unfinished") {
+		t.Fatalf("phase completed before its sub-steps should be rejected: %v", err)
+	}
+}
+
+func TestTodoWriteRejectsDroppingActiveSubStep(t *testing.T) {
+	ledger := evidence.NewLedger()
+	ledger.Record(evidence.Receipt{
+		ToolName: "todo_write",
+		Success:  true,
+		Todos: []evidence.TodoItem{
+			{Content: "Port the parser", Status: "in_progress"},
+			{Content: "move files", Status: "in_progress", Level: 1},
+			{Content: "fix imports", Status: "pending", Level: 1},
+		},
+	})
+	ctx := evidence.WithLedger(context.Background(), ledger)
+
+	_, err := (todoWrite{}).Execute(ctx, json.RawMessage(`{"todos":[
+		{"content":"Port the parser","status":"in_progress"},
+		{"content":"rewrite everything","status":"in_progress","level":1}]}`))
+	if err == nil || !strings.Contains(err.Error(), "cannot be removed or replaced") {
+		t.Fatalf("dropping the active sub-step should be rejected: %v", err)
+	}
+}

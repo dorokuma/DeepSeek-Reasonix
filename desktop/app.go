@@ -4899,11 +4899,9 @@ func historyTodoArgsWithCompleteSteps(msgs []provider.Message) map[string]string
 				}
 				rec := evidence.ReceiptFromToolCall(tc.Name, json.RawMessage(tc.Arguments), true, true)
 				match, ok := evidence.MatchStep(rec.Step, todos)
-				if !ok || match.Index < 1 || match.Index > len(todos) || todoStatusForHistory(todos[match.Index-1].Status) != "in_progress" {
+				if !ok || !evidence.AdvanceSerialTodo(todos, match.Index-1) {
 					continue
 				}
-				todos[match.Index-1].Status = "completed"
-				promoteNextHistoryTodo(todos)
 				if args, ok := todoArgsJSON(todos); ok {
 					out[latestTodoID] = args
 				}
@@ -4940,28 +4938,6 @@ func todoArgsJSON(todos []evidence.TodoItem) (string, bool) {
 		return "", false
 	}
 	return string(b), true
-}
-
-func promoteNextHistoryTodo(todos []evidence.TodoItem) {
-	for _, todo := range todos {
-		if todoStatusForHistory(todo.Status) == "in_progress" {
-			return
-		}
-	}
-	for i := range todos {
-		if todoStatusForHistory(todos[i].Status) == "pending" {
-			todos[i].Status = "in_progress"
-			return
-		}
-	}
-}
-
-func todoStatusForHistory(status string) string {
-	status = strings.TrimSpace(status)
-	if status == "" {
-		return "pending"
-	}
-	return status
 }
 
 func previewSessionMessages(sessionDir, path string) ([]HistoryMessage, error) {
