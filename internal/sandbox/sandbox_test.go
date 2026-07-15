@@ -45,13 +45,24 @@ func TestSpecZeroValue(t *testing.T) {
 
 func TestUnavailableMessageIsActionable(t *testing.T) {
 	msg := UnavailableMessage()
-	for _, want := range []string{
+	want := []string{
 		"refusing to run unconfined",
 		`[sandbox] bash = "off"`,
 		"Settings -> Sandbox",
-	} {
-		if !strings.Contains(msg, want) {
-			t.Fatalf("UnavailableMessage() = %q, want %q", msg, want)
+	}
+	if runtime.GOOS == "windows" {
+		// Windows ships no OS-level Bash backend and the effective mode is
+		// fixed to off, so the remediation states that fact instead of
+		// pointing at a config edit the platform would ignore.
+		want = []string{
+			"refusing to run unconfined",
+			"OS-level Bash sandbox",
+			`fixed to "off"`,
+		}
+	}
+	for _, w := range want {
+		if !strings.Contains(msg, w) {
+			t.Fatalf("UnavailableMessage() = %q, want %q", msg, w)
 		}
 	}
 }
