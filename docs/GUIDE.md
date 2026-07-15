@@ -59,7 +59,7 @@ default_model = "deepseek-flash"   # executor; set [agent].planner_model to add 
 # cursor_shape = "underline"       # block|underline|bar; CLI/TUI text cursor
 
 [agent]
-max_steps = 0                    # user/global only; executor tool-call rounds; 0 = no limit
+max_steps = 32                   # user/global only; executor tool-call rounds; 0 = no total round limit
 planner_max_steps = 0            # user/global only; planner read-only tool-call rounds; 0 = no limit
 reasoning_language = "auto"      # visible reasoning text: auto|zh|en
 # plan_mode_allowed_tools = ["custom_reader"]   # extra read-only custom tools only;
@@ -881,7 +881,9 @@ The planner sees loaded `REASONIX.md` / `AGENTS.md` memory and a small read-only
 research tool set, so it can inspect relevant files before handing a plan to the
 executor. Writer and workflow tools remain executor-only. `max_steps` limits the
 executor; `planner_max_steps` limits only the planner, and either can be set to
-`0` for no round limit.
+`0` for no configured round limit. Independently, an executor with an active
+todo pauses after 16 consecutive tool-call rounds without completing the
+current item; its saved work can be resumed in the next user turn.
 
 Keep step-limit preferences in the user config. Project `./reasonix.toml` files
 do not override `max_steps` or `planner_max_steps`.

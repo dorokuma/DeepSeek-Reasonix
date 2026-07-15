@@ -26,6 +26,37 @@ func TestTodoWriteRejectsBadLevel(t *testing.T) {
 	}
 }
 
+func TestTodoWriteRejectsNonSerialStates(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		args string
+		want string
+	}{
+		{
+			name: "out of order completion",
+			args: `{"todos":[{"content":"first","status":"in_progress"},{"content":"second","status":"completed"}]}`,
+			want: "completed after unfinished",
+		},
+		{
+			name: "multiple current items",
+			args: `{"todos":[{"content":"first","status":"in_progress"},{"content":"second","status":"in_progress"}]}`,
+			want: "second in_progress",
+		},
+		{
+			name: "pending without current",
+			args: `{"todos":[{"content":"first","status":"pending"}]}`,
+			want: "no in_progress",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := (todoWrite{}).Execute(context.Background(), json.RawMessage(tc.args))
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("todo_write error = %v, want %q", err, tc.want)
+			}
+		})
+	}
+}
+
 func TestTodoWriteRejectsNewCompletedWithoutCompleteStepReceipt(t *testing.T) {
 	ledger := evidence.NewLedger()
 	ledger.Record(evidence.Receipt{
@@ -58,12 +89,130 @@ func TestTodoWriteAcceptsNewCompletedWithCompleteStepReceipt(t *testing.T) {
 	}
 }
 
-func TestTodoWriteAllowsInitialCompletedWithoutBaseline(t *testing.T) {
+func TestTodoWriteRejectsInitialCompletedWithoutBaseline(t *testing.T) {
 	ctx := evidence.WithLedger(context.Background(), evidence.NewLedger())
 	args := json.RawMessage(`{"todos":[{"content":"Add parser","status":"completed"}]}`)
 
+	if _, err := (todoWrite{}).Execute(ctx, args); err == nil || !strings.Contains(err.Error(), "cannot start completed") {
+		t.Fatalf("initial completed todo without baseline should be rejected: %v", err)
+	}
+}
+
+func TestTodoWriteRejectsDroppingCurrentTodo(t *testing.T) {
+	ledger := evidence.NewLedger()
+	ledger.Record(evidence.Receipt{
+		ToolName: "todo_write",
+		Success:  true,
+		Todos: []evidence.TodoItem{
+			{Content: "Inspect environment", Status: "in_progress"},
+			{Content: "Write code", Status: "pending"},
+		},
+	})
+	ctx := evidence.WithLedger(context.Background(), ledger)
+
+	for _, args := range []string{
+		`{"todos":[]}`,
+		`{"todos":[{"content":"Write code","status":"in_progress"}]}`,
+	} {
+		_, err := (todoWrite{}).Execute(ctx, json.RawMessage(args))
+		if err == nil || !strings.Contains(err.Error(), "cannot be removed or replaced") {
+			t.Fatalf("dropping current todo with %s should be rejected: %v", args, err)
+		}
+	}
+}
+
+func TestTodoWriteDoesNotTreatNumericContentAsStepIndex(t *testing.T) {
+	ledger := evidence.NewLedger()
+	ledger.Record(evidence.Receipt{
+		ToolName: "todo_write",
+		Success:  true,
+		Todos: []evidence.TodoItem{
+			{Content: "Finished", Status: "completed"},
+			{Content: "2", Status: "in_progress"},
+		},
+	})
+	ctx := evidence.WithLedger(context.Background(), ledger)
+	args := json.RawMessage(`{"todos":[
+		{"content":"Finished","status":"completed"},
+		{"content":"Replacement","status":"in_progress"}
+	]}`)
+
+	if _, err := (todoWrite{}).Execute(ctx, args); err == nil || !strings.Contains(err.Error(), "cannot be removed or replaced") {
+		t.Fatalf("numeric todo content should be matched by identity, got %v", err)
+	}
+}
+
+func TestTodoWriteAllowsRephrasingCurrentTodo(t *testing.T) {
+	ledger := evidence.NewLedger()
+	ledger.Record(evidence.Receipt{
+		ToolName: "todo_write",
+		Success:  true,
+		Todos:    []evidence.TodoItem{{Content: "Inspect environment", Status: "in_progress"}},
+	})
+	ctx := evidence.WithLedger(context.Background(), ledger)
+	args := json.RawMessage(`{"todos":[{"content":"Inspect environment and dependencies","status":"in_progress"}]}`)
 	if _, err := (todoWrite{}).Execute(ctx, args); err != nil {
-		t.Fatalf("initial completed todo without baseline should preserve existing behavior: %v", err)
+		t.Fatalf("rephrasing the current todo should remain allowed: %v", err)
+	}
+}
+
+func TestTodoWritePreservesCanonicalCompletedPrefixAcrossTurns(t *testing.T) {
+	ctx := evidence.WithLedger(context.Background(), evidence.NewLedger())
+	ctx = evidence.WithTodoState(ctx, []evidence.TodoItem{
+		{Content: "Inspect environment", Status: "completed"},
+		{Content: "Write code", Status: "in_progress"},
+	})
+
+	args := json.RawMessage(`{"todos":[
+		{"content":"Inspect environment","status":"completed"},
+		{"content":"Write code","status":"in_progress"}
+	]}`)
+	if _, err := (todoWrite{}).Execute(ctx, args); err != nil {
+		t.Fatalf("cross-turn canonical prefix should remain valid: %v", err)
+	}
+}
+
+func TestTodoWriteCannotCompleteCanonicalCurrentAcrossTurns(t *testing.T) {
+	ctx := evidence.WithLedger(context.Background(), evidence.NewLedger())
+	ctx = evidence.WithTodoState(ctx, []evidence.TodoItem{
+		{Content: "Inspect environment", Status: "in_progress"},
+	})
+
+	args := json.RawMessage(`{"todos":[{"content":"Inspect environment","status":"completed"}]}`)
+	if _, err := (todoWrite{}).Execute(ctx, args); err == nil || !strings.Contains(err.Error(), "cannot become completed") {
+		t.Fatalf("cross-turn current todo completion should require complete_step: %v", err)
+	}
+}
+
+func TestTodoWriteRejectsDuplicatedOrReorderedCompletedPrefix(t *testing.T) {
+	ledger := evidence.NewLedger()
+	ledger.Record(evidence.Receipt{
+		ToolName: "todo_write",
+		Success:  true,
+		Todos: []evidence.TodoItem{
+			{Content: "Inspect environment", Status: "completed"},
+			{Content: "Design solution", Status: "completed"},
+			{Content: "Write code", Status: "in_progress"},
+		},
+	})
+	ctx := evidence.WithLedger(context.Background(), ledger)
+
+	for _, args := range []string{
+		`{"todos":[
+			{"content":"Inspect environment","status":"completed"},
+			{"content":"Inspect environment","status":"completed"},
+			{"content":"Write code","status":"in_progress"}
+		]}`,
+		`{"todos":[
+			{"content":"Design solution","status":"completed"},
+			{"content":"Inspect environment","status":"completed"},
+			{"content":"Write code","status":"in_progress"}
+		]}`,
+	} {
+		_, err := (todoWrite{}).Execute(ctx, json.RawMessage(args))
+		if err == nil || !strings.Contains(err.Error(), "cannot be inserted, duplicated, or reordered") {
+			t.Fatalf("invalid completed prefix should be rejected: %v", err)
+		}
 	}
 }
 

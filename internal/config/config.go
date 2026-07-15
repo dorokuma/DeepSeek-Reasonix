@@ -1570,11 +1570,10 @@ func Default() *Config {
 		},
 		Agent: AgentConfig{
 			SystemPrompt: DefaultSystemPrompt,
-			// 0 = no step cap: the agent loops until the model gives a final answer,
-			// the user cancels, or the provider errors. Context stays bounded by
-			// compaction, not by a round count. Set a positive agent.max_steps only
-			// if you want a hard guard against runaway.
-			MaxSteps:            0,
+			// Bound executor tool rounds by default so a semantically drifting model
+			// cannot consume an unbounded number of requests. Users who deliberately
+			// want the legacy behavior can still set agent.max_steps to 0.
+			MaxSteps:            32,
 			PlannerMaxSteps:     0,
 			AutoPlan:            "off",
 			SoftCompactRatio:    0.5,

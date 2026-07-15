@@ -1152,6 +1152,23 @@ func TestRenderTOMLNonDefaultStepsWrittenExplicitly(t *testing.T) {
 	}
 }
 
+func TestRenderTOMLPreservesExplicitUnlimitedExecutorSteps(t *testing.T) {
+	isolateUserConfigHome(t)
+	c := Default()
+	c.Agent.MaxSteps = 0
+	rendered := RenderTOMLForScope(c, RenderScopeUser)
+	if !strings.Contains(rendered, "max_steps         = 0") {
+		t.Fatalf("explicit unlimited max_steps was not rendered:\n%s", rendered)
+	}
+	var got Config
+	if _, err := toml.Decode(rendered, &got); err != nil {
+		t.Fatalf("rendered TOML does not parse: %v", err)
+	}
+	if got.Agent.MaxSteps != 0 {
+		t.Fatalf("round-tripped max_steps = %d, want explicit unlimited 0", got.Agent.MaxSteps)
+	}
+}
+
 func TestRenderTOMLDefaultStepsDoNotOverrideGlobalConfig(t *testing.T) {
 	isolateUserConfigHome(t)
 	globalDir := filepath.Dir(UserConfigPath())

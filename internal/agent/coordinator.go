@@ -2,7 +2,6 @@ package agent
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"strings"
 
@@ -297,8 +296,7 @@ func (c *Coordinator) Run(ctx context.Context, input string) error {
 		// failures: the first is the user aborting the turn, the second has
 		// saved work in the planner session and asks the user to continue.
 		// Neither may silently restart on the executor.
-		var pause *maxStepsPause
-		if ctx.Err() != nil || errors.As(err, &pause) {
+		if ctx.Err() != nil || isToolLoopPause(err) {
 			return fmt.Errorf("planner: %w", err)
 		}
 		// A planner failure must not take down the turn: the executor is
@@ -737,10 +735,9 @@ func (c *Coordinator) planWithTools(ctx context.Context, input string) (string, 
 		// (and possibly partial assistant/tool rounds) to the planner
 		// session, and Coordinator.Run degrades to the executor on planner
 		// failure, so a dangling user message would produce consecutive
-		// user roles on the next plan. A max-steps pause is exempt: its
-		// saved work is what the user is asked to continue from.
-		var pause *maxStepsPause
-		if !errors.As(err, &pause) {
+		// user roles on the next plan. A deliberate tool-loop pause is exempt:
+		// its saved work is what the user is asked to continue from.
+		if !isToolLoopPause(err) {
 			c.rollbackPlannerTurn(before, rewriteBefore)
 		}
 		return "", err

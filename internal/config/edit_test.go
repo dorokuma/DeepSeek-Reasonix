@@ -1312,8 +1312,8 @@ planner_max_steps = 4
 	if err != nil {
 		t.Fatalf("LoadForRoot: %v", err)
 	}
-	if cfg.Agent.MaxSteps != 0 || cfg.Agent.PlannerMaxSteps != 0 {
-		t.Fatalf("agent steps = max:%d planner:%d, want built-in global defaults 0/0", cfg.Agent.MaxSteps, cfg.Agent.PlannerMaxSteps)
+	if cfg.Agent.MaxSteps != 32 || cfg.Agent.PlannerMaxSteps != 0 {
+		t.Fatalf("agent steps = max:%d planner:%d, want built-in global defaults 32/0", cfg.Agent.MaxSteps, cfg.Agent.PlannerMaxSteps)
 	}
 }
 

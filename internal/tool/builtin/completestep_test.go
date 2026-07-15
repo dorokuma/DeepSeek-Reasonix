@@ -401,12 +401,13 @@ func TestCompleteStepRejectsTodoMismatch(t *testing.T) {
 	}
 }
 
-func TestCompleteStepAcceptsPendingTodo(t *testing.T) {
+func TestCompleteStepRejectsPendingTodo(t *testing.T) {
 	ledger := evidence.NewLedger()
 	ledger.Record(evidence.Receipt{
 		ToolName: "todo_write",
 		Success:  true,
 		Todos: []evidence.TodoItem{
+			{Content: "Inspect environment", Status: "in_progress"},
 			{Content: "Add parser", Status: "pending"},
 		},
 	})
@@ -416,11 +417,31 @@ func TestCompleteStepAcceptsPendingTodo(t *testing.T) {
 		"step":"Add parser",
 		"result":"parser added",
 		"evidence":[{"kind":"manual","summary":"checked manually"}]}`))
-	if err != nil {
-		t.Fatalf("pending todo should be signable with evidence: %v", err)
+	if err == nil || !strings.Contains(err.Error(), "only signs the current in_progress item") {
+		t.Fatalf("pending todo should be rejected, out=%q err=%v", out, err)
 	}
-	if !strings.Contains(out, "todo-matched") {
-		t.Fatalf("ack should mention todo match, got %q", out)
+	if !strings.Contains(err.Error(), "Inspect environment") {
+		t.Fatalf("pending rejection should name the current todo, got %v", err)
+	}
+}
+
+func TestCompleteStepRejectsPendingCanonicalTodoAcrossTurns(t *testing.T) {
+	ledger := evidence.NewLedger()
+	ctx := evidence.WithLedger(context.Background(), ledger)
+	ctx = evidence.WithTodoState(ctx, []evidence.TodoItem{
+		{Content: "Inspect environment", Status: "in_progress"},
+		{Content: "Add parser", Status: "pending"},
+	})
+
+	_, err := (completeStep{}).Execute(ctx, json.RawMessage(`{
+		"step":"Add parser",
+		"result":"parser added",
+		"evidence":[{"kind":"manual","summary":"checked manually"}]}`))
+	if err == nil || !strings.Contains(err.Error(), "only signs the current in_progress item") {
+		t.Fatalf("cross-turn pending todo should be rejected, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "Inspect environment") {
+		t.Fatalf("cross-turn rejection should name the current todo, got %v", err)
 	}
 }
 

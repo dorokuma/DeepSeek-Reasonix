@@ -4888,7 +4888,7 @@ func historyTodoArgsWithCompleteSteps(msgs []provider.Message) map[string]string
 				if len(rec.Todos) == 0 {
 					continue
 				}
-				todos = append([]evidence.TodoItem(nil), rec.Todos...)
+				todos = evidence.NormalizeSerialTodos(rec.Todos)
 				latestTodoID = tc.ID
 				if args, ok := todoArgsJSON(todos); ok {
 					out[latestTodoID] = args
@@ -4899,7 +4899,7 @@ func historyTodoArgsWithCompleteSteps(msgs []provider.Message) map[string]string
 				}
 				rec := evidence.ReceiptFromToolCall(tc.Name, json.RawMessage(tc.Arguments), true, true)
 				match, ok := evidence.MatchStep(rec.Step, todos)
-				if !ok || match.Index < 1 || match.Index > len(todos) || todoStatusForHistory(todos[match.Index-1].Status) == "completed" {
+				if !ok || match.Index < 1 || match.Index > len(todos) || todoStatusForHistory(todos[match.Index-1].Status) != "in_progress" {
 					continue
 				}
 				todos[match.Index-1].Status = "completed"

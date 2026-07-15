@@ -3,10 +3,11 @@ package agent
 import (
 	"context"
 	"encoding/json"
-	"reasonix/internal/event"
 	"strings"
 	"testing"
 
+	"reasonix/internal/event"
+	"reasonix/internal/evidence"
 	"reasonix/internal/planmode"
 	"reasonix/internal/provider"
 	"reasonix/internal/tool"
@@ -42,6 +43,30 @@ func TestPlanModeBlocksWriters(t *testing.T) {
 	wr := a.executeOne(context.Background(), provider.ToolCall{Name: "writer_tool"})
 	if !strings.HasPrefix(wr.output, "blocked:") {
 		t.Errorf("writer tool in plan mode should return a 'blocked:' result, got: %q", wr.output)
+	}
+}
+
+func TestPlanModeCanReplacePriorExecutionTodoState(t *testing.T) {
+	reg := tool.NewRegistry()
+	reg.Add(mustBuiltinTool(t, "todo_write"))
+	a := New(nil, reg, NewSession(""), Options{}, event.Discard)
+	a.SeedTodoState([]evidence.TodoItem{{Content: "old execution step", Status: "in_progress"}})
+	a.SetPlanMode(true)
+
+	out := a.executeOne(context.Background(), provider.ToolCall{
+		ID:   "new-plan",
+		Name: "todo_write",
+		Arguments: `{"todos":[
+			{"content":"inspect the new request","status":"in_progress"},
+			{"content":"draft a revised plan","status":"pending"}
+		]}`,
+	})
+	if out.errMsg != "" {
+		t.Fatalf("plan-mode todo replacement was blocked: %s", out.errMsg)
+	}
+	got := a.CanonicalTodoState()
+	if len(got) != 2 || got[0].Content != "inspect the new request" {
+		t.Fatalf("plan-mode todo state = %+v, want revised plan", got)
 	}
 }
 

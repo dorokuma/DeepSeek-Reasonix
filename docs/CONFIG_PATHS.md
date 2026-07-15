@@ -73,7 +73,7 @@ provider_access = ["deepseek"]
 
 [agent]
 auto_plan = "off"
-max_steps = 0
+max_steps = 32             # built-in default; set 0 for no total round limit
 
 [[providers]]
 name        = "deepseek"

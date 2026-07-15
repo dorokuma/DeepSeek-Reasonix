@@ -71,6 +71,46 @@ func TestHistoryMessagesRequireSuccessfulCompleteStepResult(t *testing.T) {
 	}
 }
 
+func TestHistoryMessagesIgnoreHistoricalPendingSignoff(t *testing.T) {
+	msgs := []provider.Message{
+		{Role: provider.RoleAssistant, ToolCalls: []provider.ToolCall{{
+			ID: "todo-1", Name: "todo_write",
+			Arguments: `{"todos":[{"content":"Create the file","status":"in_progress"},{"content":"Update the file","status":"pending"}]}`,
+		}}},
+		{Role: provider.RoleTool, ToolCallID: "todo-1", Name: "todo_write", Content: "Todos updated"},
+		{Role: provider.RoleAssistant, ToolCalls: []provider.ToolCall{{
+			ID: "step-2", Name: "complete_step", Arguments: `{"step":"Update the file"}`,
+		}}},
+		{Role: provider.RoleTool, ToolCallID: "step-2", Name: "complete_step", Content: "signed off"},
+	}
+
+	payload := restoredTodoPayload(t, msgs, "todo-1")
+	if got := payload.Todos[0].Status; got != "in_progress" {
+		t.Fatalf("current todo status = %q, want in_progress", got)
+	}
+	if got := payload.Todos[1].Status; got != "pending" {
+		t.Fatalf("historical pending signoff changed status to %q", got)
+	}
+}
+
+func TestHistoryMessagesNormalizeLegacyOutOfOrderTodoState(t *testing.T) {
+	msgs := []provider.Message{
+		{Role: provider.RoleAssistant, ToolCalls: []provider.ToolCall{{
+			ID: "todo-1", Name: "todo_write",
+			Arguments: `{"todos":[{"content":"Create the file","status":"in_progress"},{"content":"Update the file","status":"completed"}]}`,
+		}}},
+		{Role: provider.RoleTool, ToolCallID: "todo-1", Name: "todo_write", Content: "Todos updated"},
+	}
+
+	payload := restoredTodoPayload(t, msgs, "todo-1")
+	if got := payload.Todos[0].Status; got != "in_progress" {
+		t.Fatalf("legacy current todo status = %q, want in_progress", got)
+	}
+	if got := payload.Todos[1].Status; got != "pending" {
+		t.Fatalf("legacy out-of-order completion normalized to %q, want pending", got)
+	}
+}
+
 func TestHistoryMessagesIgnoreFailedTodoWriteAsReplayBase(t *testing.T) {
 	msgs := []provider.Message{
 		{Role: provider.RoleAssistant, ToolCalls: []provider.ToolCall{{

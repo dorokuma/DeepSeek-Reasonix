@@ -27,10 +27,12 @@ branch.
 - Runtime rebuilds after model, effort, or work-mode changes now preserve the
   conversation, session permission overrides, additional directories, and
   session lease ownership.
-- Agent runtime defaults now leave both executor and dedicated planner tool-call
-  rounds unlimited (`max_steps = 0`, `planner_max_steps = 0`). Step limits now
-  come from the user/global config only; project `reasonix.toml` does not
-  override them.
+- Agent runtime defaults now bound executor tool-call rounds to 32 while leaving
+  dedicated planner rounds unlimited (`max_steps = 32`,
+  `planner_max_steps = 0`). Set either value to `0` to remove its configured
+  round cap. An executor with an active todo still pauses after 16 rounds
+  without advancing the current item. Step limits come from the user/global
+  config only; project `reasonix.toml` does not override them.
 
 ## [1.0.0] — 2026-06-03
 

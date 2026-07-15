@@ -3,6 +3,7 @@ package evidence
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -491,6 +492,66 @@ func TestLedgerNoBaselineDoesNotConstrainCompletedTodos(t *testing.T) {
 	}
 	if len(missing) != 0 {
 		t.Fatalf("no baseline should not report missing completions, got %+v", missing)
+	}
+}
+
+func TestValidateSerialTodosRejectsInvalidOrdering(t *testing.T) {
+	tests := []struct {
+		name  string
+		todos []TodoItem
+		want  string
+	}{
+		{
+			name: "completed after current",
+			todos: []TodoItem{
+				{Content: "first", Status: "in_progress"},
+				{Content: "second", Status: "completed"},
+			},
+			want: "completed after unfinished",
+		},
+		{
+			name: "multiple current items",
+			todos: []TodoItem{
+				{Content: "first", Status: "in_progress"},
+				{Content: "second", Status: "in_progress"},
+			},
+			want: "second in_progress",
+		},
+		{
+			name:  "pending without current",
+			todos: []TodoItem{{Content: "first", Status: "pending"}},
+			want:  "no in_progress",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := ValidateSerialTodos(tc.todos); err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("ValidateSerialTodos() error = %v, want %q", err, tc.want)
+			}
+		})
+	}
+
+	valid := []TodoItem{
+		{Content: "done", Status: "completed"},
+		{Content: "current", Status: "in_progress"},
+		{Content: "later", Status: "pending"},
+	}
+	if err := ValidateSerialTodos(valid); err != nil {
+		t.Fatalf("valid serial list rejected: %v", err)
+	}
+}
+
+func TestNormalizeSerialTodosRepairsLegacyOutOfOrderState(t *testing.T) {
+	got := NormalizeSerialTodos([]TodoItem{
+		{Content: "first", Status: "in_progress"},
+		{Content: "second", Status: "completed"},
+		{Content: "third", Status: "in_progress"},
+	})
+	want := []string{"in_progress", "pending", "pending"}
+	for i := range want {
+		if got[i].Status != want[i] {
+			t.Fatalf("todo %d status = %q, want %q: %+v", i+1, got[i].Status, want[i], got)
+		}
 	}
 }
 

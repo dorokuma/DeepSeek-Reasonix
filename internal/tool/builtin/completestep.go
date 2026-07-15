@@ -120,12 +120,15 @@ func (completeStep) Execute(ctx context.Context, args json.RawMessage) (string, 
 		kinds = append(kinds, e.Kind)
 	}
 
-	hostVerified, manualUnverified, err := verifyStepEvidence(ctx, p.Evidence)
+	todoMatch, hasTodo, err := verifyTodoStep(ctx, step)
 	if err != nil {
 		return "", err
 	}
-	todoMatch, hasTodo, err := verifyTodoStep(ctx, step)
+	hostVerified, manualUnverified, err := verifyStepEvidence(ctx, p.Evidence)
 	if err != nil {
+		if hasTodo && todoMatch.Status == "in_progress" {
+			return "", fmt.Errorf("%v; todo %d %q remains in_progress — repair the evidence and retry this step before moving on", err, todoMatch.Index, todoMatch.Content)
+		}
 		return "", err
 	}
 	projectVerified, err := verifyProjectChecks(ctx, p.Evidence)
@@ -144,8 +147,12 @@ func (completeStep) Execute(ctx context.Context, args json.RawMessage) (string, 
 	if projectVerified > 0 {
 		projectStatus = fmt.Sprintf(" Project checks: project checks %d.", projectVerified)
 	}
-	return fmt.Sprintf("Step %q signed off with %d evidence item(s) [%s].%s The host advanced the task list; continue with the next step.",
-		step, len(p.Evidence), strings.Join(kinds, ", "), hostStatus+todoStatus+projectStatus), nil
+	advanceStatus := " The host advanced the task list; continue with the next step."
+	if hasTodo && todoMatch.Status == "completed" {
+		advanceStatus = " The matched todo was already completed; the task list is unchanged."
+	}
+	return fmt.Sprintf("Step %q signed off with %d evidence item(s) [%s].%s%s",
+		step, len(p.Evidence), strings.Join(kinds, ", "), hostStatus+todoStatus+projectStatus, advanceStatus), nil
 }
 
 func completeStepIdentity(step string, stepIndex int) string {
@@ -253,21 +260,34 @@ func checkSource(check instruction.VerifyCheck) string {
 
 func verifyTodoStep(ctx context.Context, step string) (evidence.TodoStepMatch, bool, error) {
 	ledger, ok := evidence.FromContext(ctx)
-	if !ok {
+	var todos []evidence.TodoItem
+	if ok {
+		todos, _ = ledger.LatestTodos()
+	}
+	if len(todos) == 0 {
+		todos, _ = evidence.TodoStateFromContext(ctx)
+	}
+	if len(todos) == 0 {
 		return evidence.TodoStepMatch{}, false, nil
 	}
-	match, hasTodo := ledger.MatchLatestTodoStep(step)
-	if !hasTodo {
-		return evidence.TodoStepMatch{}, false, nil
-	}
-	if !match.Found {
-		return evidence.TodoStepMatch{}, true, fmt.Errorf("step %q has no matching todo_write item in this turn; cite a todo verbatim or by number: %s", step, todoInventory(ledger))
+	match, found := evidence.MatchStep(step, todos)
+	if !found {
+		return evidence.TodoStepMatch{}, true, fmt.Errorf("step %q has no matching todo_write item in the current task list; cite a todo verbatim or by number: %s", step, todoListInventory(todos))
 	}
 	switch match.Status {
-	case "", "pending", "in_progress", "completed":
+	case "in_progress", "completed":
 		return match, true, nil
+	case "", "pending":
+		current := ""
+		for i, todo := range todos {
+			if strings.TrimSpace(todo.Status) == "in_progress" {
+				current = fmt.Sprintf("; finish todo %d %q first", i+1, todo.Content)
+				break
+			}
+		}
+		return evidence.TodoStepMatch{}, true, fmt.Errorf("step %q matches pending todo %d %q; complete_step only signs the current in_progress item%s", step, match.Index, match.Content, current)
 	default:
-		return evidence.TodoStepMatch{}, true, fmt.Errorf("step %q matches todo %d (%q) but its status is %q; complete_step requires pending, in_progress, or completed", step, match.Index, match.Content, match.Status)
+		return evidence.TodoStepMatch{}, true, fmt.Errorf("step %q matches todo %d (%q) but its status is %q; complete_step requires in_progress or completed", step, match.Index, match.Content, match.Status)
 	}
 }
 
@@ -276,6 +296,10 @@ func todoInventory(ledger *evidence.Ledger) string {
 	if !ok || len(todos) == 0 {
 		return "(no todos recorded this turn)"
 	}
+	return todoListInventory(todos)
+}
+
+func todoListInventory(todos []evidence.TodoItem) string {
 	parts := make([]string, 0, len(todos))
 	for i, t := range todos {
 		content := t.Content

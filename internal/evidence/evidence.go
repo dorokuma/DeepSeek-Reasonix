@@ -3,6 +3,7 @@ package evidence
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"path/filepath"
 	"runtime"
 	"strconv"
@@ -23,6 +24,59 @@ type TodoItem struct {
 	Status     string `json:"status"`
 	ActiveForm string `json:"activeForm,omitempty"`
 	Level      int    `json:"level,omitempty"`
+}
+
+// ValidateSerialTodos enforces the task-list state machine promised by
+// todo_write: completed items form a prefix, followed by exactly one current
+// item and then pending work. A fully completed or empty list is also valid.
+func ValidateSerialTodos(todos []TodoItem) error {
+	seenCurrent := false
+	seenPending := false
+	for i, todo := range todos {
+		switch todoStatus(todo.Status) {
+		case "completed":
+			if seenCurrent || seenPending {
+				return fmt.Errorf("todo %d %q is completed after unfinished work; serial task lists require completed items to form a prefix", i+1, todo.Content)
+			}
+		case "in_progress":
+			if seenCurrent {
+				return fmt.Errorf("todo %d %q is a second in_progress item; serial task lists allow exactly one current item", i+1, todo.Content)
+			}
+			if seenPending {
+				return fmt.Errorf("todo %d %q is in_progress after pending work; the current item must be the first unfinished item", i+1, todo.Content)
+			}
+			seenCurrent = true
+		case "pending":
+			seenPending = true
+		default:
+			return fmt.Errorf("todo %d %q has invalid status %q", i+1, todo.Content, todo.Status)
+		}
+	}
+	if len(todos) > 0 && seenPending && !seenCurrent {
+		return fmt.Errorf("serial task list has pending work but no in_progress item")
+	}
+	return nil
+}
+
+// NormalizeSerialTodos repairs legacy host state that predates
+// ValidateSerialTodos. It preserves the completed prefix, makes the first
+// unfinished item current, and returns every later item to pending.
+func NormalizeSerialTodos(todos []TodoItem) []TodoItem {
+	out := append([]TodoItem(nil), todos...)
+	unfinished := false
+	for i := range out {
+		if !unfinished && todoStatus(out[i].Status) == "completed" {
+			out[i].Status = "completed"
+			continue
+		}
+		if !unfinished {
+			out[i].Status = "in_progress"
+			unfinished = true
+			continue
+		}
+		out[i].Status = "pending"
+	}
+	return out
 }
 
 // TodoStepMatch is the result of matching complete_step.step against the latest
@@ -542,6 +596,32 @@ func MatchStep(step string, todos []TodoItem) (TodoStepMatch, bool) {
 	return m, m.Found
 }
 
+// MatchTodoIdentity resolves an existing todo against an updated list without
+// interpreting numeric content as a 1-based step citation.
+func MatchTodoIdentity(todo TodoItem, todos []TodoItem) (TodoStepMatch, bool) {
+	for i, candidate := range todos {
+		if sameTodoIdentity(todo, candidate) {
+			return TodoStepMatch{Found: true, Index: i + 1, Content: candidate.Content, Status: candidate.Status, ActiveForm: candidate.ActiveForm}, true
+		}
+	}
+	found := -1
+	for i, candidate := range todos {
+		match := TodoStepMatch{Content: candidate.Content, ActiveForm: candidate.ActiveForm}
+		if !todoContentRelates(todo, match) {
+			continue
+		}
+		if found >= 0 && found != i {
+			return TodoStepMatch{}, false
+		}
+		found = i
+	}
+	if found < 0 {
+		return TodoStepMatch{}, false
+	}
+	candidate := todos[found]
+	return TodoStepMatch{Found: true, Index: found + 1, Content: candidate.Content, Status: candidate.Status, ActiveForm: candidate.ActiveForm}, true
+}
+
 // HasAnySuccessfulReceipt reports whether any tool succeeded this turn — the
 // signal that the turn did real work, not pure conversation.
 func (l *Ledger) HasAnySuccessfulReceipt() bool {
@@ -869,6 +949,7 @@ func (l *Ledger) hasSuccessfulPaths(paths []string, accept func(Receipt) bool) b
 type contextKey struct{}
 type sessionMessagesKey struct{}
 type deliveryProfileKey struct{}
+type todoStateKey struct{}
 
 func WithLedger(ctx context.Context, ledger *Ledger) context.Context {
 	if ledger == nil {
@@ -908,6 +989,19 @@ func WithSessionMessages(ctx context.Context, msgs []provider.Message) context.C
 func SessionMessagesFromContext(ctx context.Context) ([]provider.Message, bool) {
 	msgs, ok := ctx.Value(sessionMessagesKey{}).([]provider.Message)
 	return msgs, ok
+}
+
+// WithTodoState attaches the host's canonical task list to a tool call. The
+// per-turn ledger resets between user messages, while unfinished tasks remain
+// active across those turns.
+func WithTodoState(ctx context.Context, todos []TodoItem) context.Context {
+	return context.WithValue(ctx, todoStateKey{}, append([]TodoItem(nil), todos...))
+}
+
+// TodoStateFromContext returns a copy of the host's canonical task list.
+func TodoStateFromContext(ctx context.Context) ([]TodoItem, bool) {
+	todos, ok := ctx.Value(todoStateKey{}).([]TodoItem)
+	return append([]TodoItem(nil), todos...), ok
 }
 
 // PathsProvenInSession reports whether every path is covered by a successful

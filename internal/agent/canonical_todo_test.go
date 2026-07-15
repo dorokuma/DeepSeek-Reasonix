@@ -55,14 +55,44 @@ func TestAdvanceCanonicalTodoCompletesAndPromotes(t *testing.T) {
 	}
 }
 
-func TestAdvanceCanonicalTodoMatchesByNumber(t *testing.T) {
+func TestAdvanceCanonicalTodoRejectsPendingMatchByNumber(t *testing.T) {
 	a := &Agent{sink: event.Discard, todoState: []evidence.TodoItem{
 		{Content: "first", Status: "in_progress"},
 		{Content: "second", Status: "pending"},
 	}}
 	a.advanceCanonicalTodo("2")
-	if a.todoState[1].Status != "completed" {
-		t.Fatalf("numeric step did not complete the second todo: %+v", a.todoState)
+	if a.todoState[1].Status != "pending" || a.todoState[0].Status != "in_progress" {
+		t.Fatalf("pending numeric step advanced out of order: %+v", a.todoState)
+	}
+}
+
+func TestRebuildTodoStateIgnoresHistoricalPendingSignoff(t *testing.T) {
+	msgs := []provider.Message{
+		{Role: provider.RoleAssistant, ToolCalls: []provider.ToolCall{{
+			ID: "t1", Name: "todo_write",
+			Arguments: `{"todos":[{"content":"a","status":"in_progress"},{"content":"b","status":"pending"}]}`,
+		}}},
+		{Role: provider.RoleTool, ToolCallID: "t1", Name: "todo_write", Content: "Todos updated"},
+		{Role: provider.RoleAssistant, ToolCalls: []provider.ToolCall{{
+			ID: "c1", Name: "complete_step", Arguments: `{"step":"b"}`,
+		}}},
+		{Role: provider.RoleTool, ToolCallID: "c1", Name: "complete_step", Content: "signed off"},
+	}
+	a := &Agent{}
+	a.rebuildTodoState(msgs)
+	if a.todoState[0].Status != "in_progress" || a.todoState[1].Status != "pending" {
+		t.Fatalf("historical pending signoff restored invalid state: %+v", a.todoState)
+	}
+}
+
+func TestSetTodoStateNormalizesLegacyOutOfOrderSnapshot(t *testing.T) {
+	a := &Agent{}
+	a.setTodoState([]evidence.TodoItem{
+		{Content: "first", Status: "in_progress"},
+		{Content: "second", Status: "completed"},
+	})
+	if a.todoState[0].Status != "in_progress" || a.todoState[1].Status != "pending" {
+		t.Fatalf("legacy snapshot was not normalized: %+v", a.todoState)
 	}
 }
 

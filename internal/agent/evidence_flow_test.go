@@ -997,10 +997,14 @@ func TestEvidenceFlowRecoversAfterBatchTodoCompletionRejection(t *testing.T) {
 				"result":"build and tests ran",
 				"evidence":[{"kind":"manual","summary":"checked manually"}]
 			}`),
-			toolCallChunk("c5", "todo_write", `{"todos":[
-				{"content":"Port entity imports","status":"completed"},
-				{"content":"Run build and tests","status":"completed"}
-			]}`),
+			{Type: provider.ChunkDone},
+		},
+		{
+			toolCallChunk("c5", "complete_step", `{
+				"step":"Run build and tests",
+				"result":"build and tests ran",
+				"evidence":[{"kind":"manual","summary":"checked manually"}]
+			}`),
 			{Type: provider.ChunkDone},
 		},
 		{{Type: provider.ChunkText, Text: "done"}, {Type: provider.ChunkDone}},
@@ -1012,14 +1016,19 @@ func TestEvidenceFlowRecoversAfterBatchTodoCompletionRejection(t *testing.T) {
 	}
 
 	stepResults := toolResults(a.session, "complete_step")
-	if len(stepResults) < 2 {
-		t.Fatalf("complete_step results = %v, want two sign-offs", stepResults)
+	if len(stepResults) < 3 {
+		t.Fatalf("complete_step results = %v, want blocked batch sign-off and a retry", stepResults)
 	}
-	if got := stepResults[1]; !strings.Contains(got, "signed off") {
-		t.Fatalf("pending todo complete_step result = %q, want successful sign-off", got)
+	if got := stepResults[1]; !strings.Contains(got, "only one successful complete_step") {
+		t.Fatalf("second batched complete_step result = %q, want serial-signoff block", got)
 	}
-	if got := lastToolResult(a.session, "todo_write"); !strings.Contains(got, "2 completed") {
-		t.Fatalf("final todo_write result = %q, want all todos completed", got)
+	if got := stepResults[2]; !strings.Contains(got, "signed off") {
+		t.Fatalf("next-round complete_step result = %q, want successful sign-off", got)
+	}
+	for i, todo := range a.CanonicalTodoState() {
+		if todo.Status != "completed" {
+			t.Fatalf("canonical todo %d = %+v, want completed", i+1, todo)
+		}
 	}
 }
 
@@ -1114,7 +1123,7 @@ func TestEvidenceFlowRejectsReplacedTodoAfterNumericCompleteStep(t *testing.T) {
 	}
 }
 
-func TestEvidenceFlowAcceptsReorderedTodoAfterNumericCompleteStep(t *testing.T) {
+func TestEvidenceFlowRejectsReorderedTodoAndRecoversSerially(t *testing.T) {
 	todoWrite, ok := tool.LookupBuiltin("todo_write")
 	if !ok {
 		t.Fatal("todo_write builtin not registered")
@@ -1142,19 +1151,14 @@ func TestEvidenceFlowAcceptsReorderedTodoAfterNumericCompleteStep(t *testing.T) 
 				{"content":"Write tests","status":"pending"},
 				{"content":"Add parser","status":"completed"}
 			]}`),
-			toolCallChunk("c4", "todo_write", `{"todos":[
-				{"content":"Write tests","status":"in_progress"},
-				{"content":"Add parser","status":"completed"}
-			]}`),
-			toolCallChunk("c5", "complete_step", `{
+			{Type: provider.ChunkDone},
+		},
+		{
+			toolCallChunk("c4", "complete_step", `{
 				"step":"Write tests",
 				"result":"tests written",
 				"evidence":[{"kind":"manual","summary":"checked manually"}]
 			}`),
-			toolCallChunk("c6", "todo_write", `{"todos":[
-				{"content":"Write tests","status":"completed"},
-				{"content":"Add parser","status":"completed"}
-			]}`),
 			{Type: provider.ChunkDone},
 		},
 		{{Type: provider.ChunkText, Text: "done"}, {Type: provider.ChunkDone}},
@@ -1165,7 +1169,13 @@ func TestEvidenceFlowAcceptsReorderedTodoAfterNumericCompleteStep(t *testing.T) 
 		t.Fatalf("Run: %v", err)
 	}
 
-	if got := lastToolResult(a.session, "todo_write"); !strings.Contains(got, "Todos updated") {
-		t.Fatalf("final todo_write result = %q, want reordered signed todo accepted", got)
+	results := toolResults(a.session, "todo_write")
+	if len(results) != 2 || !strings.Contains(results[1], "completed after unfinished") {
+		t.Fatalf("reordered todo_write results = %v, want serial-order rejection", results)
+	}
+	for i, todo := range a.CanonicalTodoState() {
+		if todo.Status != "completed" {
+			t.Fatalf("canonical todo %d = %+v, want completed after serial recovery", i+1, todo)
+		}
 	}
 }

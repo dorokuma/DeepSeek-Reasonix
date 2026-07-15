@@ -27,7 +27,7 @@ ask_request = true   # notify when a question is waiting
 [agent]
 # system_prompt = "You are ..."   # custom persona/prompt; unset or empty = built-in default
 # system_prompt_file = "prompts/system.md"   # overrides system_prompt when set
-max_steps         = 0    # user/global only; executor tool-call rounds; 0 = no limit
+max_steps         = 32   # user/global only; executor tool-call rounds; 0 = no total round limit
 planner_max_steps = 0    # user/global only; planner read-only tool-call rounds; 0 = no limit
 temperature       = 0.0
 auto_plan         = "off"   # user-level only; ignored in project reasonix.toml

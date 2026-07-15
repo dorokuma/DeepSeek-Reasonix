@@ -567,7 +567,7 @@ default_model = "deepseek"   # provider name (→ its default model) or "provide
 
 [agent]
 system_prompt = "You are Reasonix, a coding agent..."  # or system_prompt_file = "..."
-max_steps         = 0    # user/global only; executor tool-call rounds; 0 = no limit
+max_steps         = 32   # user/global only; executor tool-call rounds; 0 = no total round limit
 planner_max_steps = 0    # user/global only; planner read-only tool-call rounds; 0 = no limit
 temperature       = 0.0
 memory_compiler = { enabled = true, verbosity = "observe" }   # user/global only; observe|compact; CLI: reasonix config memory-v5 off|observe|compact|on|status
@@ -649,6 +649,10 @@ args    = []
 # url     = "https://mcp.stripe.com"
 # headers = { Authorization = "Bearer ${STRIPE_KEY}" }   # ${VAR} / ${VAR:-default} expanded
 ```
+
+The executor also pauses when an active todo remains unadvanced for 16
+consecutive tool-call rounds. This semantic-stall guard remains active when
+`max_steps = 0`; the pause preserves work for a later user turn.
 
 `reasonix setup` writes this default config so the CLI is usable out of the box.
 
