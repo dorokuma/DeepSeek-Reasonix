@@ -14,7 +14,10 @@ $nsisDir = Join-Path $extractRoot "nsis-$version"
 for ($attempt = 1; $attempt -le 3; $attempt++) {
     try {
         Remove-Item -LiteralPath $archive -Force -ErrorAction SilentlyContinue
-        Invoke-WebRequest -Uri $url -OutFile $archive -MaximumRedirection 10
+        & curl.exe --fail --location --silent --show-error --connect-timeout 30 --max-time 120 --output $archive $url
+        if ($LASTEXITCODE -ne 0) {
+            throw "curl failed with exit code $LASTEXITCODE"
+        }
         break
     }
     catch {
