@@ -78,11 +78,11 @@ type CachedTool struct {
 	Destructive  bool            `json:"destructive,omitempty"`
 }
 
-// SpecFingerprint hashes the load-bearing parts of a Spec so changing the
-// command/url/args/env (not just renaming) invalidates the cache. Env map
-// keys are sorted so ordering doesn't perturb the hash — Go map iteration
-// order is randomised, so we'd otherwise get fingerprint churn on every
-// launch.
+// SpecFingerprint hashes the load-bearing, non-secret parts of a Spec. Secret
+// values in env and headers are intentionally excluded: credential rotation
+// must not leak through a stable digest or force an unrelated trust review.
+// Their sorted key names remain identity-bearing, so adding/removing a runtime
+// input still invalidates the cached schema.
 func SpecFingerprint(s Spec) string {
 	h := sha256.New()
 	writeField(h, "type", s.Type)
@@ -92,8 +92,8 @@ func SpecFingerprint(s Spec) string {
 	for _, a := range s.Args {
 		writeField(h, "arg", a)
 	}
-	writeKV(h, "env", s.Env)
-	writeKV(h, "headers", s.Headers)
+	writeKeys(h, "env", s.Env)
+	writeKeys(h, "headers", s.Headers)
 	if len(s.ReadOnlyToolNames) > 0 {
 		writeBoolKV(h, "read_only_tool", s.ReadOnlyToolNames)
 	}
@@ -237,9 +237,9 @@ func writeField(h io.Writer, key, val string) {
 	_, _ = h.Write([]byte{1})
 }
 
-// writeKV hashes a map deterministically by sorting keys, so Go's randomised
-// map iteration doesn't churn the fingerprint between launches.
-func writeKV(h io.Writer, key string, m map[string]string) {
+// writeKeys hashes only sorted map keys, so Go's randomised iteration order
+// cannot perturb the non-secret identity digest.
+func writeKeys(h io.Writer, key string, m map[string]string) {
 	if len(m) == 0 {
 		writeField(h, key, "")
 		return
@@ -250,7 +250,7 @@ func writeKV(h io.Writer, key string, m map[string]string) {
 	}
 	sort.Strings(keys)
 	for _, k := range keys {
-		writeField(h, key+"."+k, m[k])
+		writeField(h, key+"."+k, "present")
 	}
 }
 

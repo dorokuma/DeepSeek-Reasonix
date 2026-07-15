@@ -303,7 +303,7 @@ func TestSpecFingerprintIgnoresHostLocalTrustAndIsolation(t *testing.T) {
 	}
 }
 
-func TestSpecFingerprintChangesOnCommandEdit(t *testing.T) {
+func TestSpecFingerprintTracksNonSecretIdentityOnly(t *testing.T) {
 	a := sampleSpec()
 	b := a
 	b.Command = "/usr/local/bin/other"
@@ -320,8 +320,26 @@ func TestSpecFingerprintChangesOnCommandEdit(t *testing.T) {
 
 	d := a
 	d.Env = map[string]string{"FOO": "1", "BAR": "different"}
-	if SpecFingerprint(a) == SpecFingerprint(d) {
-		t.Fatal("SpecFingerprint did not change when env value changed")
+	if SpecFingerprint(a) != SpecFingerprint(d) {
+		t.Fatal("SpecFingerprint changed when an environment credential value rotated")
+	}
+
+	e := a
+	e.Env = map[string]string{"FOO": "1", "NEW_KEY": "2"}
+	if SpecFingerprint(a) == SpecFingerprint(e) {
+		t.Fatal("SpecFingerprint did not change when environment key names changed")
+	}
+
+	f := a
+	f.Headers = map[string]string{"X-Custom": "rotated-secret"}
+	if SpecFingerprint(a) != SpecFingerprint(f) {
+		t.Fatal("SpecFingerprint changed when a header credential value rotated")
+	}
+
+	g := a
+	g.Headers = map[string]string{"Authorization": "secret"}
+	if SpecFingerprint(a) == SpecFingerprint(g) {
+		t.Fatal("SpecFingerprint did not change when header key names changed")
 	}
 }
 
