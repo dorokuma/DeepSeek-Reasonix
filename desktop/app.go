@@ -47,6 +47,7 @@ import (
 	"reasonix/internal/plugin"
 	"reasonix/internal/pluginpkg"
 	"reasonix/internal/provider"
+	"reasonix/internal/repair"
 	"reasonix/internal/skill"
 	"reasonix/internal/store"
 	"reasonix/internal/tool"
@@ -202,6 +203,13 @@ type App struct {
 	skillRootsCache skillRootsCache
 
 	heartbeat *HeartbeatEngine // scheduled heartbeat tasks; nil until startup
+
+	startupTracker *repair.StartupTracker
+	// startupReady records that the window reached domReady. The shutdown path
+	// treats an exit before this point as an incomplete start: it must neither
+	// reset the crash-loop counter nor bless a probationary update, or a build
+	// that boots but never paints would defeat the Guard rollback safety net.
+	startupReady atomic.Bool
 }
 
 type skillRootsCache struct {
@@ -428,17 +436,24 @@ func (a *App) startup(ctx context.Context) {
 	}
 	a.startMainThreadWatchdog()
 
-	a.heartbeat = newHeartbeatEngine(a)
-	a.heartbeat.Start()
+	if !config.SafeModeRequested() {
+		a.heartbeat = newHeartbeatEngine(a)
+		a.heartbeat.Start()
+	}
 
 	a.mu.Lock()
 	a.tabsRestored = make(chan struct{})
 	a.mu.Unlock()
 	go a.restoreOrBuildTabs()
-	a.goSafe("refreshBotRuntime", a.refreshBotRuntime)
-	a.goSafe("sendStartupPing", a.sendStartupPing)
-	a.goSafe("flushMetrics", a.flushMetrics)
-	a.goSafe("flushPendingCrash", a.flushPendingCrash)
+	if !config.SafeModeRequested() {
+		a.goSafe("refreshBotRuntime", a.refreshBotRuntime)
+		a.goSafe("sendStartupPing", a.sendStartupPing)
+		// Pending metrics/crash payloads stay on disk in Safe Mode: whether to
+		// send or drop them depends on the user's real telemetry preference,
+		// which a Safe Mode boot cannot read. The next normal boot decides.
+		a.goSafe("flushMetrics", a.flushMetrics)
+		a.goSafe("flushPendingCrash", a.flushPendingCrash)
+	}
 	// After restoreOrBuildTabs is launched: the GC's first sweep waits on
 	// tabsRestored so it never observes the pre-restore empty tab map.
 	a.startRecoveryGC()
@@ -627,11 +642,14 @@ func (a *App) restoreOrBuildTabs() {
 	// Run legacy config migration before the first config load so the
 	// freshly written config (including the user's default_model) is
 	// picked up by Load instead of falling back to built-in defaults.
-	_, _ = config.MigrateLegacyIfNeeded()
-	f := loadTabsFile()
-	_, _ = recoverLegacyProjectSidebarRoots(f)
-	_, _ = config.ApplyUserConfigUpgradesOnStartup(config.UserConfigPath())
-	_, _ = config.MigrateMCPToUserConfigOnUpgrade(desktopMCPMigrationRoots(f))
+	f := desktopTabsFile{}
+	if !config.SafeModeRequested() {
+		_, _ = config.MigrateLegacyIfNeeded()
+		f = loadTabsFile()
+		_, _ = recoverLegacyProjectSidebarRoots(f)
+		_, _ = config.ApplyUserConfigUpgradesOnStartup(config.UserConfigPath())
+		_, _ = config.MigrateMCPToUserConfigOnUpgrade(desktopMCPMigrationRoots(f))
+	}
 
 	// Load i18n from the first available config.
 	// Prefer DesktopLanguage (desktop UI setting) over Language (CLI setting),
@@ -787,6 +805,18 @@ func (a *App) shutdown(context.Context) {
 		it.ctrl.Close()
 		it.tab.releaseSessionLease()
 	}
+	if a.startupTracker != nil && a.startupReady.Load() {
+		// Only a run whose window actually became ready may reset the crash-loop
+		// counter and bless a probationary update. A clean quit before domReady
+		// (e.g. Dock-quitting a build that boots but never paints) keeps the
+		// incomplete startup record, so repeated attempts still reach the Guard
+		// recovery threshold and the update backups stay rollback-ready.
+		_ = a.startupTracker.MarkClean()
+		if !config.SafeModeRequested() {
+			_ = repair.MarkUpdateHealthy(version)
+			_ = repair.RecordHealthyConfig(version)
+		}
+	}
 }
 
 // domReady is called (via OnDomReady) after the webview finishes loading its DOM
@@ -833,6 +863,33 @@ func (a *App) domReady(_ context.Context) {
 	}
 
 	runtime.WindowShow(a.ctx)
+	a.startupReady.Store(true)
+	if a.startupTracker != nil {
+		_ = a.startupTracker.MarkReady()
+		tracker := a.startupTracker
+		ctx := a.ctx
+		a.goSafe("confirmStartupHealth", func() {
+			timer := time.NewTimer(repair.StartupHealthDelay)
+			defer timer.Stop()
+			select {
+			case <-timer.C:
+			case <-ctx.Done():
+				return
+			}
+			if err := tracker.MarkHealthy(); err != nil {
+				slog.Warn("desktop: mark startup healthy", "err", err)
+				return
+			}
+			if !config.SafeModeRequested() {
+				if err := repair.MarkUpdateHealthy(version); err != nil {
+					slog.Warn("desktop: commit healthy update", "err", err)
+				}
+				if err := repair.RecordHealthyConfig(version); err != nil {
+					slog.Warn("desktop: record last-known-good config", "err", err)
+				}
+			}
+		})
+	}
 }
 
 // --- bound command surface (frontend → controller) ---

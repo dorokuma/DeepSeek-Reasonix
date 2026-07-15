@@ -42,6 +42,9 @@ func LoadForRootReadOnly(root string) (*Config, error) {
 
 func loadForRoot(root string, migrateOnDisk bool) (*Config, error) {
 	root = resolveRoot(root)
+	if SafeModeRequested() {
+		return loadSafeModeForRoot(root), nil
+	}
 	expansionEnv := loadDotEnvForRoot(root)
 	cfg := Default()
 	cfg.setExpansionEnv(expansionEnv)
@@ -157,6 +160,51 @@ func loadForRoot(root string, migrateOnDisk bool) (*Config, error) {
 	resolveProviderCredentialsForRoot(root, cfg)
 	return cfg, nil
 }
+
+// SafeModeRequested reports whether this process should ignore user/project
+// runtime extensions and boot from built-in defaults. The environment switch is
+// intentionally process-local; it never rewrites user configuration.
+func SafeModeRequested() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("REASONIX_SAFE_MODE"))) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
+}
+
+func loadSafeModeForRoot(root string) *Config {
+	cfg := Default()
+	cfg.safeMode = true
+	cfg.Plugins = nil
+	cfg.Skills = SkillsConfig{}
+	cfg.Bot.Enabled = false
+	cfg.Bot.Connections = nil
+	cfg.Bot.Routes = nil
+	cfg.Statusline.Command = ""
+	cfg.LSP.Enabled = false
+	cfg.Desktop.CheckUpdates = safeModeBoolPtr(false)
+	// A Safe Mode boot never reads the user's config, so it cannot see (and
+	// must not override) a telemetry/metrics opt-out recorded there. Force
+	// every reporting path off instead of inheriting the enabled defaults.
+	cfg.Desktop.Telemetry = safeModeBoolPtr(false)
+	cfg.Desktop.Metrics = safeModeBoolPtr(false)
+	cfg.setExpansionEnv(nil)
+	cfg.CredentialsStore = credentialsStoreMode()
+	resolveProviderCredentialsForRoot(root, cfg)
+	return cfg
+}
+
+// LoadRecoveryDefaultsForRoot returns the same built-in-only configuration used
+// by Safe Mode without reading or migrating user/project TOML. Recovery tools use
+// it to reach an explicitly selected built-in provider when configuration is
+// malformed; provider credentials still resolve only from Reasonix's global
+// credential store.
+func LoadRecoveryDefaultsForRoot(root string) *Config {
+	return loadSafeModeForRoot(root)
+}
+
+func safeModeBoolPtr(v bool) *bool { return &v }
 
 func (c *Config) setExpansionEnv(env map[string]string) {
 	if c == nil {
@@ -508,6 +556,26 @@ func LoadForEdit(path string) *Config {
 // saving that fallback would overwrite the user's recoverable file.
 func LoadForEditReadOnlyStrict(path string) (*Config, error) {
 	return loadForEditStrict(path, true, false)
+}
+
+// ValidateFile parses one TOML config in isolation without loading credentials,
+// applying migrations, or writing the file. A missing file is valid.
+func ValidateFile(path string) error {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return nil
+	}
+	if _, err := os.Stat(path); err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	cfg := Default()
+	if _, err := decodeTOMLFile(path, cfg); err != nil {
+		return fmt.Errorf("config %s: %w", path, err)
+	}
+	return nil
 }
 
 func loadForEdit(path string, loadCredentials, persistMigrations bool) *Config {

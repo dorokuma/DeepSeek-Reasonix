@@ -1064,6 +1064,7 @@ export default function App() {
   const settingsFocus = useOverlayStore((s) => s.settingsFocus);
   const setSettingsFocus = useOverlayStore((s) => s.setSettingsFocus);
   const [desktopLayoutStyle, setDesktopLayoutStyle] = useState<DesktopLayoutStyle>("workbench");
+  const [safeMode, setSafeMode] = useState(false);
   const singleSurfaceLayout = desktopLayoutStyle === "workbench" || desktopLayoutStyle === "creation";
   const [startupUpdateChecksEnabled, setStartupUpdateChecksEnabled] = useState<boolean | null>(null);
   const [histView, setHistView] = useState<HistoryViewState | null>(null);
@@ -1336,6 +1337,7 @@ export default function App() {
       ]);
       if (cancelled) return;
       applyDesktopPreferences(settings);
+      setSafeMode(settings.safeMode === true);
       hydrateDisplayMode(settings.displayMode);
       setSidebarImConnections(sidebarImConnectionsFromBot(settings.bot, t, runtimeStatus));
       setImTopicSources(sidebarImTopicSourcesFromBot(settings.bot, t));
@@ -3794,6 +3796,9 @@ export default function App() {
 
           {state.meta?.startupErr && (
             <div className="banner banner--error">{t("topbar.startupError", { msg: state.meta.startupErr })}</div>
+          )}
+          {safeMode && (
+            <div className="banner banner--warning">{t("guard.safeMode")}</div>
           )}
 
           <UpdateBanner enabled={startupUpdateChecksEnabled === true} />

@@ -3750,13 +3750,21 @@ func TestEnsureTabControllerWorkspaceWarnsWhenPinnedSessionSwitchesWorkspace(t *
 		case e := <-events:
 			if e.Kind == event.Notice &&
 				e.Level == event.LevelWarn &&
-				strings.Contains(e.Text, f.projectA) &&
+				strings.Contains(strings.ToLower(e.Text), strings.ToLower(f.projectA)) &&
 				strings.Contains(e.Text, "switched tab") {
 				return
 			}
 		case <-deadline:
 			t.Fatal("did not receive workspace switch warning notice")
 		}
+	}
+}
+
+func TestDescribeSessionBindingWorkspaceKeepsWindowsPathReadable(t *testing.T) {
+	path := `C:\Users\Jane Doe\Reasonix`
+	want := `project workspace "C:\Users\Jane Doe\Reasonix"`
+	if got := describeSessionBindingWorkspace("project", path); got != want {
+		t.Fatalf("describeSessionBindingWorkspace = %q, want %q", got, want)
 	}
 }
 
@@ -6701,8 +6709,8 @@ args = ["-y", "@playwright/mcp"]
 }
 
 func TestCapabilitiesIncludesInstalledPlugins(t *testing.T) {
-	home := isolateDesktopUserDirs(t)
-	reasonixHome := filepath.Join(home, ".reasonix")
+	isolateDesktopUserDirs(t)
+	reasonixHome := config.ReasonixHomeDir()
 	root := filepath.Join(reasonixHome, "plugins", "superpowers")
 	if err := os.MkdirAll(filepath.Join(root, "skills"), 0o755); err != nil {
 		t.Fatal(err)
@@ -7096,13 +7104,13 @@ func TestRemoveMCPServerDeletesProjectMCPJSONEntry(t *testing.T) {
 }
 
 func TestRemoveMCPServerRejectsPluginManagedServerWithoutDisconnecting(t *testing.T) {
-	home := isolateDesktopUserDirs(t)
+	isolateDesktopUserDirs(t)
 	dir := robustTempDir(t)
 	t.Chdir(dir)
 
 	srv := desktopMCPHTTPServer(t)
 	defer srv.Close()
-	reasonixHome := filepath.Join(home, ".reasonix")
+	reasonixHome := config.ReasonixHomeDir()
 	root := filepath.Join(reasonixHome, "plugins", "superpowers")
 	if err := os.MkdirAll(root, 0o755); err != nil {
 		t.Fatal(err)

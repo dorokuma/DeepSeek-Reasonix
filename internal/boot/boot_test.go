@@ -136,6 +136,29 @@ api_key_env = "REASONIX_TEST_KEY_UNSET"
 	}
 }
 
+func TestBuildSafeModeSkipsCleanupPendingReconciliation(t *testing.T) {
+	isolateConfigHome(t)
+	dir := robustTempDir(t)
+	t.Chdir(dir)
+	t.Setenv("REASONIX_SAFE_MODE", "1")
+
+	called := false
+	ctrl, err := Build(context.Background(), Options{
+		SessionDir: filepath.Join(t.TempDir(), "sessions"),
+		CleanupPendingReconciler: func(string) error {
+			called = true
+			return nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	defer ctrl.Close()
+	if called {
+		t.Fatal("safe mode ran cleanup-pending reconciliation")
+	}
+}
+
 func TestBuildRegistersUsableHistoryAndMemoryRetrievalTools(t *testing.T) {
 	isolateConfigHome(t)
 	dir := robustTempDir(t)
@@ -1310,6 +1333,36 @@ api_key_env = "REASONIX_TEST_KEY_UNSET"
 	}
 	if !strings.Contains(sys, "projskill") || !strings.Contains(sys, "explore") {
 		t.Fatalf("skill names missing from index:\n%s", sys)
+	}
+}
+
+func TestBuildSafeModeSkipsSkillDiscovery(t *testing.T) {
+	dir := robustTempDir(t)
+	home := robustTempDir(t)
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+	t.Setenv("REASONIX_SAFE_MODE", "1")
+	t.Chdir(dir)
+	writeFile(t, dir, ".reasonix/skills/project-skill.md", "---\ndescription: project skill\n---\nplaybook")
+	writeFile(t, home, ".reasonix/skills/global-skill.md", "---\ndescription: global skill\n---\nplaybook")
+
+	ctrl, err := Build(context.Background(), Options{SessionDir: filepath.Join(t.TempDir(), "sessions")})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	defer ctrl.Close()
+
+	if skills := ctrl.Skills(); len(skills) != 0 {
+		t.Fatalf("safe mode skills = %+v, want none", skills)
+	}
+	if skills := ctrl.AllSkills(); len(skills) != 0 {
+		t.Fatalf("safe mode all skills = %+v, want none", skills)
+	}
+	if skills := ctrl.SlashSkills(); len(skills) != 0 {
+		t.Fatalf("safe mode slash skills = %+v, want none", skills)
+	}
+	if sys := systemMessage(ctrl.History()); strings.Contains(sys, "# Skills") || strings.Contains(sys, "project-skill") || strings.Contains(sys, "global-skill") {
+		t.Fatalf("safe mode system prompt contains skills:\n%s", sys)
 	}
 }
 
@@ -4156,5 +4209,40 @@ func TestHelperProcess(t *testing.T) {
 		resp := map[string]any{"jsonrpc": "2.0", "id": *req.ID, "result": result}
 		b, _ := json.Marshal(resp)
 		os.Stdout.Write(append(b, '\n'))
+	}
+}
+
+// TestBuildSafeModeOmitsSourceConnectorAndSkillTools pins the Safe Mode
+// surface across token modes: no Economy connect_tool_source (it could
+// re-expose skills, commands, memory, and MCP), no install_source, and no
+// skill tools — while slash_command stays registered with an empty list.
+func TestBuildSafeModeOmitsSourceConnectorAndSkillTools(t *testing.T) {
+	isolateConfigHome(t)
+	dir := robustTempDir(t)
+	t.Chdir(dir)
+	t.Setenv("REASONIX_SAFE_MODE", "1")
+
+	for _, tokenMode := range []string{TokenModeFull, TokenModeEconomy} {
+		ctrl, err := Build(context.Background(), Options{
+			SessionDir: filepath.Join(t.TempDir(), "sessions"),
+			TokenMode:  tokenMode,
+			Sink:       event.Discard,
+		})
+		if err != nil {
+			t.Fatalf("Build(%q): %v", tokenMode, err)
+		}
+		names := map[string]bool{}
+		for _, e := range ctrl.ToolContractEntries() {
+			names[e.Name] = true
+		}
+		ctrl.Close()
+		for _, banned := range []string{"connect_tool_source", "install_source", "run_skill", "read_skill", "read_only_skill"} {
+			if names[banned] {
+				t.Fatalf("safe mode (%q) registered %s", tokenMode, banned)
+			}
+		}
+		if !names["slash_command"] {
+			t.Fatalf("safe mode (%q) should still register slash_command", tokenMode)
+		}
 	}
 }

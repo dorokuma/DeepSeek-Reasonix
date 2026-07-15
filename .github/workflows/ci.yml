@@ -206,9 +206,18 @@ jobs:
           pnpm --dir frontend install --frozen-lockfile
           pnpm --dir frontend build
 
-      - name: test (Windows-only path semantics)
-        timeout-minutes: 10
-        run: go test . -run 'OnWindows$' -v
+      - name: test (Windows desktop and update helper)
+        timeout-minutes: 15
+        run: go test ./...
+
+      - name: Install NSIS
+        run: |
+          choco install nsis -y --no-progress
+          echo "C:\Program Files (x86)\NSIS" >> "$GITHUB_PATH"
+
+      - name: Build Windows installer and portable archive
+        timeout-minutes: 20
+        run: ../scripts/desktop-build.sh windows/amd64 v0.0.0-ci canary
 
   lint:
     runs-on: ubuntu-latest

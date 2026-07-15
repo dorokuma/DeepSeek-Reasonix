@@ -1225,7 +1225,7 @@ func TestSaveHooksSettingsNormalizesQuotedNodeEvalHookCommand(t *testing.T) {
 }
 
 func TestProjectHooksSettingsUseActiveWorkspaceRootAndTrust(t *testing.T) {
-	home := isolateDesktopUserDirs(t)
+	isolateDesktopUserDirs(t)
 	project := t.TempDir()
 	app := NewApp()
 	app.tabs = map[string]*WorkspaceTab{
@@ -1243,7 +1243,7 @@ func TestProjectHooksSettingsUseActiveWorkspaceRootAndTrust(t *testing.T) {
 	if err := app.TrustProjectHooks(); err != nil {
 		t.Fatalf("TrustProjectHooks: %v", err)
 	}
-	if !hook.IsTrusted(project, home) {
+	if !hook.IsTrusted(project, "") {
 		t.Fatal("project hooks were not trusted")
 	}
 	view := app.HooksSettings("project")
@@ -1259,7 +1259,7 @@ func TestProjectHooksSettingsUseActiveWorkspaceRootAndTrust(t *testing.T) {
 }
 
 func TestTrustProjectHooksForRootUsesDisplayedProjectRoot(t *testing.T) {
-	home := isolateDesktopUserDirs(t)
+	isolateDesktopUserDirs(t)
 	projectA := t.TempDir()
 	projectB := t.TempDir()
 	app := NewApp()
@@ -1272,10 +1272,10 @@ func TestTrustProjectHooksForRootUsesDisplayedProjectRoot(t *testing.T) {
 	if err := app.TrustProjectHooksForRoot(projectA); err != nil {
 		t.Fatalf("TrustProjectHooksForRoot: %v", err)
 	}
-	if !hook.IsTrusted(projectA, home) {
+	if !hook.IsTrusted(projectA, "") {
 		t.Fatal("displayed project root was not trusted")
 	}
-	if hook.IsTrusted(projectB, home) {
+	if hook.IsTrusted(projectB, "") {
 		t.Fatal("active project root was trusted instead of displayed project root")
 	}
 }

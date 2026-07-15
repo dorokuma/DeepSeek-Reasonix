@@ -27,8 +27,24 @@ arch="${PLATFORM#*/}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 APPNAME="Reasonix"            # wails.json productName -> Reasonix.app
 BINNAME="reasonix-desktop"    # wails.json outputfilename -> linux binary name
+GUARDNAME="reasonix-guard"
+LAUNCHERNAME="reasonix-launcher"
 
 cd "$ROOT/desktop"
+
+build_guard() {
+	echo "==> go build Reasonix Guard"
+	mkdir -p "$(dirname "$guard_out")"
+	if [ "$arch" = universal ]; then
+		guard_tmp=$(mktemp -d)
+		(cd "$ROOT" && GOOS=darwin GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X main.version=$VERSION" -o "$guard_tmp/amd64" ./cmd/reasonix-guard)
+		(cd "$ROOT" && GOOS=darwin GOARCH=arm64 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X main.version=$VERSION" -o "$guard_tmp/arm64" ./cmd/reasonix-guard)
+		lipo -create "$guard_tmp/amd64" "$guard_tmp/arm64" -output "$guard_out"
+		rm -rf "$guard_tmp"
+	else
+		(cd "$ROOT" && GOOS="$os" GOARCH="$arch" CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X main.version=$VERSION" -o "$guard_out" ./cmd/reasonix-guard)
+	fi
+}
 
 # Stamp the version resource (Windows file properties, macOS CFBundleVersion) from
 # the tag. Wails feeds info.productVersion into goversioninfo and NSIS's
@@ -43,6 +59,12 @@ ldflags="-X main.version=$VERSION -X main.channel=$CHANNEL"
 [ "$os" = "darwin" ] && [ "${HAS_APPLE_CERT:-}" = "true" ] && ldflags="$ldflags -X main.macSelfUpdate=true"
 UPDATE_HELPER="reasonix-update-helper.exe"
 if [ "$os" = windows ]; then
+	guard_out="$ROOT/desktop/build/windows/installer/$GUARDNAME.exe"
+	build_guard
+	launcher_out="$ROOT/desktop/build/windows/installer/$LAUNCHERNAME.exe"
+	echo "==> go build Windows GUI launcher"
+	(cd "$ROOT" && GOOS=windows GOARCH="$arch" CGO_ENABLED=0 go build -trimpath \
+		-ldflags="-s -w -H windowsgui -X main.version=$VERSION" -o "$launcher_out" ./cmd/reasonix-guard)
 	echo "==> go build Windows update helper"
 	GOOS=windows GOARCH="$arch" go build -trimpath -ldflags="-s -w" \
 		-o "build/windows/installer/$UPDATE_HELPER" ./cmd/update-helper
@@ -57,6 +79,10 @@ build_args+=(-platform "$PLATFORM" -ldflags "$ldflags")
 
 echo "==> wails build ${build_args[*]}"
 wails build "${build_args[@]}"
+if [ "$os" != windows ]; then
+	guard_out="$ROOT/desktop/build/bin/$GUARDNAME"
+	build_guard
+fi
 
 mkdir -p "$ROOT/dist"
 
@@ -67,6 +93,8 @@ darwin)
 	staging=$(mktemp -d)
 	app="$staging/${APPNAME}.app"
 	cp -R "build/bin/reasonix-desktop.app" "$app"
+	cp "$guard_out" "$app/Contents/MacOS/$GUARDNAME"
+	/usr/libexec/PlistBuddy -c "Set :CFBundleExecutable $GUARDNAME" "$app/Contents/Info.plist"
 
 	# Two signing paths, selected by HAS_APPLE_CERT (set by release-desktop.yml when
 	# the APPLE_* secrets are present). With a real Developer ID cert + notarization
@@ -146,18 +174,21 @@ windows)
 	portable=$(find build/bin -maxdepth 1 -type f -name "*.exe" ! -name "*installer*.exe" | head -n1 || true)
 	[ -n "$portable" ] || { echo "no portable Windows exe found in build/bin" >&2; exit 1; }
 	staging=$(mktemp -d)
-	cp "$portable" "$staging/${APPNAME}.exe"
+	cp "$portable" "$staging/$BINNAME.exe"
 	helper="build/windows/installer/$UPDATE_HELPER"
 	if [ -f "$helper" ]; then
 		cp "$helper" "$staging/$UPDATE_HELPER"
 	fi
-	src_win=$(cygpath -w "$staging/${APPNAME}.exe")
+	cp "$launcher_out" "$staging/${APPNAME}.exe"
+	cp "$launcher_out" "$staging/$LAUNCHERNAME.exe"
+	cp "$guard_out" "$staging/$GUARDNAME.exe"
+	staging_win=$(cygpath -w "$staging")
 	zip_win=$(cygpath -w "$ROOT/dist/${APPNAME}-windows-${arch}.zip")
-	powershell.exe -NoProfile -Command "Compress-Archive -Force -LiteralPath '$src_win' -DestinationPath '$zip_win'"
+	powershell.exe -NoProfile -Command "Compress-Archive -Force -Path '$staging_win\\*' -DestinationPath '$zip_win'"
 	rm -rf "$staging"
 	;;
 linux)
-	tar -czf "$ROOT/dist/${APPNAME}-linux-${arch}.tar.gz" -C build/bin "$BINNAME"
+	tar -czf "$ROOT/dist/${APPNAME}-linux-${arch}.tar.gz" -C build/bin "$BINNAME" "$GUARDNAME"
 	# Also build a .deb for Debian/Ubuntu users (goreleaser/nfpm; see
 	# desktop/build/linux/nfpm.yaml). Human-download only: the Linux updater channel
 	# stays the tarball and cmd/sign's manifest skips .deb files. nfpm reads

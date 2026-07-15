@@ -76,12 +76,15 @@ func Run(args []string, version string) int {
 	if len(args) > 0 && isDefaultInteractiveFlag(cmd) {
 		cmd = ""
 	}
-	if shouldMigrateLegacyConfigForCLI(cmd) {
+	doctorRepair := isDoctorRepairCommand(args)
+	if shouldMigrateLegacyConfigForCLI(cmd) && !doctorRepair {
 		migrateLegacyConfigForCLI()
 	}
-	if cfg, err := config.Load(); err == nil {
-		if cfg.Language != "" {
-			i18n.DetectLanguage(cfg.Language)
+	if !doctorRepair {
+		if cfg, err := config.Load(); err == nil {
+			if cfg.Language != "" {
+				i18n.DetectLanguage(cfg.Language)
+			}
 		}
 	}
 
@@ -130,7 +133,9 @@ func Run(args []string, version string) int {
 		configureCLIThemeFromConfigForTTYOutput()
 		return subagentCommand(rest)
 	case "doctor":
-		configureCLIThemeFromConfigNoProbe()
+		if !doctorRepair {
+			configureCLIThemeFromConfigNoProbe()
+		}
 		return doctorCommand(rest, version)
 	case "review":
 		configureCLIThemeFromConfigNoProbe()
@@ -152,6 +157,10 @@ func Run(args []string, version string) int {
 		usage()
 		return 2
 	}
+}
+
+func isDoctorRepairCommand(args []string) bool {
+	return len(args) > 1 && args[0] == "doctor" && args[1] == "repair"
 }
 
 func isDefaultInteractiveFlag(arg string) bool {

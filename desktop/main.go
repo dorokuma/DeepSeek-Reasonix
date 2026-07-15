@@ -22,8 +22,10 @@ import (
 
 	// Blank imports wire compile-time built-ins into their registries, exactly as
 	// cmd/reasonix does — boot.Build resolves providers/tools from these registries.
+	"reasonix/internal/config"
 	_ "reasonix/internal/provider/anthropic"
 	_ "reasonix/internal/provider/openai"
+	"reasonix/internal/repair"
 	"reasonix/internal/sandbox"
 	_ "reasonix/internal/tool/builtin"
 )
@@ -111,8 +113,28 @@ func main() {
 		os.Exit(code)
 	}
 	sandbox.RegisterHelperDispatch()
+	launch := parseDesktopLaunchArgs(os.Args[1:])
+	if config.SafeModeRequested() {
+		launch.SafeMode = true
+	}
+	tracker := repair.NewStartupTracker("")
+	if tracker.SafeModeRecommended() {
+		launch.SafeMode = true
+	}
+	if launch.SafeMode {
+		_ = os.Setenv("REASONIX_SAFE_MODE", "1")
+	}
+	// Begin runs before the Wails single-instance gate, but it refuses to
+	// overwrite the recorded state while its owner PID is alive, so a duplicate
+	// launch — which Wails terminates via os.Exit without OnShutdown — never
+	// counts as a crash toward the Safe Mode threshold.
+	startupState, _ := tracker.Begin(version, launch.SafeMode)
+	trackerOwned := startupState.PID == os.Getpid()
 
 	app := NewApp()
+	if trackerOwned {
+		app.startupTracker = tracker
+	}
 
 	// Restore saved window size, or fall back to the default.
 	width, height := 1240, 720
@@ -192,6 +214,23 @@ func main() {
 		},
 	})
 	if err != nil {
+		if trackerOwned {
+			_ = tracker.MarkFailed(err)
+		}
 		println("Error:", err.Error())
 	}
+}
+
+type desktopLaunchOptions struct {
+	SafeMode bool
+}
+
+func parseDesktopLaunchArgs(args []string) desktopLaunchOptions {
+	var out desktopLaunchOptions
+	for _, arg := range args {
+		if arg == "--safe-mode" {
+			out.SafeMode = true
+		}
+	}
+	return out
 }

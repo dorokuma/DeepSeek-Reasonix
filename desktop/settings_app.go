@@ -302,6 +302,7 @@ type DesktopStartupSettingsView struct {
 	StatusBarStyle     string          `json:"statusBarStyle"`
 	StatusBarItems     []string        `json:"statusBarItems"`
 	CheckUpdates       bool            `json:"checkUpdates"`
+	SafeMode           bool            `json:"safeMode,omitempty"`
 }
 
 func nonNil(s []string) []string {
@@ -768,6 +769,7 @@ func desktopStartupSettingsFromConfig(cfg *config.Config) DesktopStartupSettings
 		StatusBarStyle:     cfg.DesktopStatusBarStyle(),
 		StatusBarItems:     cfg.DesktopStatusBarItems(),
 		CheckUpdates:       cfg.DesktopCheckUpdates(),
+		SafeMode:           cfg.SafeMode(),
 	}
 }
 
@@ -777,9 +779,13 @@ func desktopStartupSettingsFromConfig(cfg *config.Config) DesktopStartupSettings
 func (a *App) DesktopStartupSettings() DesktopStartupSettingsView {
 	cfg, _, err := a.loadDesktopUserConfigForView()
 	if err != nil {
-		return desktopStartupSettingsFromConfig(nil)
+		view := desktopStartupSettingsFromConfig(nil)
+		view.SafeMode = config.SafeModeRequested()
+		return view
 	}
-	return desktopStartupSettingsFromConfig(cfg)
+	view := desktopStartupSettingsFromConfig(cfg)
+	view.SafeMode = config.SafeModeRequested()
+	return view
 }
 
 // Settings returns the current configuration for the Settings panel.
