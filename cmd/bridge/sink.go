@@ -206,9 +206,11 @@ func (s *sinkState) Emit(e event.Event) {
 		if e.SessionCost > 0 {
 			s.sessionCost = e.SessionCost
 		}
-		if e.CacheDiagnostics != nil {
-			s.sessionCache.hit += e.CacheDiagnostics.CacheHitTokens
-			s.sessionCache.miss += e.CacheDiagnostics.CacheMissTokens
+		// Prefer authoritative session totals from the agent; do not sum
+		// per-turn CacheDiagnostics (that double-counted and drifted).
+		if e.SessionHit+e.SessionMiss > 0 {
+			s.sessionCache.hit = e.SessionHit
+			s.sessionCache.miss = e.SessionMiss
 		}
 
 	case event.Notice:

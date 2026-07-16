@@ -1,13 +1,17 @@
-// Command reasonix is the Reasonix CLI (chat, run, serve, setup, mcp, doctor).
 package main
 
 import (
 	"os"
 
 	"reasonix/internal/cli"
+
+	// Built-in providers and tools self-register via init().
+	_ "reasonix/internal/provider/anthropic"
+	_ "reasonix/internal/provider/openai"
+	_ "reasonix/internal/tool/builtin"
 )
 
-// version is set at link time: -ldflags "-X main.version=..."
+// version is injected at link time: -X main.version=...
 var version = "dev"
 
 func main() {

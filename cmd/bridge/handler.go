@@ -20,12 +20,12 @@ import (
 // into many real messages. Token events only overwrite pending text; one worker
 // serializes API calls.
 type streamState struct {
-	mu       sync.Mutex
-	draftID  int64
-	pending  string
-	hasPend  bool
-	running  bool
-	closing  bool
+	mu      sync.Mutex
+	draftID int64
+	pending string
+	hasPend bool
+	running bool
+	closing bool
 	// draftOK: nil=unknown, true=native draft works, false=fall back to edit path
 	draftOK *bool
 	// fallbackMsgID only used if native draft API is unavailable
@@ -54,7 +54,9 @@ type Bridge struct {
 	streams map[int64]*streamState
 	// submitMu serializes handleSubmit per chat so concurrent updates cannot
 	// cancel each other's in-flight turns mid-stream.
-	submitMu map[int64]*sync.Mutex
+	submitMu    map[int64]*sync.Mutex
+	sem         chan struct{}
+	updateQueue chan Update
 }
 
 // NewBridge creates a new Bridge.
@@ -76,6 +78,8 @@ func NewBridge(cfg *Config) (*Bridge, error) {
 		showThinking: make(map[int64]bool),
 		streams:      make(map[int64]*streamState),
 		submitMu:     make(map[int64]*sync.Mutex),
+		sem:          make(chan struct{}, 100),
+		updateQueue:  make(chan Update, 500),
 	}, nil
 }
 
@@ -107,7 +111,6 @@ func (b *Bridge) ensureChatSink(chatID int64) *sinkState {
 	return s
 }
 
-
 // registerBotCommands replaces Telegram slash menu with current local commands.
 func (b *Bridge) registerBotCommands() {
 	cmds := []BotCommand{
@@ -129,6 +132,24 @@ func (b *Bridge) registerBotCommands() {
 func (b *Bridge) Start() error {
 	log.Printf("starting bridge, bot=%s", b.client.Self.UserName)
 	b.registerBotCommands()
+
+	defer close(b.updateQueue)
+
+	// Queue consumer: processes buffered updates when semaphore allows.
+	go func() {
+		for u := range b.updateQueue {
+			b.sem <- struct{}{}
+			go func(u Update) {
+				defer func() { <-b.sem }()
+				if u.Message != nil {
+					b.handleMessage(u.Message)
+				} else if u.CallbackQuery != nil {
+					b.handleCallbackQuery(u.CallbackQuery)
+				}
+			}(u)
+		}
+	}()
+
 	offset := 0
 	for {
 		select {
@@ -156,10 +177,55 @@ func (b *Bridge) Start() error {
 			offset = upd.UpdateID + 1
 			if upd.Message != nil {
 				log.Printf("[chat %d] update received, offset=%d", upd.Message.Chat.ID, offset)
-				go b.handleMessage(upd.Message)
+				// Acquire semaphore; if full, queue for later processing.
+				select {
+				case b.sem <- struct{}{}:
+					go func(msg *Message) {
+						defer func() { <-b.sem }()
+						b.handleMessage(msg)
+					}(upd.Message)
+				default:
+					// semaphore full → attempt buffered queue; if also full, drain oldest until space.
+					drained := 0
+					for len(b.updateQueue) >= cap(b.updateQueue) {
+						select {
+						case <-b.updateQueue:
+							drained++
+						default:
+						}
+					}
+					if drained > 0 {
+						log.Printf("rate limit: queue full, drained %d oldest update(s)", drained)
+					}
+					b.updateQueue <- upd
+				}
 			}
 			if upd.CallbackQuery != nil {
-				go b.handleCallbackQuery(upd.CallbackQuery)
+				select {
+				case b.sem <- struct{}{}:
+					go func(cq *CallbackQuery) {
+						defer func() { <-b.sem }()
+						b.handleCallbackQuery(cq)
+					}(upd.CallbackQuery)
+				default:
+					select {
+					case b.updateQueue <- upd:
+					default:
+						// semaphore full → attempt buffered queue; if also full, drain oldest until space.
+						drained := 0
+						for len(b.updateQueue) >= cap(b.updateQueue) {
+							select {
+							case <-b.updateQueue:
+								drained++
+							default:
+							}
+						}
+						if drained > 0 {
+							log.Printf("rate limit: queue full, drained %d oldest update(s)", drained)
+						}
+						b.updateQueue <- upd
+					}
+				}
 			}
 		}
 	}
@@ -177,7 +243,9 @@ func (b *Bridge) handleMessage(msg *Message) {
 	// Permission check
 	if !b.isAllowed(userID) {
 		log.Printf("blocked user %d (chat %d)", userID, chatID)
-		b.sendMessage(chatID, "🚫 无权限")
+		if err := b.sendMessage(chatID, "🚫 无权限"); err != nil {
+			log.Printf("failed to send message: %v", err)
+		}
 		return
 	}
 
@@ -322,7 +390,9 @@ func (b *Bridge) handleCommand(chatID, userID int64, text string) {
 	switch cmd {
 	case "/stop":
 		b.sm.Stop(chatID)
-		b.sendMessage(chatID, "⏹ 已停")
+		if err := b.sendMessage(chatID, "⏹ 已停"); err != nil {
+			log.Printf("failed to send message: %v", err)
+		}
 
 	case "/restart":
 		msgID, err := b.sendMessageID(chatID, "♻️ 重启中…")
@@ -343,16 +413,22 @@ func (b *Bridge) handleCommand(chatID, userID int64, text string) {
 		b.showThinking[chatID] = on
 		b.mu.Unlock()
 		if on {
-			b.sendMessage(chatID, "🧠 思考开")
+			if err := b.sendMessage(chatID, "🧠 思考开"); err != nil {
+				log.Printf("failed to send message: %v", err)
+			}
 		} else {
-			b.sendMessage(chatID, "🫥 思考关")
+			if err := b.sendMessage(chatID, "🫥 思考关"); err != nil {
+				log.Printf("failed to send message: %v", err)
+			}
 		}
 
 	case "/status":
 		b.ensureChatSink(chatID)
 		ctrl := b.sm.ControllerFor(chatID)
 		if ctrl == nil {
-			b.sendMessage(chatID, "💤 无会话")
+			if err := b.sendMessage(chatID, "💤 无会话"); err != nil {
+				log.Printf("failed to send message: %v", err)
+			}
 			return
 		}
 		statusText := "闲置"
@@ -390,12 +466,10 @@ func (b *Bridge) handleCommand(chatID, userID int64, text string) {
 		if cacheStr == "" {
 			cacheStr = "暂无"
 		}
-		if cost, cur := ctrl.SessionCost(); cost > 0 {
-			if cur == "" {
-				cur = "¥"
-			}
+		if cost, currency := ctrl.SessionCost(); cost > 0 {
 			if amt := formatCostAmount(cost); amt != "" {
-				costStr = cur + amt
+				symbol := mapCurrencySymbol(currency)
+				costStr = symbol + amt
 			} else {
 				costStr = "暂无"
 			}
@@ -407,7 +481,9 @@ func (b *Bridge) handleCommand(chatID, userID int64, text string) {
 		}
 		msg := fmt.Sprintf("📊 %s · 轮%d · %s\n🪙 %s\n💾 %s\n💰 %s",
 			label, turn, statusText, usageStr, cacheStr, costStr)
-		b.sendMessage(chatID, msg)
+		if err := b.sendMessage(chatID, msg); err != nil {
+			log.Printf("failed to send message: %v", err)
+		}
 
 	case "/model":
 		b.handleModel(chatID, strings.TrimSpace(strings.TrimPrefix(text, "/model")))
@@ -423,7 +499,9 @@ func (b *Bridge) handleCommand(chatID, userID int64, text string) {
 			"📊/status 状态  🤖/model 模型\n" +
 			"🆕/new 新对话  ♻️/restart 重启\n" +
 			"其它斜杠/! 同主程序"
-		b.sendMessage(chatID, help)
+		if err := b.sendMessage(chatID, help); err != nil {
+			log.Printf("failed to send message: %v", err)
+		}
 
 	default:
 		// Unrecognized slash commands are treated as normal input (验收 #9, #10).
@@ -473,7 +551,9 @@ func (b *Bridge) handleSubmit(chatID int64, text string) {
 			// so sendRichMessage lands before we declare the turn done.
 			if err := b.closeStream(cid, draftID, finalText); err != nil {
 				log.Printf("[chat %d] closeStream failed: %v — plain send", cid, err)
-				b.sendMessage(cid, stripMdv2Escapes(finalText))
+				if err := b.sendMessage(cid, stripMdv2Escapes(finalText)); err != nil {
+					log.Printf("failed to send message: %v", err)
+				}
 			}
 		},
 		func(cid int64, draftID int64) {
@@ -526,7 +606,9 @@ func (b *Bridge) handleSubmit(chatID int64, text string) {
 			}
 			log.Printf("[chat %d] turn error: %v", cid, err)
 			if !isBenignTurnErr(err) {
-				b.sendMessage(cid, fmt.Sprintf("❌ %v", err))
+				if err := b.sendMessage(cid, fmt.Sprintf("❌ %v", err)); err != nil {
+					log.Printf("failed to send message: %v", err)
+				}
 				s.markDelivered()
 			}
 		},
@@ -534,7 +616,9 @@ func (b *Bridge) handleSubmit(chatID int64, text string) {
 			if text != "" && !hasLeadingEmoji(text) {
 				text = "ℹ️ " + text
 			}
-			b.sendMessage(cid, text)
+			if err := b.sendMessage(cid, text); err != nil {
+				log.Printf("failed to send message: %v", err)
+			}
 			s.markDelivered()
 		},
 	)
@@ -550,14 +634,18 @@ func (b *Bridge) handleSubmit(chatID int64, text string) {
 
 	if err := b.sm.Submit(b.ctx, chatID, text); err != nil {
 		log.Printf("sm.Submit error (chat %d): %v", chatID, err)
-		b.sendMessage(chatID, fmt.Sprintf("❌ %v", err))
+		if err := b.sendMessage(chatID, fmt.Sprintf("❌ %v", err)); err != nil {
+			log.Printf("failed to send message: %v", err)
+		}
 		return
 	}
 
 	ctrl := b.sm.ControllerFor(chatID)
 	if ctrl == nil {
 		log.Printf("[chat %d] no controller after Submit", chatID)
-		b.sendMessage(chatID, "💥 会话未建")
+		if err := b.sendMessage(chatID, "💥 会话未建"); err != nil {
+			log.Printf("failed to send message: %v", err)
+		}
 		return
 	}
 
@@ -578,7 +666,9 @@ func (b *Bridge) handleSubmit(chatID int64, text string) {
 		case <-time.After(15 * time.Second):
 			log.Printf("[chat %d] cancel still not releasing Wait", chatID)
 		}
-		b.sendMessage(chatID, "⏰ 超时，重试或 /new")
+		if err := b.sendMessage(chatID, "⏰ 超时，重试或 /new"); err != nil {
+			log.Printf("failed to send message: %v", err)
+		}
 		s.markDelivered()
 		return
 	}
@@ -593,7 +683,9 @@ func (b *Bridge) handleSubmit(chatID int64, text string) {
 	answer := lastAssistantContent(ctrl.History())
 	if answer == "" {
 		log.Printf("[chat %d] turn done with no deliverable answer", chatID)
-		b.sendMessage(chatID, "😶 无回复，再发或 /new")
+		if err := b.sendMessage(chatID, "😶 无回复，再发或 /new"); err != nil {
+			log.Printf("failed to send message: %v", err)
+		}
 		return
 	}
 	log.Printf("[chat %d] fallback deliver PLAIN answer len=%d", chatID, len([]rune(answer)))
@@ -602,10 +694,12 @@ func (b *Bridge) handleSubmit(chatID int64, text string) {
 	if u := s.GetLastUsage(); u != nil {
 		body += fmt.Sprintf("\n\n📊 输入 %d · 输出 %d · 总计 %d", u.PromptTokens, u.CompletionTokens, u.TotalTokens)
 		if amt := formatCostAmount(s.GetSessionCost()); amt != "" {
-			body += " · 成本 " + amt
+			body += " · 成本 ¥" + amt
 		}
 	}
-	b.sendMessage(chatID, body)
+	if err := b.sendMessage(chatID, body); err != nil {
+		log.Printf("failed to send message: %v", err)
+	}
 	s.markDelivered()
 }
 
@@ -738,7 +832,6 @@ func (b *Bridge) resetStream(chatID int64) {
 	// keep draftOK across turns once probed
 	st.mu.Unlock()
 }
-
 
 // enqueueStreamUpdate records the latest process text and ensures one worker
 // flushes it via draft API. Concurrent token events only overwrite pending.
@@ -1023,8 +1116,9 @@ func stripMdv2Escapes(s string) string {
 // Message helpers
 // ---------------------------------------------------------------------------
 
-func (b *Bridge) sendMessage(chatID int64, text string) {
-	_, _ = b.sendMessageID(chatID, text)
+func (b *Bridge) sendMessage(chatID int64, text string) error {
+	_, err := b.sendMessageID(chatID, text)
+	return err
 }
 
 // sendMessageID sends plain text and returns Telegram message_id (0 on failure).
@@ -1160,6 +1254,21 @@ func redactSecrets(s string, secrets []string) string {
 		}
 	}
 	return scrubSecretPatterns(s)
+}
+
+// mapCurrencySymbol returns the currency symbol for display.
+func mapCurrencySymbol(currency string) string {
+	switch currency {
+	case "CNY", "¥":
+		return "¥"
+	case "USD", "$":
+		return "$"
+	default:
+		if currency != "" {
+			return currency + " "
+		}
+		return ""
+	}
 }
 
 // Shutdown gracefully shuts down the bridge.

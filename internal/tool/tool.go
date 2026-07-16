@@ -35,16 +35,9 @@ type Tool interface {
 
 // Concurrenter is an optional capability a Tool may implement to signal that
 // it is safe to run concurrently with other tools even though it is not
-// ReadOnly. Sub-agents (task tool) run in isolated sessions and cannot race
-// on shared resources, so they are inherently concurrent-safe.
+// ReadOnly.
 type Concurrenter interface {
 	Concurrent() bool
-}
-
-// OnlyForSubAgent marks tools that must not appear on the root (depth-0) agent,
-// e.g. send_message for background sub-agents reporting to the parent.
-type OnlyForSubAgent interface {
-	OnlyForSubAgent() bool
 }
 
 // OmitFromModelSchema marks tools that stay in the registry (so history validators

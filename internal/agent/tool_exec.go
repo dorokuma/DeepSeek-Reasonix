@@ -306,31 +306,23 @@ func (a *Agent) executeOne(ctx context.Context, call provider.ToolCall) toolOutc
 			errMsg: fmt.Sprintf("unknown tool %q", call.Name),
 		}
 	}
-	if sub, ok := t.(tool.OnlyForSubAgent); ok && sub.OnlyForSubAgent() && NestingDepthFrom(ctx) == 0 {
-		return toolOutcome{
-			output: fmt.Sprintf("error: tool %q is only available to sub-agents", call.Name),
-			errMsg: fmt.Sprintf("tool %q sub-agent only", call.Name),
-		}
-	}
-	if a.toolsDynamic != nil && a.toolsDynamic[call.Name] && NestingDepthFrom(ctx) == 0 && !a.diagnosticRequested.Load() {
+	if a.toolsDynamic != nil && a.toolsDynamic[call.Name] && !a.diagnosticRequested.Load() {
 		return toolOutcome{
 			output:  fmt.Sprintf("permission denied: tool %q is not currently available", call.Name),
 			blocked: true,
 			errMsg:  fmt.Sprintf("permission denied: tool %q not available", call.Name),
 		}
 	}
-	// Main-agent whitelist: when nesting depth is 0 (root/main agent),
-	// only allow explicitly permitted tools (if the option is set).
-	if allow := a.mainAgentAllowed; allow != nil && NestingDepthFrom(ctx) == 0 && !allow[call.Name] && !(a.toolsDynamic != nil && a.toolsDynamic[call.Name] && a.diagnosticRequested.Load()) {
+	// Main-agent whitelist: only allow explicitly permitted tools (if the option is set).
+	if allow := a.mainAgentAllowed; allow != nil && !allow[call.Name] && !(a.toolsDynamic != nil && a.toolsDynamic[call.Name] && a.diagnosticRequested.Load()) {
 		return toolOutcome{
 			output:  fmt.Sprintf("permission denied: tool %q not allowed for main agent", call.Name),
 			blocked: true,
 			errMsg:  fmt.Sprintf("permission denied: tool %q not allowed for main agent", call.Name),
 		}
 	}
-	// Main-agent readonly calls limit: when nesting depth is 0 (root/main agent),
-	// enforce maximum limit of readonly tool calls.
-	if t.ReadOnly() && NestingDepthFrom(ctx) == 0 && a.maxMainAgentReadonlyCalls > 0 {
+	// Main-agent readonly calls limit: enforce maximum limit of readonly tool calls.
+	if t.ReadOnly() && a.maxMainAgentReadonlyCalls > 0 {
 		count := a.readonlyCallsCount.Add(1)
 		if count > int64(a.maxMainAgentReadonlyCalls) {
 			return toolOutcome{

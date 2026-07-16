@@ -167,8 +167,8 @@ func (c *Coordinator) plan(ctx context.Context, input string) (string, error) {
 		var cost float64
 		var currency string
 		if c.plannerPricing != nil {
-			cost = c.plannerPricing.Cost(usage)
-			currency = c.plannerPricing.Symbol()
+			cost = c.plannerPricing.CostInCNY(usage)
+			currency = provider.CNYSymbol()
 		}
 		c.executor.AddSessionUsage(int64(usage.CacheHitTokens), int64(usage.CacheMissTokens), int64(usage.PromptTokens), int64(usage.TotalTokens), cost, currency)
 	}

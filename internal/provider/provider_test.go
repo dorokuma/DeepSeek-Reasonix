@@ -3,6 +3,7 @@ package provider
 import (
 	"context"
 	"encoding/json"
+	"math"
 	"testing"
 )
 
@@ -369,5 +370,36 @@ func TestMockProviderImplementsInterface(t *testing.T) {
 	got := <-ch
 	if got.Type != ChunkDone {
 		t.Errorf("Chunk.Type = %d, want ChunkDone", got.Type)
+	}
+}
+
+
+func TestCostInCNYConvertsUSDReported(t *testing.T) {
+	p := &Pricing{Input: 3.0, Output: 6.0, Currency: "¥", UsdCnyRate: 7}
+	u := &Usage{PromptTokens: 10_000, CompletionTokens: 100, ReportedCost: 0.10, ReportedCurrency: "$"}
+	got := p.CostInCNY(u)
+	want := 0.10 * 7
+	if math.Abs(got-want) > 1e-9 {
+		t.Errorf("CostInCNY = %v, want %v", got, want)
+	}
+}
+
+func TestCostInCNYPassthroughCNY(t *testing.T) {
+	p := &Pricing{CacheHit: 0.02, Input: 1, Output: 2, Currency: "¥"}
+	u := &Usage{PromptTokens: 1_000_000, CompletionTokens: 0, CacheHitTokens: 0, CacheMissTokens: 1_000_000}
+	got := p.CostInCNY(u)
+	if got != 1.0 {
+		t.Errorf("CostInCNY = %v, want 1.0 (CNY rates)", got)
+	}
+}
+
+func TestIsUSDCurrency(t *testing.T) {
+	for _, s := range []string{"$", "USD", "usd", "US$"} {
+		if !IsUSDCurrency(s) {
+			t.Errorf("IsUSDCurrency(%q) = false", s)
+		}
+	}
+	if IsUSDCurrency("¥") || IsUSDCurrency("CNY") {
+		t.Error("¥/CNY must not be USD")
 	}
 }

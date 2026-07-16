@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -75,19 +76,13 @@ type CronManager struct {
 	sm       *SessionManager
 	client   *TelegramClient
 	cfg      *Config
-	ctx      contextShutdown
+	ctx      context.Context
 	nextID   int
-}
-
-// contextShutdown matches the cancelable context signature the bridge uses.
-type contextShutdown interface {
-	Done() <-chan struct{}
-	Err() error
 }
 
 // NewCronManager creates a CronManager. It starts with no tasks; call Load()
 // to restore persisted tasks and Start() to begin scheduling.
-func NewCronManager(sm *SessionManager, client *TelegramClient, cfg *Config, ctx contextShutdown) *CronManager {
+func NewCronManager(sm *SessionManager, client *TelegramClient, cfg *Config, ctx context.Context) *CronManager {
 	return &CronManager{
 		cron:     cron.New(cron.WithSeconds()),
 		store:    newCronTaskStore(cfg.StateDir),
@@ -208,8 +203,8 @@ func (m *CronManager) addTask(t CronTask) {
 func (m *CronManager) executeTask(t CronTask) {
 	log.Printf("cron: executing task %d (chat %d)", t.ID, t.ChatID)
 
-	// Build a short-lived context with timeout.
-	ctx, cancel := contextTimeout(m.cfg.StateDir)
+	// Build a short-lived context with timeout that cascades from bridge ctx.
+	ctx, cancel := contextTimeout(m.ctx)
 	defer cancel()
 
 	// Ensure a non-nil sink so ApprovalRequest is not discarded; prefer an
@@ -219,7 +214,7 @@ func (m *CronManager) executeTask(t CronTask) {
 		if m.sm.sinks == nil {
 			m.sm.sinks = make(map[int64]event.Sink)
 		}
-		m.sm.sinks[t.ChatID] = &cronSink{chatID: t.ChatID, client: m.client}
+		m.sm.sinks[t.ChatID] = &cronSink{chatID: t.ChatID, client: m.client, ctx: m.ctx}
 	}
 	m.sm.mu.Unlock()
 
@@ -252,6 +247,7 @@ func (m *CronManager) executeTask(t CronTask) {
 type cronSink struct {
 	chatID int64
 	client *TelegramClient
+	ctx    context.Context
 }
 
 func (s *cronSink) Emit(e event.Event) {
@@ -259,15 +255,15 @@ func (s *cronSink) Emit(e event.Event) {
 	case event.TurnDone:
 		if e.Err != nil && !isBenignTurnErr(e.Err) {
 			msg := fmt.Sprintf("⚠️ 定时任务回合出错：%v", e.Err)
-			_, _ = s.client.Send(backgroundContext(), NewMessage(s.chatID, msg))
+			_, _ = s.client.Send(backgroundContext(s.ctx), NewMessage(s.chatID, msg))
 		}
 	case event.Message:
 		if text := strings.TrimSpace(e.Text); text != "" {
-			_, _ = s.client.Send(backgroundContext(), NewMessage(s.chatID, text))
+			_, _ = s.client.Send(backgroundContext(s.ctx), NewMessage(s.chatID, text))
 		}
 	case event.Notice:
 		if text := strings.TrimSpace(e.Text); text != "" {
-			_, _ = s.client.Send(backgroundContext(), NewMessage(s.chatID, text))
+			_, _ = s.client.Send(backgroundContext(s.ctx), NewMessage(s.chatID, text))
 		}
 	}
 }
@@ -281,7 +277,7 @@ func (m *CronManager) notifyFailure(t CronTask, cause string) {
 	msg += "原因: " + cause
 
 	// Try to send; log failure but don't propagate.
-	if _, err := m.client.Send(backgroundContext(), NewMessage(t.ChatID, msg)); err != nil {
+	if _, err := m.client.Send(backgroundContext(m.ctx), NewMessage(t.ChatID, msg)); err != nil {
 		log.Printf("cron: notifyFailure (chat %d): %v", t.ChatID, err)
 	}
 }

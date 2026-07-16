@@ -1,6 +1,9 @@
 package serve
 
-import "reasonix/internal/event"
+import (
+	"reasonix/internal/event"
+	"reasonix/internal/provider"
+)
 
 // wireEvent is the JSON shape an event.Event takes on the SSE stream. It uses
 // explicit lowercase tags (a clean contract for a JS client) and flattens the
@@ -190,10 +193,14 @@ func toWire(e event.Event) wireEvent {
 				w.Usage.CacheDiagnostics = toWireCacheDiagnostics(e.CacheDiagnostics)
 			}
 			if e.Pricing != nil {
-				cost := e.Pricing.Cost(u)
+				cost := e.Pricing.CostInCNY(u)
 				w.Usage.Cost = cost
-				w.Usage.Currency = e.Pricing.Symbol()
-				w.Usage.CostUSD = cost
+				w.Usage.Currency = "¥"
+				if provider.IsUSDCurrency(e.Pricing.CostCurrency(u)) {
+					w.Usage.CostUSD = e.Pricing.Cost(u)
+				} else {
+					w.Usage.CostUSD = 0
+				}
 			}
 		}
 	case event.ApprovalRequest:

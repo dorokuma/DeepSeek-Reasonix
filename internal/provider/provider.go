@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
 
 	"reasonix/internal/nilutil"
 )
@@ -298,6 +299,10 @@ type Usage struct {
 	CacheBreakdownKnown bool
 }
 
+// DefaultUsdCnyRate converts USD gateway costs (and $ rate tables) to CNY.
+// Matches config.UsdCnyRate default when that field is 0.
+const DefaultUsdCnyRate = 7.0
+
 // Pricing is a provider's per-1M-token rates, used to estimate spend. Currency
 // is just a display symbol (default "¥"). toml tags let config decode it.
 type Pricing struct {
@@ -306,6 +311,9 @@ type Pricing struct {
 	Output     float64 `toml:"output"`      // per 1M completion tokens
 	CacheWrite float64 `toml:"cache_write"` // per 1M cache creation tokens（Anthropic 1.25× input；OpenAI 无此概念）
 	Currency   string  `toml:"currency"`
+	// UsdCnyRate converts USD amounts to CNY for CostInCNY. 0 → DefaultUsdCnyRate.
+	// Set at boot from config.UsdCnyRate; not loaded from provider wire.
+	UsdCnyRate float64 `toml:"-"`
 }
 
 // NormalizeCache only derives missing miss from a known hit (prompt - hit).
@@ -354,7 +362,7 @@ func (p *Pricing) Cost(u *Usage) float64 {
 		float64(u.CompletionTokens)*p.Output) / 1e6
 }
 
-// CostCurrency is the symbol to display for Cost(u).
+// CostCurrency is the symbol for the raw Cost(u) amount (before CNY conversion).
 func (p *Pricing) CostCurrency(u *Usage) string {
 	if u != nil && u.ReportedCost > 0 && u.ReportedCurrency != "" {
 		return u.ReportedCurrency
@@ -369,6 +377,56 @@ func (p *Pricing) Symbol() string {
 	}
 	return p.Currency
 }
+
+// IsUSDCurrency reports whether s denotes US dollars ($ / USD / …).
+func IsUSDCurrency(s string) bool {
+	s = strings.TrimSpace(s)
+	switch strings.ToUpper(s) {
+	case "$", "USD", "US$", "＄", "DOLLAR", "DOLLARS":
+		return true
+	default:
+		return false
+	}
+}
+
+// IsCNYCurrency reports whether s denotes Chinese yuan (¥ / CNY / …).
+func IsCNYCurrency(s string) bool {
+	s = strings.TrimSpace(s)
+	switch strings.ToUpper(s) {
+	case "¥", "￥", "CNY", "RMB", "元":
+		return true
+	default:
+		return false
+	}
+}
+
+func (p *Pricing) effectiveUsdCnyRate() float64 {
+	if p != nil && p.UsdCnyRate > 0 {
+		return p.UsdCnyRate
+	}
+	return DefaultUsdCnyRate
+}
+
+// CostInCNY returns spend converted to CNY (¥). USD reported costs and $ rate
+// tables are multiplied by UsdCnyRate (default 7). CNY/¥ amounts pass through.
+// Session totals and user-facing 花销 should use this, not raw Cost().
+func (p *Pricing) CostInCNY(u *Usage) float64 {
+	if p == nil || u == nil {
+		return 0
+	}
+	raw := p.Cost(u)
+	if raw <= 0 {
+		return 0
+	}
+	cur := p.CostCurrency(u)
+	if IsUSDCurrency(cur) {
+		return raw * p.effectiveUsdCnyRate()
+	}
+	return raw
+}
+
+// CNYSymbol is the fixed display symbol for CostInCNY totals.
+func CNYSymbol() string { return "¥" }
 
 // Chunk is a single streamed event. Read the field matching Type.
 type Chunk struct {

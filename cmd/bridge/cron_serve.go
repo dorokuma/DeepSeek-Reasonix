@@ -6,14 +6,15 @@ import (
 )
 
 // contextTimeout returns a cancelable context with a reasonable timeout for
-// cron task execution (5 minutes per task). A placeholder; real implementations
-// should derive from the bridge's context.
-func contextTimeout(_ string) (context.Context, context.CancelFunc) {
-	return context.WithTimeout(context.Background(), 5*time.Minute)
+// cron task execution (5 minutes per task). It derives from parent so that
+// bridge shutdown cascades cancellation to in-flight cron tasks.
+func contextTimeout(parent context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(parent, 5*time.Minute)
 }
 
-// backgroundContext returns a background context for non-critical sends
-// (failure notifications, etc.).
-func backgroundContext() context.Context {
-	return context.Background()
+// backgroundContext returns a context derived from parent for non-critical
+// sends (failure notifications, etc.). Using parent ensures these outbound
+// sends are also cancelled when the bridge shuts down.
+func backgroundContext(parent context.Context) context.Context {
+	return parent
 }

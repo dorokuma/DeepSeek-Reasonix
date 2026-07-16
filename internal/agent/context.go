@@ -34,37 +34,8 @@ func OnCompleteCallbackFrom(ctx context.Context) func(jobID string) {
 // agentKey is the context key for the parent Agent reference.
 type agentKey struct{}
 
-// depthKey is the context key for agent nesting depth.
-type depthKey struct{}
-
 // optionsKey is the context key for Agent Options.
 type optionsKey struct{}
-
-// WithNestingDepth stores a nesting depth value in the context.
-func WithNestingDepth(ctx context.Context, depth int) context.Context {
-	return context.WithValue(ctx, depthKey{}, depth)
-}
-
-// MainAgentDepth is the nesting depth of the session root (main) agent.
-const MainAgentDepth = 0
-
-// MaySpawnAsyncSubagent reports whether this context may start a background
-// sub-agent job. Async delegation is parent→child only: the main agent may
-// spawn children; an already-running sub-agent may not spawn further async jobs.
-func MaySpawnAsyncSubagent(ctx context.Context) bool {
-	return NestingDepthFrom(ctx) == MainAgentDepth
-}
-
-// NestingDepthFrom extracts the nesting depth from the context.
-// Returns 0 when not set.
-func NestingDepthFrom(ctx context.Context) int {
-	if v := ctx.Value(depthKey{}); v != nil {
-		if d, ok := v.(int); ok {
-			return d
-		}
-	}
-	return 0
-}
 
 // WithOptions stores Agent Options in the context.
 func WithOptions(ctx context.Context, opts *Options) context.Context {

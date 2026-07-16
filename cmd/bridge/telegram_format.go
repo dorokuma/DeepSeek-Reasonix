@@ -470,9 +470,17 @@ func stripMdv2(text string) string {
 	return cleaned
 }
 
+// formatCostAmount formats a CNY session cost (no currency prefix).
+// Callers should prepend "¥". Cost is always stored in 人民币 after CostInCNY.
 func formatCostAmount(cost float64) string {
 	if cost <= 0 {
 		return ""
 	}
-	return fmt.Sprintf("$%.6f", cost)
+	s := fmt.Sprintf("%.4f", cost)
+	s = strings.TrimRight(s, "0")
+	s = strings.TrimRight(s, ".")
+	if s == "" || s == "-" {
+		return ""
+	}
+	return s
 }

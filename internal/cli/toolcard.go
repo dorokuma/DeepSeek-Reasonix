@@ -85,10 +85,9 @@ var toolVerb = map[string]string{
 	"web_search":    "Search",
 	"spawn_agent":     "Spawn agent",
 	"wait_agent":      "Wait agent",
-	"list_agents":     "List agents",
-	"send_message":    "Send message",
-	"followup_task":   "Follow-up",
-	"interrupt_agent": "Interrupt agent",
+	"send_input":    "Send input",
+	"close_agent":   "Close agent",
+	"resume_agent":  "Resume agent",
 	"note":          "Note",
 	"audit_finish":  "Report",
 }

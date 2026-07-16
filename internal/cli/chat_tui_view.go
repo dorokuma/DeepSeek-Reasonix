@@ -359,11 +359,12 @@ func cacheRateLabel(format string, hit, denom int) string {
 func (m chatTUI) cacheTag() string {
 	now := ""
 	if u := m.ctrl.LastUsage(); u != nil {
+		// Never invent a denominator from PromptTokens alone — that shows a
+		// fake "0% hit" when the provider simply omitted cache fields.
 		d := u.CacheHitTokens + u.CacheMissTokens
-		if d == 0 {
-			d = u.PromptTokens
+		if d > 0 {
+			now = cacheRateLabel(i18n.M.ChatStatusCacheNowFmt, u.CacheHitTokens, d)
 		}
-		now = cacheRateLabel(i18n.M.ChatStatusCacheNowFmt, u.CacheHitTokens, d)
 	}
 	avg := ""
 	if hit, miss := m.ctrl.SessionCache(); hit+miss > 0 {
@@ -387,16 +388,17 @@ func (m chatTUI) modelTag() string {
 	return dim(m.label)
 }
 
-// sessionCostTag returns the cumulative conversation cost, e.g. "¥0.1234".
+// sessionCostTag returns the cumulative conversation cost in CNY, e.g. "¥0.1234".
 // Empty string when no cost has been accumulated yet.
 func (m chatTUI) sessionCostTag() string {
-	if m.sessCost <= 0 || m.sessCurrency == "" {
+	if m.sessCost <= 0 {
 		return ""
 	}
 	s := fmt.Sprintf("%.4f", m.sessCost)
 	s = strings.TrimRight(s, "0")
 	s = strings.TrimRight(s, ".")
-	return dim(m.sessCurrency + s)
+	// Session totals are always CNY after CostInCNY accumulation.
+	return dim("¥" + s)
 }
 
 func (m chatTUI) effortTag() string {

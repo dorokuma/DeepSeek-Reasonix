@@ -4,22 +4,21 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"strings"
 
 	"reasonix/internal/tool"
 )
 
-// RegisterTools adds Codex MultiAgent V2 tools.
+// RegisterTools adds Codex multi-agent V1 tools only.
+// Sub-agents do not receive multi-agent tools; spawning is restricted to the root agent.
 func RegisterTools(reg *tool.Registry) {
 	if reg == nil {
 		return
 	}
 	reg.Add(spawnAgent{})
+	reg.Add(sendInput{})
 	reg.Add(waitAgent{})
-	reg.Add(listAgents{})
-	reg.Add(sendMessage{})
-	reg.Add(followupTask{})
-	reg.Add(interruptAgent{})
+	reg.Add(closeAgent{})
+	reg.Add(resumeAgent{})
 }
 
 func ctrl(ctx context.Context) (*Control, error) {
@@ -39,17 +38,46 @@ func (spawnAgent) ReadOnly() bool   { return false }
 func (spawnAgent) Concurrent() bool { return true }
 
 func (spawnAgent) Description() string {
-	return `Delegate a task to a background sub-agent. Available only to the top-level agent — sub-agents do not have this tool and cannot create further agents.
+	// Aligned with Codex V1 spawn_agent guidance; Reasonix wording where product differs.
+	return `Spawn a sub-agent for a well-scoped task. Returns the spawned agent path (task_name) plus a nickname.
 
-A sub-agent has full access to all tools (read, write, shell, search, LSP, MCP plugins). You give it a self-contained message and it does the work. After spawning, use wait_agent to collect results.
+This tool starts a background sub-agent that inherits the session environment. Follow the rules below.
 
-Parameters:
-- task_name: unique name (lowercase, digits, underscores)
-- message: complete self-contained instructions for the sub-agent
+Do not spawn sub-agents unless the user or project instructions (REASONIX.md / skills) explicitly ask for sub-agents, delegation, or parallel agent work.
+Requests for depth, thoroughness, research, investigation, or detailed codebase analysis do not count as permission to spawn. Sub-agents cannot spawn further agents.
 
-Returns: JSON with task_name (canonical path) and nickname.
+### When to delegate vs. do the subtask yourself
+- First, quickly analyze the overall user task and form a succinct high-level plan. Identify which tasks are immediate blockers on the critical path, and which tasks are sidecar tasks that are needed but can run in parallel without blocking the next local step. As part of that plan, explicitly decide what immediate task you should do locally right now. Do this planning step before delegating so you do not hand off the immediate blocking task and then waste time waiting on it.
+- Use a sub-agent when a subtask is easy enough for it to handle and can run in parallel with your local work. Prefer concrete, bounded sidecar tasks that materially advance the main task without blocking your immediate next local step.
+- Do not delegate urgent blocking work when your immediate next step depends on that result. If the very next action is blocked on that task, do it yourself to keep the critical path moving.
+- Keep work local when the subtask is too difficult to delegate well, or when it is tightly coupled, urgent, or likely to block your immediate next step.
 
-Default to parallel. When a task has multiple independent subtasks, spawn them all at once (up to 3 in one turn). Each sub-agent has a 200-step budget — decompose complex tasks so each piece fits within that limit. Prefer many small focused agents over one big generalist.`
+### Designing delegated subtasks
+- Subtasks must be concrete, well-defined, and self-contained.
+- Delegated subtasks must materially advance the main task.
+- Do not duplicate work between yourself and delegated subtasks.
+- Avoid issuing multiple spawn calls for the same unresolved work unless the new task is genuinely different and necessary.
+- Narrow the delegated ask to the concrete output you need next.
+- For coding tasks, prefer concrete code-change work over open-ended exploration when the sub-agent can make a bounded change in a clear write scope.
+- When delegating coding work, instruct the sub-agent to edit files directly and list the paths it changed in the final answer.
+- For code-edit subtasks, decompose so each delegated task has a disjoint write set.
+
+### After you delegate
+- Call wait_agent very sparingly. Only when you need the result immediately for the next critical-path step and you are blocked until it returns.
+- Do not redo delegated sub-agent tasks yourself; focus on integrating results or non-overlapping work.
+- While the sub-agent is running in the background, do meaningful non-overlapping work immediately.
+- Do not repeatedly wait by reflex.
+- When a delegated coding task returns, quickly review the changes, then integrate or refine them.
+- To continue or redirect the same agent, use send_input (reuse the thread). Do not spawn a replacement for the same work.
+- When finished with an agent, call close_agent. Completed agents stay open and count toward the concurrency limit until closed.
+
+### Parallel patterns
+- Run multiple independent information-seeking subtasks in parallel when you have distinct questions.
+- Split implementation into disjoint slices and spawn multiple agents when write scopes do not overlap.
+- Delegate verification only when it can run in parallel with ongoing work and is likely to catch a concrete risk.
+
+### Reasonix limits
+- First turn starts with a clean context: put everything the sub-agent needs in message.`
 }
 
 func (spawnAgent) Schema() json.RawMessage {
@@ -57,7 +85,7 @@ func (spawnAgent) Schema() json.RawMessage {
   "type":"object",
   "properties":{
     "task_name":{"type":"string","description":"Task name for the new agent. Use lowercase letters, digits, and underscores."},
-    "message":{"type":"string","description":"Self-contained instruction for the sub-agent. Sub-agent starts with a clean context; put all needed detail in this message."}
+    "message":{"type":"string","description":"Self-contained instruction for the sub-agent. First turn has a clean context; put all needed detail here."}
   },
   "required":["task_name","message"]
 }`)
@@ -75,19 +103,68 @@ func (spawnAgent) Execute(ctx context.Context, args json.RawMessage) (string, er
 	if err := json.Unmarshal(args, &p); err != nil {
 		return "", fmt.Errorf("invalid args: %w", err)
 	}
-	// Clean context only: message is the sole payload (no parent history fork).
 	parent := AgentPathFrom(ctx)
-	depth := 0
-	if parent != RootPath && parent != "" {
-		depth = strings.Count(strings.TrimPrefix(parent, RootPath+"/"), "/") + 1
-	}
-	path, nick, err := c.Spawn(ctx, parent, p.TaskName, p.Message, depth)
+	path, nick, err := c.Spawn(ctx, parent, p.TaskName, p.Message)
 	if err != nil {
 		return "", err
 	}
 	out, _ := json.Marshal(map[string]any{
 		"task_name": path,
 		"nickname":  nick,
+	})
+	return string(out), nil
+}
+
+// --- send_input ---
+
+type sendInput struct{}
+
+func (sendInput) Name() string     { return "send_input" }
+func (sendInput) ReadOnly() bool   { return false }
+func (sendInput) Concurrent() bool { return true }
+
+func (sendInput) Description() string {
+	// Codex V1 send_input (reasonix: same semantics).
+	return `Send a message to an existing agent. Use interrupt=true to redirect work immediately. You should reuse the agent by send_input if you believe your assigned task is highly dependent on the context of a previous task.
+
+interrupt=false or omitted: if the agent is running, queue the message for delivery at a message boundary; if the agent is idle (completed, interrupted, or errored but not closed), start a new turn on the same thread with preserved context.
+interrupt=true: stop the current turn, then handle this message on the same agent.
+
+Prefer send_input over spawn_agent when continuing or correcting work on an open agent.`
+}
+
+func (sendInput) Schema() json.RawMessage {
+	return json.RawMessage(`{
+  "type":"object",
+  "properties":{
+    "target":{"type":"string","description":"Agent id to message (from spawn_agent)."},
+    "message":{"type":"string","description":"Message text to send to the agent."},
+    "interrupt":{"type":"boolean","description":"True interrupts the current task and handles this message immediately; false or omitted queues it (or starts a turn when idle)."}
+  },
+  "required":["target","message"]
+}`)
+}
+
+func (sendInput) Execute(ctx context.Context, args json.RawMessage) (string, error) {
+	c, err := ctrl(ctx)
+	if err != nil {
+		return "", err
+	}
+	var p struct {
+		Target    string `json:"target"`
+		Message   string `json:"message"`
+		Interrupt bool   `json:"interrupt"`
+	}
+	if err := json.Unmarshal(args, &p); err != nil {
+		return "", fmt.Errorf("invalid args: %w", err)
+	}
+	path, err := c.SendInput(p.Target, p.Message, p.Interrupt)
+	if err != nil {
+		return "", err
+	}
+	out, _ := json.Marshal(map[string]any{
+		"target":        path,
+		"submission_id": path,
 	})
 	return string(out), nil
 }
@@ -101,16 +178,18 @@ func (waitAgent) ReadOnly() bool   { return true }
 func (waitAgent) Concurrent() bool { return false }
 
 func (waitAgent) Description() string {
-	return `Block until every live sub-agent under this session has finished, or until the user steers new input. No wall-clock timeout (stuck waits cost no model tokens).
+	// Codex V1 wait_agent + reasonix notes (interrupted not final; mailbox).
+	return `Wait for agents to reach a final status. Completed statuses may include the agent's final message. Once an agent reaches a final status, a notification message is also available (mailbox).
 
-Returns JSON WaitResult: message, interrupted, results (completion texts), mail_count, live_agents, next. After spawn_agent, call wait_agent once to collect results; do not re-spawn the same work. While agents run, list_agents shows live status (mailbox stays empty until completion).`
+Interrupted is not a final status — the agent remains open for send_input. After an interrupt, wait keeps blocking until a later turn finishes, the agent errors, or you close_agent.
+
+Call wait_agent sparingly: only when you need the result for the next critical-path step and you are blocked until it returns. Do not wait by reflex.
+
+The wait also ends early when new user input is steered into the active turn.`
 }
 
 func (waitAgent) Schema() json.RawMessage {
-	return json.RawMessage(`{
-  "type":"object",
-  "properties":{}
-}`)
+	return json.RawMessage(`{"type":"object","properties":{}}`)
 }
 
 func (waitAgent) Execute(ctx context.Context, args json.RawMessage) (string, error) {
@@ -118,7 +197,6 @@ func (waitAgent) Execute(ctx context.Context, args json.RawMessage) (string, err
 	if err != nil {
 		return "", err
 	}
-	// args ignored: wait blocks until batch done / steer / cancel (no timeout field).
 	_ = args
 	res := c.Wait(ctx)
 	out, err := json.Marshal(res)
@@ -128,153 +206,32 @@ func (waitAgent) Execute(ctx context.Context, args json.RawMessage) (string, err
 	return string(out), nil
 }
 
-// --- list_agents ---
+// --- close_agent ---
 
-type listAgents struct{}
+type closeAgent struct{}
 
-func (listAgents) Name() string     { return "list_agents" }
-func (listAgents) ReadOnly() bool   { return true }
-func (listAgents) Concurrent() bool { return true }
+func (closeAgent) Name() string     { return "close_agent" }
+func (closeAgent) ReadOnly() bool   { return false }
+func (closeAgent) Concurrent() bool { return true }
 
-func (listAgents) Description() string {
-	return `List live agents only (pending_init / running; includes /root). Interrupted, completed, errored, and shutdown agents are omitted — results arrive via mailbox. Optionally filter by task-path prefix. Returns agent_name (canonical path), agent_status, and last_task_message. Empty mailbox does not mean agents are gone while still listed as running.`
+func (closeAgent) Description() string {
+	// Codex V1 close_agent; Sub-agents cannot spawn further agents so no "descendants".
+	return `Close an agent when it is no longer needed, and return the target agent's previous status before shutdown was requested. Completed agents remain open and count toward the concurrency limit until closed. Don't keep agents open for too long if they are not needed anymore.
+
+After close, resume_agent can reopen the same id so it can receive send_input and wait_agent again. Prefer close_agent over leaving finished agents open until the concurrency limit is hit.`
 }
 
-func (listAgents) Schema() json.RawMessage {
+func (closeAgent) Schema() json.RawMessage {
 	return json.RawMessage(`{
   "type":"object",
   "properties":{
-    "path_prefix":{"type":"string","description":"Task-path prefix filter without a trailing slash. Omit to list all live agents."}
-  }
-}`)
-}
-
-func (listAgents) Execute(ctx context.Context, args json.RawMessage) (string, error) {
-	c, err := ctrl(ctx)
-	if err != nil {
-		return "", err
-	}
-	var p struct {
-		PathPrefix string `json:"path_prefix"`
-	}
-	_ = json.Unmarshal(args, &p)
-	agents := c.List(AgentPathFrom(ctx), p.PathPrefix)
-	if agents == nil {
-		agents = []ListedAgent{}
-	}
-	// Stable, schema-first JSON (status before long fields already in struct order).
-	out, err := json.Marshal(map[string]any{"agents": agents})
-	if err != nil {
-		return "", err
-	}
-	return string(out), nil
-}
-
-// --- send_message ---
-
-type sendMessage struct{}
-
-func (sendMessage) Name() string     { return "send_message" }
-func (sendMessage) ReadOnly() bool   { return false }
-func (sendMessage) Concurrent() bool { return true }
-
-func (sendMessage) Description() string {
-	return `Send a message to an existing agent. The message will be delivered promptly. Does not trigger a new turn.`
-}
-
-func (sendMessage) Schema() json.RawMessage {
-	return json.RawMessage(`{
-  "type":"object",
-  "properties":{
-    "target":{"type":"string","description":"Relative or canonical task name to message (from spawn_agent)."},
-    "message":{"type":"string","description":"Message text to queue on the target agent."}
-  },
-  "required":["target","message"]
-}`)
-}
-
-func (sendMessage) Execute(ctx context.Context, args json.RawMessage) (string, error) {
-	c, err := ctrl(ctx)
-	if err != nil {
-		return "", err
-	}
-	var p struct {
-		Target  string `json:"target"`
-		Message string `json:"message"`
-	}
-	if err := json.Unmarshal(args, &p); err != nil {
-		return "", fmt.Errorf("invalid args: %w", err)
-	}
-	if err := c.SendMessage(AgentPathFrom(ctx), p.Target, p.Message, false); err != nil {
-		return "", err
-	}
-	return `{"status":"queued"}`, nil
-}
-
-// --- followup_task ---
-
-type followupTask struct{}
-
-func (followupTask) Name() string     { return "followup_task" }
-func (followupTask) ReadOnly() bool   { return false }
-func (followupTask) Concurrent() bool { return true }
-
-func (followupTask) Description() string {
-	return `Send a follow-up task to an existing non-root target agent and trigger a turn if it is idle. If the target is already running, deliver the task promptly at message boundaries while sampling, or after the pending tool call completes.`
-}
-
-func (followupTask) Schema() json.RawMessage {
-	return json.RawMessage(`{
-  "type":"object",
-  "properties":{
-    "target":{"type":"string","description":"Agent id or canonical task name to send a follow-up task to (from spawn_agent)."},
-    "message":{"type":"string","description":"Message text to send to the target agent."}
-  },
-  "required":["target","message"]
-}`)
-}
-
-func (followupTask) Execute(ctx context.Context, args json.RawMessage) (string, error) {
-	c, err := ctrl(ctx)
-	if err != nil {
-		return "", err
-	}
-	var p struct {
-		Target  string `json:"target"`
-		Message string `json:"message"`
-	}
-	if err := json.Unmarshal(args, &p); err != nil {
-		return "", fmt.Errorf("invalid args: %w", err)
-	}
-	if err := c.SendMessage(AgentPathFrom(ctx), p.Target, p.Message, true); err != nil {
-		return "", err
-	}
-	return `{"status":"submitted"}`, nil
-}
-
-// --- interrupt_agent ---
-
-type interruptAgent struct{}
-
-func (interruptAgent) Name() string     { return "interrupt_agent" }
-func (interruptAgent) ReadOnly() bool   { return false }
-func (interruptAgent) Concurrent() bool { return true }
-
-func (interruptAgent) Description() string {
-	return `Interrupt an agent's current turn, if any, and return its previous status. The agent remains available for messages and follow-up tasks.`
-}
-
-func (interruptAgent) Schema() json.RawMessage {
-	return json.RawMessage(`{
-  "type":"object",
-  "properties":{
-    "target":{"type":"string","description":"Agent id or canonical task name to interrupt (from spawn_agent)."}
+    "target":{"type":"string","description":"Agent id to close (from spawn_agent)."}
   },
   "required":["target"]
 }`)
 }
 
-func (interruptAgent) Execute(ctx context.Context, args json.RawMessage) (string, error) {
+func (closeAgent) Execute(ctx context.Context, args json.RawMessage) (string, error) {
 	c, err := ctrl(ctx)
 	if err != nil {
 		return "", err
@@ -285,14 +242,60 @@ func (interruptAgent) Execute(ctx context.Context, args json.RawMessage) (string
 	if err := json.Unmarshal(args, &p); err != nil {
 		return "", fmt.Errorf("invalid args: %w", err)
 	}
-	prev, err := c.Interrupt(p.Target)
+	prev, path, err := c.CloseAgent(p.Target)
 	if err != nil {
 		return "", err
 	}
 	out, _ := json.Marshal(map[string]any{
-		"previous_status":   prev,
-		"context_preserved": true,
-		"ready_for_message": true,
+		"target":          path,
+		"previous_status": prev,
+	})
+	return string(out), nil
+}
+
+// --- resume_agent ---
+
+type resumeAgent struct{}
+
+func (resumeAgent) Name() string     { return "resume_agent" }
+func (resumeAgent) ReadOnly() bool   { return false }
+func (resumeAgent) Concurrent() bool { return true }
+
+func (resumeAgent) Description() string {
+	// Codex resume_agent.
+	return `Resume a previously closed agent by id so it can receive send_input and wait_agent calls.
+
+Use this when you closed an agent but still need its thread and context. After resume the agent is open again but idle until you send_input. If the agent is already open, this reports its current status.`
+}
+
+func (resumeAgent) Schema() json.RawMessage {
+	return json.RawMessage(`{
+  "type":"object",
+  "properties":{
+    "id":{"type":"string","description":"Agent id to resume."}
+  },
+  "required":["id"]
+}`)
+}
+
+func (resumeAgent) Execute(ctx context.Context, args json.RawMessage) (string, error) {
+	c, err := ctrl(ctx)
+	if err != nil {
+		return "", err
+	}
+	var p struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(args, &p); err != nil {
+		return "", fmt.Errorf("invalid args: %w", err)
+	}
+	st, path, err := c.ResumeAgent(p.ID)
+	if err != nil {
+		return "", err
+	}
+	out, _ := json.Marshal(map[string]any{
+		"id":     path,
+		"status": st,
 	})
 	return string(out), nil
 }

@@ -2,10 +2,7 @@ package multiagent
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
-	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -15,26 +12,25 @@ import (
 	"reasonix/internal/event"
 )
 
-// Multi-agent control defaults (no wait timeout — wait blocks until done or steer).
+// Multi-agent control defaults (Codex V1 lifecycle; one spawn layer only).
 const (
 	DefaultMaxConcurrent = 6
-	DefaultMaxDepth      = 3
-	// spawnInterruptCooldown blocks interrupt→immediate re-spawn of the same path
-	// (the expensive kill-and-retry anti-pattern). Completed/errored agents can be
-	// re-spawned by reusing the path after registry cleanup.
-	spawnInterruptCooldown = 5 * time.Minute
-	// spawnGoalCooldown blocks re-delegating the same goal (message fingerprint)
-	// even under a new task_name — kills burn-money re-spawn loops.
-	spawnGoalCooldown = 15 * time.Minute
-	// lastTaskListCap matches practical list readability; full text stays on the record
-	// for debugging via LastTaskMessageRaw if needed — list returns capped copy like
-	// a UI summary. Codex stores last_task_message for the instruction text; long
-	// prompts are rare there. Cap prevents reasonix 32KiB tool truncation from
-	// wiping agent_status entries (host constraint, not a new list schema).
 	lastTaskListCap = 240
+	// How long interrupt/close waits for the current turn to exit.
+	interruptSettle = 30 * time.Second
 )
 
-// WaitResult is the wait_agent payload: block until the whole batch is done (or steer).
+// SessionDropper is implemented by MultiAgentRunner to drop persisted sub-agent sessions.
+type SessionDropper interface {
+	DropSession(path string)
+}
+
+// Steerer soft-queues a message into a running agent turn (send_input without interrupt).
+type Steerer interface {
+	Steer(path, message string) bool
+}
+
+// WaitResult is the wait_agent payload.
 type WaitResult struct {
 	Message     string         `json:"message"`
 	Interrupted bool           `json:"interrupted,omitempty"`
@@ -46,19 +42,19 @@ type WaitResult struct {
 
 // LiveSnapshot is a compact live-agent row for wait/list.
 type LiveSnapshot struct {
-	AgentName   string `json:"agent_name"`
-	AgentStatus string `json:"agent_status"`
-	ElapsedMs   int64  `json:"elapsed_ms"`
-	CurrentTool string `json:"current_tool,omitempty"`
+	AgentName      string `json:"agent_name"`
+	AgentStatus    string `json:"agent_status"`
+	ElapsedMs      int64  `json:"elapsed_ms"`
+	CurrentTool    string `json:"current_tool,omitempty"`
 	LastActivityMs int64  `json:"last_activity_ms,omitempty"`
 }
 
-// Runner runs a spawned agent to completion (Codex child thread).
+// Runner runs a spawned agent turn (Codex child thread). Same path reuses session.
 type Runner interface {
-	Run(ctx context.Context, path, message string, depth int) (answer string, err error)
+	Run(ctx context.Context, path, message string) (answer string, err error)
 }
 
-// Metadata is one live agent record (Codex AgentMetadata + live status).
+// Metadata is one open agent record (Codex AgentMetadata + live status).
 type Metadata struct {
 	Path            string
 	Nickname        string
@@ -67,13 +63,13 @@ type Metadata struct {
 	Status          Status
 	LastAnswer      string
 	LastError       string
-	Depth           int
 	StartedAt       time.Time
-	FinishedAt      time.Time // set when entering a terminal status
+	FinishedAt      time.Time
 	CurrentTool     string
 	ToolCallCount   int
 	LastActivityAt  time.Time
 	cancel          context.CancelFunc
+	turnDone        chan struct{} // closed when the current turn exits
 	mu              sync.Mutex
 }
 
@@ -86,7 +82,7 @@ func (m *Metadata) StartTool(name string) {
 	m.mu.Unlock()
 }
 
-// EndTool records that the current tool call has finished (diagnostic metadata).
+// EndTool records that the current tool call has finished.
 func (m *Metadata) EndTool() {
 	m.mu.Lock()
 	m.CurrentTool = ""
@@ -94,65 +90,35 @@ func (m *Metadata) EndTool() {
 	m.mu.Unlock()
 }
 
-// Control is session-scoped AgentControl (one per root thread tree).
-// Shared by root and all ThreadSpawn children via context.
+// Control is session-scoped multi-agent controller (one per root session).
 type Control struct {
-	mu            sync.Mutex
-	agents        map[string]*Metadata // path -> metadata (live tree)
-	byLeaf        map[string]string
-	// recentGoals: goal fingerprint → last spawn time (live or completed).
-	// Prevents burn-money re-spawn of the same work under a new task_name.
-	recentGoals   map[string]time.Time
-	runner        Runner
+	mu     sync.Mutex
+	agents map[string]*Metadata // open agents (count toward concurrency)
+	closed map[string]*Metadata // closed but resumable (Codex resume_agent)
+	byLeaf map[string]string
+	runner Runner
 	mailbox       *Mailbox
 	maxConcurrent int
-	maxDepth      int
 	rootStatus    Status
 	OnTriggerTurn func()
 	OnCompletion  func()
-	runningCount  atomic.Int32
-	Sink          event.Sink // agent_status: event sink for sub-agent lifecycle events
+	// openCount: agents still open (Codex total_count until close_agent).
+	openCount atomic.Int32
+	// runningCount: turns currently in flight.
+	runningCount atomic.Int32
+	Sink         event.Sink
 }
 
-// NewControl builds a root-session multi-agent controller (at most one per session).
+// NewControl builds a root-session multi-agent controller.
 func NewControl() *Control {
 	return &Control{
 		agents:        make(map[string]*Metadata),
+		closed:        make(map[string]*Metadata),
 		byLeaf:        make(map[string]string),
-		recentGoals:   make(map[string]time.Time),
 		mailbox:       NewMailbox(),
 		maxConcurrent: DefaultMaxConcurrent,
-		maxDepth:      DefaultMaxDepth,
 		rootStatus:    StatusRunning,
 	}
-}
-
-// goalURLRe extracts fetch targets so two prompts with the same curl URL
-// fingerprint as one goal even when task_name/wording differ.
-var goalURLRe = regexp.MustCompile(`(?i)(?:https?://[^\s'"\\]+|wttr\.in/[^\s'"\\]+)`)
-
-// goalFingerprint derives a stable key for "same delegated work".
-// Prefer URLs / host paths in the message; else hash normalized text.
-func goalFingerprint(message string) string {
-	message = strings.TrimSpace(message)
-	if message == "" {
-		return ""
-	}
-	urls := goalURLRe.FindAllString(message, -1)
-	var core string
-	if len(urls) > 0 {
-		// strip query noise that doesn't change intent? keep full URL — format=3 vs j1 differ
-		sort.Strings(urls)
-		core = strings.Join(urls, "|")
-	} else {
-		core = strings.ToLower(message)
-		core = strings.Join(strings.Fields(core), " ")
-		if len(core) > 400 {
-			core = core[:400]
-		}
-	}
-	sum := sha256.Sum256([]byte(core))
-	return hex.EncodeToString(sum[:16])
 }
 
 func (c *Control) SetRunner(r Runner) { c.runner = r }
@@ -182,8 +148,8 @@ func (c *Control) SetRootStatus(s Status) {
 	c.mu.Unlock()
 }
 
-// Spawn starts a background agent.
-func (c *Control) Spawn(ctx context.Context, parentPath, taskName, message string, parentDepth int) (taskPath, nickname string, err error) {
+// Spawn starts a background agent (new thread + first turn).
+func (c *Control) Spawn(ctx context.Context, parentPath, taskName, message string) (taskPath, nickname string, err error) {
 	if c == nil || c.runner == nil {
 		return "", "", fmt.Errorf("multi-agent runner not configured")
 	}
@@ -195,49 +161,17 @@ func (c *Control) Spawn(ctx context.Context, parentPath, taskName, message strin
 	if parentPath == "" {
 		parentPath = RootPath
 	}
-	childDepth := parentDepth + 1
-	if childDepth > c.maxDepth {
-		return "", "", fmt.Errorf("Agent depth limit reached. Solve the task yourself.")
-	}
-	if int(c.runningCount.Load()) >= c.maxConcurrent {
-		return "", "", fmt.Errorf("too many concurrent agents (max %d)", c.maxConcurrent)
+	if int(c.openCount.Load()) >= c.maxConcurrent {
+		return "", "", fmt.Errorf("too many open agents (max %d); close_agent finished agents to free slots", c.maxConcurrent)
 	}
 
-	fp := goalFingerprint(message)
 	c.mu.Lock()
-	// Same goal under cooldown (including different task_name).
-	if fp != "" {
-		if t, ok := c.recentGoals[fp]; ok && time.Since(t) < spawnGoalCooldown {
-			// Still allow if no live agent and user substantially changed URLs
-			// (fingerprint differs). Here same fp within window → refuse.
-			c.mu.Unlock()
-			return "", "", fmt.Errorf("same goal was already delegated recently; call wait_agent for results, use followup_task to redirect, or change the work substantially (not just the task name)")
-		}
-		// Live agent already running this goal text.
-		for _, rec := range c.agents {
-			rec.mu.Lock()
-			live := IsListLive(rec.Status)
-			msg := rec.LastTaskMessage
-			rec.mu.Unlock()
-			if live && goalFingerprint(msg) == fp {
-				c.mu.Unlock()
-				return "", "", fmt.Errorf("same goal is already running as %q; call wait_agent instead of spawn_agent again", rec.Path)
-			}
-		}
-	}
 	path := JoinPath(parentPath, taskName)
 	if err := c.prepareSpawnPathLocked(path); err != nil {
 		c.mu.Unlock()
 		return "", "", err
 	}
-	if fp != "" {
-		if c.recentGoals == nil {
-			c.recentGoals = make(map[string]time.Time)
-		}
-		c.recentGoals[fp] = time.Now()
-	}
 	nick := LeafName(path)
-	// nickname uniqueness
 	base := nick
 	for n := 2; c.leafTaken(nick); n++ {
 		nick = fmt.Sprintf("%s_%d", base, n)
@@ -248,69 +182,126 @@ func (c *Control) Spawn(ctx context.Context, parentPath, taskName, message strin
 		Role:            "task",
 		LastTaskMessage: message,
 		Status:          StatusPendingInit,
-		Depth:           childDepth,
 		StartedAt:       time.Now(),
 	}
 	c.agents[path] = rec
 	c.byLeaf[nick] = path
 	c.mu.Unlock()
+	c.openCount.Add(1)
 
-	// Preserve spawn-call values without inheriting cancel; child has its own cancel.
-	runBase := context.WithoutCancel(ctx)
-	runCtx, cancel := context.WithCancel(runBase)
-	rec.mu.Lock()
-	rec.cancel = cancel
-	rec.Status = StatusRunning
-	rec.mu.Unlock()
-	c.runningCount.Add(1)
-
-	go c.runAgent(runCtx, rec, path, message, childDepth)
-
+	if err := c.startTurn(ctx, rec, path, message); err != nil {
+		// Roll back registry so a failed start does not leak a slot.
+		c.mu.Lock()
+		delete(c.agents, path)
+		if c.byLeaf[nick] == path {
+			delete(c.byLeaf, nick)
+		}
+		c.mu.Unlock()
+		if c.openCount.Load() > 0 {
+			c.openCount.Add(-1)
+		}
+		return "", "", err
+	}
 	return path, nick, nil
 }
 
-// prepareSpawnPathLocked enforces no live duplicate and no interrupt→re-spawn churn.
-// Caller holds c.mu. On success, path is free for a new Metadata entry.
+// prepareSpawnPathLocked: path free, or discard a previously closed agent at path.
 func (c *Control) prepareSpawnPathLocked(path string) error {
-	rec, exists := c.agents[path]
-	if !exists {
-		return nil
+	if rec, exists := c.agents[path]; exists {
+		rec.mu.Lock()
+		st := rec.Status
+		oldNick := rec.Nickname
+		rec.mu.Unlock()
+		if IsOpen(st) {
+			if st == StatusRunning {
+				return fmt.Errorf("agent %q is still running; call wait_agent or send_input(interrupt=true)", path)
+			}
+			return fmt.Errorf("agent %q is still open (status=%s); use send_input to continue or close_agent first", path, st)
+		}
+		delete(c.agents, path)
+		if c.byLeaf[oldNick] == path {
+			delete(c.byLeaf, oldNick)
+		}
 	}
-	rec.mu.Lock()
-	st := rec.Status
-	finished := rec.FinishedAt
-	oldNick := rec.Nickname
-	rec.mu.Unlock()
-	if IsListLive(st) {
-		return fmt.Errorf("agent %q is still running; call wait_agent (interrupt only if the task is wrong, not because it is slow)", path)
-	}
-	if st == StatusInterrupted && !finished.IsZero() && time.Since(finished) < spawnInterruptCooldown {
-		return fmt.Errorf("agent %q was just interrupted; use followup_task instead of spawn_agent for the same work", path)
-	}
-	// If old agent is interrupted, force followup instead of allowing replacement
-	if st == StatusInterrupted {
-		return fmt.Errorf("agent %q was interrupted; use followup_task to resume instead of spawning a replacement", path)
-	}
-	// Completed / errored / old interrupt: drop registry so the canonical path can be reused.
-	delete(c.agents, path)
-	if c.byLeaf[oldNick] == path {
-		delete(c.byLeaf, oldNick)
+	// Spawning over a closed path discards resume state (fresh agent).
+	if old, ok := c.closed[path]; ok {
+		delete(c.closed, old.Path)
+		if c.byLeaf[old.Nickname] == path {
+			delete(c.byLeaf, old.Nickname)
+		}
+		if d, ok := c.runner.(SessionDropper); ok {
+			d.DropSession(path)
+		}
 	}
 	return nil
 }
 
-// runAgent executes one agent turn and publishes terminal status + parent mail.
-func (c *Control) runAgent(runCtx context.Context, rec *Metadata, path, message string, depth int) {
-	defer c.runningCount.Add(-1)
-	answer, runErr := c.runner.Run(runCtx, path, message, depth)
+// startTurn begins a single turn. Fails if a turn is already active on rec.
+func (c *Control) startTurn(parentCtx context.Context, rec *Metadata, path, message string) error {
+	runBase := parentCtx
+	if runBase == nil {
+		runBase = context.Background()
+	}
+	runBase = context.WithoutCancel(runBase)
+	runCtx, cancel := context.WithCancel(runBase)
+
+	rec.mu.Lock()
+	// Only Running is a true in-flight turn. pending_init is the spawn pre-start
+	// state; completed/interrupted/errored are idle-open and may start a new turn.
+	if rec.Status == StatusRunning {
+		rec.mu.Unlock()
+		cancel()
+		return fmt.Errorf("agent %q already has an active turn", path)
+	}
+	if rec.Status == StatusShutdown {
+		rec.mu.Unlock()
+		cancel()
+		return fmt.Errorf("agent %q is closed", path)
+	}
+	done := make(chan struct{})
+	rec.turnDone = done
+	rec.cancel = cancel
+	rec.Status = StatusRunning
+	rec.LastTaskMessage = message
+	rec.LastError = ""
+	rec.FinishedAt = time.Time{}
+	rec.mu.Unlock()
+
+	c.runningCount.Add(1)
+	go c.runAgent(runCtx, rec, path, message, done)
+	return nil
+}
+
+// runAgent executes one agent turn; session persistence is the Runner's job.
+func (c *Control) runAgent(runCtx context.Context, rec *Metadata, path, message string, done chan struct{}) {
+	defer func() {
+		c.runningCount.Add(-1)
+		if done != nil {
+			close(done)
+		}
+		rec.mu.Lock()
+		if rec.turnDone == done {
+			rec.turnDone = nil
+		}
+		rec.mu.Unlock()
+	}()
+
+	answer, runErr := c.runner.Run(runCtx, path, message)
 
 	var status Status
 	var lastAns, lastErr string
 	rec.mu.Lock()
+	// If CloseAgent already shut us down, don't overwrite status (session drop is owner's job).
+	if rec.Status == StatusShutdown {
+		rec.cancel = nil
+		rec.mu.Unlock()
+		return
+	}
 	switch {
 	case runCtx.Err() != nil:
 		status = StatusInterrupted
 		lastErr = "interrupted"
+		lastAns = strings.TrimSpace(answer)
 	case runErr != nil:
 		status = StatusErrored
 		lastErr = runErr.Error()
@@ -324,6 +315,7 @@ func (c *Control) runAgent(runCtx context.Context, rec *Metadata, path, message 
 	rec.LastAnswer = lastAns
 	rec.LastError = lastErr
 	rec.FinishedAt = time.Now()
+	rec.cancel = nil
 	rec.mu.Unlock()
 
 	if c.Sink != nil {
@@ -338,8 +330,6 @@ func (c *Control) runAgent(runCtx context.Context, rec *Metadata, path, message 
 		})
 	}
 
-	// Status is terminal first, then mail — WaitFor treats "saw live, now zero, no mail yet"
-	// as enqueue race and keeps blocking on the mailbox signal (no wall-clock timeout).
 	parent := ParentPath(path)
 	if parent == "" {
 		parent = RootPath
@@ -353,30 +343,6 @@ func (c *Control) runAgent(runCtx context.Context, rec *Metadata, path, message 
 	if c.OnCompletion != nil {
 		c.OnCompletion()
 	}
-
-	// Auto-expire terminal agents: if nobody followups within 5 minutes,
-	// delete the registry entry to release memory.
-	recNick := rec.Nickname // capture for closure (rec may be reused)
-	go func() {
-		time.Sleep(5 * time.Minute)
-		c.mu.Lock()
-		defer c.mu.Unlock()
-		// Check if still terminal (a followup_task may have restarted it to Running).
-		r, ok := c.agents[path]
-		if !ok {
-			return // already cleaned up
-		}
-		r.mu.Lock()
-		st := r.Status
-		r.mu.Unlock()
-		switch st {
-		case StatusCompleted, StatusErrored, StatusInterrupted, StatusShutdown:
-			delete(c.agents, path)
-			if recNick != "" && c.byLeaf[recNick] == path {
-				delete(c.byLeaf, recNick)
-			}
-		}
-	}()
 }
 
 func (c *Control) leafTaken(nick string) bool {
@@ -395,7 +361,7 @@ func formatCompletionMessage(path string, status Status, answer, errMsg string) 
 	case StatusErrored:
 		return fmt.Sprintf("[agent_complete path=%s name=%s status=errored]\n%v\n%s", path, leaf, errMsg, answer)
 	case StatusInterrupted:
-		return fmt.Sprintf("[agent_complete path=%s name=%s status=interrupted]", path, leaf)
+		return fmt.Sprintf("[agent_complete path=%s name=%s status=interrupted]\nAgent remains open — use send_input to continue or close_agent to free the slot.", path, leaf)
 	default:
 		return fmt.Sprintf("[agent_complete path=%s name=%s status=%s]", path, leaf, status)
 	}
@@ -447,8 +413,7 @@ func (c *Control) GetStatus(path string) (Status, string, string) {
 	return rec.Status, rec.LastAnswer, rec.LastError
 }
 
-// Meta returns the Metadata pointer for path, or nil if not found.
-// Callers that mutate fields must hold rec.mu.
+// Meta returns the Metadata pointer for path, or nil.
 func (c *Control) Meta(path string) *Metadata {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -459,7 +424,7 @@ func (c *Control) Meta(path string) *Metadata {
 type ListedAgent struct {
 	AgentName       string    `json:"agent_name"`
 	AgentStatus     any       `json:"agent_status"`
-	LastTaskMessage any       `json:"last_task_message"` // string or null
+	LastTaskMessage any       `json:"last_task_message"`
 	ElapsedMs       int64     `json:"elapsed_ms,omitempty"`
 	CurrentTool     string    `json:"current_tool,omitempty"`
 	ToolCallCount   int       `json:"tool_call_count,omitempty"`
@@ -467,7 +432,7 @@ type ListedAgent struct {
 	StartedAt       time.Time `json:"-"`
 }
 
-// List returns live agents like Codex list_agents (root + tree, sorted by path).
+// List returns open agents (root + tree).
 func (c *Control) List(currentPath, pathPrefix string) []ListedAgent {
 	if c == nil {
 		return nil
@@ -494,7 +459,6 @@ func (c *Control) List(currentPath, pathPrefix string) []ListedAgent {
 	sort.Slice(rows, func(i, j int) bool { return rows[i].path < rows[j].path })
 
 	out := make([]ListedAgent, 0, len(rows)+1)
-	// Root when it matches prefix (session itself is always "live").
 	if resolved == "" || resolved == RootPath {
 		out = append(out, ListedAgent{
 			AgentName:       RootPath,
@@ -507,12 +471,12 @@ func (c *Control) List(currentPath, pathPrefix string) []ListedAgent {
 		startedAt := r.rec.StartedAt
 		st := r.rec.Status
 		last := r.rec.LastTaskMessage
+		lastAns := r.rec.LastAnswer
+		lastErr := r.rec.LastError
 		currentTool := r.rec.CurrentTool
 		toolCallCount := r.rec.ToolCallCount
 		lastActivityAt := r.rec.LastActivityAt
 		r.rec.mu.Unlock()
-		// List is live-only: pending_init + running. Interrupted/terminal omit.
-		// Registry still keeps records for followup/interrupt; results via mailbox.
 		if !IsListLive(st) {
 			continue
 		}
@@ -542,7 +506,7 @@ func (c *Control) List(currentPath, pathPrefix string) []ListedAgent {
 		}
 		out = append(out, ListedAgent{
 			AgentName:       r.path,
-			AgentStatus:     StatusJSON(st, "", ""),
+			AgentStatus:     StatusJSON(st, lastAns, lastErr),
 			LastTaskMessage: lastMsg,
 			ElapsedMs:       elapsed,
 			CurrentTool:     currentTool,
@@ -565,7 +529,7 @@ func capRunes(s string, max int) string {
 	return string(r[:max]) + "…"
 }
 
-// Interrupt cancels a running agent (Codex interrupt_agent).
+// Interrupt soft-cancels the current turn. Agent stays open (Codex).
 func (c *Control) Interrupt(target string) (previous any, err error) {
 	path, err := c.ResolveTarget(target)
 	if err != nil {
@@ -585,78 +549,238 @@ func (c *Control) Interrupt(target string) (previous any, err error) {
 	if rec.cancel != nil {
 		rec.cancel()
 	}
-	if !IsFinal(rec.Status) {
-		rec.Status = StatusInterrupted
-		rec.FinishedAt = time.Now()
-		rec.LastError = "interrupted"
-	}
 	rec.mu.Unlock()
 	return prev, nil
 }
 
-// SendMessage queues instruction (Codex send_message / followup_task).
-func (c *Control) SendMessage(fromPath, target, message string, triggerTurn bool) error {
+// waitTurnExit waits until the current turn's done channel is closed (or timeout).
+func (c *Control) waitTurnExit(rec *Metadata, timeout time.Duration) bool {
+	if rec == nil {
+		return true
+	}
+	rec.mu.Lock()
+	done := rec.turnDone
+	rec.mu.Unlock()
+	if done == nil {
+		return true
+	}
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	select {
+	case <-done:
+		return true
+	case <-timer.C:
+		return false
+	}
+}
+
+// SendInput delivers a message on an open agent thread (Codex send_input).
+// interrupt=true cancels the current turn first, then starts a new turn with message.
+// interrupt=false while running soft-queues into the live turn when possible.
+func (c *Control) SendInput(target, message string, interrupt bool) (path string, err error) {
 	message = strings.TrimSpace(message)
 	if message == "" {
-		return fmt.Errorf("Empty message can't be sent to an agent")
+		return "", fmt.Errorf("message is required")
 	}
-	path, err := c.ResolveTarget(target)
+	path, err = c.ResolveTarget(target)
 	if err != nil {
-		return err
+		return "", err
 	}
-	if fromPath == "" {
-		fromPath = RootPath
+	if path == RootPath || path == "" {
+		return "", fmt.Errorf("root is not a spawned agent")
 	}
+	if c.runner == nil {
+		return "", fmt.Errorf("multi-agent runner not configured")
+	}
+
 	c.mu.Lock()
 	rec := c.agents[path]
 	c.mu.Unlock()
 	if rec == nil {
-		return fmt.Errorf("agent %q not found", target)
+		return "", fmt.Errorf("agent %q not found", target)
 	}
+
 	rec.mu.Lock()
-	rec.LastTaskMessage = message
 	st := rec.Status
-	depth := rec.Depth
 	rec.mu.Unlock()
-
-	c.mailbox.Enqueue(Mail{
-		From:        fromPath,
-		To:          path,
-		Message:     message,
-		TriggerTurn: triggerTurn,
-	})
-	if triggerTurn && c.OnTriggerTurn != nil {
-		c.OnTriggerTurn()
+	if st == StatusShutdown {
+		return "", fmt.Errorf("agent %q is closed; spawn_agent a new one", path)
 	}
 
-	// followup on idle/terminal: start a new Run (Codex followup triggers turn).
-	if triggerTurn && (st == StatusCompleted || st == StatusErrored || st == StatusInterrupted || st == StatusShutdown) {
-		if c.runner == nil {
-			return nil
+	if interrupt && IsTurnActive(st) {
+		_, _ = c.Interrupt(path)
+		if !c.waitTurnExit(rec, interruptSettle) {
+			return "", fmt.Errorf("agent %q did not stop in time after interrupt", path)
 		}
-		if depth < 1 {
-			depth = 1
-		}
-		runCtx, cancel := context.WithCancel(context.Background())
 		rec.mu.Lock()
-		rec.cancel = cancel
-		rec.Status = StatusRunning
+		st = rec.Status
 		rec.mu.Unlock()
-		c.runningCount.Add(1)
-		go c.runAgent(runCtx, rec, path, message, depth)
 	}
-	return nil
+
+	if IsTurnActive(st) && !interrupt {
+		if s, ok := c.runner.(Steerer); ok && s.Steer(path, message) {
+			rec.mu.Lock()
+			rec.LastTaskMessage = message
+			rec.mu.Unlock()
+			return path, nil
+		}
+		return "", fmt.Errorf("agent %q is still running and soft-queue failed; set interrupt=true or wait_agent then send_input", path)
+	}
+
+	if err := c.startTurn(context.Background(), rec, path, message); err != nil {
+		return "", err
+	}
+	return path, nil
 }
 
-// Wait blocks at RootPath until the batch is done or the user steers.
+// CloseAgent shuts down an agent and frees its concurrency slot (Codex close_agent).
+// Session is kept for resume_agent; only a later re-spawn at the same path drops it.
+func (c *Control) CloseAgent(target string) (previous any, path string, err error) {
+	path, err = c.ResolveTarget(target)
+	if err != nil {
+		return nil, "", err
+	}
+	if path == RootPath || path == "" {
+		return nil, "", fmt.Errorf("root is not a spawned agent")
+	}
+	c.mu.Lock()
+	rec := c.agents[path]
+	if rec == nil {
+		c.mu.Unlock()
+		return StatusJSON(StatusNotFound, "", ""), path, nil
+	}
+	rec.mu.Lock()
+	prev := StatusJSON(rec.Status, rec.LastAnswer, rec.LastError)
+	if rec.cancel != nil {
+		rec.cancel()
+	}
+	rec.Status = StatusShutdown
+	rec.FinishedAt = time.Now()
+	rec.LastError = "shutdown"
+	nick := rec.Nickname
+	rec.mu.Unlock()
+	c.mu.Unlock()
+
+	_ = c.waitTurnExit(rec, interruptSettle)
+
+	c.mu.Lock()
+	if cur, ok := c.agents[path]; ok && cur == rec {
+		delete(c.agents, path)
+		// Keep byLeaf so resume/resolve by nickname still works for closed agents.
+		if c.closed == nil {
+			c.closed = make(map[string]*Metadata)
+		}
+		c.closed[path] = rec
+		_ = nick
+	}
+	c.mu.Unlock()
+
+	if c.openCount.Load() > 0 {
+		c.openCount.Add(-1)
+	}
+	// Do not DropSession — resume_agent needs the same thread context.
+	if c.mailbox != nil {
+		c.mailbox.NotifySteer()
+	}
+	return prev, path, nil
+}
+
+// ResumeAgent reopens a closed agent so it can receive send_input / wait_agent (Codex resume_agent).
+func (c *Control) ResumeAgent(target string) (status any, path string, err error) {
+	target = strings.TrimSpace(target)
+	if target == "" {
+		return nil, "", fmt.Errorf("id is required")
+	}
+	if int(c.openCount.Load()) >= c.maxConcurrent {
+		return nil, "", fmt.Errorf("too many open agents (max %d); close_agent others first", c.maxConcurrent)
+	}
+
+	c.mu.Lock()
+	path, rec := c.lookupAnyLocked(target)
+	if rec == nil {
+		c.mu.Unlock()
+		return StatusJSON(StatusNotFound, "", ""), "", fmt.Errorf("agent %q not found", target)
+	}
+	// Already open: report status (Codex returns current status).
+	if _, open := c.agents[path]; open {
+		rec.mu.Lock()
+		st := StatusJSON(rec.Status, rec.LastAnswer, rec.LastError)
+		rec.mu.Unlock()
+		c.mu.Unlock()
+		return st, path, nil
+	}
+	// Must be in closed map.
+	if _, ok := c.closed[path]; !ok {
+		c.mu.Unlock()
+		return StatusJSON(StatusNotFound, "", ""), path, fmt.Errorf("agent %q is not resumable", path)
+	}
+	delete(c.closed, path)
+	rec.mu.Lock()
+	// Idle-open after resume: not running until send_input.
+	rec.Status = StatusCompleted
+	if rec.LastAnswer == "" && rec.LastError == "shutdown" {
+		rec.LastError = ""
+	}
+	rec.cancel = nil
+	rec.turnDone = nil
+	st := StatusJSON(rec.Status, rec.LastAnswer, rec.LastError)
+	rec.mu.Unlock()
+	c.agents[path] = rec
+	c.byLeaf[rec.Nickname] = path
+	c.mu.Unlock()
+
+	c.openCount.Add(1)
+	return st, path, nil
+}
+
+// lookupAnyLocked finds open or closed agent by path/leaf. Caller holds c.mu.
+func (c *Control) lookupAnyLocked(target string) (path string, rec *Metadata) {
+	if rec, ok := c.agents[target]; ok {
+		return rec.Path, rec
+	}
+	if rec, ok := c.closed[target]; ok {
+		return rec.Path, rec
+	}
+	if strings.HasPrefix(target, "/") {
+		t := strings.TrimSuffix(target, "/")
+		if rec, ok := c.agents[t]; ok {
+			return rec.Path, rec
+		}
+		if rec, ok := c.closed[t]; ok {
+			return rec.Path, rec
+		}
+		return "", nil
+	}
+	seg := NormalizePathSegment(target)
+	if full, ok := c.byLeaf[seg]; ok {
+		if rec, ok := c.agents[full]; ok {
+			return rec.Path, rec
+		}
+		if rec, ok := c.closed[full]; ok {
+			return rec.Path, rec
+		}
+	}
+	for p, r := range c.agents {
+		if LeafName(p) == seg {
+			return r.Path, r
+		}
+	}
+	for p, r := range c.closed {
+		if LeafName(p) == seg {
+			return r.Path, r
+		}
+	}
+	return "", nil
+}
+
+// Wait blocks at RootPath until the batch of active turns is done or the user steers.
 func (c *Control) Wait(ctx context.Context) WaitResult {
 	return c.WaitFor(ctx, RootPath)
 }
 
-// WaitFor blocks with no deadline until every live agent under forPath has
-// finished (and all mail to forPath has been taken), or until user steer / ctx cancel.
-// Parallel children: one wait collects every completion for forPath in Results.
-// There is no timeout — a stuck wait costs no model tokens; steer wakes it.
+// WaitFor blocks until every non-final descendant under forPath has reached a
+// final status (completed/errored/shutdown) — Codex is_final: interrupted is NOT
+// final, so wait keeps blocking after interrupt until send_input finishes or close.
 func (c *Control) WaitFor(ctx context.Context, forPath string) WaitResult {
 	if forPath == "" {
 		forPath = RootPath
@@ -677,7 +801,7 @@ func (c *Control) WaitFor(ctx context.Context, forPath string) WaitResult {
 
 	finish := func(msg string, interrupted bool) WaitResult {
 		take()
-		live := c.liveUnderSnapshot(forPath)
+		live := c.pendingUnderSnapshot(forPath)
 		res := WaitResult{
 			Message:     msg,
 			Interrupted: interrupted,
@@ -686,11 +810,11 @@ func (c *Control) WaitFor(ctx context.Context, forPath string) WaitResult {
 			LiveAgents:  live,
 		}
 		if interrupted {
-			res.Next = "Interrupted by user or cancel. Process results so far; remaining live agents keep running unless you interrupt them."
+			res.Next = "Interrupted by user or cancel. Process results so far; remaining agents stay open until close_agent."
 		} else if len(taken) == 0 {
-			res.Next = "Nothing to collect. Spawn work or continue locally."
+			res.Next = "Nothing to collect. Spawn work, send_input, or continue locally. Close finished agents with close_agent."
 		} else {
-			res.Next = "All batch results are in results. Do not list_agents or re-spawn for the same work."
+			res.Next = "Batch results are in results. Close finished agents with close_agent to free slots. Do not re-spawn the same work."
 		}
 		return res
 	}
@@ -698,22 +822,20 @@ func (c *Control) WaitFor(ctx context.Context, forPath string) WaitResult {
 	ch, _, unsub := c.mailbox.SubscribeFor(forPath)
 	defer unsub()
 
-	sawLive := false
+	sawPending := false
 	for {
 		take()
-		live := c.liveUnderCount(forPath)
-		if live > 0 {
-			sawLive = true
+		pendingAgents := c.pendingUnderCount(forPath)
+		if pendingAgents > 0 {
+			sawPending = true
 		}
-		pending := c.mailbox.HasPendingFor(forPath)
+		mailPending := c.mailbox.HasPendingFor(forPath)
 
-		// Batch complete: no live descendants and no mail left to take.
-		if live == 0 && !pending {
-			if len(taken) > 0 || !sawLive {
+		// Batch done: no non-final agents and no mail left.
+		if pendingAgents == 0 && !mailPending {
+			if len(taken) > 0 || !sawPending {
 				return finish("Wait completed.", false)
 			}
-			// Saw live agents go to zero but mail not visible yet (status→enqueue race):
-			// block on the next mailbox signal only — still no wall-clock timeout.
 			select {
 			case <-ctx.Done():
 				return finish("Wait interrupted by cancel.", true)
@@ -725,12 +847,10 @@ func (c *Control) WaitFor(ctx context.Context, forPath string) WaitResult {
 			continue
 		}
 
-		if live == 0 && pending {
-			// More mail to drain on next iteration.
+		if pendingAgents == 0 && mailPending {
 			continue
 		}
 
-		// Still have live agents — wait for mail, steer, or cancel.
 		select {
 		case <-ctx.Done():
 			return finish("Wait interrupted by cancel.", true)
@@ -742,13 +862,23 @@ func (c *Control) WaitFor(ctx context.Context, forPath string) WaitResult {
 	}
 }
 
-// liveUnderCount counts live agents in the subtree of forPath (not including forPath itself).
-func (c *Control) liveUnderCount(forPath string) int {
-	return len(c.liveUnderSnapshot(forPath))
+func (c *Control) pendingUnderCount(forPath string) int {
+	return len(c.pendingUnderSnapshot(forPath))
 }
 
-// liveUnderSnapshot returns live agents under forPath (descendants only).
-func (c *Control) liveUnderSnapshot(forPath string) []LiveSnapshot {
+// activeUnderCount is turn-active only (running/pending_init) — used by tests/spawn guards.
+func (c *Control) activeUnderCount(forPath string) int {
+	n := 0
+	for _, snap := range c.pendingUnderSnapshot(forPath) {
+		if snap.AgentStatus == string(StatusRunning) || snap.AgentStatus == string(StatusPendingInit) {
+			n++
+		}
+	}
+	return n
+}
+
+// pendingUnderSnapshot returns non-final agents under forPath (Codex wait set).
+func (c *Control) pendingUnderSnapshot(forPath string) []LiveSnapshot {
 	if c == nil {
 		return nil
 	}
@@ -767,7 +897,6 @@ func (c *Control) liveUnderSnapshot(forPath string) []LiveSnapshot {
 	var rows []row
 	for path, rec := range c.agents {
 		if path == forPath || strings.HasPrefix(path, prefix) {
-			// Waiter's own path is not a child; only descendants.
 			if path == forPath {
 				continue
 			}
@@ -784,7 +913,7 @@ func (c *Control) liveUnderSnapshot(forPath string) []LiveSnapshot {
 		currentTool := r.rec.CurrentTool
 		lastActivityAt := r.rec.LastActivityAt
 		r.rec.mu.Unlock()
-		if !IsListLive(st) {
+		if IsFinal(st) {
 			continue
 		}
 		var elapsed int64
@@ -816,9 +945,12 @@ func (c *Control) liveUnderSnapshot(forPath string) []LiveSnapshot {
 	return out
 }
 
-// liveChildrenSnapshot returns all live non-root agents (for list-style diagnostics).
+func (c *Control) liveUnderSnapshot(forPath string) []LiveSnapshot {
+	return c.pendingUnderSnapshot(forPath)
+}
+
 func (c *Control) liveChildrenSnapshot() []LiveSnapshot {
-	return c.liveUnderSnapshot(RootPath)
+	return c.pendingUnderSnapshot(RootPath)
 }
 
 // FormatMailsForSession renders drained mails for the parent model.
@@ -838,7 +970,7 @@ func FormatMailsForSession(mails []Mail) string {
 	return b.String()
 }
 
-// LiveCount returns non-root agents still tracked.
+// LiveCount returns open non-root agents.
 func (c *Control) LiveCount() int {
 	if c == nil {
 		return 0
@@ -846,4 +978,12 @@ func (c *Control) LiveCount() int {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return len(c.agents)
+}
+
+// OpenCount returns the concurrency occupancy (open agents).
+func (c *Control) OpenCount() int {
+	if c == nil {
+		return 0
+	}
+	return int(c.openCount.Load())
 }

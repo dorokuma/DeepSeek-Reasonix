@@ -181,7 +181,16 @@ func mailMatchesRecipient(to, recipient string) bool {
 		return recipient == RootPath
 	}
 	to = strings.TrimSuffix(to, "/")
-	return to == recipient
+	// Exact match.
+	if to == recipient {
+		return true
+	}
+	// Descendant match: nested agents' mail is visible to ancestor recipients.
+	// e.g. mailTo="/root/a/b" matches recipient="/root".
+	if recipient != "" && strings.HasPrefix(to, recipient+"/") {
+		return true
+	}
+	return false
 }
 
 func filterPending(pending []Mail, recipient string) []Mail {

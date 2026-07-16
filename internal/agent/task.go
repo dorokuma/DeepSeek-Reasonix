@@ -20,20 +20,19 @@ const DefaultTaskSystemPrompt = `You are a sub-agent invoked by a parent coding 
 Use the provided tools to investigate or act. Return a single final answer that is concise
 and self-contained — the parent will see only that answer, not your tool calls or reasoning.
 If you need to ask for clarification, fail with a precise question instead of guessing.
-You do NOT have spawn_agent, wait_agent, or any multi-agent tools. You cannot create sub-agents.
-Complete the task yourself using the tools you have. Never attempt to delegate to other agents.`
+You do NOT have multi-agent tools. You cannot spawn other agents. Complete the task yourself.`
 
-// Meta tools children must not inherit — these allow spawning or managing agents.
+// Meta tools children must not inherit when allowMeta is false.
+// When allowMeta is true (Codex child threads), multi-agent tools are kept.
 var subagentMetaTools = []string{
 	"run_skill",
 	"install_skill",
 	"install_source",
 	"spawn_agent",
+	"send_input",
 	"wait_agent",
-	"list_agents",
-	"send_message",
-	"followup_task",
-	"interrupt_agent",
+	"close_agent",
+	"resume_agent",
 }
 
 // SubagentMetaTools returns the tool names that spawned agents should not inherit
@@ -130,7 +129,7 @@ func (t *TaskTool) buildSubReg(names []string, allowMeta bool) *tool.Registry {
 
 // FilterRegistry builds a sub-registry from parent: the named whitelist (empty =
 // every parent tool), minus any excluded names. Used to scope what a spawned
-// sub-agent may call, e.g. excluding `task` to bar recursive nesting.
+// sub-agent may call, e.g. excluding `task` to bar recursive agent spawning.
 func FilterRegistry(parent *tool.Registry, names []string, exclude ...string) *tool.Registry {
 	ex := make(map[string]bool, len(exclude))
 	for _, e := range exclude {
@@ -245,29 +244,88 @@ func (t *TaskTool) runSub(ctx context.Context, prompt string, subReg *tool.Regis
 	return RunSubAgent(ctx, prov, subReg, sysPrompt, prompt, opts, sink)
 }
 
-// RunSubAgent runs prompt to completion in a fresh sub-agent session over reg,
-// emitting tool activity to sink, and returns the sub-agent's final assistant
-// answer. It is the shared core behind the `task` tool: the caller supplies the
-// system prompt, tool registry (already filtered), and run Options.
-func RunSubAgent(ctx context.Context, prov provider.Provider, reg *tool.Registry, sysPrompt, prompt string, opts Options, sink event.Sink) (string, error) {
-	sess := NewSession(sysPrompt)
+// runSubOnSession is like runSub but reuses an existing Session (Codex thread continuity).
+// onAgent, if non-nil, is called with the live Agent before Run (for mid-turn inject).
+func (t *TaskTool) runSubOnSession(ctx context.Context, prompt string, subReg *tool.Registry, sess *Session, sink event.Sink, maxSteps int, sysPrompt, role, modelRef, effort string, onAgent func(*Agent)) (string, error) {
+	const subAgentMaxSteps = 200
+	if maxSteps <= 0 || maxSteps > subAgentMaxSteps {
+		maxSteps = subAgentMaxSteps
+	}
+	if t.resolveProvider == nil {
+		return "", fmt.Errorf("subagent model resolver not configured")
+	}
+	if sess == nil {
+		if strings.TrimSpace(sysPrompt) == "" {
+			sysPrompt = t.sysPrompt
+		}
+		if sysPrompt == "" {
+			sysPrompt = DefaultTaskSystemPrompt
+		}
+		sess = NewSession(sysPrompt)
+	}
+	if strings.TrimSpace(role) == "" {
+		role = "task"
+	}
+	prov, pricing, ctxWin, err := t.resolveProvider(role, modelRef, effort)
+	if err != nil {
+		return "", err
+	}
+	var shared *ctxmode.Store
+	if s, ok := ctxmode.FromContext(ctx); ok {
+		shared = s
+	}
+	subHooks := t.hooks
+	if r, ok := t.hooks.(*hook.Runner); ok && r != nil {
+		subHooks = r.WithAgentLayer(hook.AgentLayerSubagent)
+	}
+	opts := Options{
+		MaxSteps:          maxSteps,
+		Temperature:       t.temperature,
+		Pricing:           pricing,
+		Gate:              t.gate,
+		Hooks:             subHooks,
+		ContextWindow:     ctxWin,
+		SoftCompactRatio:  t.softCompactRatio,
+		CompactRatio:      t.compactRatio,
+		CompactForceRatio: t.compactForceRatio,
+		ArchiveDir:        t.archiveDir,
+		CtxStore:          shared,
+	}
+	if c, ok := multiagent.FromContext(ctx); ok {
+		opts.MultiAgent = c
+	}
+	if p := multiagent.AgentPathFrom(ctx); p != "" {
+		opts.AgentPath = p
+	}
+	return RunSubAgentOnSession(ctx, prov, subReg, sess, prompt, opts, sink, onAgent)
+}
 
-	// Sub-agents do not get a session jobs manager: async work is parent→child
-	// only (main agent → one background child). No grandchildren.
+// RunSubAgent runs prompt to completion in a fresh sub-agent session over reg.
+func RunSubAgent(ctx context.Context, prov provider.Provider, reg *tool.Registry, sysPrompt, prompt string, opts Options, sink event.Sink) (string, error) {
+	return RunSubAgentOnSession(ctx, prov, reg, NewSession(sysPrompt), prompt, opts, sink, nil)
+}
+
+// RunSubAgentOnSession runs prompt on an existing session (Codex: same thread).
+// onAgent is optional; called after the Agent is built and before Run.
+func RunSubAgentOnSession(ctx context.Context, prov provider.Provider, reg *tool.Registry, sess *Session, prompt string, opts Options, sink event.Sink, onAgent func(*Agent)) (string, error) {
+	if sess == nil {
+		sess = NewSession("")
+	}
+
 	subCtrl := newSubControllerBridge()
 	opts.Ctrl = subCtrl
 
 	sub := New(prov, reg, sess, opts, sink)
 	sub.SetAsker(subCtrl)
+	if onAgent != nil {
+		onAgent(sub)
+	}
 
-	// mergeSubUsage merges the sub-agent's accumulated cache/cost stats into
-	// the parent agent. Called on both success and failure paths so token
-	// consumption is never lost.
 	mergeSubUsage := func() {
 		if parentAgent := AgentFromContext(ctx); parentAgent != nil {
 			hit := sub.sessCacheHit.Load()
 			miss := sub.sessCacheMiss.Load()
-			prompt := sub.sessPromptTokens.Load()
+			promptTok := sub.sessPromptTokens.Load()
 			total := sub.sessTotalTokens.Load()
 			var cost float64
 			var currency string
@@ -276,25 +334,19 @@ func RunSubAgent(ctx context.Context, prov provider.Provider, reg *tool.Registry
 				cost = info.cost
 				currency = info.currency
 			}
-			parentAgent.AddSessionUsage(hit, miss, prompt, total, cost, currency)
+			parentAgent.AddSessionUsage(hit, miss, promptTok, total, cost, currency)
 		}
 	}
 	if err := sub.Run(ctx, prompt); err != nil {
 		mergeSubUsage()
-		return "", fmt.Errorf("sub-agent: %w", err)
+		// Interrupted turns may still have partial answer — surface empty ok.
+		if ctx.Err() != nil {
+			return lastAssistantContent(sess), ctx.Err()
+		}
+		return lastAssistantContent(sess), fmt.Errorf("sub-agent: %w", err)
 	}
 	mergeSubUsage()
-	// Walk the session backwards for the last assistant message with content —
-	// that's the sub-agent's final answer. Intermediate assistant messages with
-	// tool_calls but no text don't count.
-	var ans string
-	for i := len(sess.Messages) - 1; i >= 0; i-- {
-		m := sess.Messages[i]
-		if m.Role == provider.RoleAssistant && strings.TrimSpace(m.Content) != "" {
-			ans = m.Content
-			break
-		}
-	}
+	ans := lastAssistantContent(sess)
 	if ans == "" {
 		return "", fmt.Errorf("sub-agent finished without producing a final answer")
 	}
@@ -320,7 +372,21 @@ func RunSubAgent(ctx context.Context, prov provider.Provider, reg *tool.Registry
 	return ans, nil
 }
 
-// subSinkFor builds the nesting sink from an already-captured parent ID + stream,
+func lastAssistantContent(sess *Session) string {
+	if sess == nil {
+		return ""
+	}
+	msgs := sess.Snapshot()
+	for i := len(msgs) - 1; i >= 0; i-- {
+		m := msgs[i]
+		if m.Role == provider.RoleAssistant && strings.TrimSpace(m.Content) != "" {
+			return m.Content
+		}
+	}
+	return ""
+}
+
+// subSinkFor builds the sink from an already-captured parent ID + stream,
 // for the background path where the job runs under a context that no longer
 // carries the call context. Falls back to Discard when there's no parent stream.
 func subSinkFor(parentID string, parent event.Sink) event.Sink {

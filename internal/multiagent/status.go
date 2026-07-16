@@ -15,7 +15,8 @@ const (
 	StatusErrored     Status = "errored"
 )
 
-// IsFinal matches Codex is_final.
+// IsFinal matches Codex is_final: interrupted is NOT final — the thread stays
+// available for send_input. Wait ends on completed / errored / shutdown / not_found.
 func IsFinal(s Status) bool {
 	switch s {
 	case StatusPendingInit, StatusRunning, StatusInterrupted:
@@ -25,11 +26,25 @@ func IsFinal(s Status) bool {
 	}
 }
 
-// IsListLive is true for agents shown in list_agents: only queued or running.
-// Interrupted/terminal stay in the registry for followup/interrupt resolve, but
-// are omitted from the live list (results live in mailbox).
-func IsListLive(s Status) bool {
+// IsTurnActive is true while a turn is in flight.
+func IsTurnActive(s Status) bool {
 	return s == StatusPendingInit || s == StatusRunning
+}
+
+// IsOpen is true while the agent still occupies a concurrency slot (Codex:
+// completed agents remain open until close_agent).
+func IsOpen(s Status) bool {
+	switch s {
+	case StatusShutdown, StatusNotFound:
+		return false
+	default:
+		return true
+	}
+}
+
+// IsListLive is true for any open agent (HTTP list / diagnostics).
+func IsListLive(s Status) bool {
+	return IsOpen(s)
 }
 
 // StatusJSON matches Codex list agent_status oneOf (string enum or completed/errored object).

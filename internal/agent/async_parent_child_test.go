@@ -22,11 +22,3 @@ func TestTaskToolNotModelFacing(t *testing.T) {
 	}
 }
 
-func TestMaySpawnAsyncSubagentOnlyAtMainDepth(t *testing.T) {
-	if !MaySpawnAsyncSubagent(context.Background()) {
-		t.Fatal("main depth should allow async spawn")
-	}
-	if MaySpawnAsyncSubagent(WithNestingDepth(context.Background(), 1)) {
-		t.Fatal("depth 1 must not spawn async sub-agents")
-	}
-}

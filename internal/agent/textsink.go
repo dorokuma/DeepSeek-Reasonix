@@ -190,7 +190,12 @@ func FormatUsageLine(u *provider.Usage, p *provider.Pricing, d *event.CacheDiagn
 	if u.PromptTokens > 0 {
 		uu := *u
 		uu.NormalizeCache()
-		cacheCol = fmt.Sprintf(" (%d cached / %d new)", uu.CacheHitTokens, uu.CacheMissTokens)
+		// Only show cache split when the provider reported a real breakdown;
+		// (0 cached / N new) with unknown hit is fine; (0/0) or inventing
+		// denom from prompt alone is not shown as a hit-rate.
+		if uu.CacheHitTokens+uu.CacheMissTokens > 0 {
+			cacheCol = fmt.Sprintf(" (%d cached / %d new)", uu.CacheHitTokens, uu.CacheMissTokens)
+		}
 	}
 	reasoning := ""
 	if u.ReasoningTokens > 0 {
@@ -198,7 +203,9 @@ func FormatUsageLine(u *provider.Usage, p *provider.Pricing, d *event.CacheDiagn
 	}
 	cost := ""
 	if p != nil {
-		cost = fmt.Sprintf(" · %s%.4f", p.Symbol(), p.Cost(u))
+		if c := p.CostInCNY(u); c > 0 {
+			cost = fmt.Sprintf(" · %s%.4f", provider.CNYSymbol(), c)
+		}
 	}
 	churn := ""
 	if d != nil && d.PrefixChanged {

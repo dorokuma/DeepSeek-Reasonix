@@ -111,7 +111,7 @@ func looksLikeCapabilityRefuse(text string) bool {
 // run_skill / recall / note alone do not — they only load text or notes.
 func isOrchestratorActionTool(name string) bool {
 	switch name {
-	case "spawn_agent", "wait_agent", "ask", "followup_task", "send_message", "interrupt_agent":
+	case "spawn_agent", "wait_agent", "ask", "send_input", "close_agent", "resume_agent":
 		return true
 	default:
 		return false

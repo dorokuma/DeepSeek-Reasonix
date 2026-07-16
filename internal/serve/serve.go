@@ -655,7 +655,8 @@ func (s *Server) agentsSend(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
-		Message string `json:"message"`
+		Message   string `json:"message"`
+		Interrupt bool   `json:"interrupt"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeAgentJSON(w, http.StatusBadRequest, false, nil, "invalid JSON body")
@@ -670,11 +671,14 @@ func (s *Server) agentsSend(w http.ResponseWriter, r *http.Request) {
 		writeAgentJSON(w, http.StatusNotFound, false, nil, "multi-agent control not available")
 		return
 	}
-	if err := mac.SendMessage("", path, body.Message, false); err != nil {
+	if _, err := mac.SendInput(path, body.Message, body.Interrupt); err != nil {
 		writeAgentJSON(w, http.StatusInternalServerError, false, nil, err.Error())
 		return
 	}
-	writeAgentJSON(w, http.StatusOK, true, map[string]string{"status": "sent"}, "")
+	writeAgentJSON(w, http.StatusOK, true, map[string]any{
+		"status":    "sent",
+		"interrupt": body.Interrupt,
+	}, "")
 }
 
 func (s *Server) status(w http.ResponseWriter, r *http.Request) {

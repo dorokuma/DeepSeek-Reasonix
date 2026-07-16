@@ -1348,3 +1348,26 @@ func BuildModelFetchURLs(baseURL, apiVersion string) ([]string, error) {
 	}
 	return []string{root + "/models", root + "/v1/models"}, nil
 }
+
+
+// StampUsdCnyRates sets Pricing.UsdCnyRate on every provider price entry so
+// CostInCNY can convert USD gateway costs to 人民币. rate 0 → provider default 7.
+func StampUsdCnyRates(cfg *Config) {
+	if cfg == nil {
+		return
+	}
+	rate := cfg.UsdCnyRate
+	if rate <= 0 {
+		rate = provider.DefaultUsdCnyRate
+	}
+	for i := range cfg.Providers {
+		p := &cfg.Providers[i]
+		if p.Price != nil {
+			p.Price.UsdCnyRate = rate
+		}
+		for k, mp := range p.ModelPrices {
+			mp.UsdCnyRate = rate
+			p.ModelPrices[k] = mp
+		}
+	}
+}

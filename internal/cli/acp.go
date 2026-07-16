@@ -142,7 +142,7 @@ func (f *acpFactory) NewSession(ctx context.Context, p acp.SessionParams) (*cont
 	policy := permission.New(cfg.Permissions.Mode, cfg.Permissions.Allow, cfg.Permissions.Ask, cfg.Permissions.Deny)
 	headlessGate := permission.NewGate(policy, nil)
 	resolveSubagentProvider := newACPSubagentProviderResolver(cfg, entry, proxySpec)
-	// Codex MultiAgent V2 (no legacy `task` tool).
+	// Codex multi-agent (spawn / send_input / wait / close; no legacy task tool).
 	maCtrl := multiagent.NewControl()
 	multiagent.RegisterTools(reg)
 	kernel := agent.NewTaskTool(execProv, entry.Price, reg,

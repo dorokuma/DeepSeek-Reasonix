@@ -175,6 +175,7 @@ type Agent struct {
 	// lastToolName/toolRepeatCount detect repeated identical tool calls that
 	// may indicate the model is stuck in a loop.
 	lastToolName   string
+	lastToolArgs   string
 	toolRepeatCount int
 
 	// steerCh receives external user messages injected via Steer() while Run()
@@ -303,6 +304,7 @@ func (a *Agent) ResetSessionCost() {
 	a.sessCacheMiss.Store(0)
 	a.sessPromptTokens.Store(0)
 	a.sessTotalTokens.Store(0)
+	a.lastUsage.Store(nil)
 }
 
 // addSessionCost atomically adds cost to the cumulative session cost. The mutex
@@ -339,13 +341,15 @@ func (a *Agent) SetSessionCache(hit, miss, prompt, total int64) {
 
 // AddSessionUsage merges a sub-agent's accumulated cache/cost counters into
 // the parent agent's session-level totals so frontends see a unified number.
+// cost is expected in CNY (sub-agents already accumulate via CostInCNY).
 func (a *Agent) AddSessionUsage(hit, miss, prompt, total int64, cost float64, currency string) {
 	a.sessCacheHit.Add(hit)
 	a.sessCacheMiss.Add(miss)
 	a.sessPromptTokens.Add(prompt)
 	a.sessTotalTokens.Add(total)
 	if cost > 0 || currency != "" {
-		a.addSessionCost(cost, currency)
+		// Force CNY symbol so parent totals never inherit a stale "$".
+		a.addSessionCost(cost, provider.CNYSymbol())
 	}
 }
 
@@ -433,10 +437,6 @@ type Options struct {
 	// TODO(Phase 4): wire into SanitizeHistory / buildRequest paths.
 	KeepMultimodalTurns int
 
-	// MaxNestingDepth sets the maximum allowed nesting depth for sub-agents.
-	// When this limit is reached, spawning a new sub-agent is blocked.
-	// Default 3 when unset. Must be >= 1.
-	MaxNestingDepth int
 
 	// MainAgentAllowed is the whitelist of tools the root (depth-0) agent may
 	// invoke. When nil, no restriction is applied — all registered tools are
@@ -447,7 +447,7 @@ type Options struct {
 	ToolsDynamic map[string]bool
 
 	// MaxMainAgentReadonlyCalls limits the maximum number of readonly tool calls
-	// the main agent (nesting depth 0) can make. 0 or negative means unlimited.
+	// the main agent can make. 0 or negative means unlimited.
 	MaxMainAgentReadonlyCalls int
 }
 
@@ -544,6 +544,7 @@ func (a *Agent) Run(ctx context.Context, input string) error {
 	}
 	a.repeatSuccessCounts = nil
 	a.lastToolName = ""
+	a.lastToolArgs = ""
 	a.toolRepeatCount = 0
 	a.sink.Emit(event.Event{Kind: event.TurnStarted, AutoReentry: input == ""})
 	// Parse multimodal data URLs embedded in the input text (e.g.
@@ -715,10 +716,11 @@ func (a *Agent) Run(ctx context.Context, input string) error {
 
 		// Detect repeated tool calls: same tool invoked consecutively without producing a final answer
 		for _, call := range calls {
-			if call.Name == a.lastToolName {
+			if call.Name == a.lastToolName && call.Arguments == a.lastToolArgs {
 				a.toolRepeatCount++
 			} else {
 				a.lastToolName = call.Name
+				a.lastToolArgs = call.Arguments
 				a.toolRepeatCount = 1
 			}
 			if a.toolRepeatCount >= 10 {
@@ -740,12 +742,18 @@ func (a *Agent) Run(ctx context.Context, input string) error {
 
 // Steer injects a user message into the running agent's message loop.
 // Non-blocking: silently drops when the buffer is full.
-// Also notifies MultiAgent wait_agent (Codex Steer activity).
+// Also notifies MultiAgent wait_agent (Codex Steer activity) — for root/user input.
 func (a *Agent) Steer(input string) {
 	if a.multiAgent != nil {
 		a.multiAgent.NotifySteer()
 	}
-	if a.steerCh == nil {
+	a.InjectInput(input)
+}
+
+// InjectInput queues a message for the running loop without waking wait_agent
+// (used for parent→child send_input while the child turn is still active).
+func (a *Agent) InjectInput(input string) {
+	if a == nil || a.steerCh == nil {
 		return
 	}
 	select {
@@ -906,7 +914,8 @@ func (a *Agent) stream(ctx context.Context, turn int) (string, string, string, [
 			a.sessPromptTokens.Add(int64(chunk.Usage.PromptTokens))
 			a.sessTotalTokens.Add(int64(chunk.Usage.TotalTokens))
 			if a.pricing != nil {
-				a.addSessionCost(a.pricing.Cost(chunk.Usage), a.pricing.Symbol())
+				// Always accumulate session spend in CNY so 花销 never mixes $ + ¥.
+				a.addSessionCost(a.pricing.CostInCNY(chunk.Usage), provider.CNYSymbol())
 			}
 		case provider.ChunkError:
 			if provider.IsStreamInterrupted(chunk.Err) {
@@ -941,29 +950,20 @@ func (a *Agent) getSchemasForContext(ctx context.Context) []provider.ToolSchema 
 		return nil
 	}
 	schemas := a.tools.Schemas()
-	depth := NestingDepthFrom(ctx)
-	if depth == 0 {
-		diagnosticExpose := a.diagnosticRequested.Load()
-		filtered := make([]provider.ToolSchema, 0, len(schemas))
-		for _, s := range schemas {
-			if a.toolsDynamic != nil && a.toolsDynamic[s.Name] {
-				if !diagnosticExpose {
-					continue
-				}
-			}
-			if t, ok := a.tools.Get(s.Name); ok {
-				if sub, ok := t.(tool.OnlyForSubAgent); ok && sub.OnlyForSubAgent() {
-					continue
-				}
-			}
-			if allow := a.mainAgentAllowed; allow != nil && !allow[s.Name] {
+	diagnosticExpose := a.diagnosticRequested.Load()
+	filtered := make([]provider.ToolSchema, 0, len(schemas))
+	for _, s := range schemas {
+		if a.toolsDynamic != nil && a.toolsDynamic[s.Name] {
+			if !diagnosticExpose {
 				continue
 			}
-			filtered = append(filtered, s)
 		}
-		return filtered
+		if allow := a.mainAgentAllowed; allow != nil && !allow[s.Name] {
+			continue
+		}
+		filtered = append(filtered, s)
 	}
-	return schemas
+	return filtered
 }
 
 // executeBatch dispatches one model turn's tool calls. A ToolDispatch event is

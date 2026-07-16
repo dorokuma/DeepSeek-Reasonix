@@ -44,8 +44,12 @@ func TestToWire(t *testing.T) {
 				LogRewriteVersion:   1,
 			},
 		})
-		if w.Usage == nil || w.Usage.TotalTokens != 1200 || w.Usage.Cost <= 0 || w.Usage.CostUSD <= 0 || w.Usage.Currency != "¥" {
+		if w.Usage == nil || w.Usage.TotalTokens != 1200 || w.Usage.Cost <= 0 || w.Usage.Currency != "¥" {
 			t.Errorf("usage = %+v", w.Usage)
+		}
+		// ¥ rate table → CostInCNY; CostUSD only set for USD sources.
+		if w.Usage.CostUSD != 0 {
+			t.Errorf("CostUSD = %v, want 0 for CNY rate table", w.Usage.CostUSD)
 		}
 		if w.Usage.CacheDiagnostics == nil || w.Usage.CacheDiagnostics.PrefixChangeReasons[0] != "log_rewrite" {
 			t.Errorf("cache diagnostics = %+v", w.Usage.CacheDiagnostics)

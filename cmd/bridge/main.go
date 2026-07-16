@@ -1,3 +1,6 @@
+// Package main implements the reasonix Telegram bridge service.
+// It connects the reasonix agent runtime to Telegram, handling message
+// routing, session management, cron tasks, and user authentication.
 package main
 
 import (
