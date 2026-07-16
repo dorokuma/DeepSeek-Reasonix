@@ -183,11 +183,13 @@ func (c *Control) Spawn(ctx context.Context, parentPath, taskName, message strin
 	if !IsRootAgentPath(parentPath) {
 		return "", "", fmt.Errorf("Agent depth limit reached. Solve the task yourself.")
 	}
-	if int(c.openCount.Load()) >= c.maxConcurrent {
-		return "", "", fmt.Errorf("too many open agents (max %d); close_agent finished agents to free slots", c.maxConcurrent)
-	}
 
 	c.mu.Lock()
+	// Cap open slots under the same lock as registration so Spawn cannot race Resume.
+	if int(c.openCount.Load()) >= c.maxConcurrent {
+		c.mu.Unlock()
+		return "", "", fmt.Errorf("too many open agents (max %d); close_agent finished agents to free slots", c.maxConcurrent)
+	}
 	// Always attach under root — ignore any non-root parentPath that slipped through.
 	path := JoinPath(RootPath, taskName)
 	if PathDepth(path) != 1 {
@@ -213,8 +215,8 @@ func (c *Control) Spawn(ctx context.Context, parentPath, taskName, message strin
 	}
 	c.agents[path] = rec
 	c.byLeaf[nick] = path
-	c.mu.Unlock()
 	c.openCount.Add(1)
+	c.mu.Unlock()
 
 	if err := c.startTurn(ctx, rec, path, message); err != nil {
 		// Roll back registry so a failed start does not leak a slot.
@@ -223,10 +225,10 @@ func (c *Control) Spawn(ctx context.Context, parentPath, taskName, message strin
 		if c.byLeaf[nick] == path {
 			delete(c.byLeaf, nick)
 		}
-		c.mu.Unlock()
 		if c.openCount.Load() > 0 {
 			c.openCount.Add(-1)
 		}
+		c.mu.Unlock()
 		return "", "", err
 	}
 	return path, nick, nil
@@ -698,16 +700,19 @@ func (c *Control) CloseAgent(target string) (previous any, path string, err erro
 			c.closed = make(map[string]*Metadata)
 		}
 		c.closed[path] = rec
+		if c.openCount.Load() > 0 {
+			c.openCount.Add(-1)
+		}
 		_ = nick
 	}
 	c.mu.Unlock()
 
-	if c.openCount.Load() > 0 {
-		c.openCount.Add(-1)
-	}
 	// Persist session for resume (process restart safe when SessionKeeper is set).
 	if k, ok := c.runner.(SessionKeeper); ok {
-		_ = k.SaveSession(path)
+		if err := k.SaveSession(path); err != nil {
+			// Session still closed in memory; surface persist failure without reopening.
+			return prev, path, fmt.Errorf("close agent %q: save session: %w", path, err)
+		}
 	}
 	if c.mailbox != nil {
 		c.mailbox.NotifySteer()
@@ -762,7 +767,22 @@ func (c *Control) ResumeAgent(target string) (status any, path string, err error
 		c.mu.Unlock()
 
 		if k, ok := c.runner.(SessionKeeper); ok {
-			_ = k.LoadSession(path)
+			if err := k.LoadSession(path); err != nil {
+				// Roll back open slot so a corrupt disk session cannot leak capacity.
+				c.mu.Lock()
+				if cur, ok := c.agents[path]; ok && cur == rec {
+					delete(c.agents, path)
+					if c.closed == nil {
+						c.closed = make(map[string]*Metadata)
+					}
+					c.closed[path] = rec
+					if c.openCount.Load() > 0 {
+						c.openCount.Add(-1)
+					}
+				}
+				c.mu.Unlock()
+				return nil, path, fmt.Errorf("resume agent %q: load session: %w", path, err)
+			}
 		}
 		return st, path, nil
 	}
@@ -803,7 +823,20 @@ func (c *Control) ResumeAgent(target string) (status any, path string, err error
 	c.openCount.Add(1)
 	c.mu.Unlock()
 
-	_ = k.LoadSession(path)
+	if err := k.LoadSession(path); err != nil {
+		c.mu.Lock()
+		if cur, ok := c.agents[path]; ok && cur == rec {
+			delete(c.agents, path)
+			if c.byLeaf[rec.Nickname] == path {
+				delete(c.byLeaf, rec.Nickname)
+			}
+			if c.openCount.Load() > 0 {
+				c.openCount.Add(-1)
+			}
+		}
+		c.mu.Unlock()
+		return nil, path, fmt.Errorf("resume agent %q: load session: %w", path, err)
+	}
 	return StatusJSON(StatusCompleted, "", ""), path, nil
 }
 

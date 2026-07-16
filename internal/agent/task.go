@@ -222,17 +222,19 @@ func (t *TaskTool) runSub(ctx context.Context, prompt string, subReg *tool.Regis
 		subHooks = r.WithAgentLayer(hook.AgentLayerSubagent)
 	}
 	opts := Options{
-		MaxSteps:          maxSteps,
-		Temperature:       t.temperature,
-		Pricing:           pricing,
-		Gate:              t.gate,
-		Hooks:             subHooks,
-		ContextWindow:     ctxWin,
-		SoftCompactRatio:  t.softCompactRatio,
-		CompactRatio:      t.compactRatio,
-		CompactForceRatio: t.compactForceRatio,
-		ArchiveDir:        t.archiveDir,
-		CtxStore:          shared,
+		MaxSteps:                  maxSteps,
+		Temperature:               t.temperature,
+		Pricing:                   pricing,
+		Gate:                      t.gate,
+		Hooks:                     subHooks,
+		ContextWindow:             ctxWin,
+		SoftCompactRatio:          t.softCompactRatio,
+		CompactRatio:              t.compactRatio,
+		CompactForceRatio:         t.compactForceRatio,
+		ArchiveDir:                t.archiveDir,
+		CtxStore:                  shared,
+		MainAgentAllowed:          nil,
+		MaxMainAgentReadonlyCalls: 0,
 	}
 	// Codex: children share the session MultiAgent control + own agent path.
 	if c, ok := multiagent.FromContext(ctx); ok {
@@ -290,12 +292,19 @@ func (t *TaskTool) runSubOnSession(ctx context.Context, prompt string, subReg *t
 		CompactForceRatio: t.compactForceRatio,
 		ArchiveDir:        t.archiveDir,
 		CtxStore:          shared,
+		// Root-only limits never apply to sub-agents.
+		MainAgentAllowed:          nil,
+		MaxMainAgentReadonlyCalls: 0,
 	}
 	if c, ok := multiagent.FromContext(ctx); ok {
 		opts.MultiAgent = c
 	}
 	if p := multiagent.AgentPathFrom(ctx); p != "" {
 		opts.AgentPath = p
+	}
+	// Parent Options on ctx may still carry root-only fields; drop them again.
+	if parent := OptionsFromContext(ctx); parent != nil && parent.KeepMultimodalTurns != 0 {
+		opts.KeepMultimodalTurns = parent.KeepMultimodalTurns
 	}
 	return RunSubAgentOnSession(ctx, prov, subReg, sess, prompt, opts, sink, onAgent)
 }

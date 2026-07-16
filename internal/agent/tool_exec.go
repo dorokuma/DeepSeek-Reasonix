@@ -397,6 +397,14 @@ func (a *Agent) executeOne(ctx context.Context, call provider.ToolCall) toolOutc
 	cctx := withCallContext(ctx, call.ID, a.sink, a.asker)
 	cctx = WithSession(cctx, a.session)
 	cctx = WithAgent(cctx, a)
+	// Stamp root Options so MultiAgentRunner can strip root-only fields for children.
+	cctx = WithOptions(cctx, &Options{
+		MainAgentAllowed:          a.mainAgentAllowed,
+		MaxMainAgentReadonlyCalls: a.maxMainAgentReadonlyCalls,
+		MultiAgent:                a.multiAgent,
+		AgentPath:                 a.agentPath,
+		KeepMultimodalTurns:       a.keepMultimodalTurns,
+	})
 	if len(a.projectChecks) > 0 {
 		cctx = instruction.WithChecks(cctx, a.projectChecks)
 	}

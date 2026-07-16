@@ -99,6 +99,68 @@ func TestSanitizeToolPairingLeavesWellFormedUnchanged(t *testing.T) {
 	}
 }
 
+// --- SanitizeMultiModalParts ---
+
+func TestSanitizeMultiModalPartsKeepsShortHistory(t *testing.T) {
+	// Fewer assistant turns than keepTurns must retain all multimodal parts.
+	in := []Message{
+		{
+			Role: RoleUser,
+			Parts: []ContentPart{
+				{Type: PartTypeText, Text: "see"},
+				{Type: PartTypeImage, Image: &ImagePart{URL: "https://example.com/a.png"}},
+			},
+		},
+	}
+	out := SanitizeMultiModalParts(in, 3)
+	if len(out) != 1 || len(out[0].Parts) != 2 {
+		t.Fatalf("short history should keep parts intact: %+v", out)
+	}
+	if out[0].Parts[1].Type != PartTypeImage {
+		t.Fatalf("image part pruned on short history: %+v", out[0].Parts)
+	}
+}
+
+func TestSanitizeMultiModalPartsPrunesOlderTurns(t *testing.T) {
+	in := []Message{
+		{
+			Role: RoleUser,
+			Parts: []ContentPart{
+				{Type: PartTypeText, Text: "old"},
+				{Type: PartTypeImage, Image: &ImagePart{URL: "https://example.com/old.png"}},
+			},
+		},
+		{Role: RoleAssistant, Content: "a1"},
+		{
+			Role: RoleUser,
+			Parts: []ContentPart{
+				{Type: PartTypeText, Text: "new"},
+				{Type: PartTypeImage, Image: &ImagePart{URL: "https://example.com/new.png"}},
+			},
+		},
+		{Role: RoleAssistant, Content: "a2"},
+	}
+	// keepTurns=2 → cutoff at a1 (index 1); only messages before that prune.
+	out := SanitizeMultiModalParts(in, 2)
+	if out[0].Parts[1].Type != PartTypeText || out[0].Parts[1].Text == "" {
+		t.Fatalf("old image should become text placeholder: %+v", out[0].Parts)
+	}
+	if out[2].Parts[1].Type != PartTypeImage {
+		t.Fatalf("recent image within keep window should stay: %+v", out[2].Parts)
+	}
+}
+
+func TestSanitizeHistoryDefaultKeepsPairing(t *testing.T) {
+	in := []Message{
+		{Role: RoleAssistant, ToolCalls: []ToolCall{{ID: "c1", Name: "ls"}}},
+		// missing tool result
+	}
+	out := SanitizeHistory(in, DefaultKeepMultimodalTurns)
+	if !toolIDsAnswered(out) {
+		t.Fatalf("SanitizeHistory should repair pairing: %+v", out)
+	}
+}
+
 // --- Pricing.Cost ---
 
 func TestPricingCostNil(t *testing.T) {
@@ -372,7 +434,6 @@ func TestMockProviderImplementsInterface(t *testing.T) {
 		t.Errorf("Chunk.Type = %d, want ChunkDone", got.Type)
 	}
 }
-
 
 func TestCostInCNYConvertsUSDReported(t *testing.T) {
 	p := &Pricing{Input: 3.0, Output: 6.0, Currency: "¥", UsdCnyRate: 7}

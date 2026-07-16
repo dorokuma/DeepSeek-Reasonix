@@ -5,17 +5,19 @@ All notable changes to the Go line (Reasonix 1.0+) are recorded here. The legacy
 branch.
 
 
-## [Unreleased]
+## [2.0.1] — 2026-07-16
 
 ### Fixed
-- `resume_agent` concurrent disk-resume no longer double-counts open slots.
+- `resume_agent` concurrent disk-resume no longer double-counts open slots; load failures roll back the open slot and surface the error.
+- `spawn_agent` / `resume_agent` open-slot cap is checked under the same lock (no race past max concurrent).
 - ACP path uses the same sub-agent session directory as interactive boot.
 - Closed-agent `send_input` error points at `resume_agent` first.
-- Sub-agents no longer inherit the root-only `main_agent_allowed` whitelist.
-- Provider request path runs full `SanitizeHistory` (tool pairing + multimodal prune).
+- Root tool context now stamps Options; sub-agents never inherit `main_agent_allowed` / main readonly caps.
+- Provider request path runs full `SanitizeHistory` (tool pairing + multimodal prune); short histories no longer prune all images.
 
 ### Chore
 - Remove accidental binaries and audit scratch from the tree; gitignore local build outputs and one-off notes.
+- Strip large accidental blobs from git history where practical.
 
 ## [2.0.0] — 2026-07-16
 
