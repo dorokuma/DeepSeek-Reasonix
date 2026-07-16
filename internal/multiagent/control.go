@@ -2,6 +2,7 @@ package multiagent
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -11,6 +12,11 @@ import (
 
 	"reasonix/internal/event"
 )
+
+// ErrSessionPersist means the agent was closed (or the operation otherwise
+// succeeded) but writing the on-disk session failed. Callers should treat the
+// primary action as done and surface the warning to the user.
+var ErrSessionPersist = errors.New("session not saved")
 
 // Multi-agent control defaults (Codex V1 lifecycle; one spawn layer only).
 const (
@@ -707,17 +713,45 @@ func (c *Control) CloseAgent(target string) (previous any, path string, err erro
 	}
 	c.mu.Unlock()
 
-	// Persist session for resume (process restart safe when SessionKeeper is set).
+	// Persist is best-effort after close: the slot is already free and the agent
+	// is in the closed map. A save failure must not look like "close failed"
+	// (callers would retry), so it is returned as ErrSessionPersist.
+	var persistErr error
 	if k, ok := c.runner.(SessionKeeper); ok {
 		if err := k.SaveSession(path); err != nil {
-			// Session still closed in memory; surface persist failure without reopening.
-			return prev, path, fmt.Errorf("close agent %q: save session: %w", path, err)
+			persistErr = fmt.Errorf("%w: agent %q: %v", ErrSessionPersist, path, err)
 		}
 	}
 	if c.mailbox != nil {
 		c.mailbox.NotifySteer()
 	}
-	return prev, path, nil
+	return prev, path, persistErr
+}
+
+// rollbackResumeOpenLocked undoes a failed resume after LoadSession errors.
+// Caller must not hold c.mu. toClosed puts the record back in closed map (memory resume);
+// otherwise the path is fully dropped (disk-only resume with no closed entry).
+func (c *Control) rollbackResumeOpen(path string, rec *Metadata, toClosed bool) {
+	if c == nil || rec == nil {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if cur, ok := c.agents[path]; !ok || cur != rec {
+		return
+	}
+	delete(c.agents, path)
+	if toClosed {
+		if c.closed == nil {
+			c.closed = make(map[string]*Metadata)
+		}
+		c.closed[path] = rec
+	} else if c.byLeaf[rec.Nickname] == path {
+		delete(c.byLeaf, rec.Nickname)
+	}
+	if c.openCount.Load() > 0 {
+		c.openCount.Add(-1)
+	}
 }
 
 // ResumeAgent reopens a closed agent so it can receive send_input / wait_agent (Codex resume_agent).
@@ -768,19 +802,7 @@ func (c *Control) ResumeAgent(target string) (status any, path string, err error
 
 		if k, ok := c.runner.(SessionKeeper); ok {
 			if err := k.LoadSession(path); err != nil {
-				// Roll back open slot so a corrupt disk session cannot leak capacity.
-				c.mu.Lock()
-				if cur, ok := c.agents[path]; ok && cur == rec {
-					delete(c.agents, path)
-					if c.closed == nil {
-						c.closed = make(map[string]*Metadata)
-					}
-					c.closed[path] = rec
-					if c.openCount.Load() > 0 {
-						c.openCount.Add(-1)
-					}
-				}
-				c.mu.Unlock()
+				c.rollbackResumeOpen(path, rec, true)
 				return nil, path, fmt.Errorf("resume agent %q: load session: %w", path, err)
 			}
 		}
@@ -824,17 +846,7 @@ func (c *Control) ResumeAgent(target string) (status any, path string, err error
 	c.mu.Unlock()
 
 	if err := k.LoadSession(path); err != nil {
-		c.mu.Lock()
-		if cur, ok := c.agents[path]; ok && cur == rec {
-			delete(c.agents, path)
-			if c.byLeaf[rec.Nickname] == path {
-				delete(c.byLeaf, rec.Nickname)
-			}
-			if c.openCount.Load() > 0 {
-				c.openCount.Add(-1)
-			}
-		}
-		c.mu.Unlock()
+		c.rollbackResumeOpen(path, rec, false)
 		return nil, path, fmt.Errorf("resume agent %q: load session: %w", path, err)
 	}
 	return StatusJSON(StatusCompleted, "", ""), path, nil

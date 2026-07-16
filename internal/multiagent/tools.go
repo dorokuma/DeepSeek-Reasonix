@@ -3,6 +3,7 @@ package multiagent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	"reasonix/internal/tool"
@@ -262,11 +263,22 @@ func (closeAgent) Execute(ctx context.Context, args json.RawMessage) (string, er
 	}
 	prev, path, err := c.CloseAgent(p.Target)
 	if err != nil {
+		// Close already completed; persist failure is a warning, not a failed close.
+		if errors.Is(err, ErrSessionPersist) {
+			out, _ := json.Marshal(map[string]any{
+				"target":          path,
+				"previous_status": prev,
+				"closed":          true,
+				"persist_warning": err.Error(),
+			})
+			return string(out), nil
+		}
 		return "", err
 	}
 	out, _ := json.Marshal(map[string]any{
 		"target":          path,
 		"previous_status": prev,
+		"closed":          true,
 	})
 	return string(out), nil
 }

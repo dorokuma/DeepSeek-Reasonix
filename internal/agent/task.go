@@ -190,36 +190,17 @@ func FilterReadOnlyRegistry(parent *tool.Registry, exclude ...string) *tool.Regi
 	return sub
 }
 
-// runSub builds a sub-agent over subReg, runs prompt to completion emitting to
-// sink, and returns its final assistant answer. sysPrompt/role/model/effort
-// configure the child (playbook or freeform default).
-func (t *TaskTool) runSub(ctx context.Context, prompt string, subReg *tool.Registry, sink event.Sink, maxSteps int, sysPrompt, role, modelRef, effort string) (string, error) {
-	const subAgentMaxSteps = 200
+const subAgentMaxSteps = 200
+
+// subAgentOpts builds Options for a freeform child agent. Root-only limits are
+// never inherited; MultiAgent/path come from ctx (usually cleared for no-nesting).
+func (t *TaskTool) subAgentOpts(ctx context.Context, maxSteps int, pricing *provider.Pricing, ctxWin int, subHooks ToolHooks) Options {
 	if maxSteps <= 0 || maxSteps > subAgentMaxSteps {
 		maxSteps = subAgentMaxSteps
-	}
-	if t.resolveProvider == nil {
-		return "", fmt.Errorf("subagent model resolver not configured")
-	}
-	if strings.TrimSpace(sysPrompt) == "" {
-		sysPrompt = t.sysPrompt
-	}
-	if strings.TrimSpace(role) == "" {
-		role = "task"
-	}
-	prov, pricing, ctxWin, err := t.resolveProvider(role, modelRef, effort)
-	if err != nil {
-		return "", err
 	}
 	var shared *ctxmode.Store
 	if s, ok := ctxmode.FromContext(ctx); ok {
 		shared = s
-	}
-	// Derive sub-agent hooks with the subagent agent layer, so hooks scoped
-	// to "main" are skipped in sub-agents.
-	subHooks := t.hooks
-	if r, ok := t.hooks.(*hook.Runner); ok && r != nil {
-		subHooks = r.WithAgentLayer(hook.AgentLayerSubagent)
 	}
 	opts := Options{
 		MaxSteps:                  maxSteps,
@@ -236,23 +217,51 @@ func (t *TaskTool) runSub(ctx context.Context, prompt string, subReg *tool.Regis
 		MainAgentAllowed:          nil,
 		MaxMainAgentReadonlyCalls: 0,
 	}
-	// Codex: children share the session MultiAgent control + own agent path.
 	if c, ok := multiagent.FromContext(ctx); ok {
 		opts.MultiAgent = c
 	}
 	if p := multiagent.AgentPathFrom(ctx); p != "" {
 		opts.AgentPath = p
 	}
+	// Parent may stamp KeepMultimodalTurns via tool_exec WithOptions.
+	if parent := OptionsFromContext(ctx); parent != nil && parent.KeepMultimodalTurns != 0 {
+		opts.KeepMultimodalTurns = parent.KeepMultimodalTurns
+	}
+	return opts
+}
+
+func (t *TaskTool) subHooksForLayer() ToolHooks {
+	subHooks := t.hooks
+	if r, ok := t.hooks.(*hook.Runner); ok && r != nil {
+		return r.WithAgentLayer(hook.AgentLayerSubagent)
+	}
+	return subHooks
+}
+
+// runSub builds a sub-agent over subReg, runs prompt to completion emitting to
+// sink, and returns its final assistant answer. sysPrompt/role/model/effort
+// configure the child (playbook or freeform default).
+func (t *TaskTool) runSub(ctx context.Context, prompt string, subReg *tool.Registry, sink event.Sink, maxSteps int, sysPrompt, role, modelRef, effort string) (string, error) {
+	if t.resolveProvider == nil {
+		return "", fmt.Errorf("subagent model resolver not configured")
+	}
+	if strings.TrimSpace(sysPrompt) == "" {
+		sysPrompt = t.sysPrompt
+	}
+	if strings.TrimSpace(role) == "" {
+		role = "task"
+	}
+	prov, pricing, ctxWin, err := t.resolveProvider(role, modelRef, effort)
+	if err != nil {
+		return "", err
+	}
+	opts := t.subAgentOpts(ctx, maxSteps, pricing, ctxWin, t.subHooksForLayer())
 	return RunSubAgent(ctx, prov, subReg, sysPrompt, prompt, opts, sink)
 }
 
 // runSubOnSession is like runSub but reuses an existing Session (Codex thread continuity).
 // onAgent, if non-nil, is called with the live Agent before Run (for mid-turn inject).
 func (t *TaskTool) runSubOnSession(ctx context.Context, prompt string, subReg *tool.Registry, sess *Session, sink event.Sink, maxSteps int, sysPrompt, role, modelRef, effort string, onAgent func(*Agent)) (string, error) {
-	const subAgentMaxSteps = 200
-	if maxSteps <= 0 || maxSteps > subAgentMaxSteps {
-		maxSteps = subAgentMaxSteps
-	}
 	if t.resolveProvider == nil {
 		return "", fmt.Errorf("subagent model resolver not configured")
 	}
@@ -272,40 +281,7 @@ func (t *TaskTool) runSubOnSession(ctx context.Context, prompt string, subReg *t
 	if err != nil {
 		return "", err
 	}
-	var shared *ctxmode.Store
-	if s, ok := ctxmode.FromContext(ctx); ok {
-		shared = s
-	}
-	subHooks := t.hooks
-	if r, ok := t.hooks.(*hook.Runner); ok && r != nil {
-		subHooks = r.WithAgentLayer(hook.AgentLayerSubagent)
-	}
-	opts := Options{
-		MaxSteps:          maxSteps,
-		Temperature:       t.temperature,
-		Pricing:           pricing,
-		Gate:              t.gate,
-		Hooks:             subHooks,
-		ContextWindow:     ctxWin,
-		SoftCompactRatio:  t.softCompactRatio,
-		CompactRatio:      t.compactRatio,
-		CompactForceRatio: t.compactForceRatio,
-		ArchiveDir:        t.archiveDir,
-		CtxStore:          shared,
-		// Root-only limits never apply to sub-agents.
-		MainAgentAllowed:          nil,
-		MaxMainAgentReadonlyCalls: 0,
-	}
-	if c, ok := multiagent.FromContext(ctx); ok {
-		opts.MultiAgent = c
-	}
-	if p := multiagent.AgentPathFrom(ctx); p != "" {
-		opts.AgentPath = p
-	}
-	// Parent Options on ctx may still carry root-only fields; drop them again.
-	if parent := OptionsFromContext(ctx); parent != nil && parent.KeepMultimodalTurns != 0 {
-		opts.KeepMultimodalTurns = parent.KeepMultimodalTurns
-	}
+	opts := t.subAgentOpts(ctx, maxSteps, pricing, ctxWin, t.subHooksForLayer())
 	return RunSubAgentOnSession(ctx, prov, subReg, sess, prompt, opts, sink, onAgent)
 }
 

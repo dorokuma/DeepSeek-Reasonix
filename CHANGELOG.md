@@ -5,6 +5,13 @@ All notable changes to the Go line (Reasonix 1.0+) are recorded here. The legacy
 branch.
 
 
+## [Unreleased]
+
+### Fixed
+- Deduplicate resume-load rollback and sub-agent Options construction after 2.0.1.
+- `close_agent` treats session persist failure as a warning (`closed: true` + `persist_warning`); agent stays closed and the slot stays free.
+- Both sub-agent entry paths inherit parent `KeepMultimodalTurns` when stamped on context.
+
 ## [2.0.1] — 2026-07-16
 
 ### Fixed
