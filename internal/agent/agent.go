@@ -1381,7 +1381,7 @@ func (a *Agent) Run(ctx context.Context, input string) (runErr error) {
 			}
 		}
 	}
-	a.session.Add(provider.Message{Role: provider.RoleUser, Content: input, Images: userImages(ctx)})
+	a.session.Add(provider.Message{Role: provider.RoleUser, Content: input, Images: userImages(ctx), CreatedAt: time.Now().UnixMilli()})
 
 	finalReadinessBlocks := 0
 	seenReadinessStates := make(map[string]struct{})
@@ -2466,8 +2466,15 @@ func (a *Agent) stream(ctx context.Context, turn int) (string, string, string, [
 	ctx = provider.WithRetryNotify(ctx, func(info provider.RetryInfo) {
 		a.sink.Emit(event.Event{Kind: event.Retrying, RetryAttempt: info.Attempt, RetryMax: info.Max})
 	})
+	// CreatedAt is durable UI metadata, not model input. Strip it from the
+	// transport copy so wall-clock differences never invalidate the provider's
+	// prompt-cache prefix (and custom providers cannot accidentally send it).
+	requestMessages := append([]provider.Message(nil), a.session.Messages...)
+	for i := range requestMessages {
+		requestMessages[i].CreatedAt = 0
+	}
 	ch, err := a.prov.Stream(ctx, provider.Request{
-		Messages:    a.session.Messages,
+		Messages:    requestMessages,
 		Tools:       a.tools.Schemas(),
 		Temperature: provider.OptionalTemperature(a.temperature),
 	})

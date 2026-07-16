@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"reasonix/internal/agent"
 	"reasonix/internal/autoresearch"
@@ -114,7 +115,7 @@ func (o *turnOrchestrator) runSubagentSkillTurns(ctx context.Context, skills []s
 	if c.executor == nil {
 		return fmt.Errorf("subagent slash invocation requires an active session")
 	}
-	c.executor.Session().Add(provider.Message{Role: provider.RoleUser, Content: input, Images: images})
+	c.executor.Session().Add(provider.Message{Role: provider.RoleUser, Content: input, Images: images, CreatedAt: time.Now().UnixMilli()})
 
 	for _, sk := range skills {
 		callID := fmt.Sprintf("slash-skill-%d", c.slashSkillSeq.Add(1))

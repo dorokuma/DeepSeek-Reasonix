@@ -5,7 +5,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { CSSProperties, DragEvent as ReactDragEvent, KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent } from "react";
-import { Archive, ArrowDown, Pencil, Plus, Folder, FolderPlus, Search, BriefcaseBusiness, Copy, FolderOpen, XCircle, History, Check, ListCollapse, ListRestart, MessageSquare, Clock, Pin, MoreHorizontal, Minimize2, Maximize2, GitBranch } from "lucide-react";
+import { Archive, ArrowDown, Pencil, Plus, Folder, FolderPlus, Search, BriefcaseBusiness, Copy, FolderOpen, XCircle, Check, ListCollapse, ListRestart, MessageSquare, Clock, Pin, MoreHorizontal, Minimize2, Maximize2, GitBranch } from "lucide-react";
 import { asArray } from "../lib/array";
 import { useToast } from "../lib/toast";
 import { app } from "../lib/bridge";
@@ -29,7 +29,6 @@ interface ProjectTreeProps {
   imTopicSources?: Record<string, ProjectTreeImTopicSource>;
   variant?: ProjectTreeVariant;
   onOpenTopic: (scope: string, workspaceRoot: string, topicId: string, sessionPath?: string) => Promise<void> | void;
-  onOpenProjectHistory: (scope: "global" | "project", workspaceRoot: string) => Promise<void> | void;
   onAddProject: () => Promise<void>;
   onCreateTopic?: (scope: string, workspaceRoot: string) => Promise<void> | void;
   onCreateDeliveryWorktree?: (workspaceRoot: string) => Promise<void> | void;
@@ -590,7 +589,6 @@ export function ProjectTree({
   imTopicSources = {},
   variant = "classic",
   onOpenTopic,
-  onOpenProjectHistory,
   onAddProject,
   onCreateTopic,
   onCreateDeliveryWorktree,
@@ -1652,19 +1650,6 @@ export function ProjectTree({
           void handleCreateTopic(scope, projectRoot, key);
         },
       },
-      ...(scope === "project"
-        ? [
-            {
-              key: "project-history",
-              icon: <History size={13} />,
-              label: t("projectTree.projectHistory"),
-              onSelect: () => {
-                closeMenu();
-                void onOpenProjectHistory(scope, projectRoot);
-              },
-            },
-          ]
-        : []),
       ...isolatedWorkspaceItems,
       {
         key: "rename",
@@ -1741,19 +1726,6 @@ export function ProjectTree({
           closeMenu();
         },
       },
-      ...(scope === "project"
-        ? [
-            {
-              key: "project-history",
-              icon: <History size={13} />,
-              label: t("projectTree.projectHistory"),
-              onSelect: () => {
-                closeMenu();
-                void onOpenProjectHistory(scope, projectRoot);
-              },
-            },
-          ]
-        : []),
       {
         key: "rename",
         icon: <Pencil size={13} />,

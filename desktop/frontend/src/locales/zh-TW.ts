@@ -40,7 +40,6 @@ export const zhTW: Record<DictKey, string> = {
 
   // 側邊欄
   "sidebar.conversations": "會話",
-  "sidebar.allHistory": "歷史",
   "sidebar.trash": "回收站",
   "sidebar.automation": "自動化",
   "sidebar.workspace": "工作區",
@@ -814,7 +813,6 @@ export const zhTW: Record<DictKey, string> = {
   "projectTree.archiveConversation": "歸檔對話",
   "projectTree.renameProject": "修改顯示名稱",
   "projectTree.renameProjectWorkbench": "重新命名專案",
-  "projectTree.projectHistory": "檢視專案歷史",
   "projectTree.removeProject": "移出側邊欄",
   "projectTree.confirmRemoveProject": "確認移出側邊欄",
   "projectTree.removeProjectShort": "移除",
@@ -2262,7 +2260,6 @@ export const zhTW: Record<DictKey, string> = {
   "palette.group.commands": "命令",
   "palette.group.sessions": "最近會話",
   "palette.cmd.newSession": "新建會話",
-  "palette.cmd.history": "歷史",
   "palette.cmd.trash": "回收站",
   "palette.cmd.settings": "設定",
   "palette.cmd.appearance": "外觀",

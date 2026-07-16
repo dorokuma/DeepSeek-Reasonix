@@ -1456,6 +1456,7 @@ function makeMockApp(): AppBindings {
       out.push({
         role: "user",
         content: `第 ${i} 轮：检查聊天滚动定位，切换会话后应该自动停在最新消息底部。`,
+        createdAt: t0 - (19 - i) * 15 * 60_000,
       });
       if (i === 4) {
         out.push({ role: "phase", content: "复现切换会话后的滚动位置" });

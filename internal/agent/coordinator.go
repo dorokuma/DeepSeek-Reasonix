@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"reasonix/internal/event"
 	"reasonix/internal/nilutil"
@@ -675,7 +676,7 @@ func (c *Coordinator) persistExecutorNoOp(ctx context.Context, input, plan strin
 	if c == nil || c.executor == nil || c.executor.session == nil {
 		return
 	}
-	c.executor.session.Add(provider.Message{Role: provider.RoleUser, Content: c.executor.withTurnPreferences(input), Images: userImages(ctx)})
+	c.executor.session.Add(provider.Message{Role: provider.RoleUser, Content: c.executor.withTurnPreferences(input), Images: userImages(ctx), CreatedAt: time.Now().UnixMilli()})
 	c.executor.session.Add(provider.Message{Role: provider.RoleAssistant, Content: plan})
 }
 

@@ -25,6 +25,35 @@ func echoRegistry() *tool.Registry {
 	return reg
 }
 
+func TestRunPersistsUserCreatedAtWithoutSendingItToProvider(t *testing.T) {
+	const existingCreatedAt int64 = 1_718_000_000_000
+	prov := testutil.NewMock("m", testutil.Turn{Text: "done"})
+	session := NewSession("system")
+	session.Add(provider.Message{Role: provider.RoleUser, Content: "existing", CreatedAt: existingCreatedAt})
+	agent := New(prov, tool.NewRegistry(), session, Options{}, event.Discard)
+
+	if err := agent.Run(context.Background(), "new prompt"); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	request := prov.LastRequest()
+	if request == nil {
+		t.Fatal("provider received no request")
+	}
+	for i, message := range request.Messages {
+		if message.CreatedAt != 0 {
+			t.Fatalf("provider message %d leaked createdAt %d", i, message.CreatedAt)
+		}
+	}
+
+	messages := session.Snapshot()
+	if len(messages) < 3 || messages[1].CreatedAt != existingCreatedAt {
+		t.Fatalf("persisted existing timestamp changed: %+v", messages)
+	}
+	if messages[2].Role != provider.RoleUser || messages[2].CreatedAt <= 0 {
+		t.Fatalf("new user timestamp was not persisted: %+v", messages[2])
+	}
+}
+
 // TestRunMultiToolRoundEmptyIDsSurvivePairing drives the real loop through a turn
 // that fans out two tool calls carrying no id (a gateway that streams by index),
 // then asserts both results still pair back after SanitizeToolPairing — the repair

@@ -19,7 +19,7 @@ import (
 
 func TestHistoryMessagesIncludeAssistantReasoning(t *testing.T) {
 	msgs := []provider.Message{
-		{Role: provider.RoleUser, Content: "expanded prompt"},
+		{Role: provider.RoleUser, Content: "expanded prompt", CreatedAt: 1_718_000_000_000},
 		{Role: provider.RoleAssistant, Content: "answer", ReasoningContent: "thinking trace", WorkDurationMs: 24_000, ToolCalls: []provider.ToolCall{{
 			ID: "call_1", Name: "bash", Arguments: `{"command":"pwd"}`,
 		}}, MemoryCitations: []provider.MemoryCitation{{
@@ -44,6 +44,9 @@ func TestHistoryMessagesIncludeAssistantReasoning(t *testing.T) {
 	}
 	if got[0].SubmitText != "expanded prompt" {
 		t.Fatalf("user submit text = %q, want expanded prompt", got[0].SubmitText)
+	}
+	if got[0].CreatedAt != 1_718_000_000_000 {
+		t.Fatalf("user createdAt = %d, want 1718000000000", got[0].CreatedAt)
 	}
 	if got[1].Reasoning != "thinking trace" {
 		t.Fatalf("assistant reasoning = %q, want thinking trace", got[1].Reasoning)
@@ -595,7 +598,7 @@ func TestPreviewSessionMessagesIncludesProcessEvents(t *testing.T) {
 		`{"kind":"notice","level":"warn","text":"Network changed"}`,
 		`{"kind":"compaction_started","compaction":{"trigger":"manual"}}`,
 		`{"kind":"compaction_done","compaction":{"trigger":"manual","messages":6,"summary":"Kept the current task.","archive":"/tmp/archive.jsonl"}}`,
-		`{"type":"user.message","text":"hello"}`,
+		`{"type":"user.message","text":"hello","ts":1718000000000}`,
 		`{"type":"model.final","content":"hi","reasoningContent":"thinking"}`,
 	}, "\n") + "\n"
 	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
@@ -623,6 +626,35 @@ func TestPreviewSessionMessagesIncludesProcessEvents(t *testing.T) {
 	}
 	if got[4].Role != "user" || got[5].Reasoning != "thinking" {
 		t.Fatalf("conversation events not preserved: %+v", got[4:])
+	}
+	if got[4].CreatedAt != 1_718_000_000_000 {
+		t.Fatalf("event user createdAt = %d, want 1718000000000", got[4].CreatedAt)
+	}
+}
+
+func TestPreviewSessionMessagesRestoresAppendEventUserTime(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "session.jsonl")
+	session := agent.NewSession("")
+	session.Add(provider.Message{Role: provider.RoleUser, Content: "first"})
+	if err := session.SaveSnapshot(path); err != nil {
+		t.Fatalf("SaveSnapshot first: %v", err)
+	}
+	session.Add(provider.Message{Role: provider.RoleAssistant, Content: "one"})
+	session.Add(provider.Message{Role: provider.RoleUser, Content: "second"})
+	if err := session.SaveSnapshot(path); err != nil {
+		t.Fatalf("SaveSnapshot second: %v", err)
+	}
+
+	got, err := previewSessionMessages(dir, path)
+	if err != nil {
+		t.Fatalf("previewSessionMessages: %v", err)
+	}
+	if len(got) != 3 || got[2].Role != "user" || got[2].Content != "second" {
+		t.Fatalf("preview history = %+v, want second user at index 2", got)
+	}
+	if got[2].CreatedAt <= 0 {
+		t.Fatalf("append-event user timestamp was not restored: %+v", got[2])
 	}
 }
 

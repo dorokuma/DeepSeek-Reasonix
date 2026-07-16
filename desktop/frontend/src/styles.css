@@ -27849,7 +27849,7 @@ body > .mermaid-diagram--fullscreen {
 
 .sidebar--workbench .sidebar__utility-row {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 6px;
 }
 
@@ -29864,7 +29864,7 @@ body > .mermaid-diagram--fullscreen {
 .app--creation .sidebar__nav,
 :root[data-theme-style] .app--creation .sidebar__nav {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 6px;
   padding: 12px 0 0;
   border-top-color: color-mix(in srgb, var(--fg-faint) 9%, transparent);

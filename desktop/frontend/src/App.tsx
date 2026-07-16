@@ -23,7 +23,6 @@ import {
   FileText,
   FileJson,
   GitBranch,
-  History,
   MessageSquare,
   Settings as SettingsIcon,
   Pencil,
@@ -2784,17 +2783,6 @@ export default function App() {
     }
   }, [activeTab?.readOnly, activeTabId, clearContextPending, controllerReady, hydratePlaceholderActive, sendToTab, state.approval, state.ask, state.items, state.messageAction, state.running, rewindForTab]);
 
-  // History drawer: project menus can open a scoped saved-session list. Idle row
-  // clicks resume; running row clicks only preview through PreviewSession.
-  const openProjectHistory = useCallback(async (scope: "global" | "project", workspaceRoot: string) => {
-    closeTransientOverlays();
-    const filter = { scope, workspaceRoot };
-    setHistView({ kind: "history", source: "scope", filter, sessions: sessionsForScope(await listSessions(), filter) });
-  }, [closeTransientOverlays, listSessions]);
-  const openAllHistory = useCallback(async () => {
-    closeTransientOverlays();
-    setHistView({ kind: "history", source: "all", sessions: await listSessions() });
-  }, [closeTransientOverlays, listSessions]);
   const openTrash = useCallback(async () => {
     closeTransientOverlays();
     setHistView({ kind: "trash", sessions: await listTrashedSessions() });
@@ -3053,7 +3041,6 @@ export default function App() {
   const paletteItems = useMemo<PaletteItem[]>(() => {
     const cmds: PaletteItem[] = [
       { id: "cmd-new", group: t("palette.group.commands"), title: t("palette.cmd.newSession"), icon: <SquarePen size={15} />, compact: true, keywords: ["new", "新建"], run: () => void handleNewTab() },
-      { id: "cmd-history", group: t("palette.group.commands"), title: t("palette.cmd.history"), icon: <History size={15} />, compact: true, keywords: ["history", "历史"], run: () => void openAllHistory() },
       { id: "cmd-trash", group: t("palette.group.commands"), title: t("palette.cmd.trash"), icon: <Trash2 size={15} />, compact: true, keywords: ["trash", "回收站"], run: () => void openTrash() },
       { id: "cmd-settings", group: t("palette.group.commands"), title: t("palette.cmd.settings"), icon: <SettingsIcon size={15} />, compact: true, keywords: ["settings", "设置"], run: () => setSettingsTarget("general") },
       { id: "cmd-appearance", group: t("palette.group.commands"), title: t("palette.cmd.appearance"), icon: <Palette size={15} />, compact: true, keywords: ["theme", "appearance", "外观", "主题"], run: () => setSettingsTarget("appearance") },
@@ -3078,7 +3065,7 @@ export default function App() {
       run: () => void onResumeSession(s),
     }));
     return [...cmds, ...sessionItems];
-  }, [t, paletteSessions, handleNewTab, openAllHistory, openTrash, onResumeSession]);
+  }, [t, paletteSessions, handleNewTab, openTrash, onResumeSession]);
   // Delete / rename act on disk, then re-fetch so the panel reflects the change.
   const onDeleteSession = useCallback(
     async (path: string) => {
@@ -3447,7 +3434,6 @@ export default function App() {
               activeSessionPath={activeTab?.sessionPath}
               imTopicSources={imTopicSources}
               onOpenTopic={handleOpenTopic}
-              onOpenProjectHistory={openProjectHistory}
               onCreateTopic={(scope, workspaceRoot) => openBlankSession(scope, scope === "project" ? workspaceRoot : "")}
               onCreateDeliveryWorktree={(workspaceRoot) => enqueueNavigation({ kind: "delivery-worktree", workspaceRoot })}
               onTopicsChanged={refreshProjectsAndTabs}
@@ -3470,16 +3456,6 @@ export default function App() {
           {sidebarWorkbench ? (
             <nav className="sidebar__nav sidebar__nav--footer">
               <div className="sidebar__utility-row" aria-label={t("sidebar.utilityActions")}>
-                <Tooltip label={t("sidebar.allHistory")} fill side="top">
-                  <button
-                    className="sidebar__utility-button"
-                    type="button"
-                    onClick={() => void openAllHistory()}
-                  >
-                    <History size={16} aria-hidden="true" />
-                    <span className="sr-only">{t("sidebar.allHistory")}</span>
-                  </button>
-                </Tooltip>
                 <Tooltip label={t("sidebar.trash")} fill side="top">
                   <button
                     className="sidebar__utility-button"
@@ -3534,15 +3510,6 @@ export default function App() {
                   </button>
                 </Tooltip>
               )}
-              <Tooltip label={t("sidebar.allHistory")} fill side="right" disabled={sidebarNavTooltipDisabled}>
-                <button
-                  className="sidebar__navitem"
-                  onClick={() => void openAllHistory()}
-                >
-                  <History size={15} />
-                  <span>{t("sidebar.allHistory")}</span>
-                </button>
-              </Tooltip>
               <Tooltip label={t("sidebar.trash")} fill side="right" disabled={sidebarNavTooltipDisabled}>
                 <button
                   className="sidebar__navitem"

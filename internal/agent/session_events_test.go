@@ -412,6 +412,52 @@ func TestLoadSessionUserMessagesSeesEventLogTurns(t *testing.T) {
 	}
 }
 
+func TestSessionEventLogPreservesUserCreatedAt(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "session.jsonl")
+	want := time.Date(2026, 7, 16, 8, 30, 0, 0, time.UTC).UnixMilli()
+	s := NewSession("sys")
+	s.Add(provider.Message{Role: provider.RoleUser, Content: "timed prompt", CreatedAt: want})
+	if err := s.SaveSnapshot(path); err != nil {
+		t.Fatalf("SaveSnapshot: %v", err)
+	}
+
+	loaded, err := LoadSession(path)
+	if err != nil {
+		t.Fatalf("LoadSession: %v", err)
+	}
+	msgs := loaded.Snapshot()
+	if len(msgs) != 2 || msgs[1].CreatedAt != want {
+		t.Fatalf("loaded messages = %+v, want user createdAt %d", msgs, want)
+	}
+}
+
+func TestSessionDigestIgnoresUserCreatedAt(t *testing.T) {
+	withoutTime := []provider.Message{
+		{Role: provider.RoleSystem, Content: "sys"},
+		{Role: provider.RoleUser, Content: "prompt"},
+	}
+	withTime := append([]provider.Message(nil), withoutTime...)
+	withTime[1].CreatedAt = 1_718_000_000_000
+
+	withoutDigest, withoutSize, err := digestAndSizeSessionMessages(withoutTime)
+	if err != nil {
+		t.Fatalf("digest without createdAt: %v", err)
+	}
+	withDigest, withSize, err := digestAndSizeSessionMessages(withTime)
+	if err != nil {
+		t.Fatalf("digest with createdAt: %v", err)
+	}
+	if withoutDigest != withDigest || withoutSize != withSize {
+		t.Fatalf("local createdAt changed transcript identity: digestEqual=%v size=%d/%d", withoutDigest == withDigest, withoutSize, withSize)
+	}
+	if !messagesHavePrefix(withTime, withoutTime) || !messagesHavePrefix(withoutTime, withTime) {
+		t.Fatal("local createdAt broke cross-version transcript prefix matching")
+	}
+	if depth := messagesPrefixDigestDepth(withTime, withoutDigest); depth != len(withTime) {
+		t.Fatalf("createdAt-aware prefix digest depth = %d, want %d", depth, len(withTime))
+	}
+}
+
 func TestSessionContentModTimeTracksEventLog(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "session.jsonl")
 	s := sessionWithTurns(t, path, 1)

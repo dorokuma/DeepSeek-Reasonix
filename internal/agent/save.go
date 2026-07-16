@@ -922,12 +922,21 @@ func digestSessionMessages(msgs []provider.Message) ([sha256.Size]byte, error) {
 	return digest, err
 }
 
+func messageForSessionIdentity(m provider.Message) provider.Message {
+	// CreatedAt is local display metadata. Keep it out of transcript identity
+	// so older builds that ignore the optional field can share the same event-
+	// log revision and append without false conflicts.
+	m.CreatedAt = 0
+	return m
+}
+
 // digestAndSizeSessionMessages also reports the encoded transcript size, which
 // the save path uses to bound the event log relative to the live content.
 func digestAndSizeSessionMessages(msgs []provider.Message) ([sha256.Size]byte, int64, error) {
 	h := sha256.New()
 	size := int64(0)
 	for _, m := range msgs {
+		m = messageForSessionIdentity(m)
 		b, err := json.Marshal(m)
 		if err != nil {
 			return [sha256.Size]byte{}, 0, err
@@ -960,11 +969,12 @@ func messagesHavePrefix(full, prefix []provider.Message) bool {
 // messagesPrefixDigestDepth returns the number of leading messages of msgs
 // whose storage digest equals target, or -1 when no prefix matches. The
 // digest accumulates exactly like digestAndSizeSessionMessages, so a match at
-// depth k means msgs[:k] is byte-for-byte the transcript that produced target.
+// depth k means msgs[:k] has the same transcript identity as target.
 func messagesPrefixDigestDepth(msgs []provider.Message, target [sha256.Size]byte) int {
 	h := sha256.New()
 	sum := make([]byte, 0, sha256.Size)
 	for i, m := range msgs {
+		m = messageForSessionIdentity(m)
 		b, err := json.Marshal(m)
 		if err != nil {
 			return -1
@@ -1014,6 +1024,8 @@ func messagesWithoutLeadingSystem(msgs []provider.Message) []provider.Message {
 }
 
 func messagesEqualForStorage(a, b provider.Message) bool {
+	a = messageForSessionIdentity(a)
+	b = messageForSessionIdentity(b)
 	ab, err := json.Marshal(a)
 	if err != nil {
 		return false

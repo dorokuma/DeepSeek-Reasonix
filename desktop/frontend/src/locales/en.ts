@@ -48,7 +48,6 @@ export const en = {
 
   // sidebar
   "sidebar.conversations": "Chats",
-  "sidebar.allHistory": "History",
   "sidebar.trash": "Trash",
   "sidebar.automation": "Automation",
   "sidebar.memorySkills": "Memory & Skills",
@@ -1019,7 +1018,6 @@ export const en = {
   "projectTree.archiveConversation": "Archive conversation",
   "projectTree.renameProject": "Rename display name",
   "projectTree.renameProjectWorkbench": "Rename project",
-  "projectTree.projectHistory": "View project history",
   "projectTree.justNow": "just now",
   "projectTree.previously": "previously",
   "projectTree.running": "responding",
@@ -1746,7 +1744,6 @@ export const en = {
   "palette.group.commands": "Commands",
   "palette.group.sessions": "Recent sessions",
   "palette.cmd.newSession": "New session",
-  "palette.cmd.history": "History",
   "palette.cmd.trash": "Trash",
   "palette.cmd.settings": "Settings",
   "palette.cmd.appearance": "Appearance",

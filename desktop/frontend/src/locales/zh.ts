@@ -49,7 +49,6 @@ export const zh: Record<DictKey, string> = {
 
   // 侧边栏
   "sidebar.conversations": "会话",
-  "sidebar.allHistory": "历史",
   "sidebar.trash": "回收站",
   "sidebar.automation": "自动化",
   "sidebar.memorySkills": "记忆与技能",
@@ -1020,7 +1019,6 @@ export const zh: Record<DictKey, string> = {
   "projectTree.archiveConversation": "归档对话",
   "projectTree.renameProject": "修改显示名称",
   "projectTree.renameProjectWorkbench": "重命名项目",
-  "projectTree.projectHistory": "查看项目历史",
   "projectTree.justNow": "刚刚",
   "projectTree.previously": "之前",
   "projectTree.running": "输出中",
@@ -1748,7 +1746,6 @@ export const zh: Record<DictKey, string> = {
   "palette.group.commands": "命令",
   "palette.group.sessions": "最近会话",
   "palette.cmd.newSession": "新建会话",
-  "palette.cmd.history": "历史",
   "palette.cmd.trash": "回收站",
   "palette.cmd.settings": "设置",
   "palette.cmd.appearance": "外观",
