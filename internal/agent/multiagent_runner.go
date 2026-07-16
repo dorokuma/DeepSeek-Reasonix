@@ -45,10 +45,12 @@ func (r *MultiAgentRunner) Run(ctx context.Context, path, message string) (strin
 		bgCtx = WithAgent(bgCtx, parentAgent)
 	}
 	if opts := OptionsFromContext(ctx); opts != nil {
-		// Copy options; force non-root path and nil multi-agent control.
+		// Copy options; force non-root path, no multi-agent control, no root-only tool whitelist.
 		cp := *opts
 		cp.MultiAgent = nil
 		cp.AgentPath = path
+		cp.MainAgentAllowed = nil
+		cp.MaxMainAgentReadonlyCalls = 0
 		bgCtx = WithOptions(bgCtx, &cp)
 	}
 	bgCtx = multiagent.WithAgentPath(bgCtx, path)

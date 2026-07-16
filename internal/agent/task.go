@@ -22,8 +22,8 @@ and self-contained — the parent will see only that answer, not your tool calls
 If you need to ask for clarification, fail with a precise question instead of guessing.
 You do NOT have multi-agent tools. You cannot spawn other agents. Complete the task yourself.`
 
-// Meta tools children must not inherit when allowMeta is false.
-// When allowMeta is true (Codex child threads), multi-agent tools are kept.
+// Meta tools children must not inherit (hard no-nesting + no skill cascade).
+// allowMeta=true is reserved for tests only; production always strips these.
 var subagentMetaTools = []string{
 	"run_skill",
 	"install_skill",
@@ -95,7 +95,7 @@ func NewTaskTool(prov provider.Provider, pricing *provider.Pricing, parentReg *t
 }
 
 // TaskTool is an INTERNAL sub-agent kernel only (runSub). It is NOT a model-facing
-// tool. Codex MultiAgent V2 uses spawn_agent / wait_agent / …. Do not register this
+// tool. Codex multi-agent V1 uses spawn_agent / wait_agent / …. Do not register this
 // type on a tool.Registry — Name is deliberately not a public tool name.
 //
 // Name is intentionally empty so accidental registry.Add is skipped/ignored.
@@ -114,12 +114,12 @@ func (t *TaskTool) ReadOnly() bool { return false }
 func (t *TaskTool) Execute(ctx context.Context, args json.RawMessage) (string, error) {
 	_ = ctx
 	_ = args
-	return "", fmt.Errorf("tool \"task\" was removed; use spawn_agent (Codex multi-agent V2)")
+	return "", fmt.Errorf("tool \"task\" was removed; use spawn_agent (Codex multi-agent V1)")
 }
 
 // buildSubReg returns the sub-agent's tool set: the named whitelist (minus
 // meta-tools that could re-spawn work), or every parent tool except those
-// meta-tools. When allowMeta is true, meta-tools are included.
+// meta-tools. Production always passes allowMeta=false.
 func (t *TaskTool) buildSubReg(names []string, allowMeta bool) *tool.Registry {
 	if allowMeta {
 		return FilterRegistry(t.parentReg, names)

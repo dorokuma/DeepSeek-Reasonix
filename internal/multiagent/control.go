@@ -107,11 +107,11 @@ func (m *Metadata) EndTool() {
 
 // Control is session-scoped multi-agent controller (one per root session).
 type Control struct {
-	mu     sync.Mutex
-	agents map[string]*Metadata // open agents (count toward concurrency)
-	closed map[string]*Metadata // closed but resumable (Codex resume_agent)
-	byLeaf map[string]string
-	runner Runner
+	mu            sync.Mutex
+	agents        map[string]*Metadata // open agents (count toward concurrency)
+	closed        map[string]*Metadata // closed but resumable (Codex resume_agent)
+	byLeaf        map[string]string
+	runner        Runner
 	mailbox       *Mailbox
 	maxConcurrent int
 	rootStatus    Status
@@ -631,7 +631,7 @@ func (c *Control) SendInput(target, message string, interrupt bool) (path string
 	st := rec.Status
 	rec.mu.Unlock()
 	if st == StatusShutdown {
-		return "", fmt.Errorf("agent %q is closed; spawn_agent a new one", path)
+		return "", fmt.Errorf("agent %q is closed; call resume_agent first, or spawn_agent for a fresh thread", path)
 	}
 
 	if interrupt && IsTurnActive(st) {
@@ -716,81 +716,95 @@ func (c *Control) CloseAgent(target string) (previous any, path string, err erro
 }
 
 // ResumeAgent reopens a closed agent so it can receive send_input / wait_agent (Codex resume_agent).
+// Disk-only resume (process restart) and in-memory closed map share one critical section so
+// concurrent resume of the same id cannot double-count open slots.
 func (c *Control) ResumeAgent(target string) (status any, path string, err error) {
 	target = strings.TrimSpace(target)
 	if target == "" {
 		return nil, "", fmt.Errorf("id is required")
 	}
+
+	c.mu.Lock()
 	if int(c.openCount.Load()) >= c.maxConcurrent {
+		c.mu.Unlock()
 		return nil, "", fmt.Errorf("too many open agents (max %d); close_agent others first", c.maxConcurrent)
 	}
 
-	c.mu.Lock()
 	path, rec := c.lookupAnyLocked(target)
-	if rec == nil {
-		// Disk-only resume after process restart: target as path or leaf.
-		path = c.resolvePersistedPathLocked(target)
-		c.mu.Unlock()
-		if path == "" {
-			return StatusJSON(StatusNotFound, "", ""), "", fmt.Errorf("agent %q not found", target)
-		}
-		if k, ok := c.runner.(SessionKeeper); ok && k.HasPersistedSession(path) {
-			_ = k.LoadSession(path)
-			rec = &Metadata{
-				Path:     path,
-				Nickname: LeafName(path),
-				Role:     "task",
-				Status:   StatusCompleted,
-			}
-			c.mu.Lock()
-			if c.agents == nil {
-				c.agents = make(map[string]*Metadata)
-			}
-			if c.byLeaf == nil {
-				c.byLeaf = make(map[string]string)
-			}
-			c.agents[path] = rec
-			c.byLeaf[rec.Nickname] = path
+	if rec != nil {
+		// Already open: report status (Codex returns current status).
+		if _, open := c.agents[path]; open {
+			rec.mu.Lock()
+			st := StatusJSON(rec.Status, rec.LastAnswer, rec.LastError)
+			rec.mu.Unlock()
 			c.mu.Unlock()
-			c.openCount.Add(1)
-			return StatusJSON(StatusCompleted, "", ""), path, nil
+			return st, path, nil
 		}
-		return StatusJSON(StatusNotFound, "", ""), path, fmt.Errorf("agent %q not found", target)
-	}
-	// Already open: report status (Codex returns current status).
-	if _, open := c.agents[path]; open {
+		// Must be in closed map.
+		if _, ok := c.closed[path]; !ok {
+			c.mu.Unlock()
+			return StatusJSON(StatusNotFound, "", ""), path, fmt.Errorf("agent %q is not resumable", path)
+		}
+		delete(c.closed, path)
 		rec.mu.Lock()
+		// Idle-open after resume: not running until send_input.
+		rec.Status = StatusCompleted
+		if rec.LastAnswer == "" && rec.LastError == "shutdown" {
+			rec.LastError = ""
+		}
+		rec.cancel = nil
+		rec.turnDone = nil
 		st := StatusJSON(rec.Status, rec.LastAnswer, rec.LastError)
 		rec.mu.Unlock()
+		c.agents[path] = rec
+		c.byLeaf[rec.Nickname] = path
+		c.openCount.Add(1)
+		c.mu.Unlock()
+
+		if k, ok := c.runner.(SessionKeeper); ok {
+			_ = k.LoadSession(path)
+		}
+		return st, path, nil
+	}
+
+	// Disk-only resume after process restart: target as path or leaf.
+	path = c.resolvePersistedPathLocked(target)
+	if path == "" {
+		c.mu.Unlock()
+		return StatusJSON(StatusNotFound, "", ""), "", fmt.Errorf("agent %q not found", target)
+	}
+	// Another concurrent resume may have already reopened this path.
+	if existing, ok := c.agents[path]; ok && existing != nil {
+		existing.mu.Lock()
+		st := StatusJSON(existing.Status, existing.LastAnswer, existing.LastError)
+		existing.mu.Unlock()
 		c.mu.Unlock()
 		return st, path, nil
 	}
-	// Must be in closed map.
-	if _, ok := c.closed[path]; !ok {
+	k, ok := c.runner.(SessionKeeper)
+	if !ok || !k.HasPersistedSession(path) {
 		c.mu.Unlock()
-		return StatusJSON(StatusNotFound, "", ""), path, fmt.Errorf("agent %q is not resumable", path)
+		return StatusJSON(StatusNotFound, "", ""), path, fmt.Errorf("agent %q not found", target)
 	}
-	delete(c.closed, path)
-	rec.mu.Lock()
-	// Idle-open after resume: not running until send_input.
-	rec.Status = StatusCompleted
-	if rec.LastAnswer == "" && rec.LastError == "shutdown" {
-		rec.LastError = ""
+	if c.agents == nil {
+		c.agents = make(map[string]*Metadata)
 	}
-	rec.cancel = nil
-	rec.turnDone = nil
-	st := StatusJSON(rec.Status, rec.LastAnswer, rec.LastError)
-	rec.mu.Unlock()
+	if c.byLeaf == nil {
+		c.byLeaf = make(map[string]string)
+	}
+	rec = &Metadata{
+		Path:     path,
+		Nickname: LeafName(path),
+		Role:     "task",
+		Status:   StatusCompleted,
+	}
 	c.agents[path] = rec
 	c.byLeaf[rec.Nickname] = path
+	c.openCount.Add(1)
 	c.mu.Unlock()
 
-	if k, ok := c.runner.(SessionKeeper); ok {
-		_ = k.LoadSession(path)
-	}
-
-	c.openCount.Add(1)
-	return st, path, nil
+	_ = k.LoadSession(path)
+	return StatusJSON(StatusCompleted, "", ""), path, nil
 }
 
 // resolvePersistedPathLocked maps target to a canonical path for disk resume.

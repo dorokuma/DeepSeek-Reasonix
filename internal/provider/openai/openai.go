@@ -258,10 +258,10 @@ func (c *client) streamWithReconnect(ctx context.Context, resp *http.Response, n
 }
 
 func (c *client) buildRequest(req provider.Request) chatRequest {
-	// Repair tool-call pairing before sending: an interrupted/resumed history can
-	// carry an assistant tool_calls turn whose results never landed, which DeepSeek
-	// rejects with a 400 ("must be followed by tool messages …").
-	src := provider.SanitizeToolPairing(req.Messages)
+	// Repair tool-call pairing and prune old multimodal parts before sending:
+	// an interrupted/resumed history can carry an assistant tool_calls turn whose
+	// results never landed (DeepSeek 400), and large image/audio parts bloat cost.
+	src := provider.SanitizeHistory(req.Messages, req.EffectiveKeepMultimodalTurns())
 	msgs := make([]chatMessage, len(src))
 	for i, m := range src {
 		cm := chatMessage{
@@ -566,13 +566,13 @@ func normaliseUsage(u *wireUsage) *provider.Usage {
 		reasoning = u.CompletionTokensDetails.ReasoningTokens
 	}
 	out := &provider.Usage{
-		PromptTokens:          u.PromptTokens,
-		CompletionTokens:      u.CompletionTokens,
-		TotalTokens:           u.TotalTokens,
-		CacheHitTokens:        hit,
-		CacheMissTokens:       miss,
-		ReasoningTokens:       reasoning,
-		CacheBreakdownKnown:   hit+miss > 0,
+		PromptTokens:        u.PromptTokens,
+		CompletionTokens:    u.CompletionTokens,
+		TotalTokens:         u.TotalTokens,
+		CacheHitTokens:      hit,
+		CacheMissTokens:     miss,
+		ReasoningTokens:     reasoning,
+		CacheBreakdownKnown: hit+miss > 0,
 	}
 	out.NormalizeCache()
 	return out

@@ -14,6 +14,9 @@ agent. It is the Reasonix analog of Claude Code's CLAUDE.md.
 - Cache-first: the system-prompt prefix (base prompt + tools + memory) must stay
   byte-stable across turns so DeepSeek's automatic prefix cache stays warm. Never
   mutate it mid-session — ride the turn tail instead (see `control.Compose`).
+- Multi-agent is Codex V1 surface only: `spawn_agent`, `send_input`, `wait_agent`,
+  `close_agent`, `resume_agent`. Hard one-layer ban (children never spawn). Sub-agent
+  sessions live under the session dir `subagent-sessions/` for both TUI/boot and ACP.
 
 ## Memory
 

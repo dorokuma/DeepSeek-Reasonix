@@ -6,12 +6,12 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"time"
 
 	"reasonix/internal/acp"
 	"reasonix/internal/agent"
-	"reasonix/internal/multiagent"
 	"reasonix/internal/boot"
 	"reasonix/internal/command"
 	"reasonix/internal/config"
@@ -20,6 +20,7 @@ import (
 	"reasonix/internal/i18n"
 	"reasonix/internal/instruction"
 	"reasonix/internal/memory"
+	"reasonix/internal/multiagent"
 	"reasonix/internal/netclient"
 	"reasonix/internal/permission"
 	"reasonix/internal/plugin"
@@ -142,14 +143,18 @@ func (f *acpFactory) NewSession(ctx context.Context, p acp.SessionParams) (*cont
 	policy := permission.New(cfg.Permissions.Mode, cfg.Permissions.Allow, cfg.Permissions.Ask, cfg.Permissions.Deny)
 	headlessGate := permission.NewGate(policy, nil)
 	resolveSubagentProvider := newACPSubagentProviderResolver(cfg, entry, proxySpec)
-	// Codex multi-agent (spawn / send_input / wait / close; no legacy task tool).
+	// Codex multi-agent V1 (spawn / send_input / wait / close / resume; no nesting).
 	maCtrl := multiagent.NewControl()
 	multiagent.RegisterTools(reg)
 	kernel := agent.NewTaskTool(execProv, entry.Price, reg,
 		entry.ContextWindow, cfg.Agent.SoftCompactRatio, cfg.Agent.CompactRatio, cfg.Agent.CompactForceRatio,
 		cfg.Agent.Temperature, config.ArchiveDir(), "", headlessGate,
 		resolveSubagentProvider, nil)
-	maCtrl.SetRunner(&agent.MultiAgentRunner{Tool: kernel, Control: maCtrl})
+	maCtrl.SetRunner(&agent.MultiAgentRunner{
+		Tool:       kernel,
+		Control:    maCtrl,
+		SessionDir: filepath.Join(config.SessionDir(), "subagent-sessions"),
+	})
 
 	var mainAgentAllowed map[string]bool
 	if len(cfg.Permissions.MainAgentAllowed) > 0 {

@@ -105,6 +105,25 @@ type Request struct {
 	Tools       []ToolSchema
 	Temperature float64
 	MaxTokens   int
+	// KeepMultimodalTurns is how many recent turns keep full multimodal parts
+	// when SanitizeHistory runs in the provider request path.
+	// Zero uses DefaultKeepMultimodalTurns (3). Negative disables multimodal pruning.
+	KeepMultimodalTurns int
+}
+
+// DefaultKeepMultimodalTurns is used when Request.KeepMultimodalTurns is zero.
+const DefaultKeepMultimodalTurns = 3
+
+// EffectiveKeepMultimodalTurns maps Request.KeepMultimodalTurns to the value
+// passed to SanitizeMultiModalParts (≤0 disables pruning).
+func (r Request) EffectiveKeepMultimodalTurns() int {
+	if r.KeepMultimodalTurns < 0 {
+		return 0
+	}
+	if r.KeepMultimodalTurns == 0 {
+		return DefaultKeepMultimodalTurns
+	}
+	return r.KeepMultimodalTurns
 }
 
 // interruptedToolResult stands in for a tool result that never landed — an
@@ -157,16 +176,22 @@ func SanitizeMultiModalParts(msgs []Message, keepTurns int) []Message {
 
 	// Count turns from the end to find the cutoff index.
 	// A "turn" is an assistant message (with or without tool calls).
+	// If the history is shorter than keepTurns, keep everything.
 	turnCount := 0
-	cutoff := len(msgs)
+	cutoff := 0
+	found := false
 	for i := len(msgs) - 1; i >= 0; i-- {
 		if msgs[i].Role == RoleAssistant {
 			turnCount++
 			if turnCount == keepTurns {
 				cutoff = i
+				found = true
 				break
 			}
 		}
+	}
+	if !found {
+		return msgs
 	}
 
 	const placeholder = "[content omitted to conserve context]"
@@ -200,13 +225,11 @@ func SanitizeMultiModalParts(msgs []Message, keepTurns int) []Message {
 	return out
 }
 
-// TODO(Phase 4): integrate SanitizeHistory into the request pipeline.
-// Currently unused; will be called from buildRequest paths once
-// KeepMultimodalTurns is wired through the Options → provider chain.
-
 // SanitizeHistory performs both tool-call pairing repair and multimodal
 // content pruning in one pass. keepTurns controls how many recent turns
-// retain full multimodal content (see SanitizeMultiModalParts).
+// retain full multimodal content (see SanitizeMultiModalParts; ≤0 disables prune).
+// Providers call this from buildRequest so interrupted/resumed sessions stay API-valid
+// and old image/audio payloads do not bloat every request.
 func SanitizeHistory(msgs []Message, keepTurns int) []Message {
 	paired := SanitizeToolPairing(msgs)
 	return SanitizeMultiModalParts(paired, keepTurns)

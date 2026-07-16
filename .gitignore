@@ -5,6 +5,11 @@
 /npm/.stage/
 /reasonix
 /reasonix.exe
+/reasonix-new
+/reasonix-bin
+/bridge
+/cmd/bridge/bridge
+*.exe
 
 # Website (Astro) build output
 /site/dist/
@@ -45,3 +50,13 @@ Thumbs.db
 /tmp/
 /.codex/
 *.bak.peek
+
+# Audit scratch, one-off notes, local experiments (never commit)
+.audit-*.md
+.notes.md
+/analysis-build-function.md
+/multiagent-investigation.md
+/test-new-file.md
+/test-note.md
+/test-sync.txt
+/optimization_logs/

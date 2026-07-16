@@ -22,6 +22,34 @@ func (f fakeRunner) Run(ctx context.Context, path, message string) (string, erro
 	return "ok", nil
 }
 
+// persistRunner is a SessionKeeper for disk-resume tests.
+type persistRunner struct {
+	fakeRunner
+	persisted map[string]bool
+	loads     atomic.Int32
+}
+
+func (p *persistRunner) SaveSession(path string) error {
+	if p.persisted == nil {
+		p.persisted = make(map[string]bool)
+	}
+	p.persisted[path] = true
+	return nil
+}
+
+func (p *persistRunner) LoadSession(path string) error {
+	p.loads.Add(1)
+	return nil
+}
+
+func (p *persistRunner) HasPersistedSession(path string) bool {
+	return p.persisted[path]
+}
+
+func (p *persistRunner) DropSession(path string) {
+	delete(p.persisted, path)
+}
+
 // waitUntil polls cond until true or deadline; fails the test on timeout.
 func waitUntil(t *testing.T, timeout time.Duration, cond func() bool) {
 	t.Helper()
@@ -799,6 +827,47 @@ func TestResumeAgentAlreadyOpen(t *testing.T) {
 	}
 }
 
+func TestResumeAgentDiskConcurrentNoDoubleCount(t *testing.T) {
+	c := NewControl()
+	pr := &persistRunner{
+		fakeRunner: fakeRunner{fn: func(ctx context.Context, path, message string) (string, error) {
+			return "ok", nil
+		}},
+		persisted: map[string]bool{"/root/diskjob": true},
+	}
+	c.SetRunner(pr)
+
+	const n = 16
+	type res struct {
+		path string
+		err  error
+	}
+	ch := make(chan res, n)
+	for i := 0; i < n; i++ {
+		go func() {
+			_, path, err := c.ResumeAgent("diskjob")
+			ch <- res{path: path, err: err}
+		}()
+	}
+	var ok int
+	for i := 0; i < n; i++ {
+		r := <-ch
+		if r.err != nil {
+			t.Fatalf("resume: %v", r.err)
+		}
+		if r.path != "/root/diskjob" {
+			t.Fatalf("path = %q", r.path)
+		}
+		ok++
+	}
+	if ok != n {
+		t.Fatalf("ok=%d", ok)
+	}
+	if c.OpenCount() != 1 {
+		t.Fatalf("open count after concurrent disk resume = %d, want 1", c.OpenCount())
+	}
+}
+
 func TestActiveUnderCount(t *testing.T) {
 	c := NewControl()
 	hold := make(chan struct{})
@@ -832,5 +901,3 @@ func TestActiveUnderCount(t *testing.T) {
 		t.Fatalf("expected 0 active after both complete, got %d", n)
 	}
 }
-
-

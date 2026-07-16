@@ -47,6 +47,9 @@ type Agent struct {
 	maxMainAgentReadonlyCalls int
 	readonlyCallsCount        atomic.Int64
 
+	// keepMultimodalTurns is forwarded on provider.Request (0 → default 3).
+	keepMultimodalTurns int
+
 	// executorHandoffGuard is enabled by Coordinator for the executor agent. The
 	// per-turn marker check in Run keeps ordinary single-model turns unaffected.
 	executorHandoffGuard bool
@@ -104,8 +107,7 @@ type Agent struct {
 	// Set via SetPreEditHook.
 	onPreEdit func(diff.Change)
 
-
-	// multiAgent is Codex MultiAgent V2 control (spawn_agent / wait_agent / ...).
+	// multiAgent is Codex multi-agent V1 control (spawn_agent / wait_agent / ...).
 	multiAgent *multiagent.Control
 
 	// agentPath is this agent's canonical multi-agent path (Codex AgentPath).
@@ -174,8 +176,8 @@ type Agent struct {
 
 	// lastToolName/toolRepeatCount detect repeated identical tool calls that
 	// may indicate the model is stuck in a loop.
-	lastToolName   string
-	lastToolArgs   string
+	lastToolName    string
+	lastToolArgs    string
 	toolRepeatCount int
 
 	// steerCh receives external user messages injected via Steer() while Run()
@@ -414,8 +416,7 @@ type Options struct {
 	// disables hook firing.
 	Hooks ToolHooks
 
-
-	// MultiAgent is Codex MultiAgent V2 control for the session (nil disables).
+	// MultiAgent is Codex multi-agent V1 control for the session (nil disables).
 	MultiAgent *multiagent.Control
 
 	// AgentPath is this agent's canonical multi-agent path. Empty = /root.
@@ -431,12 +432,10 @@ type Options struct {
 	// ProjectChecks are host-observable structured checks extracted during boot.
 	ProjectChecks []instruction.VerifyCheck
 
-	// KeepMultimodalTurns controls how many recent turns retain their full
-	// multimodal content before SanitizeMultiModalParts prunes older parts.
-	// Default 3 when unset. 0 or negative disables pruning.
-	// TODO(Phase 4): wire into SanitizeHistory / buildRequest paths.
+	// KeepMultimodalTurns controls how many recent turns retain full multimodal
+	// parts when building provider requests (via SanitizeHistory).
+	// Zero uses the provider default (3). Negative disables multimodal pruning.
 	KeepMultimodalTurns int
-
 
 	// MainAgentAllowed is the whitelist of tools the root (depth-0) agent may
 	// invoke. When nil, no restriction is applied — all registered tools are
@@ -529,6 +528,7 @@ func New(prov provider.Provider, tools *tool.Registry, session *Session, opts Op
 		mainAgentAllowed:          opts.MainAgentAllowed,
 		toolsDynamic:              opts.ToolsDynamic,
 		maxMainAgentReadonlyCalls: opts.MaxMainAgentReadonlyCalls,
+		keepMultimodalTurns:       opts.KeepMultimodalTurns,
 	}
 }
 
@@ -818,9 +818,10 @@ func (a *Agent) stream(ctx context.Context, turn int) (string, string, string, [
 	msgs := a.session.Snapshot()
 	msgs, nextSent := CalculateDiffAndFilter(msgs, a.sentFragments)
 	ch, err := a.prov.Stream(ctx, provider.Request{
-		Messages:    msgs,
-		Tools:       a.getSchemasForContext(ctx),
-		Temperature: a.temperature,
+		Messages:            msgs,
+		Tools:               a.getSchemasForContext(ctx),
+		Temperature:         a.temperature,
+		KeepMultimodalTurns: a.keepMultimodalTurns,
 	})
 	if err != nil {
 		return "", "", "", nil, nil, false, false, err

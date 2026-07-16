@@ -53,6 +53,8 @@
   内核无硬编码模型。
 - **多模型 · 可组合**：DeepSeek（flash/pro）与 MiMo 作为预设内置；任何 OpenAI 兼容
   端点都只是一条配置。可选让两个模型协同（执行器 + 规划器），各自独立、缓存稳定的 session。
+- **多代理（2.0）**：主代理用 `spawn_agent` / `send_input` / `wait_agent` / `close_agent` /
+  `resume_agent` 调度后台子代理；只允许一层（子代理不能再开子代理）。
 - **插件驱动**：外部工具以子进程形式运行，通过 stdio JSON-RPC 通信（MCP 兼容）；
   内置工具在编译期自注册。
 - **零摩擦分发**：`CGO_ENABLED=0` 单二进制；一条命令交叉编译到六个目标平台。

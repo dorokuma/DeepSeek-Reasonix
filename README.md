@@ -56,6 +56,9 @@
 - **Multi-model & composable.** DeepSeek (flash/pro) and MiMo ship as presets;
   any OpenAI-compatible endpoint is a config entry, not new code. Optionally run
   two models together (executor + planner) in separate, cache-stable sessions.
+- **Multi-agent (2.0).** Root agent orchestrates background work with
+  `spawn_agent` / `send_input` / `wait_agent` / `close_agent` / `resume_agent`.
+  One layer only — children cannot spawn further agents.
 - **Plugin-driven.** External tools run as subprocesses over stdio JSON-RPC
   (MCP-compatible). Built-in tools self-register at compile time.
 - **Zero-friction distribution.** `CGO_ENABLED=0` single binary; cross-compile
