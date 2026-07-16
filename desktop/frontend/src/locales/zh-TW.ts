@@ -1530,6 +1530,9 @@ export const zhTW: Record<DictKey, string> = {
   "updater.failed": "更新失敗：{msg}",
   "updater.retry": "重試",
   "updater.dismiss": "稍後",
+  "changelog.title": "更新日誌",
+  "changelog.subtitle": "依產品能力整理新功能、改進、修復與升級提醒，不再只是提交記錄。",
+  "changelog.openWeb": "在網頁查看",
 
   // onboarding — first-run API-key overlay
   "onboarding.title": "連線 Reasonix",

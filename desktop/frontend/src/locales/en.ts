@@ -2284,6 +2284,9 @@ export const en = {
   "updater.failed": "Update failed: {msg}",
   "updater.retry": "Retry",
   "updater.dismiss": "Later",
+  "changelog.title": "Release notes",
+  "changelog.subtitle": "A product-focused history of new capabilities, improvements, fixes, and upgrade guidance.",
+  "changelog.openWeb": "Open on web",
 
   // onboarding — first-run API-key overlay
   "onboarding.title": "Connect Reasonix",

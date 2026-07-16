@@ -43,14 +43,24 @@ the `release` environment deployment.
 ## The release loop
 
 1. **Develop** — PRs land on `main-v2` (branch auto-deletes on merge).
-2. **Cut a canary** before the intended release (e.g. heading for `1.4.0`):
+2. **Prepare the release notes** — Actions → **Prepare release notes**. Enter the
+   intended version and, when needed, the previous desktop tag. The workflow sends
+   only public merged-PR metadata to DeepSeek, creates equivalent English and Chinese
+   product notes, validates their structure and citations, and opens a review PR.
+   Review and edit that PR like product copy. Once merged, the same catalog entry
+   drives `/changelog/` and both CLI and Desktop GitHub Releases; the desktop
+   app links to that web history from Settings → Updates. A missing catalog
+   entry blocks stable publication.
+3. **Cut a canary** before the intended release (e.g. heading for `1.4.0`):
    - Desktop: Actions → **Release desktop** → `channel: canary`, `base_version: 1.4.0`
    - CLI: Actions → **Release npm** → `base_version: 1.4.0`
    - Publishes `1.4.0-canary.N` to the desktop R2 `canary/` pointer (no GitHub release) and npm `@canary`.
-3. **Test** — testers install `reasonix@canary` (CLI) or grab the desktop canary
+4. **Test** — testers install `reasonix@canary` (CLI) or grab the desktop canary
    build from its R2 link, and report bugs.
-4. **Fix** on `main-v2` via PRs; re-cut the canary as needed (`canary.N` bumps).
-5. **Ship stable** when the canary is clean — push the three tags:
+5. **Fix** on `main-v2` via PRs; re-cut the canary as needed (`canary.N` bumps).
+   Re-run **Prepare release notes** after material fixes; it updates the same branch
+   and PR without publishing anything.
+6. **Ship stable** when the canary is clean and the release-notes PR is merged — push the three tags:
    ```sh
    git tag v1.4.0         && git push origin v1.4.0          # CLI binaries + Homebrew
    git tag npm-v1.4.0     && git push origin npm-v1.4.0      # npm -> latest
@@ -64,7 +74,7 @@ the `release` environment deployment.
    `npm update -g` silently downgraded users to 0.53.2 (#5822). A pushed tag whose
    publish is still awaiting approval only warns; release-npm.yml's verify step
    owns asserting the dist-tag lands.
-6. **Next cycle** — the canary rolls on toward `1.5.0`.
+7. **Next cycle** — the canary rolls on toward `1.5.0`.
 
 ## Notes
 
@@ -78,6 +88,9 @@ the `release` environment deployment.
   older desktop builds that still use GitHub `latest` do not 404.
 - Canary uses R2 plus the same gateway proxy for the `canary/` pointer; it never
   appears on the GitHub releases page.
+- DeepSeek is an editorial drafting dependency, not a runtime or publishing dependency.
+  The API key is available only to the manually dispatched preparation workflow; tag
+  workflows publish the reviewed JSON already committed to `main-v2` and never call a model.
 - Windows and Linux apply downloaded, minisign-verified artifacts in place. macOS
   applies in-app only for Developer ID signed and notarized builds; ad-hoc/local
   builds fall back to the download page.

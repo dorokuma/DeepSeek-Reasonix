@@ -39,7 +39,7 @@ import { useWailsResizeFix } from "./lib/useWailsResizeFix";
 import { asArray } from "./lib/array";
 import { clearLegacyLangPref, normalizeLangPref, readLegacyLangPref, t, useI18n, useT, type Translator } from "./lib/i18n";
 import { localizedNoticeText, useController, type Item, type LiveStream } from "./lib/useController";
-import { app, onEvent, onProjectTreeChanged, onReady, onRuntimeRebuilt, onSessionRecovered } from "./lib/bridge";
+import { app, onEvent, onProjectTreeChanged, onReady, onRuntimeRebuilt, onSessionRecovered, openExternal } from "./lib/bridge";
 import { generativeMusic, isGenerativeMusicEnabled } from "./lib/generative-music";
 import { clearAttentionChimeKeys, playAttentionChime, playSuccessChime, shouldPlayAttentionChimeForEvent } from "./lib/sound";
 import { NoticeCard, Transcript } from "./components/Transcript";
@@ -3831,7 +3831,13 @@ export default function App() {
             <div className="banner banner--warning">{t("guard.safeMode")}</div>
           )}
 
-          <UpdateBanner enabled={startupUpdateChecksEnabled === true} />
+          <UpdateBanner
+            enabled={startupUpdateChecksEnabled === true}
+            onShowReleaseNotes={(latest) => {
+              const version = latest.replace(/^(?:desktop-)?v/, "");
+              void openExternal(`https://reasonix.io/changelog/v${version}/`);
+            }}
+          />
 
           <main className="main">
             {sidebarImDetailConnection ? (

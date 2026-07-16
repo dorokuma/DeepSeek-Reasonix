@@ -1,5 +1,6 @@
 ---
 import Base from '../layouts/Base.astro';
+import SiteHeader from '../components/SiteHeader.astro';
 const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 ---
 <Base
@@ -10,16 +11,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 
   <Fragment slot="head"><meta name="robots" content="noindex" /></Fragment>
 
-  <header class="nav scrolled">
-    <div class="nav-inner">
-      <a class="brand" href={`${base}/`}><img src={`${base}/logo.svg`} alt="Reasonix logo" /><span>Reasonix</span></a>
-      <div class="lang-switch" role="group" aria-label="Language">
-        <button type="button" data-lang="en" class="active">EN</button>
-        <button type="button" data-lang="zh">中文</button>
-      </div>
-      <a class="btn btn-dark" href={`${base}/#start`}><span class="l-en">Install</span><span class="l-zh">安装</span></a>
-    </div>
-  </header>
+  <SiteHeader scrolled />
 
   <main class="hero" style="padding-bottom:150px">
     <div class="wrap">

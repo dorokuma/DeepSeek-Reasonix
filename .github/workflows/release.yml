@@ -43,6 +43,11 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+      - name: Render reviewed release notes
+        run: node scripts/release-notes.mjs render --version "${{ github.ref_name }}" --output /tmp/release-notes.md
       - uses: goreleaser/goreleaser-action@v7
         with:
           version: '~> v2'
@@ -50,6 +55,12 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+
+      - name: Publish product release notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: gh release edit "$TAG" --notes-file /tmp/release-notes.md
 
       - name: Attach desktop manifest compatibility asset
         env:

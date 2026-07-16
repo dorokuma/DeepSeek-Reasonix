@@ -124,7 +124,11 @@ import { downloadPaneFromURL } from "./download-link.js";
   langBtns.forEach((b) => b.addEventListener("click", () => setLang(b.dataset.lang)));
   let savedLang = "";
   try { savedLang = localStorage.getItem(LANG_KEY) || ""; } catch (e) {}
-  setLang(savedLang || ((navigator.language || "").toLowerCase().startsWith("zh") ? "zh" : "en"));
+  const requestedLang = new URLSearchParams(window.location.search).get("lang");
+  const initialLang = requestedLang === "zh" || requestedLang === "en"
+    ? requestedLang
+    : savedLang || ((navigator.language || "").toLowerCase().startsWith("zh") ? "zh" : "en");
+  setLang(initialLang);
 
   /* docs scrollspy */
   const sideLinks = Array.from(document.querySelectorAll(".docs-side a[href^='#']"));
@@ -169,9 +173,11 @@ import { downloadPaneFromURL } from "./download-link.js";
     "Reasonix-linux-amd64.deb",
     "Reasonix-linux-amd64.tar.gz",
   ];
-  fetch("https://dl.reasonix.io/latest/latest.json", { cache: "no-cache" })
-    .then((r) => (r.ok ? r.json() : null))
-    .then((d) => {
+  const localPreview = window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1";
+  if (!localPreview) {
+    fetch("https://dl.reasonix.io/latest/latest.json", { cache: "no-cache" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
       const rawVersion = String((d && d.version) || "");
       const versionMatch = rawVersion.match(/^v?(\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?)$/);
       if (!versionMatch) return;
@@ -184,8 +190,9 @@ import { downloadPaneFromURL } from "./download-link.js";
         });
       });
       document.querySelectorAll("a.rxnotes").forEach((a) => {
-        a.href = a.href.replace(/releases\/tag\/v[^/]*$/, "releases/tag/v" + v);
+        a.href = new URL("changelog/v" + v + "/", window.location.origin + "/").href;
       });
-    })
-    .catch(() => {});
+      })
+      .catch(() => {});
+  }
 })();

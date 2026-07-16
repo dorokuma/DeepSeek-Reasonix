@@ -74,14 +74,15 @@ body[data-lang="zh"] .hero h1 { font-size: clamp(42px, 5.6vw, 72px); line-height
   box-shadow: 0 1px 0 var(--line);
 }
 .nav-inner {
-  display: flex; align-items: center; gap: 24px;
-  height: 68px; max-width: 1180px; margin: 0 auto; padding: 0 40px;
+  display: flex; align-items: center; gap: 18px;
+  height: 68px; max-width: 1480px; margin: 0 auto; padding: 0 40px;
 }
-.brand { display: flex; align-items: center; gap: 10px; text-decoration: none; color: var(--ink); }
+.brand { display: flex; flex: none; align-items: center; gap: 10px; text-decoration: none; color: var(--ink); }
 .brand img { width: 28px; height: 28px; border-radius: 8px; display: block; }
 .brand span { font-size: 17px; font-weight: 600; letter-spacing: -0.01em; }
-.nav-links { display: flex; gap: 6px; margin-right: auto; margin-left: 18px; }
+.nav-links { display: flex; min-width: 0; gap: 6px; margin-right: auto; margin-left: 18px; }
 .nav-links a {
+  flex: none; white-space: nowrap;
   color: var(--ink-2); text-decoration: none; font-size: 14.5px; font-weight: 500;
   padding: 8px 14px; border-radius: 999px;
   transition: color 0.2s, background 0.2s;
@@ -100,6 +101,11 @@ body[data-lang="zh"] .hero h1 { font-size: clamp(42px, 5.6vw, 72px); line-height
 .btn-ghost { background: transparent; color: var(--accent); border: 1px solid var(--line); }
 .btn-ghost:hover { background: var(--accent-soft); border-color: transparent; }
 .nav .btn { padding: 9px 20px; font-size: 14px; }
+.nav .btn, .nav .lang-switch, .nav-acct { flex: none; }
+
+@media (max-width: 1260px) {
+  .nav-link--secondary { display: none; }
+}
 
 /* hero */
 .hero { position: relative; padding: 150px 0 0; text-align: center; }

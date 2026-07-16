@@ -1,8 +1,8 @@
 import { lazy, memo, Suspense, useCallback, useEffect, useId, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type PointerEvent, type ReactNode } from "react";
-import { Bot as BotIcon, Check, CheckCircle2, ChevronDown, ChevronUp, Clipboard, GripVertical, KeyRound, Loader2, MessageCircle, Minus, Play, Plus, QrCode, RefreshCw, RotateCcw, Send } from "lucide-react";
+import { Bot as BotIcon, Check, CheckCircle2, ChevronDown, ChevronUp, Clipboard, ExternalLink, GripVertical, KeyRound, Loader2, MessageCircle, Minus, Play, Plus, QrCode, RefreshCw, RotateCcw, Send } from "lucide-react";
 import { asArray } from "../lib/array";
 import { useDeferredClose } from "../lib/useMountTransition";
-import { app } from "../lib/bridge";
+import { app, openExternal } from "../lib/bridge";
 import { normalizeLangPref, useI18n, useT, type DictKey, type LangPref } from "../lib/i18n";
 import { apiKeyEnvFromProviderName, inferredVisionModels, mergedFetchedProviderModels, providerApiKeyEnvForSave, providerDefaultModel, providerIsConfigured, providerModelCandidates, providerRequiresKey } from "../lib/providerModels";
 import { useUpdater } from "../lib/useUpdater";
@@ -6968,6 +6968,16 @@ function UpdatesSection({
           {t("settings.config", { path: configPath })}
         </Tooltip>
       )}
+      <SettingsField
+        className="settings-field--wide-copy"
+        label={t("changelog.title")}
+        hint={t("changelog.subtitle")}
+      >
+        <button className="btn btn--small" onClick={() => void openExternal("https://reasonix.io/changelog/")}>
+          {t("changelog.openWeb")}
+          <ExternalLink size={14} aria-hidden="true" />
+        </button>
+      </SettingsField>
     </SettingsSection>
   );
 }

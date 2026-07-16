@@ -236,6 +236,10 @@ jobs:
           cache: true
           cache-dependency-path: desktop/go.sum
 
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+
       - uses: actions/download-artifact@v8
         with:
           path: dist
@@ -262,6 +266,10 @@ jobs:
       # Canary never appears on the GitHub releases page; the mirror job picks up
       # the signed dist via the canary-dist artifact below. Stable publishes a
       # GitHub release as usual.
+      - name: Render reviewed release notes
+        if: steps.ver.outputs.channel != 'canary'
+        run: node scripts/release-notes.mjs render --version "${{ steps.ver.outputs.version }}" --output /tmp/release-notes.md
+
       - name: Publish GitHub release
         if: steps.ver.outputs.channel != 'canary'
         env:
@@ -269,7 +277,7 @@ jobs:
         run: |
           # Keep the repository homepage focused on the installable desktop app;
           # the CLI release line is configured not to claim repository-wide latest.
-          args=(--title "Reasonix Desktop ${{ steps.ver.outputs.version }}" --generate-notes)
+          args=(--title "Reasonix Desktop ${{ steps.ver.outputs.version }}" --notes-file /tmp/release-notes.md)
           if [ "${{ steps.ver.outputs.prerelease }}" = "true" ]; then
             args+=(--prerelease --latest=false)
           else

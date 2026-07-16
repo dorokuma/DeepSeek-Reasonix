@@ -2286,6 +2286,9 @@ export const zh: Record<DictKey, string> = {
   "updater.failed": "更新失败：{msg}",
   "updater.retry": "重试",
   "updater.dismiss": "稍后",
+  "changelog.title": "更新日志",
+  "changelog.subtitle": "按产品能力整理新功能、改进、修复与升级提醒，不再只是提交记录。",
+  "changelog.openWeb": "在网页查看",
 
   // onboarding — first-run API-key overlay
   "onboarding.title": "连接 Reasonix",
