@@ -4,6 +4,17 @@ All notable changes to the Go line (Reasonix 1.0+) are recorded here. The legacy
 `0.x` TypeScript history lives on the [`v1`](https://github.com/esengine/DeepSeek-Reasonix/tree/v1)
 branch.
 
+
+## [2.0.0] — 2026-07-16
+
+### Multi-agent (Codex V1 aligned)
+
+- Replace legacy interrupt/followup surface with Codex-style tools: `spawn_agent`, `send_input`, `wait_agent`, `close_agent`, `resume_agent`.
+- One-layer only: hard ban on nested sub-agents (root may spawn; children cannot).
+- Soft interrupt via `send_input(interrupt=true)`; completed agents stay open until `close_agent`.
+- Wait timeout support; sub-agent sessions persisted for resume; soft-queue no longer silent-drop.
+- Tool guidance aligned with Codex, Reasonix product wording (REASONIX.md, no nesting).
+
 ## [1.0.0] — 2026-06-03
 
 First stable release — a **ground-up rewrite in Go**. Not an upgrade of the `0.x`

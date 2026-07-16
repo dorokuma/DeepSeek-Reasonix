@@ -15,14 +15,28 @@ import (
 // Multi-agent control defaults (Codex V1 lifecycle; one spawn layer only).
 const (
 	DefaultMaxConcurrent = 6
+	// DefaultMaxDepth: only root may spawn (no nested agents).
+	DefaultMaxDepth = 1
 	lastTaskListCap = 240
 	// How long interrupt/close waits for the current turn to exit.
 	interruptSettle = 30 * time.Second
+	// Wait timeouts (ms), Codex-style bounds.
+	DefaultWaitTimeoutMs = 600_000 // 10 minutes
+	MinWaitTimeoutMs     = 1_000
+	MaxWaitTimeoutMs     = 3_600_000 // 1 hour
 )
 
 // SessionDropper is implemented by MultiAgentRunner to drop persisted sub-agent sessions.
 type SessionDropper interface {
 	DropSession(path string)
+}
+
+// SessionKeeper persists closed-agent sessions for resume across process restarts.
+type SessionKeeper interface {
+	SessionDropper
+	SaveSession(path string) error
+	LoadSession(path string) error
+	HasPersistedSession(path string) bool
 }
 
 // Steerer soft-queues a message into a running agent turn (send_input without interrupt).
@@ -34,6 +48,7 @@ type Steerer interface {
 type WaitResult struct {
 	Message     string         `json:"message"`
 	Interrupted bool           `json:"interrupted,omitempty"`
+	TimedOut    bool           `json:"timed_out,omitempty"`
 	Results     string         `json:"results,omitempty"`
 	MailCount   int            `json:"mail_count"`
 	LiveAgents  []LiveSnapshot `json:"live_agents,omitempty"`
@@ -149,6 +164,7 @@ func (c *Control) SetRootStatus(s Status) {
 }
 
 // Spawn starts a background agent (new thread + first turn).
+// Only the root agent may spawn (DefaultMaxDepth = 1; no nesting).
 func (c *Control) Spawn(ctx context.Context, parentPath, taskName, message string) (taskPath, nickname string, err error) {
 	if c == nil || c.runner == nil {
 		return "", "", fmt.Errorf("multi-agent runner not configured")
@@ -161,12 +177,23 @@ func (c *Control) Spawn(ctx context.Context, parentPath, taskName, message strin
 	if parentPath == "" {
 		parentPath = RootPath
 	}
+	// Hard one-layer gate (product rule: no nested agents, ever).
+	// 1) Only root may be the spawn parent.
+	// 2) New path must be exactly depth 1 (/root/<name>), never /root/a/b.
+	if !IsRootAgentPath(parentPath) {
+		return "", "", fmt.Errorf("Agent depth limit reached. Solve the task yourself.")
+	}
 	if int(c.openCount.Load()) >= c.maxConcurrent {
 		return "", "", fmt.Errorf("too many open agents (max %d); close_agent finished agents to free slots", c.maxConcurrent)
 	}
 
 	c.mu.Lock()
-	path := JoinPath(parentPath, taskName)
+	// Always attach under root — ignore any non-root parentPath that slipped through.
+	path := JoinPath(RootPath, taskName)
+	if PathDepth(path) != 1 {
+		c.mu.Unlock()
+		return "", "", fmt.Errorf("Agent depth limit reached. Solve the task yourself.")
+	}
 	if err := c.prepareSpawnPathLocked(path); err != nil {
 		c.mu.Unlock()
 		return "", "", err
@@ -678,7 +705,10 @@ func (c *Control) CloseAgent(target string) (previous any, path string, err erro
 	if c.openCount.Load() > 0 {
 		c.openCount.Add(-1)
 	}
-	// Do not DropSession — resume_agent needs the same thread context.
+	// Persist session for resume (process restart safe when SessionKeeper is set).
+	if k, ok := c.runner.(SessionKeeper); ok {
+		_ = k.SaveSession(path)
+	}
 	if c.mailbox != nil {
 		c.mailbox.NotifySteer()
 	}
@@ -698,8 +728,34 @@ func (c *Control) ResumeAgent(target string) (status any, path string, err error
 	c.mu.Lock()
 	path, rec := c.lookupAnyLocked(target)
 	if rec == nil {
+		// Disk-only resume after process restart: target as path or leaf.
+		path = c.resolvePersistedPathLocked(target)
 		c.mu.Unlock()
-		return StatusJSON(StatusNotFound, "", ""), "", fmt.Errorf("agent %q not found", target)
+		if path == "" {
+			return StatusJSON(StatusNotFound, "", ""), "", fmt.Errorf("agent %q not found", target)
+		}
+		if k, ok := c.runner.(SessionKeeper); ok && k.HasPersistedSession(path) {
+			_ = k.LoadSession(path)
+			rec = &Metadata{
+				Path:     path,
+				Nickname: LeafName(path),
+				Role:     "task",
+				Status:   StatusCompleted,
+			}
+			c.mu.Lock()
+			if c.agents == nil {
+				c.agents = make(map[string]*Metadata)
+			}
+			if c.byLeaf == nil {
+				c.byLeaf = make(map[string]string)
+			}
+			c.agents[path] = rec
+			c.byLeaf[rec.Nickname] = path
+			c.mu.Unlock()
+			c.openCount.Add(1)
+			return StatusJSON(StatusCompleted, "", ""), path, nil
+		}
+		return StatusJSON(StatusNotFound, "", ""), path, fmt.Errorf("agent %q not found", target)
 	}
 	// Already open: report status (Codex returns current status).
 	if _, open := c.agents[path]; open {
@@ -729,8 +785,25 @@ func (c *Control) ResumeAgent(target string) (status any, path string, err error
 	c.byLeaf[rec.Nickname] = path
 	c.mu.Unlock()
 
+	if k, ok := c.runner.(SessionKeeper); ok {
+		_ = k.LoadSession(path)
+	}
+
 	c.openCount.Add(1)
 	return st, path, nil
+}
+
+// resolvePersistedPathLocked maps target to a canonical path for disk resume.
+func (c *Control) resolvePersistedPathLocked(target string) string {
+	if strings.HasPrefix(target, "/") {
+		return strings.TrimSuffix(target, "/")
+	}
+	seg := NormalizePathSegment(target)
+	if full, ok := c.byLeaf[seg]; ok {
+		return full
+	}
+	// Common form: leaf name only → /root/<leaf>
+	return JoinPath(RootPath, seg)
 }
 
 // lookupAnyLocked finds open or closed agent by path/leaf. Caller holds c.mu.
@@ -773,14 +846,33 @@ func (c *Control) lookupAnyLocked(target string) (path string, rec *Metadata) {
 	return "", nil
 }
 
-// Wait blocks at RootPath until the batch of active turns is done or the user steers.
+// Wait blocks at RootPath until the batch is done, the user steers, or the
+// default wait timeout elapses.
 func (c *Control) Wait(ctx context.Context) WaitResult {
-	return c.WaitFor(ctx, RootPath)
+	return c.WaitTimeout(ctx, DefaultWaitTimeoutMs)
+}
+
+// WaitTimeout is Wait with an explicit timeout in milliseconds (Codex wait_agent).
+// timeoutMs <= 0 uses DefaultWaitTimeoutMs; values are clamped to [Min, Max].
+func (c *Control) WaitTimeout(ctx context.Context, timeoutMs int64) WaitResult {
+	if timeoutMs <= 0 {
+		timeoutMs = DefaultWaitTimeoutMs
+	}
+	if timeoutMs < MinWaitTimeoutMs {
+		timeoutMs = MinWaitTimeoutMs
+	}
+	if timeoutMs > MaxWaitTimeoutMs {
+		timeoutMs = MaxWaitTimeoutMs
+	}
+	dctx, cancel := context.WithTimeout(ctx, time.Duration(timeoutMs)*time.Millisecond)
+	defer cancel()
+	return c.WaitFor(dctx, RootPath)
 }
 
 // WaitFor blocks until every non-final descendant under forPath has reached a
 // final status (completed/errored/shutdown) — Codex is_final: interrupted is NOT
 // final, so wait keeps blocking after interrupt until send_input finishes or close.
+// Context cancel / deadline ends the wait (deadline → timed_out).
 func (c *Control) WaitFor(ctx context.Context, forPath string) WaitResult {
 	if forPath == "" {
 		forPath = RootPath
@@ -799,21 +891,25 @@ func (c *Control) WaitFor(ctx context.Context, forPath string) WaitResult {
 		}
 	}
 
-	finish := func(msg string, interrupted bool) WaitResult {
+	finish := func(msg string, interrupted, timedOut bool) WaitResult {
 		take()
 		live := c.pendingUnderSnapshot(forPath)
 		res := WaitResult{
 			Message:     msg,
 			Interrupted: interrupted,
+			TimedOut:    timedOut,
 			Results:     FormatMailsForSession(taken),
 			MailCount:   len(taken),
 			LiveAgents:  live,
 		}
-		if interrupted {
+		switch {
+		case timedOut:
+			res.Next = "Wait timed out before all agents finished. Call wait_agent again, send_input, or close_agent."
+		case interrupted:
 			res.Next = "Interrupted by user or cancel. Process results so far; remaining agents stay open until close_agent."
-		} else if len(taken) == 0 {
+		case len(taken) == 0:
 			res.Next = "Nothing to collect. Spawn work, send_input, or continue locally. Close finished agents with close_agent."
-		} else {
+		default:
 			res.Next = "Batch results are in results. Close finished agents with close_agent to free slots. Do not re-spawn the same work."
 		}
 		return res
@@ -834,14 +930,17 @@ func (c *Control) WaitFor(ctx context.Context, forPath string) WaitResult {
 		// Batch done: no non-final agents and no mail left.
 		if pendingAgents == 0 && !mailPending {
 			if len(taken) > 0 || !sawPending {
-				return finish("Wait completed.", false)
+				return finish("Wait completed.", false, false)
 			}
 			select {
 			case <-ctx.Done():
-				return finish("Wait interrupted by cancel.", true)
+				if ctx.Err() == context.DeadlineExceeded {
+					return finish("Wait timed out.", false, true)
+				}
+				return finish("Wait interrupted by cancel.", true, false)
 			case a := <-ch:
 				if a == ActivitySteer {
-					return finish("Wait interrupted by new input.", true)
+					return finish("Wait interrupted by new input.", true, false)
 				}
 			}
 			continue
@@ -853,10 +952,13 @@ func (c *Control) WaitFor(ctx context.Context, forPath string) WaitResult {
 
 		select {
 		case <-ctx.Done():
-			return finish("Wait interrupted by cancel.", true)
+			if ctx.Err() == context.DeadlineExceeded {
+				return finish("Wait timed out.", false, true)
+			}
+			return finish("Wait interrupted by cancel.", true, false)
 		case a := <-ch:
 			if a == ActivitySteer {
-				return finish("Wait interrupted by new input.", true)
+				return finish("Wait interrupted by new input.", true, false)
 			}
 		}
 	}

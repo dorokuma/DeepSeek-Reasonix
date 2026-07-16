@@ -103,8 +103,11 @@ func (spawnAgent) Execute(ctx context.Context, args json.RawMessage) (string, er
 	if err := json.Unmarshal(args, &p); err != nil {
 		return "", fmt.Errorf("invalid args: %w", err)
 	}
-	parent := AgentPathFrom(ctx)
-	path, nick, err := c.Spawn(ctx, parent, p.TaskName, p.Message)
+	// Root-only spawn: never use child AgentPath as parent (hard no-nesting).
+	if !IsRootAgentPath(AgentPathFrom(ctx)) {
+		return "", fmt.Errorf("Agent depth limit reached. Solve the task yourself.")
+	}
+	path, nick, err := c.Spawn(ctx, RootPath, p.TaskName, p.Message)
 	if err != nil {
 		return "", err
 	}
@@ -178,18 +181,25 @@ func (waitAgent) ReadOnly() bool   { return true }
 func (waitAgent) Concurrent() bool { return false }
 
 func (waitAgent) Description() string {
-	// Codex V1 wait_agent + reasonix notes (interrupted not final; mailbox).
-	return `Wait for agents to reach a final status. Completed statuses may include the agent's final message. Once an agent reaches a final status, a notification message is also available (mailbox).
+	// Codex V1 wait_agent + reasonix notes (interrupted not final; mailbox; timeout).
+	return `Wait for agents to reach a final status. Completed statuses may include the agent's final message. Returns timed_out when the deadline elapses before agents finish. Once an agent reaches a final status, a notification message is also available (mailbox).
 
-Interrupted is not a final status — the agent remains open for send_input. After an interrupt, wait keeps blocking until a later turn finishes, the agent errors, or you close_agent.
+Interrupted is not a final status — the agent remains open for send_input. After an interrupt, wait keeps blocking until a later turn finishes, the agent errors, you close_agent, or timeout_ms elapses.
 
 Call wait_agent sparingly: only when you need the result for the next critical-path step and you are blocked until it returns. Do not wait by reflex.
 
-The wait also ends early when new user input is steered into the active turn.`
+The wait also ends early when new user input is steered into the active turn.
+
+timeout_ms: optional wait deadline in milliseconds (default 600000 = 10 minutes; min 1000; max 3600000).`
 }
 
 func (waitAgent) Schema() json.RawMessage {
-	return json.RawMessage(`{"type":"object","properties":{}}`)
+	return json.RawMessage(`{
+  "type":"object",
+  "properties":{
+    "timeout_ms":{"type":"integer","description":"Max wait time in milliseconds before returning timed_out (default 600000, min 1000, max 3600000)."}
+  }
+}`)
 }
 
 func (waitAgent) Execute(ctx context.Context, args json.RawMessage) (string, error) {
@@ -197,8 +207,16 @@ func (waitAgent) Execute(ctx context.Context, args json.RawMessage) (string, err
 	if err != nil {
 		return "", err
 	}
-	_ = args
-	res := c.Wait(ctx)
+	var p struct {
+		TimeoutMs *int64 `json:"timeout_ms"`
+	}
+	_ = json.Unmarshal(args, &p)
+	var res WaitResult
+	if p.TimeoutMs != nil {
+		res = c.WaitTimeout(ctx, *p.TimeoutMs)
+	} else {
+		res = c.Wait(ctx)
+	}
 	out, err := json.Marshal(res)
 	if err != nil {
 		return "", err

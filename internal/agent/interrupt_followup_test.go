@@ -31,7 +31,7 @@ func TestGetSchemasKeepsAllMetaTools(t *testing.T) {
 	multiagent.RegisterTools(reg)
 	reg.Add(stubSchemaTool{name: "read_file"})
 
-	a := &Agent{tools: reg, multiAgent: c}
+	a := &Agent{tools: reg, multiAgent: c, agentPath: multiagent.RootPath}
 	schemas := a.getSchemasForContext(context.Background())
 	names := make([]string, 0, len(schemas))
 	for _, s := range schemas {
@@ -41,6 +41,30 @@ func TestGetSchemasKeepsAllMetaTools(t *testing.T) {
 		if !containsName(names, want) {
 			t.Fatalf("%s must remain visible; got %v", want, names)
 		}
+	}
+}
+
+func TestGetSchemasHidesMetaForSubAgent(t *testing.T) {
+	c := multiagent.NewControl()
+	reg := tool.NewRegistry()
+	multiagent.RegisterTools(reg)
+	reg.Add(stubSchemaTool{name: "read_file"})
+
+	a := &Agent{tools: reg, multiAgent: c, agentPath: "/root/child"}
+	schemas := a.getSchemasForContext(context.Background())
+	for _, s := range schemas {
+		if multiagent.IsMetaTool(s.Name) {
+			t.Fatalf("sub-agent must not see %s", s.Name)
+		}
+	}
+	if !containsName(func() []string {
+		var n []string
+		for _, s := range schemas {
+			n = append(n, s.Name)
+		}
+		return n
+	}(), "read_file") {
+		t.Fatal("read_file should remain")
 	}
 }
 

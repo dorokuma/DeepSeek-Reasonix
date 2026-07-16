@@ -342,14 +342,72 @@ func TestMailboxDrainForRecipient(t *testing.T) {
 	}
 }
 
-func TestWaitAgentSchemaHasNoTimeout(t *testing.T) {
+func TestWaitAgentSchemaHasTimeout(t *testing.T) {
 	s := string(waitAgent{}.Schema())
-	if strings.Contains(s, "timeout") {
-		t.Fatalf("timeout must not appear in wait_agent schema: %s", s)
+	if !strings.Contains(s, "timeout_ms") {
+		t.Fatalf("timeout_ms must appear in wait_agent schema: %s", s)
 	}
 	d := waitAgent{}.Description()
-	if strings.Contains(strings.ToLower(d), "timeout_ms") {
-		t.Fatalf("timeout_ms must not appear in description: %s", d)
+	if !strings.Contains(strings.ToLower(d), "timeout_ms") {
+		t.Fatalf("timeout_ms must appear in description: %s", d)
+	}
+}
+
+func TestWaitTimeout(t *testing.T) {
+	c := NewControl()
+	hold := make(chan struct{})
+	c.SetRunner(fakeRunner{fn: func(ctx context.Context, path, message string) (string, error) {
+		select {
+		case <-hold:
+			return "ok", nil
+		case <-ctx.Done():
+			return "", ctx.Err()
+		}
+	}})
+	if _, _, err := c.Spawn(context.Background(), RootPath, "slow", "m"); err != nil {
+		t.Fatal(err)
+	}
+	res := c.WaitTimeout(context.Background(), 50) // 50ms
+	if !res.TimedOut {
+		t.Fatalf("want timed out, got %+v", res)
+	}
+	close(hold)
+}
+
+func TestSpawnDepthLimitNonRoot(t *testing.T) {
+	c := NewControl()
+	c.SetRunner(fakeRunner{fn: func(ctx context.Context, path, message string) (string, error) {
+		return "ok", nil
+	}})
+	_, _, err := c.Spawn(context.Background(), "/root/child", "nested", "nope")
+	if err == nil || !strings.Contains(err.Error(), "depth") {
+		t.Fatalf("want depth limit, got %v", err)
+	}
+}
+
+func TestPathDepthAndRootHelpers(t *testing.T) {
+	if !IsRootAgentPath("") || !IsRootAgentPath(RootPath) {
+		t.Fatal("root paths")
+	}
+	if IsRootAgentPath("/root/a") {
+		t.Fatal("child is not root")
+	}
+	if PathDepth(RootPath) != 0 || PathDepth("/root/a") != 1 || PathDepth("/root/a/b") != 2 {
+		t.Fatalf("depths: root=%d a=%d ab=%d", PathDepth(RootPath), PathDepth("/root/a"), PathDepth("/root/a/b"))
+	}
+}
+
+func TestSpawnAlwaysDepthOne(t *testing.T) {
+	c := NewControl()
+	c.SetRunner(fakeRunner{fn: func(ctx context.Context, path, message string) (string, error) {
+		return "ok", nil
+	}})
+	path, _, err := c.Spawn(context.Background(), RootPath, "job", "m")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if PathDepth(path) != 1 {
+		t.Fatalf("spawned path depth want 1 got %d path=%s", PathDepth(path), path)
 	}
 }
 
@@ -508,8 +566,11 @@ func TestWaitBlocksOnInterruptedUntilClose(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 80*time.Millisecond)
 	defer cancel()
 	res := c.WaitFor(ctx, RootPath)
-	if !res.Interrupted {
+	if !res.TimedOut && !res.Interrupted {
 		t.Fatalf("wait should time out / cancel while agent interrupted, got %+v", res)
+	}
+	if res.Message == "Wait completed." {
+		t.Fatalf("must not report completed while interrupted: %+v", res)
 	}
 	// Close frees wait.
 	if _, _, err := c.CloseAgent(path); err != nil {

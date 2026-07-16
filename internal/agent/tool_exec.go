@@ -313,6 +313,14 @@ func (a *Agent) executeOne(ctx context.Context, call provider.ToolCall) toolOutc
 			errMsg:  fmt.Sprintf("permission denied: tool %q not available", call.Name),
 		}
 	}
+	// Hard no-nesting: sub-agents (non-root path) cannot use multi-agent tools.
+	if multiagent.IsMetaTool(call.Name) && !multiagent.IsRootAgentPath(a.agentPath) {
+		return toolOutcome{
+			output:  "error: sub-agents cannot use multi-agent tools (spawn/send_input/wait/close/resume). Complete the task yourself.",
+			blocked: true,
+			errMsg:  "multi-agent tools blocked for sub-agent",
+		}
+	}
 	// Main-agent whitelist: only allow explicitly permitted tools (if the option is set).
 	if allow := a.mainAgentAllowed; allow != nil && !allow[call.Name] && !(a.toolsDynamic != nil && a.toolsDynamic[call.Name] && a.diagnosticRequested.Load()) {
 		return toolOutcome{

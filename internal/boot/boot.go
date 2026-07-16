@@ -481,15 +481,19 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	}
 
 	subAgentGate := permission.NewGate(policy, nil)
-	// Codex MultiAgent V2: spawn_agent / wait_agent / list_agents / send_message / followup_task / interrupt_agent.
-	// Legacy `task` tool is not registered.
+	// Codex multi-agent V1: spawn / send_input / wait / close / resume (no nesting).
 	maCtrl := multiagent.NewControl()
 	multiagent.RegisterTools(reg)
 	taskTool := agent.NewTaskTool(execProv, entry.Price, reg,
 		entry.ContextWindow, cfg.Agent.SoftCompactRatio, cfg.Agent.CompactRatio, cfg.Agent.CompactForceRatio,
 		cfg.Agent.Temperature, config.ArchiveDir(), agent.DefaultTaskSystemPrompt+"\n\n"+extractSharedSections(), subAgentGate,
 		resolveSubagentProviderForTask, hookRunner)
-	maCtrl.SetRunner(&agent.MultiAgentRunner{Tool: taskTool, Control: maCtrl})
+	maRunner := &agent.MultiAgentRunner{
+		Tool:       taskTool,
+		Control:    maCtrl,
+		SessionDir: filepath.Join(config.SessionDir(), "subagent-sessions"),
+	}
+	maCtrl.SetRunner(maRunner)
 
 	// Session history tools let the AI discover and read past conversations.
 	// `list_sessions` returns all saved session files; `read_session` loads one

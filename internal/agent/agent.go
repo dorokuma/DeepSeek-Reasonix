@@ -747,18 +747,21 @@ func (a *Agent) Steer(input string) {
 	if a.multiAgent != nil {
 		a.multiAgent.NotifySteer()
 	}
-	a.InjectInput(input)
+	_ = a.InjectInput(input)
 }
 
 // InjectInput queues a message for the running loop without waking wait_agent
 // (used for parent→child send_input while the child turn is still active).
-func (a *Agent) InjectInput(input string) {
+// Returns false if the queue is full or the agent is not ready (never silent-success).
+func (a *Agent) InjectInput(input string) bool {
 	if a == nil || a.steerCh == nil {
-		return
+		return false
 	}
 	select {
 	case a.steerCh <- input:
+		return true
 	default:
+		return false
 	}
 }
 
@@ -951,8 +954,13 @@ func (a *Agent) getSchemasForContext(ctx context.Context) []provider.ToolSchema 
 	}
 	schemas := a.tools.Schemas()
 	diagnosticExpose := a.diagnosticRequested.Load()
+	// Sub-agents never see multi-agent tools (hard no-nesting).
+	hideMeta := !multiagent.IsRootAgentPath(a.agentPath)
 	filtered := make([]provider.ToolSchema, 0, len(schemas))
 	for _, s := range schemas {
+		if hideMeta && multiagent.IsMetaTool(s.Name) {
+			continue
+		}
 		if a.toolsDynamic != nil && a.toolsDynamic[s.Name] {
 			if !diagnosticExpose {
 				continue
