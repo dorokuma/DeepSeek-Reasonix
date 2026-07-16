@@ -29,6 +29,14 @@ APPNAME="Reasonix"            # wails.json productName -> Reasonix.app
 BINNAME="reasonix-desktop"    # wails.json outputfilename -> linux binary name
 GUARDNAME="reasonix-guard"
 LAUNCHERNAME="reasonix-launcher"
+windows_resource_tool_dir=""
+
+cleanup() {
+	if [ -n "$windows_resource_tool_dir" ]; then
+		rm -rf "$windows_resource_tool_dir"
+	fi
+}
+trap cleanup EXIT
 
 cd "$ROOT/desktop"
 
@@ -46,6 +54,20 @@ build_guard() {
 	fi
 }
 
+stamp_windows_executable() {
+	local target="$1"
+	local description="$2"
+	local internal_name="$3"
+	local original_filename="$4"
+	"$windows_resource_tool" \
+		-exe "$target" \
+		-icon "$ROOT/desktop/build/windows/icon.ico" \
+		-version "$numver" \
+		-description "$description" \
+		-internal-name "$internal_name" \
+		-original-filename "$original_filename"
+}
+
 # Stamp the version resource (Windows file properties, macOS CFBundleVersion) from
 # the tag. Wails feeds info.productVersion into goversioninfo and NSIS's
 # VIFileVersion, both of which demand a strictly numeric X.X.X, so strip the
@@ -59,15 +81,22 @@ ldflags="-X main.version=$VERSION -X main.channel=$CHANNEL"
 [ "$os" = "darwin" ] && [ "${HAS_APPLE_CERT:-}" = "true" ] && ldflags="$ldflags -X main.macSelfUpdate=true"
 UPDATE_HELPER="reasonix-update-helper.exe"
 if [ "$os" = windows ]; then
+	windows_resource_tool_dir=$(mktemp -d)
+	windows_resource_tool="$windows_resource_tool_dir/reasonix-windows-resource.exe"
+	echo "==> build Windows resource stamper"
+	go build -trimpath -o "$windows_resource_tool" ./cmd/windows-resource
 	guard_out="$ROOT/desktop/build/windows/installer/$GUARDNAME.exe"
 	build_guard
+	stamp_windows_executable "$guard_out" "Reasonix Guard" "$GUARDNAME" "$GUARDNAME.exe"
 	launcher_out="$ROOT/desktop/build/windows/installer/$LAUNCHERNAME.exe"
 	echo "==> go build Windows GUI launcher"
 	(cd "$ROOT" && GOOS=windows GOARCH="$arch" CGO_ENABLED=0 go build -trimpath \
 		-ldflags="-s -w -H windowsgui -X main.version=$VERSION" -o "$launcher_out" ./cmd/reasonix-guard)
+	stamp_windows_executable "$launcher_out" "Reasonix Launcher" "$LAUNCHERNAME" "$LAUNCHERNAME.exe"
 	echo "==> go build Windows update helper"
 	GOOS=windows GOARCH="$arch" go build -trimpath -ldflags="-s -w" \
 		-o "build/windows/installer/$UPDATE_HELPER" ./cmd/update-helper
+	stamp_windows_executable "build/windows/installer/$UPDATE_HELPER" "Reasonix Update Helper" "reasonix-update-helper" "$UPDATE_HELPER"
 fi
 build_args=()
 [ "${DESKTOP_BUILD_CLEAN:-1}" != "0" ] && build_args+=(-clean)
@@ -95,6 +124,14 @@ darwin)
 	cp -R "build/bin/reasonix-desktop.app" "$app"
 	cp "$guard_out" "$app/Contents/MacOS/$GUARDNAME"
 	/usr/libexec/PlistBuddy -c "Set :CFBundleExecutable $GUARDNAME" "$app/Contents/Info.plist"
+	bundle_executable=$(/usr/libexec/PlistBuddy -c "Print :CFBundleExecutable" "$app/Contents/Info.plist")
+	[ "$bundle_executable" = "$GUARDNAME" ] || { echo "macOS bundle executable is $bundle_executable, want $GUARDNAME" >&2; exit 1; }
+	bundle_icon=$(/usr/libexec/PlistBuddy -c "Print :CFBundleIconFile" "$app/Contents/Info.plist")
+	case "$bundle_icon" in
+	*.icns) ;;
+	*) bundle_icon="$bundle_icon.icns" ;;
+	esac
+	[ -s "$app/Contents/Resources/$bundle_icon" ] || { echo "macOS bundle icon is missing: $bundle_icon" >&2; exit 1; }
 
 	# Two signing paths, selected by HAS_APPLE_CERT (set by release-desktop.yml when
 	# the APPLE_* secrets are present). With a real Developer ID cert + notarization
@@ -188,6 +225,12 @@ windows)
 	rm -rf "$staging"
 	;;
 linux)
+	for desktop_contract in \
+		'Exec=reasonix-guard launch --detach' \
+		'Icon=reasonix-desktop' \
+		'StartupWMClass=reasonix-desktop'; do
+		grep -F -x -q "$desktop_contract" build/linux/reasonix.desktop || { echo "Linux desktop entry missing: $desktop_contract" >&2; exit 1; }
+	done
 	tar -czf "$ROOT/dist/${APPNAME}-linux-${arch}.tar.gz" -C build/bin "$BINNAME" "$GUARDNAME"
 	# Also build a .deb for Debian/Ubuntu users (goreleaser/nfpm; see
 	# desktop/build/linux/nfpm.yaml). Human-download only: the Linux updater channel

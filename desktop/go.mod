@@ -16,6 +16,7 @@ require (
 	fyne.io/systray v1.12.2
 	github.com/godbus/dbus/v5 v5.2.2
 	github.com/minio/selfupdate v0.6.0
+	github.com/tc-hib/winres v0.3.1
 	github.com/wailsapp/wails/v2 v2.12.0
 	golang.org/x/mod v0.37.0
 	golang.org/x/sys v0.46.0
@@ -47,6 +48,7 @@ require (
 	github.com/mattn/go-isatty v0.0.22 // indirect
 	github.com/mattn/go-pointer v0.0.1 // indirect
 	github.com/mattn/go-runewidth v0.0.24 // indirect
+	github.com/nfnt/resize v0.0.0-20180221191011-83c6a9932646 // indirect
 	github.com/pkg/browser v0.0.0-20240102092130-5ac0b6a4141c // indirect
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/rivo/uniseg v0.4.7 // indirect

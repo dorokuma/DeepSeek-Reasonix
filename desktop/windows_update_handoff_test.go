@@ -78,9 +78,11 @@ func TestDesktopBuildScriptCompilesAndPackagesWindowsUpdateHelper(t *testing.T) 
 	script := string(data)
 	for _, want := range []string{
 		`UPDATE_HELPER="reasonix-update-helper.exe"`,
+		`go build -trimpath -o "$windows_resource_tool" ./cmd/windows-resource`,
 		`GOOS=windows GOARCH="$arch" go build`,
 		`./cmd/update-helper`,
 		`build/windows/installer/$UPDATE_HELPER`,
+		`stamp_windows_executable "build/windows/installer/$UPDATE_HELPER"`,
 		`cp "$helper" "$staging/$UPDATE_HELPER"`,
 	} {
 		if !strings.Contains(script, want) {
