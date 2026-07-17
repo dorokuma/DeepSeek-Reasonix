@@ -48,6 +48,50 @@ func TestCheckInWorkDir(t *testing.T) {
 	}
 }
 
+// TestCheckInWorkDirSymlinkEscape verifies that a symlink pointing outside
+// the workspace is detected and rejected, even when the symlink path itself
+// appears to be inside the workspace.
+func TestCheckInWorkDirSymlinkEscape(t *testing.T) {
+	workDir := t.TempDir()
+	outsideDir := t.TempDir()
+	outsideFile := filepath.Join(outsideDir, "secret.txt")
+	if err := os.WriteFile(outsideFile, []byte("secret"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Create a symlink inside the workspace that points outside.
+	linkPath := filepath.Join(workDir, "escape")
+	if err := os.Symlink(outsideDir, linkPath); err != nil {
+		t.Fatal(err)
+	}
+
+	// The symlink path itself looks inside the workspace, but resolving it
+	// reveals the actual target is outside.
+	if err := checkInWorkDir(workDir, filepath.Join(linkPath, "secret.txt")); err == nil {
+		t.Fatal("symlink escape should be rejected")
+	}
+
+	// A symlink that stays inside the workspace should be allowed.
+	realInside := filepath.Join(workDir, "real")
+	if err := os.MkdirAll(realInside, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	linkInside := filepath.Join(workDir, "safe-link")
+	if err := os.Symlink(realInside, linkInside); err != nil {
+		t.Fatal(err)
+	}
+	if err := checkInWorkDir(workDir, filepath.Join(linkInside, "ok.txt")); err != nil {
+		t.Fatalf("symlink inside workspace should be allowed: %v", err)
+	}
+
+	// A path with a non-existent tail where the existing ancestor resolves
+	// outside the workspace should be rejected.
+	deepEscape := filepath.Join(linkPath, "nope", "also-nope.txt")
+	if err := checkInWorkDir(workDir, deepEscape); err == nil {
+		t.Fatal("symlink escape with non-existent tail should be rejected")
+	}
+}
+
 // TestWorkspaceBindsReadAndWrite checks that relative paths land inside the
 // workspace directory rather than the process cwd, for both a reader and a
 // writer, and that write confinement defaults to the workspace.

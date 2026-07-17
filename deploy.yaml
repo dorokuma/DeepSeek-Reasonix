@@ -1,28 +1,25 @@
 # deploy.yaml — Reasonix 部署配置
 #
-# 项目类型: Go 单二进制 CLI (with HTTP/SSE server mode)
+# 项目类型: Go 单二进制 CLI
 # 构建方式: CGO_ENABLED=0, Go 1.25
 # 配置文件: reasonix.toml (支持 TOML 格式)
 #
 # 本配置是 Docker Compose 格式，用于 docker-compose / docker compose 部署。
-# 支持两种运行模式:
-#   1) CLI 模式 (默认): reasonix [run|chat|...]
-#   2) Server 模式: reasonix serve (HTTP/SSE, 默认端口 8080)
 #
 # 前置条件: 同级目录需有 Dockerfile（已自动生成）
 #
 # 使用方式:
-#   构建并启动 server 模式:
-#     docker compose -f deploy.yaml up -d
-#
-#   仅构建镜像:
+#   构建镜像:
 #     docker compose -f deploy.yaml build
 #
 #   运行 CLI 模式 (一次性的):
 #     docker compose -f deploy.yaml run --rm reasonix reasonix chat
 #
+#   运行单次任务:
+#     docker compose -f deploy.yaml run --rm reasonix reasonix run "task description"
+#
 #   设置 API 密钥:
-#     DEEPSEEK_API_KEY=sk-xxx docker compose -f deploy.yaml up -d
+#     DEEPSEEK_API_KEY=sk-xxx docker compose -f deploy.yaml run --rm reasonix reasonix chat
 
 services:
   reasonix:
@@ -43,16 +40,8 @@ services:
     # 容器名称
     container_name: reasonix
 
-    # 运行模式: 默认 server 模式 (HTTP/SSE)
-    # 如需 CLI 模式，覆盖 command:
-    #   command: ["reasonix", "chat"]
-    command: ["reasonix", "serve"]
-    # 或挂载配置后直接运行:
-    # command: ["reasonix", "--config", "/config/reasonix.toml", "serve"]
-
-    # 端口映射 (Server 模式)
-    ports:
-      - "8080:8080"
+    # 默认显示帮助
+    command: ["reasonix", "--help"]
 
     # 环境变量
     environment:
@@ -71,16 +60,6 @@ services:
       - ./reasonix.toml:/app/reasonix.toml:ro
       # 会话数据持久化
       - reasonix_data:/app/data
-      # 可选的系统提示覆盖
-      # - ./prompts:/app/prompts:ro
-
-    # 健康检查 (Server 模式)
-    healthcheck:
-      test: ["CMD", "reasonix", "doctor", "--check", "serve"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 5s
 
     # 资源限制
     deploy:

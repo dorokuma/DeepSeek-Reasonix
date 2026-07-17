@@ -161,16 +161,10 @@ func (c *Coordinator) plan(ctx context.Context, input string) (string, error) {
 	// usage line, mirroring the old Fprintln + printUsage tail.
 	c.sink.Emit(event.Event{Kind: event.Usage, Usage: usage, Pricing: c.plannerPricing})
 
-	// Merge planner's cache/cost stats into executor.
+	// Merge planner's cache/cost stats into executor (planner price table;
+	// provider-normalized hit/miss only — see sessionUsageFromAPI).
 	if c.executor != nil && usage != nil {
-		usage.NormalizeCache()
-		var cost float64
-		var currency string
-		if c.plannerPricing != nil {
-			cost = c.plannerPricing.CostInCNY(usage)
-			currency = provider.CNYSymbol()
-		}
-		c.executor.AddSessionUsage(int64(usage.CacheHitTokens), int64(usage.CacheMissTokens), int64(usage.PromptTokens), int64(usage.TotalTokens), cost, currency)
+		c.executor.AddSessionUsage(sessionUsageFromAPI(usage, c.plannerPricing))
 	}
 
 	plan := text.String()
@@ -199,12 +193,15 @@ func (c *Coordinator) planWithTools(ctx context.Context, input string) (string, 
 			currCost = info.cost
 			currency = info.currency
 		}
-		deltaHit := currHit - c.plannerPrevHit
-		deltaMiss := currMiss - c.plannerPrevMiss
-		deltaPrompt := currPrompt - c.plannerPrevPrompt
-		deltaTotal := currTotal - c.plannerPrevTotal
-		deltaCost := currCost - c.plannerPrevCost
-		c.executor.AddSessionUsage(deltaHit, deltaMiss, deltaPrompt, deltaTotal, deltaCost, currency)
+		c.executor.AddSessionUsage(SessionUsageDelta{
+			Hit:      currHit - c.plannerPrevHit,
+			Miss:     currMiss - c.plannerPrevMiss,
+			Prompt:   currPrompt - c.plannerPrevPrompt,
+			Total:    currTotal - c.plannerPrevTotal,
+			Cost:     currCost - c.plannerPrevCost,
+			Currency: currency,
+			Reported: c.plannerAgent.SessionCacheReported(),
+		})
 		c.plannerPrevHit = currHit
 		c.plannerPrevMiss = currMiss
 		c.plannerPrevCost = currCost

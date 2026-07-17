@@ -2,6 +2,7 @@ package builtin
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -92,8 +93,9 @@ func resolveIn(workDir, p string) string {
 }
 
 // checkInWorkDir rejects paths that escape workDir when a workspace is bound.
-// Empty workDir means process-cwd tools (unconfined). Absolute paths and
-// cleaned ".." joins are both checked so read_file cannot open /etc/passwd.
+// Empty workDir means process-cwd tools (unconfined). Absolute paths,
+// cleaned ".." joins, and symlink escapes are all checked so read_file
+// cannot open /etc/passwd and a symlink inside the workspace cannot tunnel out.
 func checkInWorkDir(workDir, path string) error {
 	if workDir == "" || path == "" {
 		return nil
@@ -113,7 +115,51 @@ func checkInWorkDir(workDir, path string) error {
 	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 		return fmt.Errorf("%s is outside the allowed workspace %s", path, workDir)
 	}
+	// Resolve symlinks and re-check. A symlink like workspace/link -> /etc
+	// would pass the Abs check above (workspace/link/passwd is inside the
+	// workspace prefix) but actually reads /etc/passwd. Walk up the path to
+	// find the deepest existing ancestor (EvalSymlinks requires the path or
+	// at least a prefix to exist) and verify the resolved target is still
+	// inside the workspace.
+	if resolved, ok := resolveExistingAncestor(absP); ok {
+		if rel, err := filepath.Rel(absW, resolved); err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			return fmt.Errorf("symlink target %s is outside the allowed workspace %s", resolved, absW)
+		}
+	}
 	return nil
+}
+
+// resolveExistingAncestor walks up from absPath to find the deepest path
+// component that exists, resolves symlinks on it via EvalSymlinks, and
+// re-appends the remaining non-existent tail. Returns ("", false) when even
+// the root doesn't exist (nothing to resolve).
+func resolveExistingAncestor(absPath string) (string, bool) {
+	// Collect the tail components we need to re-attach after resolution.
+	var tail []string
+	p := absPath
+	for {
+		_, err := os.Lstat(p)
+		if err == nil {
+			resolved, err := filepath.EvalSymlinks(p)
+			if err != nil {
+				return "", false
+			}
+			// Walk back down through the collected tail.
+			for i := len(tail) - 1; i >= 0; i-- {
+				resolved = filepath.Join(resolved, tail[i])
+			}
+			return resolved, true
+		}
+		if !os.IsNotExist(err) {
+			return "", false
+		}
+		parent := filepath.Dir(p)
+		if parent == p {
+			return "", false // reached root without finding anything
+		}
+		tail = append(tail, filepath.Base(p))
+		p = parent
+	}
 }
 
 // vendorDirs are directory names grep and glob skip during a recursive walk:

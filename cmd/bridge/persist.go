@@ -23,7 +23,7 @@ import (
 const defaultStateDir = "/var/lib/reasonix-bridge"
 
 // chatRecord is persisted across reasonix-bridge restarts so we can resume the
-// same Reasonix conversation (reasonix serve --resume <path>).
+// same Reasonix conversation.
 type chatRecord struct {
 	ChatID      int64   `json:"chat_id"`
 	Workdir     string  `json:"workdir,omitempty"`
@@ -72,15 +72,15 @@ func (st *stateStore) sessionsDir() string {
 
 // sessionPathForChat returns the path to the encrypted session file for a chat.
 // Session files are stored as AES-256-GCM encrypted JSONL with a .jsonl.enc
-// extension.  A temporary plaintext copy (.jsonl) may exist while the external
-// reasonix serve process is running.
+// extension.  A temporary plaintext copy (.jsonl) may exist while the session
+// is active.
 func (st *stateStore) sessionPathForChat(chatID int64) string {
 	return filepath.Join(st.sessionsDir(), fmt.Sprintf("%d.jsonl.enc", chatID))
 }
 
-// sessionPathForChatPlain returns the plaintext temp path for reasonix serve.
-// The external serve process reads/writes plain JSONL at this path; the bridge
-// re-encrypts it to the .jsonl.enc file after serve exits.
+// sessionPathForChatPlain returns the plaintext temp path for an active session.
+// The process reads/writes plain JSONL at this path; the bridge re-encrypts it
+// to the .jsonl.enc file after the session ends.
 func (st *stateStore) sessionPathForChatPlain(chatID int64) string {
 	return filepath.Join(st.sessionsDir(), fmt.Sprintf("%d.jsonl", chatID))
 }

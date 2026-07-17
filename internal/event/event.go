@@ -227,8 +227,8 @@ type Event struct {
 	// Usage's single-turn numbers.
 	SessionHit      int        // Usage: cumulative cache-hit prompt tokens this session
 	SessionMiss     int        // Usage: cumulative cache-miss prompt tokens this session
-	SessionCost     float64    // Usage: cumulative conversation cost, computed from Pricing.Cost
-	SessionCurrency string     // Usage: currency symbol for SessionCost (e.g. "¥")
+	SessionCost     float64    // Usage: cumulative conversation spend in CNY via Pricing.CostInCNY
+	SessionCurrency string     // Usage: currency symbol for SessionCost (always "¥" after CostInCNY)
 	SessionPrompt   int        // Usage: cumulative prompt tokens this session
 	SessionTotal    int        // Usage: cumulative total tokens this session
 	Level           Level      // Notice

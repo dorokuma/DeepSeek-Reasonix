@@ -47,9 +47,7 @@ func TestRenderTOMLRoundTrips(t *testing.T) {
 	orig.LSP.Enabled = true
 	orig.Codegraph.Enabled = false
 	orig.Codegraph.Path = "/usr/local/bin/codegraph"
-	orig.Serve.AuthMode = "token"
-	orig.Serve.Token = "super-secret-token"
-	orig.Serve.BehindProxy = true
+
 	orig.Plugins = []PluginEntry{
 		{Name: "example", Command: "reasonix-plugin-example"},
 		{Name: "stripe", Type: "http", URL: "https://mcp.stripe.com", Headers: map[string]string{"Authorization": "Bearer x"}, AutoStart: boolPtr(false), Tier: "background"},
@@ -175,15 +173,7 @@ func TestRenderTOMLRoundTrips(t *testing.T) {
 	if got.Codegraph.Enabled || got.Codegraph.Path != "/usr/local/bin/codegraph" {
 		t.Errorf("codegraph not preserved: %+v", got.Codegraph)
 	}
-	if got.Serve.AuthMode != "token" || !got.Serve.BehindProxy {
-		t.Errorf("serve not preserved: %+v", got.Serve)
-	}
-	if strings.Contains(rendered, "super-secret-token") {
-		t.Error("raw serve token must not appear in rendered TOML")
-	}
-	if !strings.Contains(rendered, "REASONIX_SERVE_TOKEN") {
-		t.Error("serve token should render as env placeholder")
-	}
+
 	if !got.LSP.Enabled {
 		t.Error("lsp.enabled not preserved")
 	}

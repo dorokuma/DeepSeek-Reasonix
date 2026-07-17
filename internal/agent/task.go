@@ -308,10 +308,6 @@ func RunSubAgentOnSession(ctx context.Context, prov provider.Provider, reg *tool
 
 	mergeSubUsage := func() {
 		if parentAgent := AgentFromContext(ctx); parentAgent != nil {
-			hit := sub.sessCacheHit.Load()
-			miss := sub.sessCacheMiss.Load()
-			promptTok := sub.sessPromptTokens.Load()
-			total := sub.sessTotalTokens.Load()
 			var cost float64
 			var currency string
 			if v := sub.sessCostInfo.Load(); v != nil {
@@ -319,7 +315,15 @@ func RunSubAgentOnSession(ctx context.Context, prov provider.Provider, reg *tool
 				cost = info.cost
 				currency = info.currency
 			}
-			parentAgent.AddSessionUsage(hit, miss, promptTok, total, cost, currency)
+			parentAgent.AddSessionUsage(SessionUsageDelta{
+				Hit:      sub.sessCacheHit.Load(),
+				Miss:     sub.sessCacheMiss.Load(),
+				Prompt:   sub.sessPromptTokens.Load(),
+				Total:    sub.sessTotalTokens.Load(),
+				Cost:     cost,
+				Currency: currency,
+				Reported: sub.SessionCacheReported(),
+			})
 		}
 	}
 	if err := sub.Run(ctx, prompt); err != nil {

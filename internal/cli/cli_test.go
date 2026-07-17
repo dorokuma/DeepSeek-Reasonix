@@ -53,54 +53,6 @@ func TestChdirTo(t *testing.T) {
 	}
 }
 
-func TestModelForResumePathUsesStoredModelWhenAvailable(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "session.jsonl")
-	session := agent.NewSession("sys")
-	session.Add(provider.Message{Role: provider.RoleUser, Content: "hello"})
-	if err := session.Save(path); err != nil {
-		t.Fatal(err)
-	}
-	if err := agent.SetBranchModelPreserveUpdated(path, "saved"); err != nil {
-		t.Fatal(err)
-	}
-	cfg := &config.Config{
-		DefaultModel: "default/model",
-		Providers: []config.ProviderEntry{
-			{Name: "default", Kind: "openai", BaseURL: "https://default.invalid/v1", Model: "model"},
-			{Name: "saved", Kind: "openai", BaseURL: "https://saved.invalid/v1", Model: "model"},
-		},
-	}
-
-	if got := modelForResumePath("", path, cfg); got != "saved" {
-		t.Fatalf("modelForResumePath = %q, want saved", got)
-	}
-	if got := modelForResumePath("explicit/model", path, cfg); got != "explicit/model" {
-		t.Fatalf("explicit model was overwritten: %q", got)
-	}
-	if got := modelForResumePath("", filepath.Join(dir, "missing.jsonl"), cfg); got != "" {
-		t.Fatalf("missing session model = %q, want empty fallback", got)
-	}
-	cfg.Providers = cfg.Providers[:1]
-	if got := modelForResumePath("", path, cfg); got != "" {
-		t.Fatalf("unknown stored model = %q, want empty fallback", got)
-	}
-}
-
-func TestLoadResumableSessionRejectsCleanupPending(t *testing.T) {
-	home := isolateCLIConfigHome(t)
-
-	path := filepath.Join(config.SessionDir(), "pending.jsonl")
-	os.MkdirAll(filepath.Dir(path), 0o755)
-	saveTestSession(t, path, "pending prompt")
-	agent.MarkCleanupPending(path, "delete")
-
-	if _, err := loadResumableSession(path); err == nil || !strings.Contains(err.Error(), "pending cleanup") {
-		t.Fatalf("loadResumableSession cleanup-pending error = %v, want pending cleanup", err)
-	}
-	_ = home
-}
-
 func TestRunResumeRejectsCleanupPending(t *testing.T) {
 	home := isolateCLIConfigHome(t)
 
@@ -118,50 +70,6 @@ func TestRunResumeRejectsCleanupPending(t *testing.T) {
 		t.Fatalf("run --resume cleanup-pending stderr = %q, want pending cleanup", errOut)
 	}
 	_ = home
-}
-
-func TestServeResumeRejectsCleanupPending(t *testing.T) {
-	isolateCLIConfigHome(t)
-
-	path := filepath.Join(config.SessionDir(), "pending-serve.jsonl")
-	os.MkdirAll(filepath.Dir(path), 0o755)
-	saveTestSession(t, path, "pending prompt")
-	agent.MarkCleanupPending(path, "delete")
-
-	errOut := captureStderr(t, func() {
-		if rc := runServe([]string{"--resume", path, "--addr", "127.0.0.1:0"}); rc != 1 {
-			t.Fatalf("serve --resume cleanup-pending rc = %d, want 1", rc)
-		}
-	})
-	if !strings.Contains(errOut, "pending cleanup") {
-		t.Fatalf("serve --resume cleanup-pending stderr = %q, want pending cleanup", errOut)
-	}
-}
-
-func TestServeRejectsUnknownAuthMode(t *testing.T) {
-	isolateCLIConfigHome(t)
-
-	errOut := captureStderr(t, func() {
-		if rc := runServe([]string{"--auth", "tokne", "--addr", "127.0.0.1:0"}); rc != 1 {
-			t.Fatalf("serve --auth tokne rc = %d, want 1", rc)
-		}
-	})
-	if !strings.Contains(errOut, "auth mode must be none, token, or password") {
-		t.Fatalf("serve --auth tokne stderr = %q, want auth mode validation", errOut)
-	}
-}
-
-func TestServePasswordAuthRequiresPasswordMaterial(t *testing.T) {
-	isolateCLIConfigHome(t)
-
-	errOut := captureStderr(t, func() {
-		if rc := runServe([]string{"--auth", "password", "--addr", "127.0.0.1:0"}); rc != 1 {
-			t.Fatalf("serve --auth password without password rc = %d, want 1", rc)
-		}
-	})
-	if !strings.Contains(errOut, "auth mode password requires --password or serve.password_hash") {
-		t.Fatalf("serve --auth password stderr = %q, want password material validation", errOut)
-	}
 }
 
 func TestReserveNativeScrollbackFrameWritesOnlyNewlines(t *testing.T) {

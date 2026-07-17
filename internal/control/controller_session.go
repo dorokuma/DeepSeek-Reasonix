@@ -339,9 +339,11 @@ func (c *Controller) Resume(s *agent.Session, path string) {
 		if cost, currency := readSessionCost(path); cost > 0 {
 			c.executor.SetSessionCost(cost, currency)
 		}
-		// Restore cumulative cache/token stats from sidecar file, if one exists.
-		if hit, miss, prompt, total := readSessionCache(path); hit > 0 || miss > 0 {
-			c.executor.SetSessionCache(hit, miss, prompt, total)
+		// Restore cumulative cache/token stats whenever any counter is present
+		// (including prompt-only rows written when the provider omitted cache
+		// fields — keeps spend and token lifetime aligned across resume).
+		if hit, miss, prompt, total, reported := readSessionCache(path); hit > 0 || miss > 0 || prompt > 0 || total > 0 {
+			c.executor.SetSessionCache(hit, miss, prompt, total, reported)
 		}
 	}
 	c.mu.Lock()
@@ -374,7 +376,9 @@ func readSessionCost(path string) (cost float64, currency string) {
 }
 
 // writeSessionCost persists the cumulative cost alongside a session JSONL.
+// Cost is rounded to 6 decimal places to avoid float dust in on-disk files.
 func writeSessionCost(path string, cost float64, currency string) error {
+	cost = provider.RoundCost(cost)
 	if cost <= 0 || currency == "" {
 		os.Remove(sessionCostSidecar(path))
 		return nil
@@ -398,36 +402,47 @@ func sessionCacheSidecar(sessionPath string) string {
 
 // readSessionCache reads the cache sidecar written by snapshot. Missing or
 // unparseable files are silently treated as zeros so resume never breaks.
-func readSessionCache(path string) (hit, miss, prompt, total int64) {
+// reported is true when the session saw a real provider cache breakdown
+// (legacy files without the field default to hit+miss > 0).
+func readSessionCache(path string) (hit, miss, prompt, total int64, reported bool) {
 	b, err := os.ReadFile(sessionCacheSidecar(path))
 	if err != nil {
-		return 0, 0, 0, 0
+		return 0, 0, 0, 0, false
 	}
 	var v struct {
-		Hit    int64 `json:"cacheHit"`
-		Miss   int64 `json:"cacheMiss"`
-		Prompt int64 `json:"promptTokens"`
-		Total  int64 `json:"totalTokens"`
+		Hit      int64 `json:"cacheHit"`
+		Miss     int64 `json:"cacheMiss"`
+		Prompt   int64 `json:"promptTokens"`
+		Total    int64 `json:"totalTokens"`
+		Reported *bool `json:"cacheReported"`
 	}
 	if json.Unmarshal(b, &v) != nil {
-		return 0, 0, 0, 0
+		return 0, 0, 0, 0, false
 	}
-	return v.Hit, v.Miss, v.Prompt, v.Total
+	if v.Reported != nil {
+		reported = *v.Reported
+	} else {
+		// Pre-field sidecars: any non-zero split was provider-sourced.
+		reported = v.Hit+v.Miss > 0
+	}
+	return v.Hit, v.Miss, v.Prompt, v.Total, reported
 }
 
 // writeSessionCache persists the cumulative cache/token stats alongside a
-// session JSONL.
-func writeSessionCache(path string, hit, miss, prompt, total int64) error {
+// session JSONL. Writes whenever any counter is non-zero so resume restores
+// prompt/total even when the provider never reported cache hit/miss.
+func writeSessionCache(path string, hit, miss, prompt, total int64, reported bool) error {
 	if hit == 0 && miss == 0 && prompt == 0 && total == 0 {
 		os.Remove(sessionCacheSidecar(path))
 		return nil
 	}
 	v := struct {
-		Hit    int64 `json:"cacheHit"`
-		Miss   int64 `json:"cacheMiss"`
-		Prompt int64 `json:"promptTokens"`
-		Total  int64 `json:"totalTokens"`
-	}{Hit: hit, Miss: miss, Prompt: prompt, Total: total}
+		Hit      int64 `json:"cacheHit"`
+		Miss     int64 `json:"cacheMiss"`
+		Prompt   int64 `json:"promptTokens"`
+		Total    int64 `json:"totalTokens"`
+		Reported bool  `json:"cacheReported"`
+	}{Hit: hit, Miss: miss, Prompt: prompt, Total: total, Reported: reported}
 	b, err := json.Marshal(v)
 	if err != nil {
 		return err
@@ -491,10 +506,13 @@ func (c *Controller) snapshot(markActivity bool) error {
 		}
 	}
 	// Persist cumulative cache/token stats alongside the session so resume
-	// restores them (P2b). Always writes when any counter is non-zero.
-	if hit, miss := c.executor.SessionCache(); hit > 0 || miss > 0 {
-		prompt, total := c.executor.SessionTokens()
-		if err := writeSessionCache(path, int64(hit), int64(miss), prompt, total); err != nil {
+	// restores them. Write when hit/miss/prompt/total any non-zero so sessions
+	// that only have spend (no provider cache fields) still round-trip tokens.
+	hit, miss := c.executor.SessionCache()
+	prompt, total := c.executor.SessionTokens()
+	if hit > 0 || miss > 0 || prompt > 0 || total > 0 {
+		reported := c.executor.SessionCacheReported()
+		if err := writeSessionCache(path, int64(hit), int64(miss), prompt, total, reported); err != nil {
 			slog.Warn("controller: write session cache sidecar", "err", err)
 		}
 	}
@@ -592,6 +610,26 @@ func (c *Controller) SessionCache() (hit, miss int) {
 	return c.executor.SessionCache()
 }
 
+// SessionCacheReported is true once any call supplied a real provider cache
+// split. Frontends should hide session avg hit-rate until this is true.
+func (c *Controller) SessionCacheReported() bool {
+	if c.executor == nil {
+		return false
+	}
+	return c.executor.SessionCacheReported()
+}
+
+// SessionCacheRate returns the session-aggregate hit/miss for status UIs.
+// ok is false when there is no real provider split yet (including synthetic
+// miss-only accounting used for spend alignment) — callers should hide the avg.
+func (c *Controller) SessionCacheRate() (hit, miss int, ok bool) {
+	hit, miss = c.SessionCache()
+	if hit+miss == 0 || !c.SessionCacheReported() {
+		return 0, 0, false
+	}
+	return hit, miss, true
+}
+
 // SessionTokens returns cumulative prompt and total tokens for the session
 // (main + sub-agent rollups). Used by bridge /status and session sidecars.
 func (c *Controller) SessionTokens() (prompt, total int64) {
@@ -603,6 +641,7 @@ func (c *Controller) SessionTokens() (prompt, total int64) {
 
 // SessionCost returns the cumulative conversation cost and its currency.
 // Includes main agent + sub-agent rollups (same口径 as TUI status).
+// Amounts are CNY after CostInCNY accumulation.
 func (c *Controller) SessionCost() (cost float64, currency string) {
 	if c.executor == nil {
 		return 0, ""
@@ -614,6 +653,14 @@ func (c *Controller) SessionCost() (cost float64, currency string) {
 func (c *Controller) SetSessionCost(cost float64, currency string) {
 	if c.executor != nil {
 		c.executor.SetSessionCost(cost, currency)
+	}
+}
+
+// SetSessionCache restores cumulative cache/token stats (and whether a real
+// provider breakdown was seen) from a loaded session or model-switch handoff.
+func (c *Controller) SetSessionCache(hit, miss, prompt, total int64, reported bool) {
+	if c.executor != nil {
+		c.executor.SetSessionCache(hit, miss, prompt, total, reported)
 	}
 }
 

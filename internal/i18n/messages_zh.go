@@ -331,7 +331,6 @@ var Chinese = Messages{
 用法：
   reasonix chat [--model NAME] [-c|--continue] [--resume]   交互会话
   reasonix run  [--model NAME] [--max-steps N] [-c|--continue] [--resume PATH] <task>   单次任务
-  reasonix serve [--model NAME] [--addr HOST:PORT]     HTTP/SSE 服务
   reasonix setup [path]    交互式配置向导
   reasonix mcp <add|remove|list>    管理 MCP 服务器
   reasonix doctor [--json]    诊断信息

@@ -56,19 +56,13 @@ COPY --from=builder /usr/share/zoneinfo /usr/share/zoneinfo
 # 复制二进制
 COPY --from=builder /reasonix /reasonix
 
-# 创建必要的目录结构
-COPY --from=builder /src/internal/serve/index.html /app/public/index.html 2>/dev/null || true
-
 # 默认路径
 WORKDIR /app
 
-# 暴露 HTTP/SSE 服务端口
-EXPOSE 8080
-
 # 健康检查
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-  CMD ["/reasonix", "doctor", "--check", "serve"]
+  CMD ["/reasonix", "doctor"]
 
 # 默认入口
 ENTRYPOINT ["/reasonix"]
-CMD ["serve"]
+CMD ["--help"]

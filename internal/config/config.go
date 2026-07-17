@@ -55,7 +55,6 @@ type Config struct {
 	Statusline    StatuslineConfig    `toml:"statusline"`
 	LSP           LSPConfig           `toml:"lsp"`
 	Codegraph     CodegraphConfig     `toml:"codegraph"`
-	Serve         ServeConfig         `toml:"serve"`
 	// UsdCnyRate is the exchange rate used to convert OpenCode Go USD pricing
 	// to CNY for display and cost calculation. 0 means use the built-in default
 	// (7.0). Only meaningful when a provider with usd-denominated pricing (e.g.
@@ -173,27 +172,6 @@ type LSPServer struct {
 // status data row. A JSON payload (model, context tokens, cwd) is fed on stdin.
 type StatuslineConfig struct {
 	Command string `toml:"command"`
-}
-
-// ServeConfig configures the HTTP serve frontend (reasonix serve).
-type ServeConfig struct {
-	// AuthMode selects the authentication mode for the HTTP serve frontend.
-	// "none" (default): no authentication.
-	// "token": a pre-shared token in the URL query string.
-	// "password": a login page with bcrypt password verification.
-	AuthMode string `toml:"auth_mode"`
-	// Token is a pre-shared token for auth_mode = "token". When empty, a
-	// cryptographically random token is generated at startup and printed.
-	Token string `toml:"token"`
-	// PasswordHash is a bcrypt hash of the password for auth_mode = "password".
-	// Generate one with: reasonix serve --hash-password <password>
-	PasswordHash string `toml:"password_hash"`
-	// BehindProxy indicates the server sits behind a trusted reverse proxy
-	// (nginx, Caddy, Cloudflare, etc.) that sets X-Forwarded-For and
-	// X-Forwarded-Proto headers. When true, those headers are used for
-	// rate-limiting and Secure-cookie decisions. When false (default), they
-	// are ignored — an attacker can otherwise forge them.
-	BehindProxy bool `toml:"behind_proxy"`
 }
 
 // NetworkConfig controls ordinary outbound HTTP traffic such as model providers,

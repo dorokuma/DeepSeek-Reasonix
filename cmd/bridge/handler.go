@@ -454,7 +454,7 @@ func (b *Bridge) handleCommand(chatID, userID int64, text string) {
 		} else {
 			usageStr = "暂无"
 		}
-		if hit, miss := ctrl.SessionCache(); hit+miss > 0 {
+		if hit, miss, ok := ctrl.SessionCacheRate(); ok {
 			avg := fmt.Sprintf("会话%.0f%% (%d/%d)",
 				float64(hit)*100/float64(hit+miss), hit, miss)
 			if cacheStr != "" {

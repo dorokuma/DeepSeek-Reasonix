@@ -5,6 +5,9 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"reasonix/internal/event"
+	"reasonix/internal/provider"
 )
 
 func TestWriteMetrics(t *testing.T) {
@@ -32,10 +35,31 @@ func TestWriteMetrics(t *testing.T) {
 		"completion_tokens",
 		"cache_hit_tokens",
 		"cache_miss_tokens",
+		"cache_hit_billed_tokens",
+		"cache_miss_billed_tokens",
 		"steps",
 	} {
 		if _, ok := got[key]; !ok {
 			t.Fatalf("metrics JSON missing %q: %s", key, string(b))
 		}
+	}
+}
+
+func TestMetricsSinkDualCache口径(t *testing.T) {
+	s := &metricsSink{inner: event.Discard}
+	// Opaque usage: provider cache 0/0, billed miss = prompt.
+	s.Emit(event.Event{
+		Kind:    event.Usage,
+		Usage:   &provider.Usage{PromptTokens: 100, CompletionTokens: 10, TotalTokens: 110},
+		Pricing: &provider.Pricing{Input: 1, Output: 2, Currency: "¥"},
+	})
+	if s.m.CacheHitTokens != 0 || s.m.CacheMissTokens != 0 {
+		t.Fatalf("provider口径 = %d/%d want 0/0", s.m.CacheHitTokens, s.m.CacheMissTokens)
+	}
+	if s.m.CacheHitBilledTokens != 0 || s.m.CacheMissBilledTokens != 100 {
+		t.Fatalf("billed口径 = %d/%d want 0/100", s.m.CacheHitBilledTokens, s.m.CacheMissBilledTokens)
+	}
+	if s.m.Currency != "¥" || s.m.Cost <= 0 {
+		t.Fatalf("cost=%v currency=%q", s.m.Cost, s.m.Currency)
 	}
 }

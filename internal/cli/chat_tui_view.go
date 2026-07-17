@@ -367,7 +367,7 @@ func (m chatTUI) cacheTag() string {
 		}
 	}
 	avg := ""
-	if hit, miss := m.ctrl.SessionCache(); hit+miss > 0 {
+	if hit, miss, ok := m.ctrl.SessionCacheRate(); ok {
 		avg = cacheRateLabel(i18n.M.ChatStatusCacheAvgFmt, hit, hit+miss)
 	}
 	switch {

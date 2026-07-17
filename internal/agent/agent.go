@@ -73,9 +73,16 @@ type Agent struct {
 	// reset on compaction (compaction only rewrites session.Messages), so the
 	// aggregate never craters when the prefix is summarized away. Atomic: the run
 	// loop accumulates them while the status line reads them.
-	sessCacheHit  atomic.Int64
-	sessCacheMiss atomic.Int64
-	sessCostInfo  atomic.Value // stores sessionCostInfo{cost, currency}
+	//
+	// When a provider omits cache fields, Pricing.Cost still bills the full prompt
+	// as miss; recordSessionUsage mirrors that into sessCacheMiss so spend and
+	// token lifetime stay aligned. sessCacheReported is set only when the provider
+	// actually reported a hit/miss split — status lines hide the session avg until
+	// then so synthetic miss does not show a fake "0% hit".
+	sessCacheHit      atomic.Int64
+	sessCacheMiss     atomic.Int64
+	sessCacheReported atomic.Bool
+	sessCostInfo      atomic.Value // stores sessionCostInfo{cost, currency}
 	// sessCostMu serializes Load-Modify-Store on sessCostInfo only. Other
 	// sess* atomics are updated independently (no shared invariant with the
 	// cost struct), so they intentionally omit this mutex.
@@ -277,8 +284,18 @@ func (a *Agent) LastUsage() *provider.Usage { return a.lastUsage.Load() }
 
 // SessionCache returns the cumulative cache hit/miss prompt tokens across every
 // API call this session — the basis for the status line's aggregate hit-rate.
+// Miss may include synthetic "billed as miss" tokens when the provider omitted
+// cache fields (aligned with Pricing.Cost). Prefer SessionCacheReported before
+// rendering a hit-rate percentage.
 func (a *Agent) SessionCache() (hit, miss int) {
 	return int(a.sessCacheHit.Load()), int(a.sessCacheMiss.Load())
+}
+
+// SessionCacheReported is true once any API call this session supplied a real
+// cache hit/miss split. Synthetic miss-only accounting (no provider breakdown)
+// leaves this false so UIs do not show a fake 0% hit rate.
+func (a *Agent) SessionCacheReported() bool {
+	return a.sessCacheReported.Load()
 }
 
 // SessionTokens returns the cumulative prompt and total tokens across every API
@@ -304,6 +321,7 @@ func (a *Agent) ResetSessionCost() {
 	a.sessCostInfo.Store(sessionCostInfo{})
 	a.sessCacheHit.Store(0)
 	a.sessCacheMiss.Store(0)
+	a.sessCacheReported.Store(false)
 	a.sessPromptTokens.Store(0)
 	a.sessTotalTokens.Store(0)
 	a.lastUsage.Store(nil)
@@ -311,8 +329,12 @@ func (a *Agent) ResetSessionCost() {
 
 // addSessionCost atomically adds cost to the cumulative session cost. The mutex
 // protects against concurrent Load-Modify-Store from AddSessionUsage and the
-// stream loop's ChunkUsage handler.
+// stream loop's ChunkUsage handler. Amounts are rounded so long sessions do not
+// accumulate binary float dust.
 func (a *Agent) addSessionCost(cost float64, currency string) {
+	if cost <= 0 && currency == "" {
+		return
+	}
 	a.sessCostMu.Lock()
 	defer a.sessCostMu.Unlock()
 	prev := a.sessCostInfo.Load()
@@ -320,7 +342,7 @@ func (a *Agent) addSessionCost(cost float64, currency string) {
 	if prev != nil {
 		info, _ = prev.(sessionCostInfo)
 	}
-	info.cost += cost
+	info.cost = provider.RoundCost(info.cost + cost)
 	if info.currency == "" {
 		info.currency = currency
 	}
@@ -329,29 +351,59 @@ func (a *Agent) addSessionCost(cost float64, currency string) {
 
 // SetSessionCost restores cumulative cost from a loaded session sidecar.
 func (a *Agent) SetSessionCost(cost float64, currency string) {
-	a.sessCostInfo.Store(sessionCostInfo{cost: cost, currency: currency})
+	a.sessCostInfo.Store(sessionCostInfo{cost: provider.RoundCost(cost), currency: currency})
 }
 
 // SetSessionCache restores cumulative cache/token statistics from a loaded
 // session sidecar. This is the counterpart of SetSessionCost for cache stats.
-func (a *Agent) SetSessionCache(hit, miss, prompt, total int64) {
+// reported indicates the sidecar's hit/miss came from real provider breakdowns
+// (so the status line may show session avg hit rate).
+func (a *Agent) SetSessionCache(hit, miss, prompt, total int64, reported bool) {
 	a.sessCacheHit.Store(hit)
 	a.sessCacheMiss.Store(miss)
 	a.sessPromptTokens.Store(prompt)
 	a.sessTotalTokens.Store(total)
+	a.sessCacheReported.Store(reported)
 }
 
-// AddSessionUsage merges a sub-agent's accumulated cache/cost counters into
-// the parent agent's session-level totals so frontends see a unified number.
-// cost is expected in CNY (sub-agents already accumulate via CostInCNY).
-func (a *Agent) AddSessionUsage(hit, miss, prompt, total int64, cost float64, currency string) {
+// AddSessionUsage merges a SessionUsageDelta into this agent's session totals
+// so frontends see one unified number (main + sub-agent + planner rollups).
+// Cost is expected in CNY (callers already use CostInCNY).
+func (a *Agent) AddSessionUsage(d SessionUsageDelta) {
+	a.sessCacheHit.Add(d.Hit)
+	a.sessCacheMiss.Add(d.Miss)
+	a.sessPromptTokens.Add(d.Prompt)
+	a.sessTotalTokens.Add(d.Total)
+	if d.Reported {
+		a.sessCacheReported.Store(true)
+	}
+	if d.Cost > 0 || d.Currency != "" {
+		// Force CNY symbol so parent totals never inherit a stale "$".
+		a.addSessionCost(d.Cost, provider.CNYSymbol())
+	}
+}
+
+// recordSessionUsage folds one API call's usage into session counters and cost.
+// Shared helpers: normalizeUsage + sessionCacheAdd. lastUsage keeps the
+// provider-normalized view (no synthetic full-prompt miss on the turn line).
+func (a *Agent) recordSessionUsage(u *provider.Usage) {
+	if u == nil {
+		return
+	}
+	norm := normalizeUsage(u)
+	a.lastUsage.Store(&norm)
+
+	hit, miss, reported := sessionCacheAdd(norm)
+	if reported {
+		a.sessCacheReported.Store(true)
+	}
 	a.sessCacheHit.Add(hit)
 	a.sessCacheMiss.Add(miss)
-	a.sessPromptTokens.Add(prompt)
-	a.sessTotalTokens.Add(total)
-	if cost > 0 || currency != "" {
-		// Force CNY symbol so parent totals never inherit a stale "$".
-		a.addSessionCost(cost, provider.CNYSymbol())
+	a.sessPromptTokens.Add(int64(norm.PromptTokens))
+	a.sessTotalTokens.Add(int64(norm.TotalTokens))
+	if a.pricing != nil {
+		// Always accumulate session spend in CNY so 花销 never mixes $ + ¥.
+		a.addSessionCost(a.pricing.CostInCNY(&norm), provider.CNYSymbol())
 	}
 }
 
@@ -912,15 +964,7 @@ func (a *Agent) stream(ctx context.Context, turn int) (string, string, string, [
 			calls = append(calls, *chunk.ToolCall)
 		case provider.ChunkUsage:
 			usage = chunk.Usage
-			a.lastUsage.Store(chunk.Usage)
-			a.sessCacheHit.Add(int64(chunk.Usage.CacheHitTokens))
-			a.sessCacheMiss.Add(int64(chunk.Usage.CacheMissTokens))
-			a.sessPromptTokens.Add(int64(chunk.Usage.PromptTokens))
-			a.sessTotalTokens.Add(int64(chunk.Usage.TotalTokens))
-			if a.pricing != nil {
-				// Always accumulate session spend in CNY so 花销 never mixes $ + ¥.
-				a.addSessionCost(a.pricing.CostInCNY(chunk.Usage), provider.CNYSymbol())
-			}
+			a.recordSessionUsage(chunk.Usage)
 		case provider.ChunkError:
 			if provider.IsStreamInterrupted(chunk.Err) {
 				stored, _ := finishReasoning()

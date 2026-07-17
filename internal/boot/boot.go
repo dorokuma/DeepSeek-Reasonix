@@ -3,9 +3,9 @@
 // plugins), wires the permission gate, and constructs the executor — optionally
 // wrapping it in a two-model Coordinator. It is the one place that turns "what the
 // user configured" into "a Controller a frontend can drive", so every frontend —
-// the terminal TUI, the HTTP/SSE server, the desktop webview — shares the exact
-// same assembly instead of each re-deriving it. Frontends pass only a sink and a
-// couple of run knobs; everything else comes from config.
+// the terminal TUI, the desktop webview — shares the exact same assembly instead
+// of each re-deriving it. Frontends pass only a sink and a couple of run knobs;
+// everything else comes from config.
 package boot
 
 import (
@@ -51,7 +51,7 @@ var ErrUnknownModel = errors.New("unknown model")
 // Options carries the per-run knobs a frontend chooses; everything else is read
 // from configuration. Model "" falls back to the configured default_model;
 // MaxSteps 0 uses the config/default. RequireKey forces the executor's API key to
-// be present (run/serve pass true so a missing key fails fast; chat/desktop pass
+// be present (run passes true so a missing key fails fast; chat/desktop pass
 // false so the UI is reachable before a key is set). Sink receives the agent's
 // typed event stream.
 type Options struct {
@@ -80,9 +80,8 @@ type Options struct {
 	ConfigRoot string
 
 	// SkipModelRefresh skips the live GET /models probe per provider.
-	// Used by serve.switchModel to avoid network I/O while holding its
-	// write lock; the initial boot (TUI, desktop, serve creation) does
-	// refresh so the model list is current once.
+	// The initial boot (TUI, desktop) does refresh so the model list is
+	// current once.
 	SkipModelRefresh bool
 }
 

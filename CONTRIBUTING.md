@@ -35,7 +35,6 @@ go test ./...              # runs the full test suite
 | `internal/memory` | REASONIX.md hierarchy + auto-memory |
 | `internal/skill` | Skill discovery from Markdown |
 | `internal/sandbox` | OS-level sandboxing |
-| `internal/serve` | HTTP/SSE server frontend |
 | `internal/checkpoint` | Snapshot-based rewind |
 | `docs/` | Engineering spec, migration guide |
 

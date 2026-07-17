@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"sort"
 	"strings"
 
@@ -450,6 +451,16 @@ func (p *Pricing) CostInCNY(u *Usage) float64 {
 
 // CNYSymbol is the fixed display symbol for CostInCNY totals.
 func CNYSymbol() string { return "¥" }
+
+// RoundCost rounds a spend amount to 6 decimal places so session sidecars and
+// metrics files do not accumulate binary float dust (e.g. 0.41009400000000007).
+// Six places is finer than per-token pricing needs while still human-readable.
+func RoundCost(c float64) float64 {
+	if c <= 0 {
+		return 0
+	}
+	return math.Round(c*1e6) / 1e6
+}
 
 // Chunk is a single streamed event. Read the field matching Type.
 type Chunk struct {

@@ -30,7 +30,6 @@ import (
 	"reasonix/internal/notify"
 	"reasonix/internal/provider"
 	"reasonix/internal/provider/openai"
-	"reasonix/internal/serve"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -82,8 +81,7 @@ func Run(args []string, version string) int {
 		return runAgent(rest)
 	case "chat", "code": // "code" is the v0.x name for the interactive session
 		return chatREPL(rest)
-	case "serve":
-		return runServe(rest)
+
 	case "setup":
 		configureCLIThemeFromConfigForTTYOutput()
 		return setupConfig(rest)
@@ -123,7 +121,7 @@ func Run(args []string, version string) int {
 
 func shouldMigrateLegacyConfigForCLI(cmd string) bool {
 	switch cmd {
-	case "", "run", "chat", "code", "serve", "setup", "config", "init", "acp", "mcp", "doctor":
+	case "", "run", "chat", "code", "setup", "config", "init", "acp", "mcp", "doctor":
 		return true
 	default:
 		return false
@@ -391,10 +389,6 @@ func runAgent(args []string) int {
 	return 0
 }
 
-// runServe exposes the controller over HTTP+SSE: events stream to the browser,
-// commands arrive as JSON POSTs. The Broadcaster is the controller's event sink,
-// so the same typed stream the chat TUI consumes reaches web clients — the
-// transport-agnostic controller driven by a second frontend.
 // resumeOrPinSession loads an existing transcript or pins a fresh session to
 // path when the file does not exist yet (e.g. reasonix-telegram /new).
 func resumeOrPinSession(ctrl *control.Controller, path string) error {
@@ -417,169 +411,7 @@ func resumeOrPinSession(ctrl *control.Controller, path string) error {
 	return nil
 }
 
-// loadResumableSession loads a session file and returns an error if it is
-// pending cleanup (marked for deletion).
-func loadResumableSession(path string) (*agent.Session, error) {
-	if agent.IsCleanupPending(path) {
-		return nil, fmt.Errorf("session %s is pending cleanup", path)
-	}
-	return agent.LoadSession(path)
-}
 
-// modelForResumePath returns the stored model from a session's branch meta.
-// When explicitModel is non-empty it is returned directly (user override).
-// When the session has no meta or the stored model is unknown it returns "".
-func modelForResumePath(explicitModel, path string, cfg *config.Config) string {
-	if explicitModel != "" {
-		return explicitModel
-	}
-	meta, ok, err := agent.LoadBranchMeta(path)
-	if err != nil || !ok || meta.Model == "" {
-		return ""
-	}
-	// Verify the stored model is still configured.
-	for _, p := range cfg.Providers {
-		if p.Name == meta.Model {
-			return meta.Model
-		}
-	}
-	return ""
-}
-
-func runServe(args []string) int {
-	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
-	model := fs.String("model", "", "provider name (default: config default_model)")
-	maxSteps := fs.Int("max-steps", 0, "max tool-call rounds (0 = use config/default)")
-	addr := fs.String("addr", "127.0.0.1:8787", "listen address")
-	resume := fs.String("resume", "", "resume a saved session file")
-	configDir := fs.String("config-dir", "", "project config directory (reasonix.toml); default: working directory")
-	auth := fs.String("auth", "", "auth mode: none, token, or password (default: none)")
-	token := fs.String("token", "", "pre-shared token for auth=token (auto-generated if empty)")
-	password := fs.String("password", "", "password for auth=password (use --hash-password to store a hash instead)")
-	hashPassword := fs.Bool("hash-password", false, "print a bcrypt hash of --password and exit")
-	behindProxy := fs.Bool("behind-proxy", false, "trust X-Forwarded-For / X-Forwarded-Proto headers from a reverse proxy")
-	sessionDir := fs.String("session-dir", "", "session directory (default: ~/.config/reasonix/sessions/)")
-	if err := fs.Parse(args); err != nil {
-		return 2
-	}
-
-	// Apply --session-dir override before any session resolution.
-	if *sessionDir != "" {
-		config.SetSessionDir(*sessionDir)
-	}
-	// Reject cleanup-pending sessions before any provider setup.
-	var resumePath string
-	if *resume != "" {
-		var err error
-		resumePath, err = agent.SafeSessionPath(config.SessionDir(), *resume)
-		if err != nil {
-			fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
-			return 1
-		}
-	}
-	if *resume != "" && agent.IsCleanupPending(resumePath) {
-		fmt.Fprintf(os.Stderr, "session %s is pending cleanup\n", resumePath)
-		return 1
-	}
-
-	// --hash-password: generate a bcrypt hash and exit.
-	if *hashPassword {
-		if *password == "" {
-			fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, "--hash-password requires --password")
-			return 1
-		}
-		h, err := serve.HashPassword(*password)
-		if err != nil {
-			fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
-			return 1
-		}
-		fmt.Println(h)
-		return 0
-	}
-
-	ctx := context.Background()
-	bc := serve.NewBroadcaster()
-
-	cfg, _ := config.Load()
-
-	// Build serve config, merging CLI flags over config file.
-	serveCfg := cfg.Serve
-	if *auth != "" {
-		serveCfg.AuthMode = *auth
-	}
-	if *token != "" {
-		serveCfg.Token = *token
-	}
-	if *behindProxy {
-		serveCfg.BehindProxy = true
-	}
-	mode, err := serve.NormalizeAuthMode(serveCfg.AuthMode)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
-		return 1
-	}
-	serveCfg.AuthMode = mode
-	if *password != "" && serveCfg.AuthMode == "password" {
-		// Hash the password at startup so the config never stores plaintext.
-		// If a PasswordHash is already set in config, the CLI password overrides it.
-		h, err := serve.HashPassword(*password)
-		if err != nil {
-			fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, "failed to hash password:", err)
-			return 1
-		}
-		serveCfg.PasswordHash = h
-	}
-	if serveCfg.AuthMode == "password" && strings.TrimSpace(serveCfg.PasswordHash) == "" {
-		fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, "auth mode password requires --password or serve.password_hash")
-		return 1
-	}
-
-	ctrl, err := setup(ctx, *model, *maxSteps, true, bc, *configDir)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
-		return 1
-	}
-
-	// Auto-save target: reuse the resumed file, else a fresh one — same as chat.
-	if *resume != "" {
-		if err := resumeOrPinSession(ctrl, resumePath); err != nil {
-			fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
-			return 1
-		}
-	} else if ctrl.SessionDir() != "" {
-		ctrl.SetSessionPath(agent.NewSessionPath(ctrl.SessionDir(), ctrl.Label()))
-	}
-
-	srv := serve.New(ctrl, bc, serveCfg)
-	defer func() {
-		if cur := srv.Ctl(); cur != nil {
-			cur.Close()
-		}
-	}()
-
-	fmt.Printf("reasonix serve — %s on http://%s\n", ctrl.Label(), *addr)
-	if srv.AuthMode() == "token" {
-		fmt.Printf("  auth: token\n")
-		tok := srv.AuthToken()
-		if len(tok) > 8 {
-			tok = tok[:4] + "****" + tok[len(tok)-4:]
-		} else {
-			tok = "****"
-		}
-		fmt.Printf("  share: http://%s/?token=%s\n", *addr, tok)
-	} else if srv.AuthMode() == "password" {
-		fmt.Printf("  auth: password (login at http://%s/login)\n", *addr)
-	}
-
-	// Use graceful shutdown so SIGINT/SIGTERM drain active connections.
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
-	if err := srv.RunGraceful(ctx, *addr); err != nil {
-		fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
-		return 1
-	}
-	return 0
-}
 
 // chatREPL is an interactive session: a single persistent agent/session and a
 // prompt loop that keeps conversation context across turns. Exit with

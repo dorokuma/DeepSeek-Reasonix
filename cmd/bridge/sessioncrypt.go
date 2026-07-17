@@ -272,7 +272,7 @@ func WriteEncryptedFile(path string, data []byte) error {
 
 // ReadEncryptedFile reads a file from path and, if it starts with the
 // encryption magic prefix, decrypts it transparently.  Plaintext files
-// (legacy or written by reasonix serve) are returned as-is.
+// (legacy or unencrypted) are returned as-is.
 func ReadEncryptedFile(path string) ([]byte, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {

@@ -454,6 +454,18 @@ func TestCostInCNYPassthroughCNY(t *testing.T) {
 	}
 }
 
+func TestRoundCost(t *testing.T) {
+	if got := RoundCost(0.41009400000000007); got != 0.410094 {
+		t.Errorf("RoundCost dust = %v, want 0.410094", got)
+	}
+	if got := RoundCost(0); got != 0 {
+		t.Errorf("RoundCost(0) = %v", got)
+	}
+	if got := RoundCost(-1); got != 0 {
+		t.Errorf("RoundCost negative = %v, want 0", got)
+	}
+}
+
 func TestIsUSDCurrency(t *testing.T) {
 	for _, s := range []string{"$", "USD", "usd", "US$"} {
 		if !IsUSDCurrency(s) {

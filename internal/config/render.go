@@ -359,30 +359,6 @@ func RenderTOMLForScope(c *Config, scope RenderScope) string {
 	}
 	b.WriteString("\n")
 
-	if scope != RenderScopeProject {
-		b.WriteString("[serve]\n")
-		b.WriteString("# auth_mode: none|token|password. token/password recommended on non-loopback binds.\n")
-		mode := c.Serve.AuthMode
-		if mode == "" {
-			mode = "none"
-		}
-		fmt.Fprintf(&b, "auth_mode = %q\n", mode)
-		// Never write the live token/password hash as recoverable secrets.
-		// Presence is preserved via placeholder so round-trip keeps auth_mode.
-		if strings.TrimSpace(c.Serve.Token) != "" {
-			b.WriteString("token = \"${REASONIX_SERVE_TOKEN}\"   # set via env; never store the raw token here\n")
-		} else {
-			b.WriteString("# token = \"${REASONIX_SERVE_TOKEN}\"   # for auth_mode = \"token\"\n")
-		}
-		if strings.TrimSpace(c.Serve.PasswordHash) != "" {
-			fmt.Fprintf(&b, "password_hash = %q   # bcrypt hash from: reasonix serve --hash-password\n", c.Serve.PasswordHash)
-		} else {
-			b.WriteString("# password_hash = \"\"   # bcrypt hash from: reasonix serve --hash-password\n")
-		}
-		fmt.Fprintf(&b, "behind_proxy = %v   # trust X-Forwarded-* only behind a known reverse proxy\n", c.Serve.BehindProxy)
-		b.WriteString("\n")
-	}
-
 	b.WriteString("# External MCP servers. type: \"stdio\" (default, a subprocess) | \"http\" | \"sse\".\n")
 	b.WriteString("# ${VAR} / ${VAR:-default} are expanded from the environment in command/args/env/url/headers.\n")
 	if len(c.Plugins) == 0 {

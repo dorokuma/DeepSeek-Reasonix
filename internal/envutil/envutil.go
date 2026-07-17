@@ -10,8 +10,19 @@ import (
 )
 
 // StripCredentialEnv removes env vars likely to carry secrets from the
-// inherited process environment. Callers should declare needed credentials
-// explicitly instead of relying on inheritance.
+// inherited process environment. It matches by naming convention (suffixes
+// like _KEY, _TOKEN, _SECRET, _PASSWORD, etc.) and by well-known names
+// (GITHUB_TOKEN, OPENAI_API_KEY, etc.).
+//
+// IMPORTANT: This is a heuristic filter. Custom env vars that carry secrets
+// but don't match these patterns (e.g. MYAPP_AUTH_DATA) will NOT be stripped.
+// Plugin authors should always declare needed credentials explicitly in their
+// plugin config's env block rather than relying on inheritance. When in doubt,
+// add the var name to the explicit blocklist inside this function.
+//
+// Callers should declare needed credentials explicitly instead of relying on
+// inheritance.
+//
 // isAllowedURL returns true for env var names that are known to contain
 // non-secret URLs (public endpoints, app URLs, etc.).
 func isAllowedURL(upper string) bool {
