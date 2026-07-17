@@ -85,11 +85,11 @@ func TestUICursorShapeNormalizes(t *testing.T) {
 		in   string
 		want string
 	}{
-		{"", "underline"},
+		{"", "bar"},
 		{"UNDERLINE", "underline"},
 		{" block ", "block"},
 		{"bar", "bar"},
-		{"unknown", "underline"},
+		{"unknown", "bar"},
 	} {
 		c.UI.CursorShape = tt.in
 		if got := c.UICursorShape(); got != tt.want {

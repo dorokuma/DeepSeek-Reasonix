@@ -77,7 +77,7 @@ func RenderTOMLForScope(c *Config, scope RenderScope) string {
 		if strings.TrimSpace(c.UI.CursorShape) != "" {
 			fmt.Fprintf(&b, "cursor_shape = %q   # block|underline|bar; text input cursor shape\n", c.UICursorShape())
 		} else {
-			b.WriteString("# cursor_shape = \"underline\"   # block|underline|bar; text input cursor shape\n")
+			b.WriteString("# cursor_shape = \"bar\"   # block|underline|bar; text input cursor shape\n")
 		}
 		if strings.TrimSpace(c.UI.CloseBehavior) != "" && scope == RenderScopeProject {
 			fmt.Fprintf(&b, "close_behavior = %q   # legacy desktop close behavior; prefer [desktop].close_behavior in user config\n", c.DesktopCloseBehavior())

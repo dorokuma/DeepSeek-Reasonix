@@ -24,6 +24,17 @@ branch.
   remains an independent `Ctrl+Y` toggle.
 - Model, provider, resume, and approval menus now use consistent row selection;
   slash completion, help, aliases, and dispatch share one command registry.
+- The full-screen CLI composer now uses theme-accented borders and a slim bar
+  cursor by default, grows within the available terminal height, scrolls long
+  drafts independently, and preserves selections across explicit image paste.
+- The persistent CLI footer now uses a responsive, theme-aware layout for
+  interaction state, model, effort, localized work mode, Git identity, cache,
+  context, compaction headroom, jobs, and balance. Narrow terminals move or
+  compact complete groups instead of clipping labels.
+- CLI clipboard actions now separate terminal-native text paste from explicit
+  image paste: `Ctrl+V` on macOS/Linux, `Alt+V` on Windows, or `/paste-image`.
+  Local transcript copy verifies the native clipboard write, while SSH uses a
+  clearly labelled OSC 52 fallback.
 - Runtime rebuilds after model, effort, or work-mode changes now preserve the
   conversation, session permission overrides, additional directories, and
   session lease ownership.
@@ -42,6 +53,9 @@ branch.
 
 ### Fixed
 
+- Localized persistent-footer labels and displayed work-mode values in English,
+  Simplified Chinese, and Traditional Chinese, while keeping command arguments
+  stable.
 - Restored the `0.53` content boundary: model output, tool output, session
   transcripts, recovery branches, and background-job artifacts retain their
   original text instead of being rewritten by heuristic secret redaction.

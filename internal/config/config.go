@@ -128,7 +128,7 @@ type UIConfig struct {
 	ShortcutLayout string `toml:"shortcut_layout"` // classic|desktop; accepted for compatibility
 	CloseBehavior  string `toml:"close_behavior"`  // legacy desktop close behavior; prefer desktop.close_behavior
 	ShowReasoning  bool   `toml:"show_reasoning"`  // Ctrl+O / /verbose: show thinking text in CLI; false = collapsed
-	CursorShape    string `toml:"cursor_shape"`    // block|underline|bar; empty defaults to underline
+	CursorShape    string `toml:"cursor_shape"`    // block|underline|bar; empty defaults to bar
 }
 
 // DesktopConfig controls desktop-only UI preferences. It is intentionally
@@ -214,18 +214,17 @@ func (c *Config) UIShortcutLayout() string {
 	}
 }
 
-// UICursorShape normalizes ui.cursor_shape. Defaults to "underline" to avoid
-// block-cursor visual corruption with CJK wide characters in the textarea
-// (Bubble Tea real-cursor + CJK column-counting drift). Valid values:
-// "block", "underline", "bar".
+// UICursorShape normalizes ui.cursor_shape. The slim "bar" default stays
+// visible without covering CJK wide characters. Valid values are "block",
+// "underline", and "bar".
 func (c *Config) UICursorShape() string {
 	switch strings.ToLower(strings.TrimSpace(c.UI.CursorShape)) {
 	case "block":
 		return "block"
-	case "bar":
-		return "bar"
-	default:
+	case "underline":
 		return "underline"
+	default:
+		return "bar"
 	}
 }
 

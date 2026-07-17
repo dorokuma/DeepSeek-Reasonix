@@ -55,7 +55,7 @@ default_model = "deepseek-flash"   # executor; set [agent].planner_model to add 
 
 [ui]
 # shortcut_layout = "desktop"      # classic|desktop; compatibility setting
-# cursor_shape = "underline"       # block|underline|bar; CLI/TUI text cursor
+# cursor_shape = "bar"             # block|underline|bar; CLI/TUI text cursor
 
 [agent]
 reasoning_language = "auto"      # visible reasoning text: auto|zh|en
@@ -355,16 +355,17 @@ trust model are documented in [the Chinese desktop hooks guide](./DESKTOP_HOOKS.
 Shortcuts are documented by client because users usually look for the keys that
 work in the surface they are using. Desktop keeps its Plan toggle, while the CLI
 cycles Ask, Auto, and Plan with `Shift+Tab`. `Ctrl/Cmd+Y` controls YOLO, and
-paste stays on the platform paste key.
+desktop paste stays on the platform paste key. In the CLI, terminal-native text
+paste and application-owned image paste use separate shortcuts.
 
 `[ui].shortcut_layout` is still accepted for old configs, but the shortcut
 behavior below is unified across layouts.
 
 For CLI/TUI text input, `[ui].cursor_shape` accepts `underline`, `block`, or
-`bar`. The default is `underline` because terminal block cursors can visually
-cover double-width CJK characters in some mixed-language input. Set it to
-`block` to keep the old terminal-style cursor, or `bar` for a thin insertion
-cursor. This setting does not change desktop or web text fields.
+`bar`. The default is `bar`: it remains easy to locate without covering
+double-width CJK characters in mixed-language input. Set it to `block` for a
+traditional terminal cursor or `underline` for a lower-profile cursor. This
+setting does not change desktop or web text fields.
 
 ### Desktop GUI
 
@@ -414,6 +415,22 @@ Menus and controls:
 
 ### CLI / TUI
 
+The composer uses theme-coloured top and bottom borders and a slim bar cursor by
+default. Long drafts grow to the available maximum height; once they overflow,
+wheel events inside the composer scroll the draft without moving the insertion
+cursor, while wheel events in the transcript keep scrolling the conversation.
+Use `/theme auto|light|dark` to select the background mode, or `/theme <style>`
+to select one of the named accent palettes shown by bare `/theme`.
+
+The responsive footer keeps the active Ask/Auto/Plan or YOLO posture and current
+interaction state on the left. On wider terminals, model, effort, and work mode
+stay together on the right; a second row shows available Git identity, cache hit
+rate, context use, compaction headroom, jobs, and balance. `ready` is the idle
+composer state, not a model-health check. Pickers, approvals, image paste, shell
+mode, and other active interactions replace it. Narrow terminals move, wrap, or
+compact whole groups; labels and displayed work-mode values follow `/language`,
+while `/work-mode` command arguments remain the stable English identifiers.
+
 Chat and transcript shortcuts:
 
 | Key or command | What it does | Notes |
@@ -426,12 +443,13 @@ Chat and transcript shortcuts:
 | `Ctrl+L` or `/cls` | Clears only the visible transcript | The LLM context, session file, tools, memory, and plugins stay loaded. Use `/clear` when you want to discard the conversation context. |
 | `Esc` | Backs out of the current action | It un-sends a just-submitted turn before any reply, cancels a running turn, or clears non-empty input. |
 | Double `Esc` on an empty idle composer | Opens the rewind picker | Same entry point as `/rewind`. |
-| Transcript text selection | Copies transcript text | The full-screen TUI enables mouse reporting, so drag in the transcript to select text in-app; releasing the mouse copies it automatically, and `Ctrl+C`/`Super+C`/`Meta+C` or right-clicking the active selection copy it again. |
+| Transcript text selection | Copies transcript text | Releasing an in-app drag writes through the verified native clipboard path in a local session (`pbcopy` on macOS, the available Wayland/X11 tool on Linux, or the Windows clipboard). SSH falls back to OSC 52 and labels the fallback instead of claiming native success. `Ctrl+C`/`Super+C`/`Meta+C` or right-clicking the active selection copies it again. |
 | `/mouse` | Toggles in-app mouse capture | Off hands the mouse back to your terminal, restoring its native click-drag selection and right-click context menu, at the cost of in-app drag-select, the transcript scrollbar, and wheel-scroll. Set `REASONIX_DISABLE_MOUSE=1` to start every session with it off. |
 | `Ctrl+C` | Copies, cancels, clears, or quits | Copies an active transcript selection first. Otherwise it cancels a running turn, clears non-empty input, or quits on a second empty-composer press. |
 | `Ctrl+D` | Quits the TUI | Immediate quit. |
-| `Ctrl+V`, `Ctrl+Shift+V`, `Meta+V`, or `Super+V` | Pastes clipboard content | The CLI tries an image first, then falls back to text or file references. |
-| `/paste-image` | Pastes a clipboard image | Use it when you want image-only paste or the terminal handles text paste itself. |
+| Your terminal's text-paste shortcut | Pastes text | Text stays on the terminal's bracketed-paste path (`Cmd+V` on macOS, commonly `Ctrl+Shift+V` on Linux, and the terminal's configured shortcut elsewhere). Reasonix consumes the resulting paste event and never probes for an image first. |
+| `Ctrl+V` on macOS/Linux; `Alt+V` on Windows | Pastes a clipboard image | Image paste is a separate application action. The footer shows `Pasting image…` while the clipboard is read, then inserts an editable `[image #N]` token at the cursor. |
+| `/paste-image` | Pastes a clipboard image | Command form of the same image-only action. |
 | A line starting with `!` | Runs a shell command directly | The command runs locally without asking the model. |
 
 Mode and display shortcuts:
@@ -442,6 +460,7 @@ Mode and display shortcuts:
 | `Ctrl+Y` | Toggles YOLO on/off | Turning YOLO off restores the previous Ask/Auto base when known. Terminals that forward Command/Super may also send `Cmd+Y`, but `Ctrl+Y` is the reliable terminal shortcut. |
 | `--yolo`, `--dangerously-skip-permissions` | Starts chat in YOLO | Same runtime mode as `Ctrl+Y`. |
 | `/work-mode [economy|balanced|delivery]` | Shows or switches the current session's work mode | `/profile` is a compatibility alias. Switching rebuilds the runtime atomically, preserves the conversation and approval posture, and is blocked while work is active. |
+| `/theme [auto|light|dark|style]` | Shows or switches the CLI theme | Bare `/theme` lists background modes and named accent palettes. The choice is saved to the user config; `REASONIX_THEME` and `REASONIX_THEME_STYLE` can override it for one run. |
 | `Ctrl+O` | Toggles verbose reasoning display | Also available through `/verbose`. |
 | `Ctrl+B` | Expands or collapses long shell output | Long shell-output hint lines can also be clicked in the transcript; text selection is handled in-app while the full-screen TUI has mouse reporting enabled. |
 | `/goal <objective>`, `/goal --research <objective>`, `/goal --simple <objective>`, `/goal status`, `/goal clear` | Starts, checks, or clears Goal | Goal is not in any keyboard cycle; clearly long-horizon goals automatically enable AutoResearch. Ordinary prompts with strong AutoResearch signals are also upgraded into Goal. |

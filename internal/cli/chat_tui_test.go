@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -269,8 +270,9 @@ func TestCompletionMenuPadsWithNonBreakingSpaces(t *testing.T) {
 }
 
 // TestTranscriptViewportSizing proves the viewport tracks the terminal size and
-// gets the rows left over after the pinned bottom region (input box + 2 status
-// rows = 5 with an empty 1-line composer), and is fed the committed transcript.
+// gets the rows left over after the pinned bottom region (input box + two
+// information rows and their divider = 6 with an empty 1-line composer), and
+// is fed the committed transcript.
 func TestTranscriptViewportSizing(t *testing.T) {
 	ctrl := control.New(control.Options{})
 	m := newChatTUI(ctrl, "", make(chan event.Event, 1), 80)
@@ -278,14 +280,14 @@ func TestTranscriptViewportSizing(t *testing.T) {
 	m0, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 	m = m0.(chatTUI)
 
-	if got := m.bottomRows(); got != 5 {
-		t.Fatalf("bottomRows with an empty composer = %d, want 5 (input 1 + border 2 + status 2)", got)
+	if got := m.bottomRows(); got != 6 {
+		t.Fatalf("bottomRows with an empty composer = %d, want 6 (input 1 + border 2 + status 3)", got)
 	}
 	if m.viewport.Width() != 79 {
 		t.Errorf("viewport content width = %d, want 79 (terminal 80 - 1 scrollbar column)", m.viewport.Width())
 	}
-	if want := m.transcriptHeight(); m.viewport.Height() != want || want != 19 {
-		t.Errorf("viewport height = %d, transcriptHeight = %d, want 19 (24-5)", m.viewport.Height(), want)
+	if want := m.transcriptHeight(); m.viewport.Height() != want || want != 18 {
+		t.Errorf("viewport height = %d, transcriptHeight = %d, want 18 (24-6)", m.viewport.Height(), want)
 	}
 	if m.viewport.TotalLineCount() == 0 {
 		t.Errorf("viewport should hold the committed banner after the first resize")
@@ -416,6 +418,18 @@ func TestManualNewlineGrowsComposerWithoutHidingFirstLine(t *testing.T) {
 	}
 }
 
+func TestEmptyComposerShowsOnlyPrompt(t *testing.T) {
+	ctrl := control.New(control.Options{})
+	m := newChatTUI(ctrl, "", make(chan event.Event, 1), 60)
+	m0, _ := m.Update(tea.WindowSizeMsg{Width: 60, Height: 16})
+	m = m0.(chatTUI)
+
+	firstLine := strings.Split(ansi.Strip(m.renderComposerInput()), "\n")[0]
+	if strings.TrimSpace(firstLine) != "❯" {
+		t.Fatalf("empty composer = %q, want only the prompt", firstLine)
+	}
+}
+
 func TestManualNewlineCanExceedVisibleComposerRows(t *testing.T) {
 	ctrl := control.New(control.Options{})
 	m := newChatTUI(ctrl, "", make(chan event.Event, 1), 40)
@@ -423,6 +437,10 @@ func TestManualNewlineCanExceedVisibleComposerRows(t *testing.T) {
 	m0, _ := m.Update(tea.WindowSizeMsg{Width: 40, Height: 12})
 	m = m0.(chatTUI)
 	m.input.SetValue("first line")
+	visibleCap := m.input.MaxHeight
+	if visibleCap >= maxInputRows {
+		t.Fatalf("short terminal input cap = %d, want less than comfort cap %d", visibleCap, maxInputRows)
+	}
 
 	for range maxInputRows + 1 {
 		m0, _ = m.Update(tea.KeyPressMsg{Code: 'j', Mod: tea.ModCtrl})
@@ -432,8 +450,125 @@ func TestManualNewlineCanExceedVisibleComposerRows(t *testing.T) {
 	if got, want := strings.Count(m.input.Value(), "\n"), maxInputRows+1; got != want {
 		t.Fatalf("manual newlines preserved = %d, want %d", got, want)
 	}
+	if got := m.input.Height(); got != visibleCap {
+		t.Fatalf("visible input height = %d, want terminal-aware cap %d", got, visibleCap)
+	}
+	if got := m.input.ScrollYOffset(); got == 0 {
+		t.Fatal("overflowing composer should scroll internally to keep the caret visible")
+	}
+	if got := m.transcriptHeight(); got < minTranscriptRows {
+		t.Fatalf("transcript height = %d, want at least %d rows", got, minTranscriptRows)
+	}
+}
+
+func TestComposerHeightReflowsWhenTerminalShrinksAndGrows(t *testing.T) {
+	ctrl := control.New(control.Options{})
+	m := newChatTUI(ctrl, "", make(chan event.Event, 1), 80)
+
+	m0, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 30})
+	m = m0.(chatTUI)
+	m.input.SetValue(strings.Repeat("line\n", maxInputRows+2))
+	// SetValue recalculates the dynamic textarea before the outer model gets a
+	// chance to resize the transcript, so send a harmless resize through Update.
+	m0, _ = m.Update(tea.WindowSizeMsg{Width: 80, Height: 30})
+	m = m0.(chatTUI)
 	if got := m.input.Height(); got != maxInputRows {
-		t.Fatalf("visible input height = %d, want capped at %d", got, maxInputRows)
+		t.Fatalf("tall terminal input height = %d, want comfort cap %d", got, maxInputRows)
+	}
+
+	m0, _ = m.Update(tea.WindowSizeMsg{Width: 80, Height: 12})
+	m = m0.(chatTUI)
+	shortCap := m.input.MaxHeight
+	if got := m.input.Height(); got != shortCap {
+		t.Fatalf("shrunk terminal input height = %d, want cap %d", got, shortCap)
+	}
+	if shortCap >= maxInputRows {
+		t.Fatalf("shrunk terminal cap = %d, want less than %d", shortCap, maxInputRows)
+	}
+	if got := strings.Count(m.input.Value(), "\n"); got != maxInputRows+2 {
+		t.Fatalf("resize changed composer content: newline count = %d, want %d", got, maxInputRows+2)
+	}
+	if got := m.transcriptHeight(); got < minTranscriptRows {
+		t.Fatalf("shrunk transcript height = %d, want at least %d", got, minTranscriptRows)
+	}
+
+	m0, _ = m.Update(tea.WindowSizeMsg{Width: 80, Height: 30})
+	m = m0.(chatTUI)
+	if got := m.input.Height(); got != maxInputRows {
+		t.Fatalf("regrown terminal input height = %d, want restored cap %d", got, maxInputRows)
+	}
+}
+
+func TestTranscriptResizeRerendersCommittedMarkdownAtNewWidth(t *testing.T) {
+	ctrl := control.New(control.Options{})
+	m := newChatTUI(ctrl, "", make(chan event.Event, 1), 40)
+	m0, _ := m.Update(tea.WindowSizeMsg{Width: 40, Height: 14})
+	m = m0.(chatTUI)
+
+	raw := "A committed answer with a thematic break.\n\n---\n\n" +
+		strings.Repeat("reflow words across the old terminal width ", 4)
+	m.pending.WriteString(raw)
+	m.commitPending()
+	answer := len(m.transcript) - 1
+	oldRendered := ansi.Strip(m.transcript[answer])
+	oldLines := strings.Count(oldRendered, "\n") + 1
+
+	m0, _ = m.Update(tea.WindowSizeMsg{Width: 80, Height: 14})
+	m = m0.(chatTUI)
+	newRendered := ansi.Strip(m.transcript[answer])
+	newLines := strings.Count(newRendered, "\n") + 1
+
+	ruleWidth := 0
+	for _, line := range strings.Split(newRendered, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed != "" && strings.Trim(trimmed, "─") == "" {
+			ruleWidth = visibleWidth(trimmed)
+			break
+		}
+	}
+	if got, want := ruleWidth, transcriptContentWidth(80, false); got != want {
+		t.Fatalf("resized thematic rule width = %d, want new transcript width %d", got, want)
+	}
+	if newLines >= oldLines {
+		t.Fatalf("wider transcript kept old hard wrapping: old lines=%d new lines=%d\n%s", oldLines, newLines, newRendered)
+	}
+	if got := m.transcriptSources[answer]; got.kind != transcriptSourceMarkdown || got.raw != raw {
+		t.Fatalf("committed answer lost markdown source: %+v", got)
+	}
+}
+
+func TestTranscriptResizeKeepsScrolledReaderOnSameBlock(t *testing.T) {
+	ctrl := control.New(control.Options{})
+	m := newChatTUI(ctrl, "", make(chan event.Event, 1), 40)
+	m0, _ := m.Update(tea.WindowSizeMsg{Width: 40, Height: 12})
+	m = m0.(chatTUI)
+	m.clearTranscriptDisplay()
+
+	for i := range 8 {
+		m.commitTranscriptSource(transcriptSource{
+			kind: transcriptSourceMarkdown,
+			raw:  fmt.Sprintf("ANCHOR-%d\n\n%s", i, strings.Repeat("content that wraps at the narrow width ", 4)),
+		})
+	}
+	m.transcriptDirty = true
+	m0, _ = m.Update(tea.WindowSizeMsg{Width: 40, Height: 12})
+	m = m0.(chatTUI)
+
+	contentWidth := transcriptContentWidth(m.width, false)
+	secondBlockStart := transcriptBlockLineCount(m.transcript[0], contentWidth)
+	m.viewport.SetYOffset(secondBlockStart)
+	if m.viewport.AtBottom() {
+		t.Fatal("test reader anchor must be above the transcript bottom")
+	}
+	if top := ansi.Strip(m.wrappedLines[m.viewport.YOffset()]); !strings.Contains(top, "ANCHOR-1") {
+		t.Fatalf("test setup top row = %q, want ANCHOR-1", top)
+	}
+
+	m0, _ = m.Update(tea.WindowSizeMsg{Width: 80, Height: 12})
+	m = m0.(chatTUI)
+	top := ansi.Strip(m.wrappedLines[m.viewport.YOffset()])
+	if !strings.Contains(top, "ANCHOR-1") {
+		t.Fatalf("resize moved reader to another transcript block: top row %q", top)
 	}
 }
 
@@ -453,6 +588,51 @@ func TestSoftWrappedInputGrowsComposerAndShrinksTranscript(t *testing.T) {
 	}
 	if got := m.viewport.Height(); got >= initialViewportHeight {
 		t.Fatalf("viewport height after composer growth = %d, want less than initial %d", got, initialViewportHeight)
+	}
+}
+
+func TestComposerPromptReservesWidthAndOffsetsCJKCursor(t *testing.T) {
+	ctrl := control.New(control.Options{})
+	m := newChatTUI(ctrl, "", make(chan event.Event, 1), 40)
+
+	m0, _ := m.Update(tea.WindowSizeMsg{Width: 40, Height: 12})
+	m = m0.(chatTUI)
+	m.input.SetValue("你好")
+
+	firstLine := strings.Split(ansi.Strip(m.input.View()), "\n")[0]
+	if !strings.HasPrefix(firstLine, "❯ 你好") {
+		t.Fatalf("composer first line = %q, want prompt before CJK input", firstLine)
+	}
+	if got, want := m.input.Width(), 40-4-composerPromptWidth; got != want {
+		t.Fatalf("textarea content width = %d, want %d after prompt gutter", got, want)
+	}
+	cursor := m.input.Cursor()
+	if cursor == nil {
+		t.Fatal("focused composer should expose the real terminal cursor")
+	}
+	if got, want := cursor.X, composerPromptWidth+4; got != want {
+		t.Fatalf("cursor X after two CJK runes = %d, want %d", got, want)
+	}
+}
+
+func TestComposerPromptDoesNotRepeatOnWrappedRows(t *testing.T) {
+	ctrl := control.New(control.Options{})
+	m := newChatTUI(ctrl, "", make(chan event.Event, 1), 16)
+
+	// Give this prompt-gutter test enough vertical space for the responsive
+	// footer; terminal-height prioritization is covered separately.
+	m0, _ := m.Update(tea.WindowSizeMsg{Width: 16, Height: 18})
+	m = m0.(chatTUI)
+	m.input.SetValue(strings.Repeat("x", m.input.Width()+1))
+	lines := strings.Split(ansi.Strip(m.input.View()), "\n")
+	if len(lines) < 2 {
+		t.Fatalf("wrapped composer lines = %d, want at least 2", len(lines))
+	}
+	if !strings.HasPrefix(lines[0], "❯ ") {
+		t.Fatalf("first composer row missing prompt: %q", lines[0])
+	}
+	if strings.HasPrefix(lines[1], "❯ ") || !strings.HasPrefix(lines[1], "  ") {
+		t.Fatalf("continuation row should keep a blank prompt gutter: %q", lines[1])
 	}
 }
 
@@ -826,7 +1006,7 @@ func TestCompletionMenuCtrlPNMovesSelection(t *testing.T) {
 	}
 }
 
-func TestStatusCommandShowsDetailsRemovedFromFooter(t *testing.T) {
+func TestStatusCommandShowsRuntimeDetails(t *testing.T) {
 	m := newTestChatTUI()
 	m.modelRef = "provider/model"
 	m.effortLevel = "max"
@@ -921,7 +1101,7 @@ func TestIngestEventRoutesByKind(t *testing.T) {
 	}{
 		{"dispatch", event.Event{Kind: event.ToolDispatch, Tool: event.Tool{Name: "read_file", Args: `{"path":"x"}`}}, "● Read(x)"},
 		{"blocked", event.Event{Kind: event.ToolResult, Tool: event.Tool{Name: "bash", Err: "blocked by permission policy"}}, "● Bash ⊘ blocked by permission policy"},
-		{"usage", event.Event{Kind: event.Usage, Usage: &provider.Usage{PromptTokens: 1000, CompletionTokens: 200, TotalTokens: 1200, CacheHitTokens: 900, CacheMissTokens: 100}}, "  · 1200 tok"},
+		{"usage", event.Event{Kind: event.Usage, Usage: &provider.Usage{PromptTokens: 1000, CompletionTokens: 200, TotalTokens: 1200, CacheHitTokens: 900, CacheMissTokens: 100}}, "TURN  1.2K tok"},
 		{"usage-diagnostics", event.Event{Kind: event.Usage, Usage: &provider.Usage{PromptTokens: 1000, CompletionTokens: 200, TotalTokens: 1200}, CacheDiagnostics: &event.CacheDiagnostics{PrefixChanged: true, PrefixChangeReasons: []string{"tools"}}}, "cache prefix changed: tools"},
 		{"notice-info", event.Event{Kind: event.Notice, Level: event.LevelInfo, Text: "compacted 8 messages → summary"}, "  · compacted 8 messages → summary"},
 		{"notice-warn", event.Event{Kind: event.Notice, Level: event.LevelWarn, Text: "response truncated: hit max output tokens"}, "  ! response truncated: hit max output tokens"},
@@ -930,7 +1110,12 @@ func TestIngestEventRoutesByKind(t *testing.T) {
 		m := newTestChatTUI()
 		m.ingestEvent(tc.ev)
 		got := *m.pendingCommit
-		if len(got) != 1 || !strings.Contains(got[0], tc.want) {
+		normalized := ""
+		if len(got) == 1 {
+			normalized = strings.Join(strings.Fields(ansi.Strip(got[0])), " ")
+		}
+		want := strings.Join(strings.Fields(tc.want), " ")
+		if len(got) != 1 || !strings.Contains(normalized, want) {
 			t.Errorf("%s: committed=%v, want a single line containing %q", tc.name, got, tc.want)
 		}
 	}
@@ -1228,6 +1413,30 @@ func TestTranscriptScrollbarClickAndDrag(t *testing.T) {
 	}
 }
 
+func clipboardCopyResultFromCmd(t *testing.T, cmd tea.Cmd) clipboardCopyMsg {
+	t.Helper()
+	if cmd == nil {
+		t.Fatal("expected clipboard command")
+	}
+	msg := cmd()
+	switch msg := msg.(type) {
+	case clipboardCopyMsg:
+		return msg
+	case tea.BatchMsg:
+		for _, child := range msg {
+			if child == nil {
+				continue
+			}
+			childMsg := child()
+			if result, ok := childMsg.(clipboardCopyMsg); ok {
+				return result
+			}
+		}
+	}
+	t.Fatalf("clipboard command returned %T, want clipboardCopyMsg", msg)
+	return clipboardCopyMsg{}
+}
+
 // TestMouseDragReleaseAutoCopies verifies that releasing the mouse after a
 // left-drag over the transcript copies the selection to the clipboard
 // automatically (native terminal convention), keeps the selection highlighted
@@ -1251,8 +1460,23 @@ func TestMouseDragReleaseAutoCopies(t *testing.T) {
 	if !m2.sel.active {
 		t.Error("selection should stay highlighted after auto-copy so right-click can re-copy it")
 	}
-	if m2.copyNoticeText == "" {
-		t.Error("release after a real drag should arm the copied-to-clipboard notice")
+	if m2.copyNoticeText != "" {
+		t.Error("copy must not claim success before the native clipboard write completes")
+	}
+
+	previous := writeNativeClipboardText
+	t.Cleanup(func() { writeNativeClipboardText = previous })
+	writeNativeClipboardText = func(text string) error {
+		if text != "hello" {
+			t.Fatalf("native clipboard text = %q, want hello", text)
+		}
+		return nil
+	}
+	result := clipboardCopyResultFromCmd(t, cmd)
+	out, _ = m2.Update(result)
+	m3 := out.(chatTUI)
+	if m3.copyNoticeText != i18n.M.MouseCopiedHint {
+		t.Errorf("completed native copy notice = %q, want %q", m3.copyNoticeText, i18n.M.MouseCopiedHint)
 	}
 }
 
@@ -1300,6 +1524,37 @@ func TestCopyNoticeExpires(t *testing.T) {
 	m3 := out.(chatTUI)
 	if m3.copyNoticeText != "" {
 		t.Fatal("the matching expiry tick should clear the notice")
+	}
+}
+
+func TestClipboardCopyFallbackDoesNotClaimNativeSuccess(t *testing.T) {
+	m := newTestChatTUI()
+	m.copyNoticeSeq = 7
+
+	out, cmd := m.Update(clipboardCopyMsg{
+		text:       "selected text",
+		err:        errors.New("pbcopy unavailable"),
+		statusHint: true,
+		seq:        7,
+	})
+	m = out.(chatTUI)
+	if got := m.copyNoticeText; got != i18n.M.ClipboardCopyFallbackHint {
+		t.Fatalf("fallback copy notice = %q, want %q", got, i18n.M.ClipboardCopyFallbackHint)
+	}
+	if cmd == nil {
+		t.Fatal("fallback copy should emit an OSC 52 clipboard command")
+	}
+}
+
+func TestImagePastePendingAppearsInFooter(t *testing.T) {
+	ctrl := control.New(control.Options{})
+	m := newChatTUI(ctrl, "", make(chan event.Event, 1), 80)
+	next, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 14})
+	m = next.(chatTUI)
+	m.clipboardImagePending = true
+	view := ansi.Strip(m.View().Content)
+	if !strings.Contains(view, i18n.M.ClipboardImagePastingHint) {
+		t.Fatalf("pending image paste missing from footer:\n%s", view)
 	}
 }
 
@@ -1598,6 +1853,9 @@ func TestLanguageCommandSwitchesImmediatelyAndPersists(t *testing.T) {
 
 	if i18n.M.ChatStatusIdle != "就绪" {
 		t.Fatalf("/language zh did not switch active catalogue, idle=%q", i18n.M.ChatStatusIdle)
+	}
+	if got := m.input.Placeholder; got != "" {
+		t.Fatalf("/language zh introduced an idle composer placeholder: %q", got)
 	}
 	body, err := os.ReadFile(config.UserConfigPath())
 	if err != nil {
@@ -2994,12 +3252,6 @@ func TestCtrlCCopyBeatsClearInput(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("expected clipboard cmd")
 	}
-	if batch, ok := cmd().(tea.BatchMsg); ok {
-		for _, c := range batch {
-			c()
-		}
-	}
-
 	// Second Ctrl+C (no selection, non-empty composer) clears the draft.
 	out2, _ := m2.Update(ctrlC)
 	m3 := out2.(chatTUI)

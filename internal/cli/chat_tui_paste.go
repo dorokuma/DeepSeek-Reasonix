@@ -8,7 +8,6 @@ import (
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
-	"github.com/atotto/clipboard"
 
 	"reasonix/internal/control"
 	"reasonix/internal/shellparse"
@@ -115,21 +114,19 @@ func pasteClipboardImage() tea.Cmd {
 	}
 }
 
-func pasteClipboard() tea.Cmd {
-	return func() tea.Msg {
-		path, imageErr := control.SaveClipboardImage()
-		if imageErr == nil {
-			return clipboardPasteMsg{path: path}
-		}
-		text, textErr := clipboard.ReadAll()
-		if textErr == nil && text != "" {
-			return clipboardPasteMsg{text: text}
-		}
-		if textErr != nil {
-			return clipboardPasteMsg{err: fmt.Errorf("%v; text paste failed: %w", imageErr, textErr)}
-		}
-		return clipboardPasteMsg{err: imageErr}
+func imagePasteShortcut(keyName, goos string) bool {
+	if goos == "windows" {
+		return keyName == "alt+v"
 	}
+	return keyName == "ctrl+v"
+}
+
+func (m *chatTUI) beginClipboardImagePaste() tea.Cmd {
+	if m.clipboardImagePending {
+		return nil
+	}
+	m.clipboardImagePending = true
+	return pasteClipboardImage()
 }
 
 func (m *chatTUI) attachPastedImages(text string) bool {

@@ -1,10 +1,8 @@
 package cli
 
 import (
-	"reflect"
+	"errors"
 	"testing"
-
-	tea "charm.land/bubbletea/v2"
 )
 
 func TestScrollbarThumb(t *testing.T) {
@@ -70,9 +68,40 @@ func TestSelectedTextMultiLine(t *testing.T) {
 }
 
 func TestCopyToClipboard(t *testing.T) {
-	got := copyToClipboard("hello")()
-	want := tea.SetClipboard("hello")()
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("copyToClipboard returned %#v, want %#v", got, want)
+	t.Setenv("SSH_CONNECTION", "")
+	t.Setenv("SSH_CLIENT", "")
+	t.Setenv("SSH_TTY", "")
+	previous := writeNativeClipboardText
+	t.Cleanup(func() { writeNativeClipboardText = previous })
+
+	var written string
+	writeNativeClipboardText = func(text string) error {
+		written = text
+		return nil
+	}
+	message := copyToClipboard("hello")()
+	got, ok := message.(clipboardCopyMsg)
+	if !ok {
+		t.Fatalf("copyToClipboard returned %T, want clipboardCopyMsg", message)
+	}
+	if written != "hello" || got.text != "hello" || got.err != nil || got.osc52 {
+		t.Fatalf("native clipboard result = %+v, written %q", got, written)
+	}
+
+	wantErr := errors.New("clipboard unavailable")
+	writeNativeClipboardText = func(string) error { return wantErr }
+	got = copyToClipboard("fallback")().(clipboardCopyMsg)
+	if !errors.Is(got.err, wantErr) || got.osc52 {
+		t.Fatalf("failed native clipboard result = %+v", got)
+	}
+
+	t.Setenv("SSH_CONNECTION", "host 22 client 1234")
+	writeNativeClipboardText = func(string) error {
+		t.Fatal("SSH copy must not write the remote host's native clipboard")
+		return nil
+	}
+	got = copyToClipboard("remote")().(clipboardCopyMsg)
+	if !got.osc52 || got.text != "remote" {
+		t.Fatalf("SSH clipboard result = %+v, want OSC 52", got)
 	}
 }

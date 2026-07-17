@@ -558,7 +558,7 @@ default_model = "deepseek"   # provider name (→ its default model) or "provide
 
 [ui]
 # shortcut_layout = "desktop"       # classic|desktop; compatibility setting
-# cursor_shape = "underline"        # CLI/TUI textarea cursor: underline|block|bar
+# cursor_shape = "bar"              # CLI/TUI textarea cursor: underline|block|bar
 
 [agent]
 system_prompt = "You are Reasonix, a coding agent..."  # or system_prompt_file = "..."
@@ -662,7 +662,7 @@ explicit controls for one-off and unattended execution.
 `reasonix setup` writes this default config so the CLI is usable out of the box.
 
 `[ui].cursor_shape` is normalized to `underline`, `block`, or `bar`; empty or
-unknown values fall back to `underline`. It applies to the Bubble Tea CLI/TUI
+unknown values fall back to `bar`. It applies to the Bubble Tea CLI/TUI
 textarea only, while desktop and browser inputs keep their platform-native
 cursor behavior.
 
