@@ -10,7 +10,7 @@ Type=simple
 User=root
 Group=root
 WorkingDirectory=/root
-EnvironmentFile=/etc/reasonix-telegram.env
+EnvironmentFile=/etc/reasonix-bridge.env
 ExecStartPre=/bin/mkdir -p /var/lib/reasonix-bridge
 ExecStart=/usr/local/bin/reasonix-telegram
 Restart=always
@@ -24,7 +24,7 @@ ProtectHome=read-only
 # STATE_DIR (/var/lib/reasonix-telegram) for sessions, cache, chat-wd
 # WORK_DIR (/root) for reasonix.toml permanent allow (§9.1)
 # SessionDir (~/.config/reasonix/sessions) for conversation persistence
-ReadWritePaths=/var/lib/reasonix-telegram /root/.config/reasonix /root
+ReadWritePaths=/var/lib/reasonix-bridge /root/.config/reasonix /root
 PrivateTmp=true
 PrivateDevices=true
 ProtectKernelTunables=true
