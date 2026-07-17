@@ -250,6 +250,15 @@ func main() {
 	}
 	bridge.cron.Start()
 
+	// Listen for restart requests from /restart command.
+	// Exit the process so systemd Restart=always brings it back.
+	go func() {
+		<-restartRequested()
+		log.Println("restart requested — exiting for systemd to restart")
+		bridge.Shutdown()
+		os.Exit(0)
+	}()
+
 	// Send restart notification to the last active chat, if any.
 	if chatID, msgID := pendingRestartNotify(); chatID != 0 {
 		go func() {

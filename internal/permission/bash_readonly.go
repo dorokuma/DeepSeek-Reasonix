@@ -70,9 +70,70 @@ func isReadOnlyBashSubject(subject string) bool {
 	if cmd == "" {
 		return false
 	}
-	if containsShellSyntax(cmd) {
+	// Hard shell syntax (semicolons, backticks, $(), redirects, chaining) is always unsafe.
+	if containsUnsafeShellSyntax(cmd) {
 		return false
 	}
+	// Pipes: split on | and verify every segment is read-only.
+	if strings.ContainsRune(cmd, '|') {
+		return isReadOnlyPipeline(cmd)
+	}
+	return isReadOnlySingleCommand(cmd)
+}
+
+// isReadOnlyPipeline checks that every command in a pipe is read-only.
+// "ls | head" → true ; "ls | rm -rf /" → false ; "cat f | tee x" → false
+func isReadOnlyPipeline(cmd string) bool {
+	segments := splitPipeline(cmd)
+	if len(segments) <= 1 {
+		return isReadOnlySingleCommand(strings.TrimSpace(cmd))
+	}
+	for _, seg := range segments {
+		seg = strings.TrimSpace(seg)
+		if seg == "" {
+			continue
+		}
+		if !isReadOnlySingleCommand(seg) {
+			return false
+		}
+	}
+	return true
+}
+
+// splitPipeline splits cmd on unquoted pipe characters.
+func splitPipeline(cmd string) []string {
+	var parts []string
+	var current strings.Builder
+	var quote byte
+	for i := 0; i < len(cmd); i++ {
+		c := cmd[i]
+		if quote != 0 {
+			if c == quote {
+				quote = 0
+			}
+			current.WriteByte(c)
+			continue
+		}
+		if c == '\'' || c == '"' {
+			quote = c
+			current.WriteByte(c)
+			continue
+		}
+		if c == '|' {
+			parts = append(parts, current.String())
+			current.Reset()
+			continue
+		}
+		current.WriteByte(c)
+	}
+	if current.Len() > 0 {
+		parts = append(parts, current.String())
+	}
+	return parts
+}
+
+// isReadOnlySingleCommand checks a single (non-pipeline) command.
+func isReadOnlySingleCommand(cmd string) bool {
 	fields := strings.Fields(cmd)
 	if len(fields) == 0 {
 		return false
@@ -94,10 +155,19 @@ func isReadOnlyBashSubject(subject string) bool {
 	return false
 }
 
+// containsShellSyntax is the original check kept for compatibility with
+// BashDangerWarning callers. Use containsUnsafeShellSyntax for gating.
 func containsShellSyntax(cmd string) bool {
-	// Case-insensitive $() catches both $(...) and $(...) variants.
 	upper := strings.ToUpper(cmd)
 	return strings.ContainsAny(cmd, ";|&<>\n`") || strings.Contains(upper, "$(") || strings.Contains(cmd, "${")
+}
+
+// containsUnsafeShellSyntax returns true when cmd contains shell operators
+// that are always unsafe — pipes (|) are handled separately by isReadOnlyPipeline.
+func containsUnsafeShellSyntax(cmd string) bool {
+	upper := strings.ToUpper(cmd)
+	// Semicolons, backticks, $(), ${}, &&, ||, &, >, < are all unsafe.
+	return strings.ContainsAny(cmd, ";&<>\n`") || strings.Contains(cmd, "||") || strings.Contains(upper, "$(") || strings.Contains(cmd, "${")
 }
 
 func hasUnsafeReadOnlyArgs(base string, args []string) bool {
