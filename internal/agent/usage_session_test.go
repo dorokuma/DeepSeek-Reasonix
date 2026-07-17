@@ -104,6 +104,12 @@ func TestCacheBilledTokens(t *testing.T) {
 	if h != 40 || m != 60 {
 		t.Fatalf("reported billed=%d/%d", h, m)
 	}
+	// Hit-only (no miss field): must self-normalize before billing.
+	partial := &provider.Usage{PromptTokens: 1000, CacheHitTokens: 600}
+	h, m = CacheBilledTokens(partial)
+	if h != 600 || m != 400 {
+		t.Fatalf("self-normalize billed=%d/%d want 600/400", h, m)
+	}
 	opaque := &provider.Usage{PromptTokens: 80}
 	h, m = CacheBilledTokens(opaque)
 	if h != 0 || m != 80 {

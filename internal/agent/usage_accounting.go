@@ -44,14 +44,13 @@ func sessionCacheAdd(u provider.Usage) (hit, miss int64, reported bool) {
 	return 0, 0, false
 }
 
-// CacheBilledTokens returns session-aligned hit/miss for one usage record
-// (caller should NormalizeCache first). Opaque prompts count as miss so totals
-// match Pricing.Cost; harnesses use this as the "billed" cache口径.
+// CacheBilledTokens returns session-aligned hit/miss for one usage record.
+// It normalizes cache fields itself (callers need not pre-Normalize). Opaque
+// prompts count as miss so totals match Pricing.Cost; harnesses use this as
+// the "billed" cache口径.
 func CacheBilledTokens(u *provider.Usage) (hit, miss int) {
-	if u == nil {
-		return 0, 0
-	}
-	h, m, _ := sessionCacheAdd(*u)
+	norm := normalizeUsage(u)
+	h, m, _ := sessionCacheAdd(norm)
 	return int(h), int(m)
 }
 

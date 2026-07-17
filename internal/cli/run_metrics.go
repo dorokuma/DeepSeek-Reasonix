@@ -45,15 +45,15 @@ type metricsSink struct {
 
 func (s *metricsSink) Emit(e event.Event) {
 	if e.Kind == event.Usage && e.Usage != nil {
-		// Dual口径 via the same helpers the agent uses for session accounting.
+		// Provider口径: normalize only (no synthetic full-prompt miss).
 		norm := *e.Usage
 		norm.NormalizeCache()
 		s.m.PromptTokens += norm.PromptTokens
 		s.m.CompletionTokens += norm.CompletionTokens
 		s.m.CacheHitTokens += norm.CacheHitTokens
 		s.m.CacheMissTokens += norm.CacheMissTokens
-		// Session-aligned billed split (exported helper mirror — keep logic in agent).
-		hitB, missB := agent.CacheBilledTokens(&norm)
+		// Billed口径: CacheBilledTokens normalizes again and invents miss when opaque.
+		hitB, missB := agent.CacheBilledTokens(e.Usage)
 		s.m.CacheHitBilledTokens += hitB
 		s.m.CacheMissBilledTokens += missB
 		s.m.Steps++
