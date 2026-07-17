@@ -584,9 +584,13 @@ func (b *Bridge) handleSubmit(chatID int64, text string) {
 			s.markDelivered()
 		},
 		func(cid int64, toolName, args, status string, elapsed time.Duration) {
-			line := "🔧 " + toolName
+			meta := getToolMeta(toolName)
+			line := toolIcon(toolName) + " " + meta.Label
 			if args != "" {
 				line += "(" + truncate(args, 60) + ")"
+			}
+			if elapsed > 0 {
+				line += fmt.Sprintf(" · %s", elapsed.Round(time.Millisecond))
 			}
 			msgID, err := b.sendMessageID(cid, line)
 			if err == nil && msgID > 0 {
@@ -632,7 +636,14 @@ func (b *Bridge) handleSubmit(chatID int64, text string) {
 	stopTyping := b.beginTyping(b.ctx, chatID)
 	defer stopTyping()
 
-	if err := b.sm.Submit(b.ctx, chatID, text); err != nil {
+	// Hard timeout for the entire turn (model call + tool execution).
+	// Without this, a stuck HTTP/2 connection can hang forever — the 8-min
+	// Wait() timeout only fires after the turn completes, but a dead TCP
+	// write never completes. 10 minutes matches the Wait + Cancel grace.
+	turnCtx, turnCancel := context.WithTimeout(b.ctx, 10*time.Minute)
+	defer turnCancel()
+
+	if err := b.sm.Submit(turnCtx, chatID, text); err != nil {
 		log.Printf("sm.Submit error (chat %d): %v", chatID, err)
 		if err := b.sendMessage(chatID, fmt.Sprintf("❌ %v", err)); err != nil {
 			log.Printf("failed to send message: %v", err)

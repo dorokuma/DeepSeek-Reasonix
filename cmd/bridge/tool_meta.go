@@ -50,6 +50,19 @@ func getToolMeta(toolName string) toolMeta {
 	return toolMeta{toolName, "risk"}
 }
 
+// toolIcon returns a distinct emoji for the tool category.
+func toolIcon(toolName string) string {
+	switch toolName {
+	case "spawn_agent", "send_input", "wait_agent", "close_agent", "resume_agent":
+		return "🤖"
+	}
+	meta := getToolMeta(toolName)
+	if meta.Risk == "safe" {
+		return "📋"
+	}
+	return "🔧"
+}
+
 // firstLine returns the first line of s, truncated to maxLen runes if longer.
 // Used for the approval message parameter summary line.
 func firstLine(s string, maxLen int) string {
