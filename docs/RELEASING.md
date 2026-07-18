@@ -45,10 +45,13 @@ separate SignPath confirmations for the AMD64 and ARM64 requests.
 > environment.
 
 The reusable publishers additionally require the stable orchestrator to run on
-the protected stable tag (or protected `main-v2` recovery ref), bind the caller
-workflow commit to the approved SHA, check out that SHA, and revalidate each
-remote release tag immediately before publication. An unprotected branch cannot
-claim that it already passed the approval job.
+the protected stable tag (or protected `main-v2` recovery ref). Normal tag-push
+releases bind the caller workflow commit to the approved SHA. Recovery keeps the
+fixed control-plane workflow on protected `main-v2`, resolves the existing three
+tags to one immutable historical SHA on `main-v2`, and uses that SHA only for the
+actual build and publication checkouts. Every publisher revalidates its remote
+release tag immediately before publication. An unprotected branch cannot claim
+that it already passed the approval job.
 
 Repository `write` access remains a privileged role: GitHub Actions workflows on
 repository branches can access repository-level Actions secrets. Do not grant
@@ -101,7 +104,10 @@ from accidental or unauthorized invocation.
    stable npm tags and `npm update -g` silently downgraded users to 0.53.2 (#5822).
    The CLI and npm jobs run concurrently; the CLI's freshness check may warn while
    npm is still propagating, while release-npm.yml's verify step owns the final
-   assertion.
+   assertion. The stable orchestrator finishes with a postflight that verifies
+   both GitHub Releases contain their required assets and npm `latest` exactly
+   matches the approved version; missing artifacts can no longer produce a green
+   stable run.
 7. **Next cycle** — the canary rolls on toward `1.5.0`.
 
 ## Notes
@@ -109,6 +115,11 @@ from accidental or unauthorized invocation.
 - Canary version numbers use the workflow `run_number`, so the desktop and CLI canary
   numbers differ (e.g. `canary.11` vs `canary.2`). Only monotonicity per channel matters.
 - A stable `-rc` tag (e.g. `npm-v1.4.0-rc.1`) still ships under `next`, not `canary`.
+- Recover an interrupted stable release by dispatching **Release stable** from
+  protected `main-v2` with the existing `vX.Y.Z` tag. Recovery requires the CLI,
+  npm, and Desktop tags to remain aligned on an ancestor of current `main-v2`,
+  then uses the same single approval and postflight. Never move or recreate the
+  published tags to pick up a workflow fix.
 - Windows release signing uses SignPath trusted-build and origin verification.
   Keep **Use approval process** enabled on `release-signing`: the AMD64 and ARM64
   requests can each require a manual confirmation after the single GitHub

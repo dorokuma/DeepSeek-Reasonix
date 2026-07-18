@@ -78,7 +78,7 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
-          ref: ${{ inputs.approved_sha }}
+          ref: ${{ github.sha }}
       - name: Verify caller and approved release ref
         env:
           ACTUAL_CALLER_WORKFLOW_REF: ${{ github.workflow_ref }}
@@ -87,9 +87,11 @@ jobs:
           CALLER_REF: ${{ github.ref }}
           CALLER_REF_PROTECTED: ${{ github.ref_protected }}
           CALLER_WORKFLOW_SHA: ${{ github.workflow_sha }}
+          CALLER_SHA: ${{ github.sha }}
           APPROVED_CLI_TAG: ${{ inputs.approved_cli_tag }}
           APPROVED_SHA: ${{ inputs.approved_sha }}
           RELEASE_TAG: ${{ inputs.tag }}
+          VERIFY_RELEASE_CHECKOUT: false
         run: |
           bash scripts/verify-release-authorization.sh
           bash scripts/verify-release-tag.sh
@@ -122,6 +124,7 @@ jobs:
   npm:
     name: publish npm packages
     needs: cache-guard
+    if: ${{ always() && !cancelled() && needs.cache-guard.result == 'success' }}
     runs-on: ubuntu-latest
     # The stable caller has already passed the single GitHub release approval.
     # Direct prereleases/manual stable recovery pass release-gate above; canaries
