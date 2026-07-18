@@ -785,6 +785,7 @@ export interface SkillView {
   model?: string;
   effort?: string;
   allowedTools?: string[];
+  readOnly?: boolean;
   color?: string;
   invocation?: string;
   invocationMode?: string;
@@ -833,6 +834,7 @@ export interface SubagentProfileInput {
   model?: string;
   effort?: string;
   allowedTools?: string[];
+  readOnly?: boolean;
   scope?: "project" | "global";
 }
 export interface PluginView {
@@ -1239,6 +1241,8 @@ export interface AgentView {
   maxSteps: number;
   plannerMaxSteps: number;
   maxSubagentDepth: number;
+  maxSubagentConcurrency: number;
+  maxParallelWriters: number;
   systemPrompt: string;
   coldResumePrune: boolean;
   reasoningLanguage: string; // "auto" | "zh" | "en"

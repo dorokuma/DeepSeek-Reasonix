@@ -6076,7 +6076,10 @@ type SkillView struct {
 	Model        string   `json:"model,omitempty"`
 	Effort       string   `json:"effort,omitempty"`
 	AllowedTools []string `json:"allowedTools,omitempty"`
-	Color        string   `json:"color,omitempty"`
+	// ReadOnly mirrors frontmatter read-only; omitted/false keeps the legacy
+	// writable default for older profiles.
+	ReadOnly bool   `json:"readOnly,omitempty"`
+	Color    string `json:"color,omitempty"`
 	// Invocation is the user-facing slash name; InvocationMode preserves the
 	// frontmatter policy used by the subagent profile editor.
 	Invocation     string `json:"invocation,omitempty"`
@@ -6456,6 +6459,7 @@ func (a *App) SkillsSettings() SkillsSettingsView {
 			Model:            s.Model,
 			Effort:           s.Effort,
 			AllowedTools:     append([]string{}, s.AllowedTools...),
+			ReadOnly:         s.ReadOnly,
 			Color:            s.Color,
 			Invocation:       "/" + s.SlashName(),
 			InvocationMode:   s.Invocation,

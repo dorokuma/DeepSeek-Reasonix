@@ -1247,7 +1247,7 @@ function normalizeSettingsView(view: SettingsView | null | undefined): SettingsV
     noProxy: "",
     proxy: { type: "socks5", server: "", port: 0, username: "", password: "" },
   };
-  const agent = view.agent ?? { temperature: 0, maxSteps: 0, plannerMaxSteps: 0, maxSubagentDepth: 2, systemPrompt: "", coldResumePrune: true, reasoningLanguage: "auto" };
+  const agent = view.agent ?? { temperature: 0, maxSteps: 0, plannerMaxSteps: 0, maxSubagentDepth: 2, maxSubagentConcurrency: 6, maxParallelWriters: 3, systemPrompt: "", coldResumePrune: true, reasoningLanguage: "auto" };
   agent.plannerMaxSteps = Number.isFinite(agent.plannerMaxSteps) ? Math.max(0, Math.trunc(agent.plannerMaxSteps)) : 0;
   agent.maxSteps = Number.isFinite(agent.maxSteps) ? Math.max(0, Math.trunc(agent.maxSteps)) : 0;
   agent.maxSubagentDepth = Number.isFinite(agent.maxSubagentDepth) && agent.maxSubagentDepth <= 1 ? 1 : 2;
@@ -3951,8 +3951,14 @@ function ModelsSection({ s, busy, apply, backgroundApply }: ModelsSectionProps) 
     : !providerIsConfigured(defaultProviderView)
       ? t("settings.modelNeedsKey", { provider: modelProviderLabel(defaultProvider, defaultProviderView, t) })
       : "";
-  const agent = s.agent ?? { temperature: 0, maxSteps: 0, plannerMaxSteps: 0, maxSubagentDepth: 2, systemPrompt: "", coldResumePrune: true, reasoningLanguage: "auto" };
+  const agent = s.agent ?? { temperature: 0, maxSteps: 0, plannerMaxSteps: 0, maxSubagentDepth: 2, maxSubagentConcurrency: 6, maxParallelWriters: 3, systemPrompt: "", coldResumePrune: true, reasoningLanguage: "auto" };
   const subagentDepth = Number.isFinite(agent.maxSubagentDepth) && agent.maxSubagentDepth <= 1 ? 1 : 2;
+  const subagentConcurrency = Number.isFinite(agent.maxSubagentConcurrency) && agent.maxSubagentConcurrency > 0
+    ? Math.max(1, Math.min(32, Math.floor(agent.maxSubagentConcurrency)))
+    : 6;
+  const parallelWriters = Number.isFinite(agent.maxParallelWriters) && agent.maxParallelWriters > 0
+    ? Math.max(1, Math.min(subagentConcurrency, Math.floor(agent.maxParallelWriters)))
+    : Math.min(3, subagentConcurrency);
 
   useEffect(() => {
     if (subtab !== "usage") return;
@@ -4076,6 +4082,38 @@ function ModelsSection({ s, busy, apply, backgroundApply }: ModelsSectionProps) 
                   </button>
                 ))}
               </div>
+            </SettingsField>
+
+            <SettingsField label={t("settings.subagentConcurrency")} hint={t("settings.subagentConcurrencyHint")}>
+              <input
+                className="mem-input"
+                type="number"
+                min={1}
+                max={32}
+                value={subagentConcurrency}
+                disabled={busy}
+                onChange={(e) => {
+                  const n = Number(e.target.value);
+                  if (!Number.isFinite(n)) return;
+                  void apply(() => app.SetMaxSubagentConcurrency(n));
+                }}
+              />
+            </SettingsField>
+
+            <SettingsField label={t("settings.parallelWriters")} hint={t("settings.parallelWritersHint")}>
+              <input
+                className="mem-input"
+                type="number"
+                min={1}
+                max={subagentConcurrency}
+                value={parallelWriters}
+                disabled={busy}
+                onChange={(e) => {
+                  const n = Number(e.target.value);
+                  if (!Number.isFinite(n)) return;
+                  void apply(() => app.SetMaxParallelWriters(n));
+                }}
+              />
             </SettingsField>
 
             {modelIssue && <div className="provider-fetch-banner provider-fetch-banner--warn">{modelIssue}</div>}

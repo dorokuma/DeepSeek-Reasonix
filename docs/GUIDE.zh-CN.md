@@ -59,6 +59,8 @@ reasoning_language = "auto"      # 可见思考过程语言：auto|zh|en
 # subagent_model = "deepseek-pro"     # runAs=subagent skill 的默认模型
 # subagent_models = { review = "deepseek-pro", security_review = "deepseek-pro" }
 # max_subagent_depth = 2              # 子代理嵌套委派深度；设为 1 可恢复旧的单层边界
+# max_subagent_concurrency = 6        # 会话级子代理总并发（task/fleet/skills）
+# max_parallel_writers = 3            # 互不重叠 write_paths 时的并行写入上限
 auto_plan = "off"                  # 仅用户级生效；off|on；off 表示计划模式仅手动开启
 # auto_plan_classifier = "deepseek-flash"   # 可选；只在边界任务上调用
 tool_result_snip_ratio = 0.6       # 在摘要 compaction 前先缩短旧工具输出
@@ -718,6 +720,7 @@ source 也可在 Plan 中加载，后续 writer 调用仍通过 Permissions/Sand
 | --- | --- |
 | `read_only_task` | 主会话派生的隔离只读调研子会话 |
 | `parallel_tasks`（只读） | 并发只读调研子会话 |
+| `fleet` 且 `read_only: true` | 可带 Profile 的并行批量（单项强制只读） |
 | `read_only_skill` | 以既有 skill 驱动的同等隔离 |
 | `reasonix review`（CLI） | 只读评审 diff 或分支 |
 | 桌面端 preview/review 子代理 | 桌面端只读分析面 |

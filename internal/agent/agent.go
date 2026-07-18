@@ -352,6 +352,15 @@ type Agent struct {
 	// reach it. nil leaves those tools to degrade gracefully.
 	jobs *jobs.Manager
 
+	// writeScheduler coordinates parent-agent writes against background
+	// subagent write claims. Set on the parent executor only (subagentDepth 0);
+	// reservation is taken around Execute so late-loaded MCP/Economy tools are
+	// covered without registry wrapping. Provider-visible schemas are unchanged.
+	writeScheduler *SubagentScheduler
+	// writeWorkspaceRoot is the workspace used to normalize parent write
+	// reservations when writeScheduler is set.
+	writeWorkspaceRoot string
+
 	// workspaceLease is shared by every writer-capable agent in one Delivery
 	// session. It is acquired lazily on the first mutation and held through the
 	// final participating run/background job so verification remains isolated.
@@ -846,6 +855,14 @@ type Options struct {
 	// Jobs is the session's background-job manager (nil disables background tools).
 	Jobs *jobs.Manager
 
+	// WriteScheduler is the session-scoped subagent concurrency/write-claim
+	// controller. When set on the parent executor, write-capable tools reserve
+	// paths for the duration of Execute so background writers cannot TOCTOU
+	// race parent writes. Subagents leave this nil (or depth > 0 skips it).
+	WriteScheduler *SubagentScheduler
+	// WriteWorkspaceRoot normalizes parent write reservations.
+	WriteWorkspaceRoot string
+
 	// WorkspaceLease serializes Delivery mutations across sessions that target
 	// the same workspace. nil preserves source compatibility for direct Agent
 	// construction; boot always supplies it for Delivery sessions.
@@ -976,6 +993,8 @@ func New(prov provider.Provider, tools *tool.Registry, session *Session, opts Op
 		configWriteApprover:   configWriteApprover,
 		hooks:                 hooks,
 		jobs:                  opts.Jobs,
+		writeScheduler:        opts.WriteScheduler,
+		writeWorkspaceRoot:    strings.TrimSpace(opts.WriteWorkspaceRoot),
 		workspaceLease:        opts.WorkspaceLease,
 		evidence:              evidence.NewLedger(),
 		projectChecks:         append([]instruction.VerifyCheck(nil), opts.ProjectChecks...),
@@ -1005,6 +1024,25 @@ func usageSourceOrDefault(source, fallback string) string {
 		return source
 	}
 	return fallback
+}
+
+// reserveParentWrite holds write claims for the duration of a parent-agent
+// write tool call. Returns a no-op release when reservation is not needed
+// (subagent, read-only, no scheduler, or non-write tool).
+func (a *Agent) reserveParentWrite(runTool tool.Tool, args json.RawMessage, readOnly bool) (release func(), err error) {
+	noop := func() {}
+	if a == nil || a.writeScheduler == nil || a.subagentDepth > 0 || readOnly || runTool == nil {
+		return noop, nil
+	}
+	name := runTool.Name()
+	if !parentWriteGuardTarget(name) {
+		return noop, nil
+	}
+	claim, err := parentWriteReservation(a.writeWorkspaceRoot, name, args)
+	if err != nil {
+		return noop, err
+	}
+	return a.writeScheduler.ReserveParentWrite(claim)
 }
 
 // Run appends the user input and drives the tool loop until the model returns a
@@ -3046,6 +3084,31 @@ func (a *Agent) executeOne(ctx context.Context, call provider.ToolCall) toolOutc
 			}
 		}
 	}
+	// Resolve the concrete execution target before hooks. A proxy may carry a
+	// different target/name/argument set than the provider-visible call.
+	runTool := execTool
+	runArgs := execArgs
+	if resolved.Target != nil {
+		runTool = resolved.Target
+		runArgs = resolved.Args
+		if len(runArgs) == 0 {
+			runArgs = json.RawMessage(`{}`)
+		}
+	}
+	// Hold the parent claim before PreToolUse: hooks are user shell code and may
+	// mutate the same workspace. The reservation remains live through hooks,
+	// checkpointing, and the concrete Execute call, closing both hook-side and
+	// check-before-write TOCTOU windows. Dynamic Economy/MCP tools are covered
+	// here after registry lookup without schema-changing wrappers.
+	if releaseParentWrite, perr := a.reserveParentWrite(runTool, runArgs, readOnly); perr != nil {
+		return toolOutcome{
+			output:  "blocked: " + perr.Error(),
+			blocked: true,
+			errMsg:  "blocked: write path claimed by background subagent",
+		}
+	} else if releaseParentWrite != nil {
+		defer releaseParentWrite()
+	}
 	// PreToolUse hooks run after permission is granted but before the call: a
 	// gating hook (exit 2) refuses it, surfaced to the model like a gate denial.
 	// Proxy tools fire hooks against the real MCP target name and arguments.
@@ -3116,17 +3179,6 @@ func (a *Agent) executeOne(ctx context.Context, call provider.ToolCall) toolOutc
 	var result string
 	var images []string
 	var err error
-	// When a proxy resolved a concrete target, execute that target (not the
-	// proxy again) so permission-approved args and evidence stay aligned.
-	runTool := execTool
-	runArgs := execArgs
-	if resolved.Target != nil {
-		runTool = resolved.Target
-		runArgs = resolved.Args
-		if len(runArgs) == 0 {
-			runArgs = json.RawMessage(`{}`)
-		}
-	}
 	// A call that was authorized under reader classification carries that
 	// basis into dispatch: the MCP execution layer re-verifies it linearizably
 	// against live trust state and refuses to promote it into a writer lane if

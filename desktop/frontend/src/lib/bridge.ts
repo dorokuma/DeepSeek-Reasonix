@@ -334,6 +334,8 @@ export interface AppBindings {
   SetSubagentModel(ref: string): Promise<void>;
   SetSubagentEffort(level: string): Promise<void>;
   SetMaxSubagentDepth(depth: number): Promise<void>;
+  SetMaxSubagentConcurrency(n: number): Promise<void>;
+  SetMaxParallelWriters(n: number): Promise<void>;
   SetAutoPlan(mode: string): Promise<void>;
   SetDefaultToolApprovalMode(mode: string): Promise<void>;
   SaveProvider(p: ProviderView): Promise<void>;
@@ -678,7 +680,7 @@ function bridgeBreadcrumb(method: string): string {
   if (method === "ReportCrash") return "";
   if (/^(Submit|SubmitDisplay|RunShell|Steer|Cancel|Approve|AnswerQuestion|ReplayPendingPrompts)/.test(method))
     return `turn ${method}`;
-  if (/^(SetModel|SetEffort|SetTokenMode|SetDefaultModel|SetPlannerModel|SetSubagentModel|SetSubagentEffort|SetMaxSubagentDepth)/.test(method))
+  if (/^(SetModel|SetEffort|SetTokenMode|SetDefaultModel|SetPlannerModel|SetSubagentModel|SetSubagentEffort|SetMaxSubagentDepth|SetMaxSubagentConcurrency|SetMaxParallelWriters)/.test(method))
     return `model ${method}`;
   if (/^(SetDesktop|SetCloseBehavior|SetDisplayMode|SetStatusBar|SetExpandThinking|SetAutoPlan|SetDefaultToolApprovalMode|SetReasoningLanguage)/.test(method))
     return `settings ${method}`;
@@ -1232,7 +1234,7 @@ function makeMockApp(): AppBindings {
       noProxy: "",
       proxy: { type: "socks5", server: "127.0.0.1", port: 7890, username: "", password: "" },
     },
-    agent: { temperature: 0.2, maxSteps: 0, plannerMaxSteps: 0, maxSubagentDepth: 2, systemPrompt: "You are Reasonix, a coding agent.", coldResumePrune: true, reasoningLanguage: "auto" },
+    agent: { temperature: 0.2, maxSteps: 0, plannerMaxSteps: 0, maxSubagentDepth: 2, maxSubagentConcurrency: 6, maxParallelWriters: 3, systemPrompt: "You are Reasonix, a coding agent.", coldResumePrune: true, reasoningLanguage: "auto" },
     bot: {
       enabled: !freshMock,
       model: "",
@@ -3500,6 +3502,16 @@ function makeMockApp(): AppBindings {
     },
     async SetMaxSubagentDepth(depth: number) {
       settings.agent = { ...settings.agent, maxSubagentDepth: depth <= 1 ? 1 : 2 };
+    },
+    async SetMaxSubagentConcurrency(n: number) {
+      const total = Math.max(1, Math.min(32, Math.floor(n) || 6));
+      const writers = Math.min(total, Math.max(1, settings.agent.maxParallelWriters || 3));
+      settings.agent = { ...settings.agent, maxSubagentConcurrency: total, maxParallelWriters: writers };
+    },
+    async SetMaxParallelWriters(n: number) {
+      const total = Math.max(1, Math.min(32, settings.agent.maxSubagentConcurrency || 6));
+      const writers = Math.max(1, Math.min(total, Math.floor(n) || 3));
+      settings.agent = { ...settings.agent, maxParallelWriters: writers };
     },
     async SetAutoPlan(mode: string) {
       settings.autoPlan = mode;

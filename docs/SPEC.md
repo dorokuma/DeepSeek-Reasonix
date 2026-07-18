@@ -514,10 +514,19 @@ refused so an editor cannot silently flatten or discard rich Skill content.
 Built-in profiles support configuration overrides but have no writable file.
 
 Effective model and effort precedence is: per-profile
-`agent.subagent_models` / `agent.subagent_efforts`, profile frontmatter,
-`agent.subagent_model` / `agent.subagent_effort`, then executor/default model
-configuration. See [Subagent profiles](./SUBAGENT_PROFILES.md) for the user-facing
-command and file-format contract.
+`agent.subagent_models` / `agent.subagent_efforts`, this call's `model` /
+`effort` on `task`/`fleet`, profile frontmatter, `agent.subagent_model` /
+`agent.subagent_effort`, then executor/default model configuration.
+
+`task` accepts optional `profile` and `write_paths`. `fleet` dispatches 2–64
+profile-aware tasks under a session scheduler
+(`agent.max_subagent_concurrency`, default 6; `agent.max_parallel_writers`,
+default 3). Profile names are resolved at runtime from the Skill store and
+must never enter tool schemas or the parent system prompt. Custom and named
+built-in profile bodies are the full child system prompt (no implicit
+concise default). `parallel_tasks` remains the compatible read-only batch
+API on the same scheduler. See [Subagent profiles](./SUBAGENT_PROFILES.md)
+for the user-facing command and file-format contract.
 
 ## 4. Data Types (`internal/provider`)
 

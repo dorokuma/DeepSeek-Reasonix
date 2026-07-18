@@ -1812,6 +1812,7 @@ func defaultFullBootToolNames() []string {
 		"delete_symbol",
 		"edit_file",
 		"explore",
+		"fleet",
 		"forget",
 		"glob",
 		"grep",
@@ -2267,7 +2268,7 @@ model = "x"
 		t.Fatalf("read_only_task child bash schema should not advertise run_in_background")
 	}
 	for _, forbidden := range []string{
-		"connect_tool_source", "task", "parallel_tasks",
+		"connect_tool_source", "task", "parallel_tasks", "fleet",
 		"install_source", "run_skill", "install_skill", "remember", "forget",
 		"write_file", "edit_file", "multi_edit", "move_file", "complete_step",
 	} {
@@ -2349,7 +2350,7 @@ READ ONLY SKILL BODY`)
 		t.Fatalf("read_only_skill child bash schema should not advertise run_in_background")
 	}
 	for _, forbidden := range []string{
-		"connect_tool_source", "task", "read_only_task", "parallel_tasks",
+		"connect_tool_source", "task", "read_only_task", "parallel_tasks", "fleet",
 		"install_source", "run_skill", "install_skill", "remember", "forget",
 		"write_file", "edit_file", "multi_edit", "move_file", "complete_step",
 	} {

@@ -277,6 +277,16 @@ func RenderTOMLForScope(c *Config, scope RenderScope) string {
 	} else {
 		b.WriteString("# max_subagent_depth = 2   # nested subagent delegation depth; set 1 to disable nested delegation\n")
 	}
+	if c.Agent.MaxSubagentConcurrency != defaults.Agent.MaxSubagentConcurrency {
+		fmt.Fprintf(&b, "max_subagent_concurrency = %d   # session-wide sub-agent concurrency (task/fleet/skills)\n", c.Agent.MaxSubagentConcurrency)
+	} else {
+		b.WriteString("# max_subagent_concurrency = 6   # session-wide sub-agent concurrency (task/fleet/skills)\n")
+	}
+	if c.Agent.MaxParallelWriters != defaults.Agent.MaxParallelWriters {
+		fmt.Fprintf(&b, "max_parallel_writers = %d   # concurrent writers with non-overlapping write_paths\n", c.Agent.MaxParallelWriters)
+	} else {
+		b.WriteString("# max_parallel_writers = 3   # concurrent writers with non-overlapping write_paths\n")
+	}
 	if c.Agent.OutputStyle != "" {
 		fmt.Fprintf(&b, "output_style = %q   # persona/tone folded into the prompt\n", c.Agent.OutputStyle)
 	} else {

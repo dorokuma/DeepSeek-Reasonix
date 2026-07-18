@@ -128,13 +128,15 @@ type NetworkView struct {
 }
 
 type AgentView struct {
-	Temperature       float64 `json:"temperature"`
-	MaxSteps          int     `json:"maxSteps"`
-	PlannerMaxSteps   int     `json:"plannerMaxSteps"`
-	MaxSubagentDepth  int     `json:"maxSubagentDepth"`
-	SystemPrompt      string  `json:"systemPrompt"`
-	ColdResumePrune   bool    `json:"coldResumePrune"`
-	ReasoningLanguage string  `json:"reasoningLanguage"`
+	Temperature            float64 `json:"temperature"`
+	MaxSteps               int     `json:"maxSteps"`
+	PlannerMaxSteps        int     `json:"plannerMaxSteps"`
+	MaxSubagentDepth       int     `json:"maxSubagentDepth"`
+	MaxSubagentConcurrency int     `json:"maxSubagentConcurrency"`
+	MaxParallelWriters     int     `json:"maxParallelWriters"`
+	SystemPrompt           string  `json:"systemPrompt"`
+	ColdResumePrune        bool    `json:"coldResumePrune"`
+	ReasoningLanguage      string  `json:"reasoningLanguage"`
 }
 
 type BotAllowlistView struct {
@@ -802,8 +804,15 @@ func (a *App) Settings() SettingsView {
 				Ask:   []string{},
 				Deny:  []string{},
 			},
-			Sandbox:                 SandboxView{Bash: config.Default().BashMode(), AllowWrite: []string{}, EffectiveWriteRoots: []string{}, Shell: "auto", EffectiveShell: sandboxEffectiveShellView(sandbox.ResolveShell("", "", nil))},
-			Agent:                   AgentView{PlannerMaxSteps: 0, MaxSubagentDepth: agent.DefaultMaxSubagentDepth, ColdResumePrune: true, ReasoningLanguage: "auto"},
+			Sandbox: SandboxView{Bash: config.Default().BashMode(), AllowWrite: []string{}, EffectiveWriteRoots: []string{}, Shell: "auto", EffectiveShell: sandboxEffectiveShellView(sandbox.ResolveShell("", "", nil))},
+			Agent: AgentView{
+				PlannerMaxSteps:        0,
+				MaxSubagentDepth:       agent.DefaultMaxSubagentDepth,
+				MaxSubagentConcurrency: agent.DefaultMaxSubagentConcurrency,
+				MaxParallelWriters:     agent.DefaultMaxParallelWriters,
+				ColdResumePrune:        true,
+				ReasoningLanguage:      "auto",
+			},
 			Bot:                     botSettingsView(config.BotConfig{}),
 			AutoPlan:                "off",
 			DesktopLayoutStyle:      "workbench",
@@ -866,7 +875,17 @@ func (a *App) Settings() SettingsView {
 				Password: cfg.Network.Proxy.Password,
 			},
 		},
-		Agent:                   AgentView{Temperature: cfg.Agent.Temperature, MaxSteps: cfg.Agent.MaxSteps, PlannerMaxSteps: cfg.Agent.PlannerMaxSteps, MaxSubagentDepth: desktopMaxSubagentDepth(cfg.Agent.MaxSubagentDepth), SystemPrompt: cfg.Agent.SystemPrompt, ColdResumePrune: cfg.ColdResumePruneEnabled(), ReasoningLanguage: cfg.ReasoningLanguage()},
+		Agent: AgentView{
+			Temperature:            cfg.Agent.Temperature,
+			MaxSteps:               cfg.Agent.MaxSteps,
+			PlannerMaxSteps:        cfg.Agent.PlannerMaxSteps,
+			MaxSubagentDepth:       desktopMaxSubagentDepth(cfg.Agent.MaxSubagentDepth),
+			MaxSubagentConcurrency: desktopSubagentConcurrency(cfg.Agent.MaxSubagentConcurrency),
+			MaxParallelWriters:     desktopParallelWriters(cfg.Agent.MaxParallelWriters, cfg.Agent.MaxSubagentConcurrency),
+			SystemPrompt:           cfg.Agent.SystemPrompt,
+			ColdResumePrune:        cfg.ColdResumePruneEnabled(),
+			ReasoningLanguage:      cfg.ReasoningLanguage(),
+		},
 		Bot:                     botSettingsView(cfg.Bot),
 		DesktopLanguage:         cfg.DesktopLanguage(),
 		DesktopLayoutStyle:      cfg.DesktopLayoutStyle(),
@@ -1833,6 +1852,36 @@ func desktopMaxSubagentDepth(depth int) int {
 func (a *App) SetMaxSubagentDepth(depth int) error {
 	return a.applyConfigChange(func(c *config.Config) error {
 		c.Agent.MaxSubagentDepth = desktopMaxSubagentDepth(depth)
+		return nil
+	})
+}
+
+func desktopSubagentConcurrency(n int) int {
+	total, _ := agent.NormalizeConcurrencyLimits(n, 0)
+	return total
+}
+
+func desktopParallelWriters(writers, total int) int {
+	_, w := agent.NormalizeConcurrencyLimits(total, writers)
+	return w
+}
+
+// SetMaxSubagentConcurrency sets the session-wide sub-agent concurrency cap (1–32).
+func (a *App) SetMaxSubagentConcurrency(n int) error {
+	return a.applyConfigChange(func(c *config.Config) error {
+		total, writers := agent.NormalizeConcurrencyLimits(n, c.Agent.MaxParallelWriters)
+		c.Agent.MaxSubagentConcurrency = total
+		c.Agent.MaxParallelWriters = writers
+		return nil
+	})
+}
+
+// SetMaxParallelWriters sets the concurrent writer cap (1–32, ≤ total concurrency).
+func (a *App) SetMaxParallelWriters(n int) error {
+	return a.applyConfigChange(func(c *config.Config) error {
+		total, writers := agent.NormalizeConcurrencyLimits(c.Agent.MaxSubagentConcurrency, n)
+		c.Agent.MaxSubagentConcurrency = total
+		c.Agent.MaxParallelWriters = writers
 		return nil
 	})
 }

@@ -771,6 +771,45 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	taskModel := firstNonEmpty(cfg.Agent.SubagentModels["task"], cfg.Agent.SubagentModel)
 	taskEffort := firstNonEmpty(cfg.Agent.SubagentEfforts["task"], cfg.Agent.SubagentEffort)
 	maxSubagentDepth := agent.NormalizeMaxSubagentDepth(cfg.Agent.MaxSubagentDepth)
+	maxSubagentConcurrency, maxParallelWriters := agent.NormalizeConcurrencyLimits(
+		cfg.Agent.MaxSubagentConcurrency, cfg.Agent.MaxParallelWriters,
+	)
+	subagentScheduler := agent.NewSubagentScheduler(maxSubagentConcurrency, maxParallelWriters)
+	profileLookup := func(name string) (agent.ProfileDefinition, bool) {
+		sk, ok := skillStore.Read(name)
+		if !ok || sk.RunAs != skill.RunSubagent {
+			return agent.ProfileDefinition{}, false
+		}
+		return agent.ProfileDefinition{
+			Name:         sk.Name,
+			Body:         sk.Body,
+			AllowedTools: sk.AllowedTools,
+			Model:        sk.Model,
+			Effort:       sk.Effort,
+			ReadOnly:     sk.ReadOnly,
+			Invocation:   sk.Invocation,
+			NamedBuiltin: agent.NamedBuiltinProfile(sk.Name),
+		}, true
+	}
+	profileConfigModel := func(profile string) string {
+		for _, key := range SubagentModelKeys(profile) {
+			if m := strings.TrimSpace(cfg.Agent.SubagentModels[key]); m != "" {
+				return m
+			}
+		}
+		return ""
+	}
+	profileConfigEffort := func(profile string) string {
+		for _, key := range SubagentModelKeys(profile) {
+			if e := strings.TrimSpace(cfg.Agent.SubagentEfforts[key]); e != "" {
+				return e
+			}
+		}
+		return ""
+	}
+	bashSandboxEnforced := func() bool {
+		return bashSpec.Enforce()
+	}
 	taskToolAdded := false
 	readOnlyTaskToolAdded := false
 	var taskTool *agent.TaskTool
@@ -784,7 +823,11 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 			WithTranscriptIdentityResolver(subagentIdentity).
 			WithMaxSubagentDepth(maxSubagentDepth).
 			WithDeliveryProfile(tokenDelivery).
-			WithWorkspaceLease(workspaceLease)
+			WithWorkspaceLease(workspaceLease).
+			WithScheduler(subagentScheduler).
+			WithProfileLookup(profileLookup).
+			WithProfileConfigResolvers(profileConfigModel, profileConfigEffort).
+			WithBashSandboxEnforced(bashSandboxEnforced)
 	}
 	addTaskTool := func() string {
 		if taskToolAdded {
@@ -794,8 +837,11 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 		if taskTool == nil {
 			taskTool = newTaskTool()
 		}
+		// Fixed registration order for prompt-cache stability: task →
+		// parallel_tasks → fleet. Profile names never enter tool schemas.
 		reg.Add(taskTool)
 		reg.Add(agent.NewParallelTasksTool(taskTool, reg))
+		reg.Add(agent.NewFleetTool(taskTool))
 		return "enabled task."
 	}
 	addReadOnlyTaskTool := func() string {
@@ -887,6 +933,15 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 		if strings.TrimSpace(runOpts.ContinueFrom) != "" || strings.TrimSpace(runOpts.ForkFrom) != "" {
 			return "", fmt.Errorf("read_only_skill does not support continue_from/fork_from")
 		}
+		releaseSlot, err := subagentScheduler.Acquire(sctx, agent.AcquireRequest{
+			Writer: false,
+			Nested: agent.SubagentDepth(sctx) > 0,
+			Label:  sk.Name,
+		})
+		if err != nil {
+			return "", err
+		}
+		defer releaseSlot()
 		sk = skill.WithCodeGraphTools(sk, skill.CodeGraphReadTools(reg))
 		prov, price, ctxWin := execProv, entry.Price, entry.ContextWindow
 		modelRef := subagentModelRef(cfg, sk)
@@ -916,7 +971,12 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 				steps = 5
 			}
 		}
-		sysPrompt := agent.DefaultReadOnlyTaskSystemPrompt + "\n\nSkill instructions:\n" + sk.Body
+		// Custom and named built-in profiles fully control their system prompt
+		// (no implicit concise/DefaultReadOnlyTaskSystemPrompt overlay).
+		sysPrompt := strings.TrimSpace(sk.Body)
+		if sysPrompt == "" {
+			sysPrompt = agent.DefaultReadOnlyTaskSystemPrompt
+		}
 		runOptions := subagentSkillOptions(sctx, steps, price, ctxWin, childDepth)
 		// Delivery risk gates consume typed reports; outside Delivery a casual
 		// /review run may finish with prose only.
@@ -932,6 +992,25 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	// per-skill model, and resumable transcripts when the parent session supports
 	// them. Its tool activity nests under the invoking call, like `task`.
 	skillRunner := func(sctx context.Context, sk skill.Skill, task string, runOpts skill.SubagentRunOptions) (string, error) {
+		// Writer skills without write_paths claim the whole workspace so they
+		// cannot race fleet/task writers that declared disjoint paths.
+		acq := agent.AcquireRequest{
+			Writer: !sk.ReadOnly,
+			Nested: agent.SubagentDepth(sctx) > 0,
+			Label:  sk.Name,
+		}
+		if !sk.ReadOnly {
+			whole, werr := agent.WholeWorkspaceWriteClaim(root)
+			if werr != nil {
+				return "", fmt.Errorf("subagent skill %q write claim: %w", sk.Name, werr)
+			}
+			acq.WritePaths = whole
+		}
+		releaseSlot, err := subagentScheduler.Acquire(sctx, acq)
+		if err != nil {
+			return "", err
+		}
+		defer releaseSlot()
 		sk = skill.WithCodeGraphTools(sk, skill.CodeGraphReadTools(reg))
 		prov, price, ctxWin := execProv, entry.Price, entry.ContextWindow
 		modelRef := subagentModelRef(cfg, sk)
@@ -1386,13 +1465,17 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 
 	execSess := agent.NewSession(sysPrompt)
 	executor := agent.New(execProv, reg, execSess, agent.Options{
-		MaxSteps:                 maxSteps,
-		MaxStepsKey:              opts.MaxStepsKey,
-		Temperature:              cfg.Agent.Temperature,
-		Pricing:                  entry.Price,
-		Gate:                     headlessGate,
-		Hooks:                    hookRunner,
-		Jobs:                     jm,
+		MaxSteps:    maxSteps,
+		MaxStepsKey: opts.MaxStepsKey,
+		Temperature: cfg.Agent.Temperature,
+		Pricing:     entry.Price,
+		Gate:        headlessGate,
+		Hooks:       hookRunner,
+		Jobs:        jm,
+		// Parent write reservation at the executor entry covers all writers
+		// (including late Economy/MCP adds) without wrapping tool schemas.
+		WriteScheduler:           subagentScheduler,
+		WriteWorkspaceRoot:       root,
 		ProjectChecks:            projectChecks,
 		DeliveryProfile:          tokenDelivery,
 		WorkspaceLease:           workspaceLease,

@@ -1048,6 +1048,14 @@ type AgentConfig struct {
 	SubagentEffort      string            `toml:"subagent_effort"`
 	SubagentEfforts     map[string]string `toml:"subagent_efforts"`
 	MaxSubagentDepth    int               `toml:"max_subagent_depth"`
+	// MaxSubagentConcurrency bounds how many sub-agents (task, fleet items,
+	// profile skills, nested children) may run at once in one session.
+	// 0 means the default (6). Values outside 1–32 are clamped on load.
+	MaxSubagentConcurrency int `toml:"max_subagent_concurrency"`
+	// MaxParallelWriters bounds concurrent writer-capable sub-agents that
+	// declare non-overlapping write_paths. 0 means the default (3). Must not
+	// exceed MaxSubagentConcurrency after normalization.
+	MaxParallelWriters int `toml:"max_parallel_writers"`
 	// OutputStyle selects a persona/tone block folded into the system prompt at
 	// startup (a built-in like "explanatory"/"learning"/"concise", or a custom
 	// .reasonix/output-styles/<name>.md). Empty = the unmodified prompt.
@@ -1566,14 +1574,16 @@ func Default() *Config {
 			SystemPrompt: DefaultSystemPrompt,
 			// Normal interactive execution has no configurable total round cap. It
 			// is bounded by adaptive progress guards and context compaction instead.
-			MaxSteps:            0,
-			PlannerMaxSteps:     0,
-			AutoPlan:            "off",
-			SoftCompactRatio:    0.5,
-			ToolResultSnipRatio: 0.6,
-			CompactRatio:        0.8,
-			CompactForceRatio:   0.9,
-			MaxSubagentDepth:    2,
+			MaxSteps:               0,
+			PlannerMaxSteps:        0,
+			AutoPlan:               "off",
+			SoftCompactRatio:       0.5,
+			ToolResultSnipRatio:    0.6,
+			CompactRatio:           0.8,
+			CompactForceRatio:      0.9,
+			MaxSubagentDepth:       2,
+			MaxSubagentConcurrency: 6,
+			MaxParallelWriters:     3,
 		},
 		// Mode "ask" with no rules keeps `reasonix run` autonomous (no TTY → ask
 		// resolves to allow) while `reasonix` prompts before writers. Users add

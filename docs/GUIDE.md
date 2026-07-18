@@ -65,6 +65,8 @@ reasoning_language = "auto"      # visible reasoning text: auto|zh|en
 # subagent_model = "deepseek-pro"     # optional default for runAs=subagent skills
 # subagent_models = { review = "deepseek-pro", security_review = "deepseek-pro" }
 # max_subagent_depth = 2              # nested delegation depth; set 1 for the old single-layer boundary
+# max_subagent_concurrency = 6        # session-wide sub-agent concurrency (task/fleet/skills)
+# max_parallel_writers = 3            # concurrent writers with non-overlapping write_paths
 auto_plan = "off"                  # user-level only; off|on; off keeps plan mode manual
 # auto_plan_classifier = "deepseek-flash"   # optional; only borderline tasks call it
 tool_result_snip_ratio = 0.6       # shorten stale tool output before summary compaction
@@ -911,6 +913,7 @@ the strict read-only entrances:
 | --- | --- |
 | `read_only_task` | Isolated read-only research child from the main session |
 | `parallel_tasks` (read-only) | Concurrent read-only research children |
+| `fleet` with `read_only: true` | Parallel profile-aware batch (forced read-only per item) |
 | `read_only_skill` | The same isolation driving an existing skill |
 | `reasonix review` (CLI) | Read-only review of a diff or branch |
 | Desktop preview/review subagents | Read-only desktop analysis surfaces |
