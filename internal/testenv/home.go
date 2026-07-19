@@ -35,7 +35,10 @@ func IsolateUserState() (func(), error) {
 		"HOME":            home,
 		"USERPROFILE":     home,
 		"XDG_CONFIG_HOME": filepath.Join(home, ".config"),
+		"XDG_CACHE_HOME":  filepath.Join(home, ".cache"),
+		"XDG_STATE_HOME":  filepath.Join(home, ".local", "state"),
 		"AppData":         filepath.Join(home, "AppData", "Roaming"),
+		"LocalAppData":    filepath.Join(home, "AppData", "Local"),
 	}
 	unset := []string{
 		"REASONIX_HOME",
