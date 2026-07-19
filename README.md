@@ -194,13 +194,6 @@ A small list of folks whose work has shaped Reasonix the most — the current to
 | [**CnsMaple**](https://github.com/CnsMaple) | [**cyq1017**](https://github.com/cyq1017) | [**JesonChou**](https://github.com/JesonChou) | [**XTLine**](https://github.com/XTLine) |
 <!-- reasonix-top-contributors:end -->
 
-The CLI clipboard compatibility fix for
-[#6603](https://github.com/esengine/DeepSeek-Reasonix/issues/6603) was
-co-developed with [**Andrei Kiparuk**](https://github.com/andrei-kiparuk)
-through [#6560](https://github.com/esengine/DeepSeek-Reasonix/pull/6560); the
-final integration landed in
-[#6632](https://github.com/esengine/DeepSeek-Reasonix/pull/6632).
-
 Also a separate thank-you to [**Bernardxu123**](https://github.com/Bernardxu123)
 for designing the project logo, and to
 [AIGC Link](https://xhslink.com/m/80ngts127cA) for promoting the project on XiaoHongShu.

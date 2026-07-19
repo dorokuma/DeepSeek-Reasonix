@@ -55,12 +55,7 @@ branch.
 
 - Restored captured-mouse right-click text paste, made composer drag selection
   copy through the verified native clipboard path, and kept non-Git footer
-  telemetry left-aligned without reserving an empty data band. The native
-  clipboard fallback was co-developed with
-  [@andrei-kiparuk](https://github.com/andrei-kiparuk) through
-  [#6560](https://github.com/esengine/DeepSeek-Reasonix/pull/6560); the integrated
-  implementation landed in
-  [#6632](https://github.com/esengine/DeepSeek-Reasonix/pull/6632).
+  telemetry left-aligned without reserving an empty data band.
 - Restored stateful MCP behavior after the v1.17.13 regression: compatible
   trust receipts migrate instead of prompting again, user-added servers work
   without extra trust settings (including delivery-mode on-demand calls), and
