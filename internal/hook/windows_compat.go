@@ -54,53 +54,97 @@ func windowsPOSIXShellInvocationWith(command string, resolve func() (string, err
 	return path, append([]string(nil), fields[1:]...), true, nil
 }
 
-// windowsBatchCommandLine builds the cmd.exe command line for a simple .cmd or
-// .bat hook. Go's default Windows argument encoder follows CommandLineToArgvW,
-// but cmd.exe has different quote rules: passing a command string that starts
-// with a quoted executable can leave the quotes escaped into the command name.
-// /s deliberately strips the outer pair below and leaves the individually
-// quoted batch path and arguments intact.
+// windowsBatchCommandLine builds the cmd.exe command line for a shell-form .cmd
+// or .bat hook whose executable is already quoted. Go's default Windows
+// argument encoder follows CommandLineToArgvW, but cmd.exe has different quote
+// rules: passing a command string that starts with a quoted executable can leave
+// the quotes escaped into the command name. Preserve the original argument tail
+// byte-for-byte so valid batch syntax is not reinterpreted.
 func windowsBatchCommandLine(command string) (string, bool) {
-	fields, _, _, ok := parseSimpleHookCommandFields(command)
-	if !ok || len(fields) == 0 {
+	command = strings.TrimSpace(command)
+	if len(command) < 2 || command[0] != '"' {
 		return "", false
 	}
-	return windowsBatchFieldsCommandLine(fields)
+	closingQuote := strings.IndexByte(command[1:], '"')
+	if closingQuote < 0 {
+		return "", false
+	}
+	closingQuote++
+	executable := normalizeWindowsBatchExecutable(command[1:closingQuote])
+	if !isWindowsBatchExecutable(executable) {
+		return "", false
+	}
+	tail := command[closingQuote+1:]
+	if tail != "" && !isShellWhitespace(tail[0]) {
+		return "", false
+	}
+	if !isSimpleWindowsBatchTail(tail) {
+		return "", false
+	}
+	// /s strips the first and last quotes around the /c string, leaving the
+	// quoted executable and its untouched argument tail for cmd.exe to parse.
+	return `cmd.exe /d /s /c ""` + executable + `"` + tail + `"`, true
 }
 
 func windowsBatchArgvCommandLine(command string, args []string) (string, bool) {
-	fields := make([]string, 1, len(args)+1)
-	fields[0] = command
-	fields = append(fields, args...)
-	return windowsBatchFieldsCommandLine(fields)
-}
-
-func windowsBatchFieldsCommandLine(fields []string) (string, bool) {
-	executable := strings.ReplaceAll(strings.TrimSpace(fields[0]), "/", `\`)
-	lower := strings.ToLower(executable)
-	if !strings.HasSuffix(lower, ".cmd") && !strings.HasSuffix(lower, ".bat") {
+	executable := normalizeWindowsBatchExecutable(command)
+	if !isWindowsBatchExecutable(executable) || strings.ContainsAny(executable, "\"%!\r\n") {
 		return "", false
 	}
-	fields[0] = executable
 
 	var b strings.Builder
-	b.WriteString(`cmd.exe /d /s /c "`)
-	for i, field := range fields {
-		// Embedded quotes need cmd.exe-specific escaping that is outside this
-		// narrow compatibility path. Preserve such commands' existing shell
-		// contract instead of guessing.
-		if strings.ContainsAny(field, "\"\r\n") {
+	b.WriteString(`cmd.exe /d /s /c ""`)
+	b.WriteString(executable)
+	b.WriteByte('"')
+	for _, arg := range args {
+		rendered, ok := renderWindowsBatchArg(arg)
+		if !ok {
 			return "", false
 		}
-		if i > 0 {
-			b.WriteByte(' ')
-		}
-		b.WriteByte('"')
-		b.WriteString(field)
-		b.WriteByte('"')
+		b.WriteByte(' ')
+		b.WriteString(rendered)
 	}
 	b.WriteByte('"')
 	return b.String(), true
+}
+
+func normalizeWindowsBatchExecutable(executable string) string {
+	return strings.ReplaceAll(strings.TrimSpace(executable), "/", `\`)
+}
+
+func isWindowsBatchExecutable(executable string) bool {
+	lower := strings.ToLower(executable)
+	return strings.HasSuffix(lower, ".cmd") || strings.HasSuffix(lower, ".bat")
+}
+
+func isSimpleWindowsBatchTail(tail string) bool {
+	quoted := false
+	for i := 0; i < len(tail); i++ {
+		switch tail[i] {
+		case '\r', '\n':
+			return false
+		case '"':
+			quoted = !quoted
+		case '&', '|', ';', '<', '>', '(', ')':
+			if !quoted {
+				return false
+			}
+		}
+	}
+	return !quoted
+}
+
+func renderWindowsBatchArg(arg string) (string, bool) {
+	// cmd.exe expands percent variables even inside quotes, and delayed
+	// expansion can do the same for exclamation marks. Keep argv-form support
+	// deliberately narrow instead of silently changing a literal argument.
+	if strings.ContainsAny(arg, "\"%!\r\n") {
+		return "", false
+	}
+	if arg == "" || strings.ContainsAny(arg, " \t&|;<>()^[]{}=' +,`~") {
+		return `"` + arg + `"`, true
+	}
+	return arg, true
 }
 
 func isBarePOSIXShellWord(word string) bool {

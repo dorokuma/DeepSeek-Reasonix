@@ -16,7 +16,9 @@ func TestDefaultSpawnerRunsQuotedPluginBatchHook(t *testing.T) {
 		t.Fatal(err)
 	}
 	script := filepath.Join(hooksDir, "run-hook.cmd")
-	contents := "@echo off\r\nset /p hook_input=\r\necho %~1:%hook_input%\r\n"
+	// Use raw %1 rather than %~1 so the test catches accidental argument
+	// re-quoting; %~1 would hide added surrounding quotes.
+	contents := "@echo off\r\nset /p hook_input=\r\necho %1:%hook_input%\r\n"
 	if err := os.WriteFile(script, []byte(contents), 0o644); err != nil {
 		t.Fatal(err)
 	}
