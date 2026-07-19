@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -21,6 +22,7 @@ import (
 	"reasonix/internal/event"
 	"reasonix/internal/i18n"
 	"reasonix/internal/provider"
+	"reasonix/internal/secrets"
 	"reasonix/internal/skill"
 	"reasonix/internal/testenv"
 )
@@ -33,6 +35,31 @@ type stubbornTurnRunner struct {
 }
 
 const tinyPNGBase64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+
+const (
+	middleClickPasteHelperFlag = "GO_WANT_REASONIX_MIDDLE_CLICK_PASTE_HELPER"
+	middleClickPasteHelperMode = "REASONIX_MIDDLE_CLICK_PASTE_HELPER_MODE"
+	middleClickPasteTestValue  = "REASONIX_MIDDLE_CLICK_TEST_VALUE"
+)
+
+func TestMiddleClickPasteCommandHelper(t *testing.T) {
+	if os.Getenv(middleClickPasteHelperFlag) != "1" {
+		return
+	}
+	switch os.Getenv(middleClickPasteHelperMode) {
+	case "credential":
+		if value := os.Getenv(middleClickPasteTestValue); value != "" {
+			_, _ = fmt.Fprint(os.Stdout, value)
+		} else {
+			_, _ = fmt.Fprint(os.Stdout, "filtered")
+		}
+	case "newlines":
+		_, _ = fmt.Fprint(os.Stdout, "line\n\n")
+	default:
+		os.Exit(2)
+	}
+	os.Exit(0)
+}
 
 func TestMain(m *testing.M) {
 	old := detectTermuxTerminal
@@ -1458,6 +1485,29 @@ func clipboardTextPasteResultFromCmd(t *testing.T, cmd tea.Cmd) clipboardTextPas
 	return clipboardTextPasteMsg{}
 }
 
+func middleClickPasteResultFromCmd(t *testing.T, cmd tea.Cmd) tea.PasteMsg {
+	t.Helper()
+	if cmd == nil {
+		t.Fatal("expected middle-click paste command")
+	}
+	msg := cmd()
+	switch msg := msg.(type) {
+	case tea.PasteMsg:
+		return msg
+	case tea.BatchMsg:
+		for _, child := range msg {
+			if child == nil {
+				continue
+			}
+			if result, ok := child().(tea.PasteMsg); ok {
+				return result
+			}
+		}
+	}
+	t.Fatalf("middle-click command returned %T, want tea.PasteMsg", msg)
+	return tea.PasteMsg{}
+}
+
 func setLocalClipboardSession(t *testing.T) {
 	t.Helper()
 	t.Setenv("SSH_CONNECTION", "")
@@ -1537,6 +1587,192 @@ func TestMouseRightClickPasteUsesCanonicalFoldedPastePath(t *testing.T) {
 	}
 	if len(m.pastedBlocks) != 1 || m.pastedBlocks[0].text != pasted {
 		t.Fatalf("right-click folded paste block = %+v", m.pastedBlocks)
+	}
+}
+
+func TestMiddleClickUsesTmuxPasteBufferInsideTmux(t *testing.T) {
+	t.Setenv("TMUX", "/tmp/tmux-1000/default,1,0")
+	previousTmux := readTmuxPasteBuffer
+	previousPrimary := readPrimaryPasteSelection
+	t.Cleanup(func() {
+		readTmuxPasteBuffer = previousTmux
+		readPrimaryPasteSelection = previousPrimary
+	})
+	readTmuxPasteBuffer = func() (string, error) { return "tmux buffer", nil }
+	readPrimaryPasteSelection = func() (string, error) {
+		t.Fatal("middle-click inside tmux must not read the desktop PRIMARY selection")
+		return "", nil
+	}
+
+	msg := pasteMiddleClick()()
+	paste, ok := msg.(tea.PasteMsg)
+	if !ok || paste.Content != "tmux buffer" {
+		t.Fatalf("middle-click result = %#v, want tmux-buffer PasteMsg", msg)
+	}
+}
+
+func TestMouseMiddleClickPastesPrimarySelectionThroughCanonicalPath(t *testing.T) {
+	setLocalClipboardSession(t)
+	t.Setenv("TMUX", "")
+	previous := readPrimaryPasteSelection
+	t.Cleanup(func() { readPrimaryPasteSelection = previous })
+	readPrimaryPasteSelection = func() (string, error) { return "primary selection", nil }
+
+	m := newComposerMouseTestTUI(t, 60, 16)
+	m.input.SetValue("before ")
+	next, cmd := m.Update(tea.MouseClickMsg{Button: tea.MouseMiddle})
+	m = next.(chatTUI)
+	paste := middleClickPasteResultFromCmd(t, cmd)
+	next, _ = m.Update(paste)
+	m = next.(chatTUI)
+
+	if got := m.input.Value(); got != "before primary selection" {
+		t.Fatalf("middle-click paste produced %q, want %q", got, "before primary selection")
+	}
+}
+
+func TestMouseMiddleClickDoesNotMutateHiddenComposer(t *testing.T) {
+	setLocalClipboardSession(t)
+	t.Setenv("TMUX", "")
+	previous := readPrimaryPasteSelection
+	t.Cleanup(func() { readPrimaryPasteSelection = previous })
+	readPrimaryPasteSelection = func() (string, error) {
+		t.Fatal("middle-click with a hidden composer must not read PRIMARY")
+		return "", nil
+	}
+
+	m := newComposerMouseTestTUI(t, 60, 16)
+	m.input.SetValue("before")
+	m.pendingApproval = &event.Approval{ID: "approval", Tool: "bash", Subject: "echo hi"}
+	if !m.hideComposer() {
+		t.Fatal("test setup did not hide composer")
+	}
+
+	next, cmd := m.Update(tea.MouseClickMsg{Button: tea.MouseMiddle})
+	m = next.(chatTUI)
+	if cmd != nil {
+		t.Fatalf("hidden-composer middle-click returned command with message %#v", cmd())
+	}
+	if got := m.input.Value(); got != "before" {
+		t.Fatalf("hidden composer changed to %q", got)
+	}
+}
+
+func TestMouseMiddleClickPasteOverSSHDoesNotReadRemotePrimary(t *testing.T) {
+	t.Setenv("SSH_CONNECTION", "host 22 client 1234")
+	t.Setenv("SSH_CLIENT", "")
+	t.Setenv("SSH_TTY", "")
+	t.Setenv("TMUX", "")
+	previous := readPrimaryPasteSelection
+	t.Cleanup(func() { readPrimaryPasteSelection = previous })
+	readPrimaryPasteSelection = func() (string, error) {
+		t.Fatal("SSH middle-click must not read PRIMARY on the remote host")
+		return "", nil
+	}
+
+	m := newComposerMouseTestTUI(t, 60, 16)
+	next, cmd := m.Update(tea.MouseClickMsg{Button: tea.MouseMiddle})
+	m = next.(chatTUI)
+	result := clipboardTextPasteResultFromCmd(t, cmd)
+	if !result.remote {
+		t.Fatalf("SSH middle-click paste result = %+v, want remote hint", result)
+	}
+
+	next, _ = m.Update(result)
+	m = next.(chatTUI)
+	if got := strings.Join(m.transcript, "\n"); !strings.Contains(got, i18n.M.ClipboardTextPasteRemoteHint) {
+		t.Fatalf("SSH middle-click paste notice = %q, want %q", got, i18n.M.ClipboardTextPasteRemoteHint)
+	}
+}
+
+func TestMiddleClickUsesPrimarySelectionOutsideTmux(t *testing.T) {
+	t.Setenv("TMUX", "")
+	previousTmux := readTmuxPasteBuffer
+	previousPrimary := readPrimaryPasteSelection
+	t.Cleanup(func() {
+		readTmuxPasteBuffer = previousTmux
+		readPrimaryPasteSelection = previousPrimary
+	})
+	readTmuxPasteBuffer = func() (string, error) {
+		t.Fatal("middle-click outside tmux must not read a tmux buffer")
+		return "", nil
+	}
+	readPrimaryPasteSelection = func() (string, error) { return "primary selection", nil }
+
+	msg := pasteMiddleClick()()
+	paste, ok := msg.(tea.PasteMsg)
+	if !ok || paste.Content != "primary selection" {
+		t.Fatalf("middle-click result = %#v, want PRIMARY-selection PasteMsg", msg)
+	}
+}
+
+func TestMiddleClickTmuxReadFailureIsSilent(t *testing.T) {
+	t.Setenv("TMUX", "/tmp/tmux-1000/default,1,0")
+	previous := readTmuxPasteBuffer
+	t.Cleanup(func() { readTmuxPasteBuffer = previous })
+	readTmuxPasteBuffer = func() (string, error) { return "", errors.New("no buffers") }
+
+	if msg := pasteMiddleClick()(); msg != nil {
+		t.Fatalf("failed tmux-buffer read returned %#v, want silent no-op", msg)
+	}
+}
+
+func TestMiddleClickPasteCommandsFilterRegisteredCredentials(t *testing.T) {
+	t.Setenv(middleClickPasteHelperFlag, "1")
+	t.Setenv(middleClickPasteHelperMode, "credential")
+	t.Setenv(middleClickPasteTestValue, "credential-leaked")
+	secrets.RegisterCredentialEnvKeys([]string{middleClickPasteTestValue})
+
+	previous := newPasteCommand
+	t.Cleanup(func() { newPasteCommand = previous })
+	newPasteCommand = func(_ string, _ ...string) *exec.Cmd {
+		return exec.Command(os.Args[0], "-test.run=^TestMiddleClickPasteCommandHelper$")
+	}
+
+	for name, read := range map[string]func() (string, error){
+		"tmux":    readTmuxBuffer,
+		"primary": readPrimarySelection,
+	} {
+		t.Run(name, func(t *testing.T) {
+			text, err := read()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if text != "filtered" {
+				t.Fatalf("paste helper inherited registered credential: %q", text)
+			}
+		})
+	}
+}
+
+func TestReadPrimarySelectionRequestsTextAndPreservesNewlines(t *testing.T) {
+	t.Setenv(middleClickPasteHelperFlag, "1")
+	t.Setenv(middleClickPasteHelperMode, "newlines")
+
+	previous := newPasteCommand
+	t.Cleanup(func() { newPasteCommand = previous })
+	called := false
+	newPasteCommand = func(name string, args ...string) *exec.Cmd {
+		called = true
+		if name != "wl-paste" {
+			t.Fatalf("first PRIMARY helper = %q, want wl-paste", name)
+		}
+		want := []string{"--primary", "--type", "text", "--no-newline"}
+		if !reflect.DeepEqual(args, want) {
+			t.Fatalf("wl-paste args = %q, want %q", args, want)
+		}
+		return exec.Command(os.Args[0], "-test.run=^TestMiddleClickPasteCommandHelper$")
+	}
+
+	text, err := readPrimarySelection()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !called {
+		t.Fatal("PRIMARY helper was not invoked")
+	}
+	if text != "line\n\n" {
+		t.Fatalf("PRIMARY selection = %q, want trailing newlines preserved", text)
 	}
 }
 
