@@ -238,7 +238,14 @@ Anthropic-compatible 网关需要的 Bearer 认证、Ollama Cloud max-effort 支
 | 模型能力模式 | 指定 Reasonix 对该 provider 使用哪种 reasoning 请求协议。 | 默认用“自动识别”。只有网关被误判，或模型文档要求特定 reasoning 格式时再切换。 |
 | Thinking 覆盖 | provider 专用的 `thinking.type` 覆盖项。 | 默认用 Auto。只有后端文档明确支持 `enabled`、`disabled` 或 `adaptive` 时再手动指定；不支持的值可能让中转站拒绝请求。 |
 | 余额查询 URL | 可选的钱包余额查询接口。 | 服务商提供余额接口，且希望桌面端状态栏显示余额时填写。 |
-| 上下文窗口 | 该 provider 可保留的最大上下文 token 数。`0` 表示使用模型服务默认值。 | 模型实际上下文大小和 Reasonix 默认值或内置元数据不一致时填写。 |
+| 上下文窗口 | Reasonix 用于自动清理上下文的 provider 级 token 预算。`0` 表示禁用自动 compaction。 | 按该 provider 的模型上下文上限填写；所选模型规格不同时使用下方的逐模型覆盖。 |
+
+每个已选模型还提供一个可选的 **上下文窗口** 输入框。留空时继承 provider
+级设置；填写正整数时只覆盖该模型。这样，同一端点下的长上下文模型不会过早
+compaction，短上下文模型也不会在 Reasonix 清理前被服务端拒绝。
+这里应填写模型文档标注的上下文窗口，而不是最大输出 token。例如 128K 通常填
+`128000`；如果服务商明确标注 `131072`，则按该精确值填写。小于 16384 时界面会
+显示非阻断警告，因为过小的窗口可能导致频繁 compaction 并降低缓存命中率。
 
 模型能力模式选项：
 

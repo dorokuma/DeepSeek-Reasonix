@@ -271,7 +271,16 @@ For Anthropic-compatible services, such as some coding-plan endpoints, choose
 | Model capability mode | Which reasoning request protocol Reasonix should use for this provider. | Keep **Auto-detect** unless the gateway is misdetected or the model docs require a specific reasoning format. |
 | Thinking override | Provider-specific override for `thinking.type`. | Keep **Auto** unless the backend documents `enabled`, `disabled`, or `adaptive`. Unsupported values can make some OpenAI-compatible gateways reject the request. |
 | Balance URL | Optional endpoint for wallet/balance lookup. | Set it when the provider exposes a balance endpoint and you want the desktop status bar to show it. |
-| Context window | The maximum number of tokens this provider keeps in context. `0` means provider default. | Set it when the model's real context size differs from Reasonix's default or built-in metadata. |
+| Context window | The provider-wide token budget Reasonix uses for automatic context cleanup. `0` disables automatic compaction. | Set it to the provider's model context limit; use a per-model override below when selected models differ. |
+
+Each selected model also has an optional **Context window** input. Leave it blank
+to inherit the provider-wide value, or enter a positive token count to override
+that value for this model. This avoids premature compaction for long-context
+models and provider errors for shorter-context models sharing the same endpoint.
+Use the context-window limit from the model documentation, not the maximum output
+tokens. For example, 128K commonly means `128000`; if the provider documents
+`131072`, use that exact value. Values below 16384 show a non-blocking warning
+because they can trigger frequent compaction and reduce cache hit rates.
 
 Model capability mode options:
 

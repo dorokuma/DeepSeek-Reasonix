@@ -91,9 +91,9 @@ type Config struct {
   one vendor expose several models without re-declaring the endpoint/key. A
   **model reference** (`default_model`, the `--model` flag, the desktop switcher)
   resolves via `Config.ResolveModel`, which accepts a provider name (→ its default
-  model), a bare model name, or an explicit `provider/model`. `context_window` /
-  `price` are per-provider, so models that need distinct values stay separate
-  single-`model` entries.
+  model), a bare model name, or an explicit `provider/model`. `context_window` is
+  the provider-wide fallback; `model_overrides.<model>.context_window` can replace
+  it for one model. Per-model `prices` use model IDs as keys.
 - Streaming tool-call deltas are accumulated by index inside the provider; only
   complete `ToolCall`s are emitted.
 
@@ -208,6 +208,9 @@ Long tasks eventually fill the model's context window. Reasonix manages this wit
   pruning still leaves the prompt above the threshold does summary compaction
   run. At `agent.compact_force_ratio` (default `0.9`), the existing forced fold
   may proceed even when the fold economics would normally skip it.
+- A positive `model_overrides.<model>.context_window` replaces the provider-wide
+  value after model resolution. Missing or zero model overrides inherit the
+  provider value; provider-level `context_window = 0` disables compaction.
 - Tool-result snip/prune never removes messages, so assistant `tool_calls` and
   tool results stay paired. `KeepErrors` preserves error/blocked tool outputs,
   and the recent tail is not rewritten. Snipped results can later be upgraded to
@@ -604,6 +607,7 @@ models         = ["deepseek-v4-flash", "deepseek-v4-pro"]
 default        = "deepseek-v4-flash"   # optional; defaults to models[0]
 api_key_env    = "DEEPSEEK_API_KEY"
 context_window = 1000000   # tokens; harness compacts older history near this limit (0 disables)
+# model_overrides = { "deepseek-v4-flash" = { context_window = 1000000 } }
 
 # A single-model entry still works for custom OpenAI-compatible endpoints.
 
