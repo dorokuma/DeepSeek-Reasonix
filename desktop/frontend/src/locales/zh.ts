@@ -2363,6 +2363,7 @@ export const zh: Record<DictKey, string> = {
   "notice.toolBudget": "工具调用轮数已达上限，已要求助手总结当前进展。",
   "notice.loopGuard": "助手没有取得有效进展，已要求它重新评估当前步骤。",
   "notice.workspaceLease": "另一个交付会话正在写入此工作区；安全后本会话会自动继续。",
+  "notice.cancelledTurnDisplay": "本轮已中断。上方的部分输出仅供查看，不会进入模型下一轮上下文；继续或回滚前请先检查当前工作区。",
   "notice.contextLarge": "上下文正在变大，暂时保留缓存，等需要时再清理。",
   "notice.contextCleanupSkipped": "本次暂未清理上下文。",
   "notice.contextCleanupPaused": "自动上下文清理已暂停：当前上下文窗口太小。",

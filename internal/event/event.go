@@ -292,6 +292,7 @@ const (
 	NoticeCodeToolBudget      = "tool_budget"
 	NoticeCodeLoopGuard       = "loop_guard"
 	NoticeCodeWorkspaceLease  = "workspace_lease"
+	NoticeCodeCancelledTurn   = "cancelled_turn_display"
 )
 
 type Event struct {
@@ -317,6 +318,7 @@ type Event struct {
 	Approval     Approval        // ApprovalRequest
 	Ask          Ask             // AskRequest
 	Err          error           // TurnDone: non-nil on failure
+	Cancelled    bool            // TurnDone: Cancel was requested while the turn was active
 	Outcome      string          // TurnDone: optional machine-readable recoverable outcome
 	Readiness    *FinalReadiness // TurnDone: structured final-readiness recovery state
 	Compaction   Compaction      // Compaction

@@ -1424,6 +1424,7 @@ const noticeCodeKeys: Record<string, DictKey> = {
   tool_budget: "notice.toolBudget",
   loop_guard: "notice.loopGuard",
   workspace_lease: "notice.workspaceLease",
+  cancelled_turn_display: "notice.cancelledTurnDisplay",
 };
 
 // localizedNoticeText localizes a notice's main copy by its stable code first,

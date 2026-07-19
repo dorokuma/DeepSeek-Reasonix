@@ -160,7 +160,8 @@ func (o *turnOrchestrator) runOrchestratedTurn(ctx context.Context, turn orchest
 	parentSession := c.parentSessionID()
 	ctx = agent.WithParentSession(ctx, parentSession)
 	ctx = jobs.WithSession(ctx, parentSession)
-	ctx = agent.WithUserImages(ctx, c.inputImages(turn.input))
+	userImages := c.inputImages(turn.input)
+	ctx = agent.WithUserImages(ctx, userImages)
 	input := c.compose(turn.input, turn.raw, !turn.synthetic)
 	startMessages := c.messageCount()
 	defer c.snapshotActivityIfChanged(startMessages)
@@ -222,7 +223,12 @@ func (o *turnOrchestrator) runOrchestratedTurn(ctx context.Context, turn orchest
 			if turn.synthetic || IsSyntheticUserMessage(turn.raw) {
 				c.stripTurnMessagesAfter(startMessages)
 			} else {
-				c.stripCancelledVisibleTurnMessagesAfter(startMessages)
+				c.stripCancelledVisibleTurnMessagesAfterWithFallback(startMessages, provider.Message{
+					Role:      provider.RoleUser,
+					Content:   input,
+					Images:    append([]string(nil), userImages...),
+					CreatedAt: time.Now().UnixMilli(),
+				})
 			}
 		}
 		c.clearInFlightTurn()

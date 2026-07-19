@@ -453,6 +453,7 @@ func TestTurnOrchestratorCancelPreservesVisibleUserPrompt(t *testing.T) {
 
 	ex := agent.New(nil, nil, sess, agent.Options{}, event.Discard)
 	c := New(Options{Runner: runner, Executor: ex})
+	c.SetPlanMode(true)
 	// Simulate a user-initiated cancel: set the cancelling flag.
 	c.mu.Lock()
 	c.canceling = true
@@ -477,7 +478,7 @@ func TestTurnOrchestratorCancelPreservesVisibleUserPrompt(t *testing.T) {
 	}
 	last := msgs[len(msgs)-1]
 	if last.Role != provider.RoleUser || last.Content != "add config file abc" {
-		t.Fatalf("last message after cancel = %+v, want preserved visible user prompt", last)
+		t.Fatalf("last message after cancel = %+v, want preserved user prompt without compose prefixes", last)
 	}
 	for _, m := range msgs[preCount+1:] {
 		if m.Role == provider.RoleAssistant || m.Role == provider.RoleTool {
@@ -489,6 +490,39 @@ func TestTurnOrchestratorCancelPreservesVisibleUserPrompt(t *testing.T) {
 	// cancelled turn must not survive the strip.
 	if todos := c.Todos(); len(todos) != 0 {
 		t.Fatalf("Todos() after cancel = %v, want empty — cancelled todo_write leaked into canonical state", todos)
+	}
+}
+
+func TestTurnOrchestratorCancelBeforeRunnerAddsUserPreservesVisiblePrompt(t *testing.T) {
+	workspace := t.TempDir()
+	writeVisionTestConfig(t, workspace)
+	imagePath := filepath.Join(workspace, "diagram.png")
+	if err := os.WriteFile(imagePath, mustBase64(t, tinyPNG), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	sess := agent.NewSession("system")
+	ex := agent.New(nil, nil, sess, agent.Options{}, event.Discard)
+	c := New(Options{
+		Runner:        cancelBeforeUserRunner{},
+		Executor:      ex,
+		WorkspaceRoot: workspace,
+		ModelRef:      "custom/vision-pro",
+	})
+	c.SetPlanMode(true)
+	c.mu.Lock()
+	c.canceling = true
+	c.mu.Unlock()
+
+	err := newTurnOrchestrator(c).runTurnWithRawDisplay(context.Background(), "inspect @diagram.png", "inspect @diagram.png", "")
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected context.Canceled, got %v", err)
+	}
+	msgs := sess.Snapshot()
+	if len(msgs) != 2 || msgs[1].Role != provider.RoleUser || msgs[1].Content != "inspect @diagram.png" {
+		t.Fatalf("session after pre-executor cancel = %+v, want system + prefix-free visible user", msgs)
+	}
+	if len(msgs[1].Images) != 1 || !strings.HasPrefix(msgs[1].Images[0], "data:image/png;base64,") {
+		t.Fatalf("session after pre-executor cancel lost user image: %+v", msgs[1].Images)
 	}
 }
 
@@ -527,6 +561,7 @@ func TestTurnOrchestratorCancelFlushesCleanTranscriptToDisk(t *testing.T) {
 		Executor:    agent.New(nil, nil, sess, agent.Options{}, event.Discard),
 		SessionPath: sessionPath,
 	})
+	c.SetPlanMode(true)
 	c.mu.Lock()
 	c.canceling = true
 	c.mu.Unlock()
@@ -659,6 +694,12 @@ type cancelStrippingRunner struct {
 	session *agent.Session
 	add     []provider.Message
 	err     error
+}
+
+type cancelBeforeUserRunner struct{}
+
+func (cancelBeforeUserRunner) Run(context.Context, string) error {
+	return context.Canceled
 }
 
 func (r *cancelStrippingRunner) Run(ctx context.Context, input string) error {

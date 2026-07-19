@@ -2007,6 +2007,9 @@ func removeDesktopSessionArtifacts(path string) error {
 	if err := removeSessionDisplay(filepath.Dir(path), path); err != nil {
 		return err
 	}
+	if err := removeSessionPlannerDisplay(filepath.Dir(path), path); err != nil {
+		return err
+	}
 	if err := agent.DeleteSubagentsByParent(filepath.Dir(path), agent.BranchID(path)); err != nil {
 		return err
 	}
@@ -2385,6 +2388,7 @@ func (a *App) ListSessions() []SessionMeta {
 		}
 	}
 	_ = pruneSessionDisplays(dir, protectedDisplays)
+	_ = pruneSessionPlannerDisplays(dir, protectedDisplays)
 	titles := loadSessionTitles(dir)
 	channelRoutes := channelSessionRoutesForDir(dir)
 	active := a.activeSessionPath(dir)

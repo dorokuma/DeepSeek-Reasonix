@@ -1580,6 +1580,7 @@ export const zhTW: Record<DictKey, string> = {
   "notice.toolBudget": "工具呼叫輪數已達上限，已要求助手總結目前進度。",
   "notice.loopGuard": "助手沒有取得有效進展，已要求它重新評估目前步驟。",
   "notice.workspaceLease": "另一個交付會話正在寫入此工作區；安全後本會話會自動繼續。",
+  "notice.cancelledTurnDisplay": "本輪已中斷。上方的部分輸出僅供查看，不會進入模型下一輪上下文；繼續或回復前請先檢查目前工作區。",
   "notice.contextLarge": "上下文正在變大，暫時保留快取，等需要時再清理。",
   "notice.contextCleanupSkipped": "本次暫未清理上下文。",
   "notice.contextCleanupPaused": "自動上下文清理已暫停：目前上下文視窗太小。",
