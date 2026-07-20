@@ -40,11 +40,19 @@ import { createRafResizeUpdater } from "../lib/resizeDrag";
 import { closeWorkspacePreviewTab } from "../lib/workspacePreviewTabs";
 import { shouldScrollWorkspaceTreeSelection } from "../lib/workspaceTreeReveal";
 import { mergeWorkspaceSearchResults } from "../lib/workspaceTreeSearch";
-import type { DirEntry, FilePreview, GitCommitView, GitCommitDetailView, WorkspaceChangesView } from "../lib/types";
+import type {
+  DirEntry,
+  FilePreview,
+  GitCommitView,
+  GitCommitDetailView,
+  WorkspaceChangeDetailView,
+  WorkspaceChangesView,
+} from "../lib/types";
 import { formatWorkspaceReference, WORKSPACE_REF_DRAG_TYPE } from "../lib/workspaceDrag";
 import { formatSelectionReference, languageFor } from "../lib/selectedTextContext";
 import { cleanGitDiff } from "../lib/diff";
 import { CodeViewer } from "./CodeViewer";
+import { DiffView } from "./DiffView";
 import { ContextMenu, contextMenuPointFromEvent, type ContextMenuItem, type ContextMenuPoint } from "./ContextMenu";
 import { FloatingMenu, FloatingMenuItems } from "./FloatingMenu";
 import { Markdown } from "./Markdown";
@@ -220,6 +228,9 @@ export function WorkspacePanel({
   const [viewMode, setViewMode] = useState<"files" | "changed">(initialViewMode);
   const [gitHistory, setGitHistory] = useState<GitCommitView[]>([]);
   const [workspaceChanges, setWorkspaceChanges] = useState<WorkspaceChangesView | null>(null);
+  const [changeDetail, setChangeDetail] = useState<WorkspaceChangeDetailView | null>(null);
+  const [loadingChangeDetail, setLoadingChangeDetail] = useState(false);
+  const [changeDetailErr, setChangeDetailErr] = useState("");
   const [loadingHistory, setLoadingHistory] = useState(false);
   const [expandedCommit, setExpandedCommit] = useState<string | null>(null);
   const [commitDetail, setCommitDetail] = useState<GitCommitDetailView | null>(null);
@@ -250,6 +261,7 @@ export function WorkspacePanel({
   const currentWorkspaceScopeKeyRef = useRef(workspaceScopeKey);
   const lastWorkspaceScopeKeyRef = useRef(workspaceScopeKey);
   const workspaceChangesRequestIdRef = useRef(0);
+  const changeDetailRequestIdRef = useRef(0);
   const gitHistoryRequestIdRef = useRef(0);
   const commitDetailRequestIdRef = useRef(0);
   const dirLoadGenerationRef = useRef(0);
@@ -319,6 +331,36 @@ export function WorkspacePanel({
       }
     }
   }, [workspaceScopeKey, workspaceTabId]);
+
+  const loadChangeDetail = useCallback(async () => {
+    const requestId = ++changeDetailRequestIdRef.current;
+    const requestTabId = workspaceTabId;
+    const requestScopeKey = workspaceScopeKey;
+    const requestPath = selectedPath;
+    if (!requestPath) {
+      setChangeDetail(null);
+      setChangeDetailErr("");
+      setLoadingChangeDetail(false);
+      return;
+    }
+    setLoadingChangeDetail(true);
+    setChangeDetailErr("");
+    try {
+      const detail = await app.WorkspaceChangeDetail(requestTabId, requestPath);
+      if (changeDetailRequestIdRef.current === requestId && currentWorkspaceScopeKeyRef.current === requestScopeKey) {
+        setChangeDetail(detail ?? null);
+      }
+    } catch (err) {
+      if (changeDetailRequestIdRef.current === requestId && currentWorkspaceScopeKeyRef.current === requestScopeKey) {
+        setChangeDetail(null);
+        setChangeDetailErr(String((err as { message?: unknown })?.message ?? err));
+      }
+    } finally {
+      if (changeDetailRequestIdRef.current === requestId && currentWorkspaceScopeKeyRef.current === requestScopeKey) {
+        setLoadingChangeDetail(false);
+      }
+    }
+  }, [selectedPath, workspaceScopeKey, workspaceTabId]);
 
   const toggleCommit = useCallback((hash: string) => {
     setExpandedCommit((prev) => {
@@ -407,6 +449,10 @@ export function WorkspacePanel({
     setOpenTabs([]);
     setPreview(null);
     setGitHistory([]);
+    changeDetailRequestIdRef.current += 1;
+    setChangeDetail(null);
+    setChangeDetailErr("");
+    setLoadingChangeDetail(false);
     setExpandedCommit(null);
     setCommitDetail(null);
     setSelectionMenu(null);
@@ -423,9 +469,13 @@ export function WorkspacePanel({
     if (lastWorkspaceScopeKeyRef.current === workspaceScopeKey) return;
     lastWorkspaceScopeKeyRef.current = workspaceScopeKey;
     workspaceChangesRequestIdRef.current += 1;
+    changeDetailRequestIdRef.current += 1;
     gitHistoryRequestIdRef.current += 1;
     commitDetailRequestIdRef.current += 1;
     setWorkspaceChanges(null);
+    setChangeDetail(null);
+    setChangeDetailErr("");
+    setLoadingChangeDetail(false);
     setGitHistory([]);
     setCommitHistoryOpen(false);
     setExpandedCommit(null);
@@ -458,6 +508,10 @@ export function WorkspacePanel({
     setCommitHistoryOpen(false);
     setExpandedCommit(null);
     setCommitDetail(null);
+    changeDetailRequestIdRef.current += 1;
+    setChangeDetail(null);
+    setChangeDetailErr("");
+    setLoadingChangeDetail(false);
     setSelectionMenu(null);
     setTreeMenu(null);
     setRecentOpen(false);
@@ -611,17 +665,24 @@ export function WorkspacePanel({
     if (viewMode === "changed") {
       void loadGitHistory();
       void loadWorkspaceChanges();
+      if (selectedPath) void loadChangeDetail();
+    } else {
+      changeDetailRequestIdRef.current += 1;
+      setChangeDetail(null);
+      setChangeDetailErr("");
+      setLoadingChangeDetail(false);
     }
-  }, [selectedPath, viewMode, loadGitHistory, loadWorkspaceChanges, open]);
+  }, [selectedPath, viewMode, loadChangeDetail, loadGitHistory, loadWorkspaceChanges, open]);
 
   useEffect(() => {
     if (!open || !refreshKey) return;
     if (viewMode === "changed") {
       void loadGitHistory();
       void loadWorkspaceChanges();
+      if (selectedPath) void loadChangeDetail();
     }
     openDirsRef.current.forEach((dir) => void loadDir(dir));
-  }, [loadGitHistory, loadWorkspaceChanges, loadDir, open, refreshKey, viewMode]);
+  }, [loadChangeDetail, loadGitHistory, loadWorkspaceChanges, loadDir, open, refreshKey, selectedPath, viewMode]);
 
   useEffect(() => {
     if (!selectionMenu && !treeMenu) return;
@@ -655,12 +716,13 @@ export function WorkspacePanel({
     if (viewMode === "changed") {
       void loadGitHistory();
       void loadWorkspaceChanges();
+      if (selectedPath) void loadChangeDetail();
       return;
     }
     onFileTreeRefresh?.();
     const dirs = Array.from(openDirsRef.current);
     dirs.forEach((dir) => void loadDir(dir));
-  }, [loadGitHistory, loadWorkspaceChanges, loadDir, onFileTreeRefresh, viewMode]);
+  }, [loadChangeDetail, loadGitHistory, loadWorkspaceChanges, loadDir, onFileTreeRefresh, selectedPath, viewMode]);
 
   const refreshSelected = useCallback(() => {
     if (!selectedPath) return;
@@ -1505,9 +1567,10 @@ export function WorkspacePanel({
               ) : (
                 <>
                   {sessionChanges.length > 0 && renderChangeScope(t("workspace.changedTab"), sessionChanges)}
+                  {gitWorkingChanges.length > 0 && renderChangeScope(t("workspace.workingChanges"), gitWorkingChanges)}
                   {loadingHistory ? (
                     <div className="workspace-empty">{t("workspace.loading")}</div>
-                  ) : gitHistory.length === 0 && sessionChanges.length === 0 ? (
+                  ) : gitHistory.length === 0 && !hasFileChanges ? (
                     <div className="workspace-empty">{workspaceGitWarning ? t("workspace.gitChangesUnknown") : t("workspace.noChanges")}</div>
                   ) : (
                     <div className="workspace-git-history__list">
@@ -1560,44 +1623,93 @@ export function WorkspacePanel({
             </div>
           ) : viewMode === "changed" && selectedPath ? (
             <div className="workspace-git-history">
-              {loadingHistory ? (
-                <div className="workspace-empty">{t("workspace.loading")}</div>
-              ) : gitHistory.length === 0 ? (
-                <div className="workspace-empty">{t("workspace.noChanges")}</div>
-              ) : (
-                <div className="workspace-git-history__list">
-                  {gitHistory.map((commit) => (
-                    <div key={commit.hash} className={`workspace-git-history__item${expandedCommit === commit.hash ? " workspace-git-history__item--expanded" : ""}`}>
-                      <button
-                        className="workspace-git-history__head"
-                        onClick={() => void toggleCommit(commit.hash)}
-                      >
-                        <div className="workspace-git-history__head-top">
-                          {expandedCommit === commit.hash ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-                          <span className="workspace-git-history__message">{commit.message}</span>
-                        </div>
-                        <div className="workspace-git-history__head-bottom">
-                          <span className="workspace-git-history__author">{commit.author}</span>
-                          <span className="workspace-git-history__date">
-                            {formatCommitDate(commit.date)} <span className="workspace-git-history__hash">{commit.hash.substring(0, 7)}</span>
-                          </span>
-                        </div>
-                      </button>
-                      {expandedCommit === commit.hash && (
-                        <div className="workspace-git-history__detail">
-                          {loadingCommit ? (
-                            <div className="workspace-empty">{t("workspace.loading")}</div>
-                          ) : commitDetail?.diff ? (
-                            <CodeViewer value={cleanGitDiff(commitDetail.diff)} language="diff" />
-                          ) : (
-                            <div className="workspace-empty">No details available</div>
+              <section className="workspace-current-change">
+                <header className="workspace-current-change__head">
+                  <div>
+                    <strong>{t("workspace.currentChanges")}</strong>
+                    {changeDetail?.source && (
+                      <span>{t(changeDetail.source === "git" ? "workspace.currentChangesSourceGit" : "workspace.currentChangesSourceSession")}</span>
+                    )}
+                  </div>
+                  {(changeDetail?.added || changeDetail?.removed) ? (
+                    <small>
+                      <span className="workspace-current-change__added">+{changeDetail.added ?? 0}</span>
+                      <span className="workspace-current-change__removed">-{changeDetail.removed ?? 0}</span>
+                    </small>
+                  ) : null}
+                </header>
+                <div className="workspace-current-change__body">
+                  {loadingChangeDetail ? (
+                    <div className="workspace-empty">{t("workspace.loading")}</div>
+                  ) : changeDetailErr ? (
+                    <div className="workspace-empty workspace-empty--error">{t("workspace.changeDetailUnavailable")}: {changeDetailErr}</div>
+                  ) : changeDetail?.truncated ? (
+                    <div className="workspace-empty">{t("workspace.changeDetailTooLarge")}</div>
+                  ) : changeDetail?.binary ? (
+                    <div className="workspace-empty">{t("workspace.binaryChange")}</div>
+                  ) : changeDetail?.diff ? (
+                    changeDetail.diff.includes("@@") ? (
+                      <DiffView diff={changeDetail.diff} language={languageFor(selectedPath)} />
+                    ) : (
+                      <CodeViewer value={changeDetail.diff} language="diff" />
+                    )
+                  ) : (
+                    <div className="workspace-empty">{t("workspace.noCurrentDiff")}</div>
+                  )}
+                </div>
+              </section>
+              <section className={`workspace-commit-history${commitHistoryOpen ? " workspace-commit-history--open" : ""}`}>
+                <button
+                  className="workspace-commit-history__toggle"
+                  type="button"
+                  aria-expanded={commitHistoryOpen}
+                  onClick={() => {
+                    setCommitHistoryOpen((value) => !value);
+                    setExpandedCommit(null);
+                  }}
+                >
+                  {commitHistoryOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                  <span>{t("workspace.commitHistory")}</span>
+                  <small>{loadingHistory ? t("workspace.loading") : t("workspace.commitHistoryMeta", { count: gitHistory.length })}</small>
+                </button>
+                {commitHistoryOpen && (
+                  loadingHistory ? (
+                    <div className="workspace-empty">{t("workspace.loading")}</div>
+                  ) : gitHistory.length === 0 ? (
+                    <div className="workspace-empty">{t("workspace.noCommitHistory")}</div>
+                  ) : (
+                    <div className="workspace-git-history__list">
+                      {gitHistory.map((commit) => (
+                        <div key={commit.hash} className={`workspace-git-history__item${expandedCommit === commit.hash ? " workspace-git-history__item--expanded" : ""}`}>
+                          <button className="workspace-git-history__head" onClick={() => void toggleCommit(commit.hash)}>
+                            <div className="workspace-git-history__head-top">
+                              {expandedCommit === commit.hash ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                              <span className="workspace-git-history__message">{commit.message}</span>
+                            </div>
+                            <div className="workspace-git-history__head-bottom">
+                              <span className="workspace-git-history__author">{commit.author}</span>
+                              <span className="workspace-git-history__date">
+                                {formatCommitDate(commit.date)} <span className="workspace-git-history__hash">{commit.hash.substring(0, 7)}</span>
+                              </span>
+                            </div>
+                          </button>
+                          {expandedCommit === commit.hash && (
+                            <div className="workspace-git-history__detail">
+                              {loadingCommit ? (
+                                <div className="workspace-empty">{t("workspace.loading")}</div>
+                              ) : commitDetail?.diff ? (
+                                <CodeViewer value={cleanGitDiff(commitDetail.diff)} language="diff" />
+                              ) : (
+                                <div className="workspace-empty">{t("workspace.noCommitDetail")}</div>
+                              )}
+                            </div>
                           )}
                         </div>
-                      )}
+                      ))}
                     </div>
-                  ))}
-                </div>
-              )}
+                  )
+                )}
+              </section>
             </div>
           ) : !selectedPath ? (
             <div className="workspace-empty">{t("workspace.pickFile")}</div>

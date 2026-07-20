@@ -9277,6 +9277,96 @@ body > .mermaid-diagram--fullscreen {
   flex-direction: column;
   gap: 12px;
 }
+.workspace-current-change {
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  background: var(--bg);
+}
+.workspace-current-change__head {
+  min-height: 46px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border-soft);
+  background: var(--bg-soft);
+}
+.workspace-current-change__head > div {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.workspace-current-change__head strong {
+  color: var(--fg);
+  font-size: 12.5px;
+  font-weight: 620;
+}
+.workspace-current-change__head > div > span {
+  overflow: hidden;
+  color: var(--fg-faint);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.workspace-current-change__head small {
+  flex: 0 0 auto;
+  display: flex;
+  gap: 7px;
+  font-family: var(--mono);
+  font-size: 11px;
+}
+.workspace-current-change__added {
+  color: var(--ok);
+}
+.workspace-current-change__removed {
+  color: var(--danger);
+}
+.workspace-current-change__body {
+  min-width: 0;
+  overflow: auto;
+}
+.workspace-current-change__body .diff,
+.workspace-current-change__body .code {
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+}
+.workspace-commit-history {
+  border-top: 1px solid var(--border-soft);
+}
+.workspace-commit-history__toggle {
+  --wails-draggable: no-drag;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  min-height: 34px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--fg-faint);
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+}
+.workspace-commit-history__toggle:hover,
+.workspace-commit-history__toggle:focus-visible {
+  background: var(--sidebar-hover);
+  color: var(--fg);
+}
+.workspace-commit-history__toggle small {
+  margin-left: auto;
+  color: var(--fg-faint);
+  font-size: 11px;
+}
+.workspace-commit-history--open .workspace-git-history__list {
+  padding-top: 8px;
+}
 .workspace-git-history__list {
   display: flex;
   flex-direction: column;
