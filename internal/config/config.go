@@ -1071,16 +1071,17 @@ type AgentConfig struct {
 	// startup (a built-in like "explanatory"/"learning"/"concise", or a custom
 	// .reasonix/output-styles/<name>.md). Empty = the unmodified prompt.
 	OutputStyle string `toml:"output_style"`
-	// AutoPlan controls whether interactive turns that look multi-step start in
-	// plan mode automatically: "off" keeps plan mode manual, "on" enables the
-	// approval gate. Legacy "ask" is treated as "on".
+	// Deprecated compatibility field. Automatic plan mode was retired in config
+	// version 5; old TOML remains readable, but loading normalizes it to "off"
+	// and rendering omits it. Plan mode remains available as an explicit user
+	// choice.
 	AutoPlan string `toml:"auto_plan"`
 	// ReasoningLanguage controls the preferred language for visible reasoning
 	// text. Empty/auto follows the conversation language. Applied as transient
 	// turn context, not the stable prompt.
 	ReasoningLanguage string `toml:"reasoning_language"`
-	// AutoPlanClassifier optionally names a provider/model used to classify
-	// borderline auto-plan decisions. Empty keeps the zero-cost heuristic path.
+	// Deprecated compatibility field paired with AutoPlan. Old TOML remains
+	// readable, but loading clears it and rendering omits it.
 	AutoPlanClassifier string `toml:"auto_plan_classifier"`
 	// Compaction window fractions: soft = notice only, compact = trigger, force = hard ceiling.
 	SoftCompactRatio    float64 `toml:"soft_compact_ratio"`
@@ -1577,7 +1578,7 @@ const LanguagePolicy = `Reply in the same language the user is using in their mo
 // Default returns the built-in default configuration.
 func Default() *Config {
 	return &Config{
-		ConfigVersion:    4,
+		ConfigVersion:    5,
 		DefaultModel:     "deepseek-flash",
 		CredentialsStore: CredentialsStoreAuto,
 		UI:               UIConfig{Theme: "auto"},

@@ -855,7 +855,7 @@ func (a *App) Settings() SettingsView {
 		PlannerModel:      cfg.Agent.PlannerModel,
 		SubagentModel:     cfg.Agent.SubagentModel,
 		SubagentEffort:    cfg.Agent.SubagentEffort,
-		AutoPlan:          desktopAutoPlanMode(cfg.Agent.AutoPlan),
+		AutoPlan:          "off", // deprecated JSON compatibility for older frontends
 		Providers:         []ProviderView{},
 		OfficialProviders: []ProviderView{},
 		ProviderPresets:   []ProviderPresetView{},
@@ -1921,42 +1921,11 @@ func (a *App) SetMaxParallelWriters(n int) error {
 	})
 }
 
-// SetAutoPlan updates the automatic plan-first workflow setting (off|on).
+// SetAutoPlan is retained for older frontend bundles. Automatic plan mode is
+// retired, so "off" is an idempotent compatibility call and enabling it is
+// rejected without mutating user configuration or live controllers.
 func (a *App) SetAutoPlan(mode string) error {
-	if err := a.ensureLiveControllersRuntimeMutationAllowed("auto-plan"); err != nil {
-		return err
-	}
-	var cfg *config.Config
-	// Lock only the load-modify-save cycle; the live-controller fan-out and the
-	// optional rebuild below are slow and must not hold the config edit lock.
-	if err := func() error {
-		unlock := config.LockUserConfigEdits()
-		defer unlock()
-		loaded, path, err := a.loadDesktopUserConfigForEdit()
-		if err != nil {
-			return err
-		}
-		if err := loaded.SetAutoPlan(mode); err != nil {
-			return err
-		}
-		if err := loaded.SaveTo(path); err != nil {
-			return err
-		}
-		cfg = loaded
-		return nil
-	}(); err != nil {
-		return err
-	}
-	a.applyAutoPlanToLiveControllers(cfg.Agent.AutoPlan)
-	if desktopAutoPlanMode(cfg.Agent.AutoPlan) == "on" && strings.TrimSpace(cfg.Agent.AutoPlanClassifier) != "" {
-		if err := a.rebuild(); err != nil {
-			if _, ok := a.deferredRebuildWarning("auto-plan", err); ok {
-				return nil
-			}
-			return err
-		}
-	}
-	return nil
+	return config.Default().SetAutoPlan(mode)
 }
 
 // SetDefaultToolApprovalMode updates the global Ask/Auto/YOLO default used only
@@ -1965,37 +1934,6 @@ func (a *App) SetDefaultToolApprovalMode(mode string) error {
 	return a.applyConfigOnly(func(c *config.Config) error {
 		return c.SetDesktopDefaultToolApprovalMode(mode)
 	})
-}
-
-func desktopAutoPlanMode(mode string) string {
-	switch strings.ToLower(strings.TrimSpace(mode)) {
-	case "on", "ask":
-		return "on"
-	default:
-		return "off"
-	}
-}
-
-func (a *App) applyAutoPlanToLiveControllers(fallback string) {
-	type liveTab struct {
-		root string
-		ctrl control.SessionAPI
-	}
-	var tabs []liveTab
-	a.mu.RLock()
-	for _, tab := range a.tabs {
-		if tab != nil && tab.Ctrl != nil {
-			tabs = append(tabs, liveTab{root: tab.WorkspaceRoot, ctrl: tab.Ctrl})
-		}
-	}
-	a.mu.RUnlock()
-	for _, tab := range tabs {
-		mode := fallback
-		if cfg, err := config.LoadForRoot(tab.root); err == nil {
-			mode = cfg.Agent.AutoPlan
-		}
-		tab.ctrl.SetAutoPlan(mode)
-	}
 }
 
 func officialProviderTemplate(kind, pricingLanguage string) ([]config.ProviderEntry, string, error) {

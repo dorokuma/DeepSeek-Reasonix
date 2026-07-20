@@ -38,7 +38,7 @@ func TestTurnOrchestratorRunsForegroundUnit(t *testing.T) {
 
 func TestTurnOrchestratorTypedSyntheticTurnDoesNotDependOnPrefix(t *testing.T) {
 	runner := &fakeTurnRunner{}
-	c := New(Options{AutoPlan: "on", Runner: runner})
+	c := New(Options{Runner: runner})
 	o := newTurnOrchestrator(c)
 
 	turn := "Controller-created follow-up with a brand-new synthetic wording:\n- inspect\n- edit\n- verify"
@@ -53,7 +53,7 @@ func TestTurnOrchestratorTypedSyntheticTurnDoesNotDependOnPrefix(t *testing.T) {
 		t.Fatalf("runner inputs = %d, want 1", len(runner.inputs))
 	}
 	if strings.HasPrefix(runner.inputs[0], PlanModeMarker) {
-		t.Fatalf("typed synthetic turn should not be auto-planned, got %q", runner.inputs[0])
+		t.Fatalf("typed synthetic turn should remain a plain turn, got %q", runner.inputs[0])
 	}
 }
 
@@ -286,7 +286,6 @@ func TestTurnOrchestratorAutoReasoningLanguageUsesRawPromptForRefTurns(t *testin
 	c := New(Options{
 		WorkspaceRoot: root,
 		Runner:        runner,
-		AutoPlan:      "off",
 		Sink: event.FuncSink(func(e event.Event) {
 			events <- e
 		}),

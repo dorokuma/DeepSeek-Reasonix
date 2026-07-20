@@ -243,7 +243,6 @@ var ChineseTraditional = Messages{
 	CmdSandbox:          "檢視沙箱狀態",
 	CmdEffort:           "設定推理強度",
 	CmdMouse:            "切換滑鼠接管（關閉後由終端原生處理選取/右鍵）",
-	CmdAutoPlan:         "設定自動計畫模式",
 	CmdReasonLang:       "設定可見思考語言",
 	CmdHelp:             "檢視命令列表",
 	CmdTodo:             "清除任務清單",
@@ -461,7 +460,6 @@ var ChineseTraditional = Messages{
   reasonix serve [--model NAME] [--addr HOST:PORT] [--auth none|token|password] [--token STR] [--password STR] [--hash-password]  透過 HTTP+SSE 提供服務（支援可選認證）
   reasonix acp [--model NAME]                           透過 stdio 提供 Agent Client Protocol（也可用：reasonix --acp）
   reasonix setup [path]                                 互動式設定精靈；生成 reasonix.toml（及 .env）
-  reasonix config auto-plan [off|on]                    設定自動計畫模式
   reasonix config reasoning-language [auto|zh|en]        設定可見思考語言
   reasonix mcp <add|remove|list|import>                 管理 reasonix.toml 裡的 MCP 伺服器
   reasonix subagent <list|create|edit|delete|try|run>   管理和執行隔離子智慧體 profile

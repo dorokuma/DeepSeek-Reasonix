@@ -79,9 +79,6 @@ cursor_shape = "bar"         # CLI/TUI text cursor: underline|block|bar
 [desktop]
 provider_access = ["deepseek"]
 
-[agent]
-auto_plan = "off"
-
 [[providers]]
 name        = "deepseek"
 kind        = "openai"

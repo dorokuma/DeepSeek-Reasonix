@@ -1,8 +1,10 @@
 package config
 
 import (
+	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/BurntSushi/toml"
@@ -710,7 +712,7 @@ func TestResetOfficialProviderPricingOnUpgradeRunsOnce(t *testing.T) {
 	}
 }
 
-func TestApplyUserConfigUpgradesOnStartupVersion3NonWindowsNoop(t *testing.T) {
+func TestApplyUserConfigUpgradesOnStartupVersion3NonWindowsAdvancesToV5(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.toml")
 	setRuntimeGOOS(t, "darwin")
 
@@ -734,15 +736,15 @@ func TestApplyUserConfigUpgradesOnStartupVersion3NonWindowsNoop(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ApplyUserConfigUpgradesOnStartup: %v", err)
 	}
-	if changed {
-		t.Fatal("v3 non-Windows config should not be rewritten by the Windows bash sandbox migration")
+	if !changed {
+		t.Fatal("v3 config should advance through the retired Auto Plan migration")
 	}
 	var got Config
 	if _, err := toml.DecodeFile(path, &got); err != nil {
 		t.Fatalf("decode migrated config: %v", err)
 	}
-	if got.ConfigVersion != 3 {
-		t.Fatalf("config_version = %d, want 3", got.ConfigVersion)
+	if got.ConfigVersion != 5 {
+		t.Fatalf("config_version = %d, want 5", got.ConfigVersion)
 	}
 	deepseek, _ := got.Provider("deepseek")
 	if p := deepseek.Prices["deepseek-v4-flash"]; p == nil || p.Output != 4 || p.Currency != "$" {
@@ -820,6 +822,52 @@ func TestApplyUserConfigUpgradesOnStartupWindowsBashOffOnlyMarksVersion(t *testi
 	}
 	if got.Sandbox.Bash != "off" || got.BashMode() != "off" {
 		t.Fatalf("Windows bash mode after marker migration = raw %q effective %q, want off/off", got.Sandbox.Bash, got.BashMode())
+	}
+}
+
+func TestApplyUserConfigUpgradesOnStartupRetiresAutoPlan(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	setRuntimeGOOS(t, "darwin")
+	original := `config_version = 4
+default_model = "deepseek-flash"
+
+[agent]
+auto_plan = "on"
+auto_plan_classifier = "deepseek-flash"
+temperature = 0.4
+`
+	if err := os.WriteFile(path, []byte(original), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	changed, err := ApplyUserConfigUpgradesOnStartup(path)
+	if err != nil {
+		t.Fatalf("ApplyUserConfigUpgradesOnStartup: %v", err)
+	}
+	if !changed {
+		t.Fatal("v4 auto-plan config should migrate to the manual-only experience")
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), "auto_plan") {
+		t.Fatalf("retired auto-plan keys remain after migration:\n%s", raw)
+	}
+	got := LoadForEdit(path)
+	if got.ConfigVersion != Default().ConfigVersion || got.Agent.AutoPlan != "off" || got.Agent.AutoPlanClassifier != "" {
+		t.Fatalf("migrated config = version:%d auto:%q classifier:%q", got.ConfigVersion, got.Agent.AutoPlan, got.Agent.AutoPlanClassifier)
+	}
+	if got.Agent.Temperature != 0.4 {
+		t.Fatalf("unrelated agent temperature = %v, want 0.4", got.Agent.Temperature)
+	}
+
+	again, err := ApplyUserConfigUpgradesOnStartup(path)
+	if err != nil {
+		t.Fatalf("second ApplyUserConfigUpgradesOnStartup: %v", err)
+	}
+	if again {
+		t.Fatal("v5 config should not migrate again")
 	}
 }
 

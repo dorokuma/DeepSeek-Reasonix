@@ -15,11 +15,9 @@ import (
 	"reasonix/internal/tool"
 )
 
-// TestAutoApproveToolsStillAutoPlansAndRequiresPlanApproval drives the same
-// complex request that TestAutoPlanGateEndToEnd uses, but with YOLO/full access
-// on. Tool auto-approval skips tool approvals, not collaboration gates: a complex
-// task still drafts a plan and must wait for the user's plan approval.
-func TestAutoApproveToolsStillAutoPlansAndRequiresPlanApproval(t *testing.T) {
+// TestAutoApproveToolsStillRequiresExplicitPlanApproval proves that YOLO/full
+// tool access does not bypass the separate Plan Mode collaboration gate.
+func TestAutoApproveToolsStillRequiresExplicitPlanApproval(t *testing.T) {
 	prov := &scriptedTurns{turns: [][]provider.Chunk{
 		textTurn("Plan:\n1. Add the config field\n2. Wire it into boot\n3. Add tests"),
 		textTurn("Done — implemented the approved plan."),
@@ -29,7 +27,6 @@ func TestAutoApproveToolsStillAutoPlansAndRequiresPlanApproval(t *testing.T) {
 	approvalRequests := make(chan event.Approval, 1)
 	var seeded bool
 	c := New(Options{
-		AutoPlan: "on",
 		Runner:   ag,
 		Executor: ag,
 		Sink: event.FuncSink(func(e event.Event) {
@@ -44,6 +41,7 @@ func TestAutoApproveToolsStillAutoPlansAndRequiresPlanApproval(t *testing.T) {
 		}),
 	})
 	c.SetAutoApproveTools(true)
+	c.SetPlanMode(true)
 
 	input := "实现 issue #2395：新增配置项、自动判断复杂任务、补测试和文档"
 	done := make(chan error, 1)
@@ -73,7 +71,7 @@ func TestAutoApproveToolsStillAutoPlansAndRequiresPlanApproval(t *testing.T) {
 		t.Fatal("approved plan did not continue into execution")
 	}
 	if got := agent.StripTransientUserBlocks(firstUserMessage(ag.Session().Messages)); !strings.HasPrefix(got, PlanModeMarker) {
-		t.Fatalf("first model input = %q, want the auto-plan marker prefixed", got)
+		t.Fatalf("first model input = %q, want the plan marker prefixed", got)
 	}
 	if c.PlanMode() {
 		t.Fatal("plan mode should be off after approval")

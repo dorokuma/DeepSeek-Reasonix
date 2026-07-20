@@ -256,7 +256,6 @@ var English = Messages{
 	CmdSandbox:          "show sandbox status",
 	CmdEffort:           "set reasoning effort",
 	CmdMouse:            "toggle in-app mouse capture (off = native terminal selection/right-click)",
-	CmdAutoPlan:         "configure automatic plan mode",
 	CmdReasonLang:       "set visible reasoning language",
 	CmdHelp:             "list commands",
 	CmdTodo:             "dismiss the task list",
@@ -512,7 +511,6 @@ Usage:
   reasonix serve [--model NAME] [--addr HOST:PORT] [--auth none|token|password] [--token STR] [--password STR] [--hash-password]  serve over HTTP+SSE (with optional auth)
   reasonix acp [--model NAME]                           serve Agent Client Protocol over stdio (also: reasonix --acp)
   reasonix setup [path]                                 interactive config wizard; writes reasonix.toml (+ .env)
-  reasonix config auto-plan [off|on]                    configure automatic plan mode
   reasonix config reasoning-language [auto|zh|en]        configure visible reasoning language
   reasonix mcp <add|remove|list|import>                 manage MCP servers in reasonix.toml
   reasonix subagent <list|create|edit|delete|try|run>   manage and run isolated subagent profiles

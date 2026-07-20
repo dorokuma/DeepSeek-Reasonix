@@ -74,43 +74,6 @@ func TestActiveGoalBlockCarriesTaskContractAndPausePolicy(t *testing.T) {
 	}
 }
 
-func TestGoalModeSkipsAutoPlanApproval(t *testing.T) {
-	prov := &scriptedTurns{turns: [][]provider.Chunk{
-		textTurn("Implemented the requested work.\n\n[goal:complete]"),
-	}}
-	ag := agent.New(prov, tool.NewRegistry(), agent.NewSession(""), agent.Options{}, event.Discard)
-	approvalRequests := make(chan event.Approval, 1)
-	events := make(chan event.Event, 4)
-	c := New(Options{
-		AutoPlan: "on",
-		Runner:   ag,
-		Executor: ag,
-		Sink: event.FuncSink(func(e event.Event) {
-			switch e.Kind {
-			case event.ApprovalRequest:
-				approvalRequests <- e.Approval
-			case event.TurnDone:
-				events <- e
-			}
-		}),
-	})
-
-	c.Submit("/goal 实现一个复杂功能，修改代码，补测试，并更新文档")
-	waitForTurnDone(t, events)
-
-	select {
-	case approval := <-approvalRequests:
-		t.Fatalf("goal mode should not request plan approval under auto-plan; got %+v", approval)
-	default:
-	}
-	if c.PlanMode() {
-		t.Fatal("goal mode should leave plan mode off")
-	}
-	if got := firstUserMessage(ag.Session().Messages); strings.HasPrefix(got, PlanModeMarker) {
-		t.Fatalf("goal mode should not prepend plan marker, got %q", got)
-	}
-}
-
 func TestPlainInputWithStrongResearchSignalStaysNormal(t *testing.T) {
 	prov := &scriptedTurns{turns: [][]provider.Chunk{
 		textTurn("Here is the normal response."),

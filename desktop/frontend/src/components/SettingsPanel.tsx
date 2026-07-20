@@ -776,7 +776,6 @@ const REASONING_PROTOCOLS: readonly string[] = ["", "deepseek", "openai", "none"
 const THINKING_MODES: readonly string[] = ["", "enabled", "disabled", "adaptive"];
 const PROXY_TYPES = ["http", "https", "socks5", "socks5h"] as const;
 const LANGUAGE_PREFS: LangPref[] = ["", "zh", "en"];
-const AUTO_PLAN_MODES = ["off", "on"] as const;
 const TOOL_APPROVAL_MODES = ["ask", "auto", "yolo"] as const;
 const BOT_TOOL_APPROVAL_MODES = ["", "ask", "auto", "yolo"] as const;
 const BOT_QUEUE_MODES = ["steer", "followup", "collect", "interrupt"] as const;
@@ -784,7 +783,6 @@ const BOT_QUEUE_DROPS = ["summarize", "old", "new"] as const;
 const BOT_ROUTE_CHAT_TYPES = ["", "dm", "group", "guild", "direct", "thread"] as const;
 
 type ProxyMode = (typeof PROXY_MODES)[number];
-type AutoPlanMode = (typeof AUTO_PLAN_MODES)[number];
 
 function normalizeProxyMode(mode: string): ProxyMode {
   switch (mode) {
@@ -799,10 +797,6 @@ function normalizeProxyMode(mode: string): ProxyMode {
 
 function normalizeNetworkView(network: NetworkView): NetworkView {
   return { ...network, proxyMode: normalizeProxyMode(network.proxyMode) };
-}
-
-function normalizeAutoPlan(mode: string | undefined): AutoPlanMode {
-  return mode === "ask" || mode === "on" ? "on" : "off";
 }
 
 function normalizeReasoningProtocol(protocol: string | undefined): string {
@@ -1347,7 +1341,7 @@ function normalizeSettingsView(view: SettingsView | null | undefined): SettingsV
     },
     agent,
     bot: normalizeBotSettings(view.bot),
-    autoPlan: normalizeAutoPlan(view.autoPlan),
+    autoPlan: "off",
     defaultToolApprovalMode: normalizeToolApprovalMode(view.defaultToolApprovalMode),
     autoApproveTools: Boolean(view.autoApproveTools ?? view.bypass),
     bypass: Boolean(view.autoApproveTools ?? view.bypass),
@@ -1506,7 +1500,6 @@ function GeneralSection({ s, busy, apply, agentRunning }: SectionProps & { agent
   useEffect(() => onDisplayModeChange((mode) => setDisplayMode(mode)), []);
   useEffect(() => onProcessFoldPreferenceChange((pref) => setProcessFold(pref)), []);
   useEffect(() => () => mouseDragCleanupRef.current?.(), []);
-  const autoPlan = normalizeAutoPlan(s.autoPlan);
   const defaultToolApprovalMode = normalizeToolApprovalMode(s.defaultToolApprovalMode);
   const languagePref = normalizeLangPref(s.desktopLanguage);
   const desktopLayoutStyle = normalizeDesktopLayoutStyle(s.desktopLayoutStyle);
@@ -1748,20 +1741,6 @@ function GeneralSection({ s, busy, apply, agentRunning }: SectionProps & { agent
               onClick={() => void apply(() => app.SetDefaultToolApprovalMode(mode))}
             >
               {t(`settings.defaultToolApprovalMode.${mode}`)}
-            </button>
-          ))}
-        </div>
-      </SettingsField>
-      <SettingsField label={t("settings.autoPlan")}>
-        <div className="set-seg">
-          {AUTO_PLAN_MODES.map((mode) => (
-            <button
-              key={mode}
-              className={`set-seg__btn${autoPlan === mode ? " set-seg__btn--on" : ""}`}
-              disabled={busy}
-              onClick={() => void apply(() => app.SetAutoPlan(mode))}
-            >
-              {t(`settings.autoPlan.${mode}`)}
             </button>
           ))}
         </div>

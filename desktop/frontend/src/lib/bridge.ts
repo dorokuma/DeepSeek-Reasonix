@@ -3595,7 +3595,8 @@ function makeMockApp(): AppBindings {
       settings.agent = { ...settings.agent, maxParallelWriters: writers };
     },
     async SetAutoPlan(mode: string) {
-      settings.autoPlan = mode;
+      if (mode !== "off") throw new Error("Automatic plan mode has been retired; use Plan Mode explicitly.");
+      settings.autoPlan = "off";
     },
     async SetDefaultToolApprovalMode(mode: string) {
       settings.defaultToolApprovalMode = normalizeToolApprovalMode(mode);

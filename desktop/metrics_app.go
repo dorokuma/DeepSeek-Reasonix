@@ -230,7 +230,6 @@ func (m *metricsAggregator) observeSettingsSnapshot(c *config.Config) {
 	m.inc("settings_theme_style", themeStyle)
 	m.inc("settings_close_behavior", c.DesktopCloseBehavior())
 	m.inc("settings_display_mode", c.DesktopDisplayMode())
-	m.inc("settings_auto_plan", desktopAutoPlanMode(c.Agent.AutoPlan))
 	m.inc("settings_status_bar_style", c.DesktopStatusBarStyle())
 	m.inc("settings_status_bar_items_count", statusBarItemsCountBucket(len(c.DesktopStatusBarItems())))
 	m.inc("settings_check_updates", boolBucket(c.DesktopCheckUpdates()))

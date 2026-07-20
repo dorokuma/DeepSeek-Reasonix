@@ -70,9 +70,6 @@ func TestObserveSettingsSnapshotUsesSafeBuckets(t *testing.T) {
 	if err := cfg.SetDesktopDisplayMode("compact"); err != nil {
 		t.Fatalf("SetDesktopDisplayMode: %v", err)
 	}
-	if err := cfg.SetAutoPlan("on"); err != nil {
-		t.Fatalf("SetAutoPlan: %v", err)
-	}
 	if err := cfg.SetDesktopStatusBarStyle("icon"); err != nil {
 		t.Fatalf("SetDesktopStatusBarStyle: %v", err)
 	}
@@ -112,7 +109,6 @@ func TestObserveSettingsSnapshotUsesSafeBuckets(t *testing.T) {
 		"settings_theme_style":             "graphite",
 		"settings_close_behavior":          "quit",
 		"settings_display_mode":            "compact",
-		"settings_auto_plan":               "on",
 		"settings_status_bar_style":        "icon",
 		"settings_status_bar_items_count":  "n_3",
 		"settings_check_updates":           "off",

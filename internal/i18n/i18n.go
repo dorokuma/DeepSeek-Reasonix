@@ -245,7 +245,6 @@ type Messages struct {
 	CmdSandbox          string // /sandbox
 	CmdEffort           string // /effort
 	CmdMouse            string // /mouse
-	CmdAutoPlan         string // /auto-plan
 	CmdReasonLang       string // /reasoning-language
 	CmdHelp             string // /help
 	CmdTodo             string // /todo

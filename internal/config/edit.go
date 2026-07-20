@@ -69,19 +69,16 @@ func (c *Config) SetPlannerModel(name string) error {
 	return nil
 }
 
-// SetAutoPlan sets the interactive auto-plan gate. "off" keeps plan mode manual;
-// "on" opts into the automatic plan-first workflow for complex-looking turns.
-// "ask" is accepted as a legacy synonym for "on" but is never written back.
+// SetAutoPlan is retained for source compatibility with older desktop clients.
+// Automatic plan mode is retired: "off" is an idempotent compatibility write,
+// while every attempt to enable it is rejected explicitly.
 func (c *Config) SetAutoPlan(mode string) error {
-	switch strings.ToLower(strings.TrimSpace(mode)) {
-	case "off":
+	if strings.EqualFold(strings.TrimSpace(mode), "off") {
 		c.Agent.AutoPlan = "off"
-	case "on", "ask":
-		c.Agent.AutoPlan = "on"
-	default:
-		return fmt.Errorf("auto_plan %q: must be off|on", mode)
+		c.Agent.AutoPlanClassifier = ""
+		return nil
 	}
-	return nil
+	return fmt.Errorf("automatic plan mode has been retired; use Plan Mode explicitly")
 }
 
 // SetDesktopDefaultToolApprovalMode sets the Ask/Auto/YOLO posture used only

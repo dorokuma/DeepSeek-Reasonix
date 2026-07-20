@@ -1519,12 +1519,6 @@ function backendNoticeKey(msg: string): DictKey | "" {
       return "notice.contextCleanupPaused";
     case "Context was compacted without a generated summary.":
       return "notice.compactionNoSummary";
-    case "Planning mode enabled for this multi-step task.":
-      return "notice.autoPlanEnabled";
-    case "Plan detection requested a plan.":
-      return "notice.autoPlanRequested";
-    case "Plan detection was uncertain; using the fallback planner heuristic.":
-      return "notice.autoPlanFallback";
     case "Goal is not ready to complete yet; continuing the remaining work.":
       return "notice.goalNotReady";
     case "Goal still has unfinished task state; continuing the remaining work.":

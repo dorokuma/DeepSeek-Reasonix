@@ -241,6 +241,8 @@ const compactButton = Array.from(document.querySelectorAll("button")).find((butt
 if (!compactButton) throw new Error("compact display mode button did not render");
 eq(document.querySelectorAll(".step-limit-control").length, 0, "general settings hide executor and planner step-limit controls");
 ok(!document.body.textContent?.includes("step limit"), "general settings keep automatic progress free of step-limit copy");
+ok(!document.body.textContent?.includes("Automatic plan mode"), "general settings omit the retired automatic Plan Mode control");
+ok(!document.body.textContent?.includes("planning defaults"), "general settings omit retired automatic Plan Mode copy");
 
 await act(async () => {
   compactButton.click();

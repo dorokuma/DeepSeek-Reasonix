@@ -7,6 +7,7 @@ import {
   isKnownNonCrashDiagnostic,
   namespaceReportFingerprint,
   normalizeForFingerprint,
+  Metrics,
   severityForReport,
 } from "./index";
 import { renderStats } from "./stats";
@@ -19,6 +20,46 @@ const base = {
   errorMessage: "boom",
   topFrame: "at render (assets/index.js:1:2)",
 };
+
+describe("metrics compatibility", () => {
+  it("drops unknown signals without rejecting known counters in the batch", () => {
+    const payload = {
+      version: "v1.17.16",
+      os: "darwin",
+      counters: [
+        { signal: "settings_auto_plan", bucket: "off", count: 1 },
+        { signal: "cache_hit", bucket: "90_100", count: 1 },
+      ],
+    };
+
+    const parsed = Metrics.safeParse(payload);
+    expect(parsed.success).toBe(true);
+    if (!parsed.success) return;
+    expect(parsed.data.counters).toEqual([{ signal: "cache_hit", bucket: "90_100", count: 1 }]);
+  });
+
+  it("accepts an all-unknown batch as an empty no-op", () => {
+    const parsed = Metrics.safeParse({
+      version: "v1.18.0",
+      os: "darwin",
+      counters: [{ signal: "future_signal", arbitrary: "future payload" }],
+    });
+
+    expect(parsed.success).toBe(true);
+    if (!parsed.success) return;
+    expect(parsed.data.counters).toEqual([]);
+  });
+
+  it("still rejects malformed counters for known signals", () => {
+    expect(
+      Metrics.safeParse({
+        version: "v1.18.0",
+        os: "darwin",
+        counters: [{ signal: "cache_hit", bucket: "not allowed", count: 1 }],
+      }).success,
+    ).toBe(false);
+  });
+});
 
 describe("diagnostic classification", () => {
   it("keeps development reports out of release crash priority", () => {

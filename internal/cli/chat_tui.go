@@ -1494,9 +1494,8 @@ func (m chatTUI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, finalize(m, cmds)
 			}
 
-			// `raw` is the un-resolved user prompt used for auto-plan scoring. It must
-			// be the EXPANDED paste content (sentLine), not the folded label (line), so
-			// downstream consumers of the raw turn never see just the placeholder label.
+			// Keep the expanded paste content as the raw turn, not the folded label,
+			// so downstream consumers never see just the placeholder label.
 			cmds = append(cmds, m.startTurnWithRaw(sentLine, sentLine, line, sentLine))
 			return m, finalize(m, cmds)
 		}
@@ -3508,9 +3507,9 @@ func (m *chatTUI) startTurn(sent, displayed, restore string) tea.Cmd {
 	return m.startTurnWithRaw(sent, displayed, restore, sent)
 }
 
-// startTurnWithRaw is startTurn plus an explicit `raw` (the un-resolved user
-// prompt) used only for the controller's auto-plan scoring, so resolved
-// @-reference payloads can't inflate the complexity signal.
+// startTurnWithRaw is startTurn plus an explicit unresolved user prompt. This
+// keeps reference-expanded model input separate from the text shown/restored by
+// the frontend.
 func (m *chatTUI) startTurnWithRaw(sent, displayed, restore, raw string) tea.Cmd {
 	return m.startControllerTurn(displayed, restore, func() { m.ctrl.SendWithRaw(sent, raw) })
 }
@@ -3872,9 +3871,6 @@ func (m *chatTUI) runSlashCommand(input string) tea.Cmd {
 	case "/work-mode", "/profile":
 		m.echoLocalCommand(input)
 		return m.runWorkModeCommand(input)
-	case "/auto-plan":
-		m.echoLocalCommand(input)
-		m.runAutoPlanCommand(input)
 	case "/reasoning-language":
 		m.echoLocalCommand(input)
 		m.runReasoningLanguageCommand(input)

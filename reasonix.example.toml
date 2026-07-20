@@ -28,9 +28,7 @@ ask_request = true   # notify when a question is waiting
 # system_prompt = "You are ..."   # custom persona/prompt; unset or empty = built-in default
 # system_prompt_file = "prompts/system.md"   # overrides system_prompt when set
 temperature       = 0.0
-auto_plan         = "off"   # user-level only; ignored in project reasonix.toml
 # reasoning_language = "auto"   # visible reasoning text: auto|zh|en
-# auto_plan_classifier = "deepseek-flash"   # optional; only used for borderline tasks
 # plan_mode_allowed_tools = ["mcp__legacy__reader"]   # legacy MCP read-only trust alias; does not change Plan availability
 # plan_mode_read_only_commands = ["gh issue view"]   # legacy compatibility only; Plan bash uses Permissions
 soft_compact_ratio  = 0.5   # notice only; keeps the cache-first prefix intact

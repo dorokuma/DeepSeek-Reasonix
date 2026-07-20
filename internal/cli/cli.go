@@ -1968,9 +1968,6 @@ func providersWithMissingKeys(cfg *config.Config) []config.ProviderEntry {
 		cfg.Agent.PlannerModel,
 		cfg.Agent.SubagentModel,
 	}
-	if !strings.EqualFold(strings.TrimSpace(cfg.Agent.AutoPlan), "off") {
-		refs = append(refs, cfg.Agent.AutoPlanClassifier)
-	}
 	if len(cfg.Agent.SubagentModels) > 0 {
 		keys := make([]string, 0, len(cfg.Agent.SubagentModels))
 		for key := range cfg.Agent.SubagentModels {
@@ -2139,7 +2136,7 @@ func configCommand(args []string) int {
 	}
 	switch args[0] {
 	case "auto-plan":
-		return configAutoPlanCommand(args[1:])
+		return configAutoPlanCompatibilityCommand(args[1:])
 	case "reasoning-language":
 		return configReasoningLanguageCommand(args[1:])
 	default:
@@ -2148,9 +2145,12 @@ func configCommand(args []string) int {
 	}
 }
 
-func configAutoPlanCommand(args []string) int {
+// configAutoPlanCompatibilityCommand preserves the released shell interface
+// without restoring Automatic Plan Mode. Reading and writing "off" are safe
+// no-ops; every attempt to enable the retired feature is rejected.
+func configAutoPlanCompatibilityCommand(args []string) int {
 	fs := flag.NewFlagSet("config auto-plan", flag.ContinueOnError)
-	local := fs.Bool("local", false, "unsupported; auto-plan is user-level only")
+	local := fs.Bool("local", false, "unsupported; automatic plan mode is retired")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -2160,39 +2160,19 @@ func configAutoPlanCommand(args []string) int {
 	}
 	rest := fs.Args()
 	if len(rest) > 1 {
-		configAutoPlanUsage()
+		configAutoPlanCompatibilityUsage()
 		return 2
 	}
 	if len(rest) == 0 {
-		cfg, err := config.Load()
-		if err != nil {
-			fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
-			return 1
-		}
-		mode := cfg.Agent.AutoPlan
-		mode = cliAutoPlanMode(mode)
-		fmt.Printf("auto_plan = %q\n", mode)
+		fmt.Println(`auto_plan = "off"`)
 		return 0
 	}
-	path := config.UserConfigPath()
-	if path == "" {
-		fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, "cannot resolve config path")
-		return 1
-	}
-	// Serialize the load-modify-save against other in-process user-config
-	// editors so concurrent writers don't drop each other's fields.
-	unlock := config.LockUserConfigEdits()
-	defer unlock()
-	cfg := config.LoadForEdit(path)
+	cfg := config.Default()
 	if err := cfg.SetAutoPlan(rest[0]); err != nil {
 		fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
 		return 2
 	}
-	if err := cfg.SaveTo(path); err != nil {
-		fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
-		return 1
-	}
-	fmt.Printf("auto_plan = %q (%s)\n", cfg.Agent.AutoPlan, displayPath(path))
+	fmt.Println(`auto_plan = "off"`)
 	return 0
 }
 
@@ -2265,14 +2245,13 @@ func configReasoningLanguageCommand(args []string) int {
 
 func configUsage() {
 	fmt.Print(`Usage:
-  reasonix config auto-plan [off|on]
   reasonix config reasoning-language [--local] [auto|zh|en]
 `)
 }
 
-func configAutoPlanUsage() {
+func configAutoPlanCompatibilityUsage() {
 	fmt.Print(`Usage:
-  reasonix config auto-plan [off|on]
+  reasonix config auto-plan [off]
 `)
 }
 

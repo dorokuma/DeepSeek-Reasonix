@@ -136,6 +136,7 @@ func loadForRoot(root string, migrateOnDisk bool) (*Config, error) {
 	normalizePluginCommandLines(cfg)
 	normalizeLegacyEffort(cfg)
 	cfg.ignoredLegacyStepLimits = normalizeLegacyAgentStepLimits(cfg)
+	normalizeRetiredAutoPlan(cfg)
 	normalizeLegacyMCPTiers(cfg)
 	normalizeLegacyStepFunBaseURLs(cfg)
 	normalizeLegacyLongCatContextWindows(cfg)
@@ -150,7 +151,6 @@ func loadForRoot(root string, migrateOnDisk bool) (*Config, error) {
 	if userDefaultModelExplicit {
 		restoreUnresolvableProjectDefaultModel(cfg, userDefaultModel)
 	}
-	cfg.Agent.AutoPlan = userAutoPlanMode()
 	cfg.CredentialsStore = credentialsStoreMode()
 	cfg.setExpansionEnv(expansionEnv)
 	resolveProviderCredentialsForRoot(root, cfg)
@@ -221,19 +221,6 @@ func cloneStringMap(in map[string]string) map[string]string {
 		out[k] = v
 	}
 	return out
-}
-
-func userAutoPlanMode() string {
-	cfg := Default()
-	if uc := userConfigLoadPath(); uc != "" {
-		_ = mergeFile(cfg, uc)
-	}
-	switch strings.ToLower(strings.TrimSpace(cfg.Agent.AutoPlan)) {
-	case "on", "ask":
-		return "on"
-	default:
-		return "off"
-	}
 }
 
 // restoreUnresolvableProjectDefaultModel falls back to the user/global
@@ -674,8 +661,9 @@ func normalizeConfigForEdit(cfg *Config) bool {
 	normalizePluginCommandLines(cfg)
 	normalizeLegacyEffort(cfg)
 	normalizeLegacyAgentStepLimits(cfg)
+	changed := normalizeRetiredAutoPlan(cfg)
 	normalizeLegacyMCPTiers(cfg)
-	changed := normalizeLegacyStepFunBaseURLs(cfg)
+	changed = normalizeLegacyStepFunBaseURLs(cfg) || changed
 	changed = normalizeLegacyLongCatContextWindows(cfg) || changed
 	changed = normalizeLegacyMimoCustomProviders(cfg) || changed
 	normalizeLegacyProviderModels(cfg)
@@ -683,6 +671,20 @@ func normalizeConfigForEdit(cfg *Config) bool {
 	applyDeepSeekOfficialDefaultPricing(cfg)
 	backfillDeepSeekOfficialPrices(cfg)
 	normalizeEffortConfig(cfg)
+	return changed
+}
+
+// normalizeRetiredAutoPlan keeps pre-v5 configs readable while enforcing the
+// single explicit-plan experience. The deprecated fields remain in AgentConfig
+// only so old TOML and older desktop payloads decode safely.
+func normalizeRetiredAutoPlan(c *Config) bool {
+	if c == nil {
+		return false
+	}
+	changed := strings.TrimSpace(c.Agent.AutoPlan) != "" && !strings.EqualFold(strings.TrimSpace(c.Agent.AutoPlan), "off") ||
+		strings.TrimSpace(c.Agent.AutoPlanClassifier) != ""
+	c.Agent.AutoPlan = "off"
+	c.Agent.AutoPlanClassifier = ""
 	return changed
 }
 
@@ -1378,7 +1380,6 @@ func legacyMimoConfigRefs(c *Config) []string {
 		c.DefaultModel,
 		c.Agent.PlannerModel,
 		c.Agent.SubagentModel,
-		c.Agent.AutoPlanClassifier,
 		c.Bot.Model,
 	}
 	for _, ref := range c.Agent.SubagentModels {
@@ -1520,7 +1521,6 @@ func NormalizeLegacyDesktopProviderAccess(c *Config) {
 	addRef(c.DefaultModel)
 	addRef(c.Agent.PlannerModel)
 	addRef(c.Agent.SubagentModel)
-	addRef(c.Agent.AutoPlanClassifier)
 	for _, ref := range c.Agent.SubagentModels {
 		addRef(ref)
 	}
@@ -1708,7 +1708,6 @@ func retargetDesktopOfficialRefs(c *Config, access map[string]bool) {
 	c.DefaultModel = retargetDesktopOfficialRef(c.DefaultModel, access)
 	c.Agent.PlannerModel = retargetDesktopOfficialRef(c.Agent.PlannerModel, access)
 	c.Agent.SubagentModel = retargetDesktopOfficialRef(c.Agent.SubagentModel, access)
-	c.Agent.AutoPlanClassifier = retargetDesktopOfficialRef(c.Agent.AutoPlanClassifier, access)
 	for skill, ref := range c.Agent.SubagentModels {
 		c.Agent.SubagentModels[skill] = retargetDesktopOfficialRef(ref, access)
 	}

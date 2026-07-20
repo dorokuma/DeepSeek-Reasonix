@@ -32,6 +32,10 @@ branch.
 
 ### Changed
 
+- Automatic Plan Mode has been retired. Plan Mode is now always entered through
+  an explicit user choice, and the one-time config v5 upgrade removes legacy
+  `agent.auto_plan` and `agent.auto_plan_classifier` values so upgraded users
+  receive the same behavior as new users.
 - `Shift+Tab` now cycles CLI safe modes from Ask to Auto to Plan, while YOLO
   remains an independent `Ctrl+Y` toggle.
 - Model, provider, resume, and approval menus now use consistent row selection;

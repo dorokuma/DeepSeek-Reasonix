@@ -381,8 +381,8 @@ func (p Policy) Decide(toolName string, readOnly bool, args json.RawMessage) Dec
   permission prompts for approval-gated tools such as writers and Bash. Explicit
   deny rules and forced fresh reviews still apply.
   Neither posture answers `ask` questions or approves `exit_plan_mode` plans.
-  Auto-plan is also a separate feature flag: when enabled, a complex task may
-  still enter plan mode in any tool approval posture. After a user approves a
+  Plan Mode is entered only through an explicit user choice and remains
+  independent of the active tool-approval posture. After a user approves a
   plan, the controller opens a short `approvedPlanAutoApproveTools` execution
   window so the model can perform the approved writes without re-prompting; that
   transient window still does not auto-approve future plans. In headless `ask`

@@ -67,8 +67,6 @@ reasoning_language = "auto"      # visible reasoning text: auto|zh|en
 # max_subagent_depth = 2              # nested delegation depth; set 1 for the old single-layer boundary
 # max_subagent_concurrency = 6        # session-wide sub-agent concurrency (task/fleet/skills)
 # max_parallel_writers = 3            # concurrent writers with non-overlapping write_paths
-auto_plan = "off"                  # user-level only; off|on; off keeps plan mode manual
-# auto_plan_classifier = "deepseek-flash"   # optional; only borderline tasks call it
 tool_result_snip_ratio = 0.6       # shorten stale tool output before summary compaction
 
 [[providers]]
@@ -770,7 +768,7 @@ convenient.
 In an interactive `reasonix` session, built-in commands (`/compact`, `/new`, `/clear`, `/rewind`,
 `/tree`, `/branch`, `/switch`, `/todo`, `/model`, `/work-mode`, `/mcp`, `/skills`, `/hooks`,
 `/memory`, `/goal`, `/output-style`, `/sandbox`, `/language`,
-`/auto-plan`, `/reasoning-language`, `/help`) run
+`/reasoning-language`, `/help`) run
 locally — `/help` lists them all. Built-in **skills** such as `/init`,
 `/explore`, `/test`, and `/reasonix-guide` also appear in the slash menu and via
 `run_skill` (bodies load on demand; only the index line is cache-stable). Use
@@ -1043,17 +1041,14 @@ surface changes again.
 Desktop tabs expose the same three choices and persist Economy or Delivery;
 legacy empty/`full` values remain Balanced.
 
-For interactive frontends, plan mode is manual by default. Set
-`agent.auto_plan = "on"` to make complex-looking tasks enter plan mode
-automatically: Reasonix first drafts a plan, then waits for approval before the
-workflow switches to implementation. Tool calls made while drafting still use
-the current Permissions and Sandbox. `auto_plan_classifier` can
-name a cheap provider such as `deepseek-flash`; it is only called for borderline
-inputs and falls back to the heuristic if classification fails. Use
-`/auto-plan off|on` inside `reasonix` to change the user-level setting, or
-`reasonix config auto-plan off|on` from a shell/script. Auto-plan is user-level
-only; `agent.auto_plan` in a project `reasonix.toml` is ignored. The visible
-reasoning language uses a similar shape: `/reasoning-language auto|zh|en` in the
+For interactive frontends, Plan Mode is always an explicit user choice. Select
+Plan in the desktop collaboration-mode control or cycle to Plan with
+`Shift+Tab` in the CLI. Reasonix first drafts a plan, then waits for approval
+before the workflow switches to implementation. Tool calls made while drafting
+still use the current Permissions and Sandbox. Legacy `agent.auto_plan` and
+`agent.auto_plan_classifier` values are ignored and removed from the user config
+during upgrade. The visible reasoning language can be changed with
+`/reasoning-language auto|zh|en` in the
 session, or `reasonix config reasoning-language auto|zh|en` in a shell/script.
 Pass `--local`
 to the reasoning-language shell command only when you intentionally want a

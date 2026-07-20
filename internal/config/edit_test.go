@@ -374,24 +374,18 @@ func TestSetPlannerModel(t *testing.T) {
 	}
 }
 
-func TestSetAutoPlan(t *testing.T) {
+func TestSetAutoPlanRejectsRetiredModes(t *testing.T) {
 	c := Default()
-	for _, mode := range []string{"on", "off"} {
-		if err := c.SetAutoPlan(mode); err != nil {
-			t.Fatalf("SetAutoPlan(%q): %v", mode, err)
+	if err := c.SetAutoPlan("off"); err != nil {
+		t.Fatalf("SetAutoPlan(off): %v", err)
+	}
+	if c.Agent.AutoPlan != "off" || c.Agent.AutoPlanClassifier != "" {
+		t.Fatalf("retired auto-plan state = (%q, %q), want off/empty", c.Agent.AutoPlan, c.Agent.AutoPlanClassifier)
+	}
+	for _, mode := range []string{"on", "ask", "auto"} {
+		if err := c.SetAutoPlan(mode); err == nil || !strings.Contains(err.Error(), "retired") {
+			t.Fatalf("SetAutoPlan(%q) err = %v, want retired error", mode, err)
 		}
-		if c.Agent.AutoPlan != mode {
-			t.Fatalf("auto_plan = %q, want %q", c.Agent.AutoPlan, mode)
-		}
-	}
-	if err := c.SetAutoPlan("ask"); err != nil {
-		t.Fatalf("legacy ask should be accepted: %v", err)
-	}
-	if c.Agent.AutoPlan != "on" {
-		t.Fatalf("legacy ask should save as on, got %q", c.Agent.AutoPlan)
-	}
-	if err := c.SetAutoPlan("auto"); err == nil {
-		t.Fatal("expected error for invalid auto_plan mode")
 	}
 }
 

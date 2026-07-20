@@ -107,20 +107,14 @@ type Controller struct {
 	// memory owns the loaded memory snapshot, the pending turn-tail notes queue,
 	// and write serialization behind its own locks, off c.mu — so a memory-panel
 	// save never stalls an approval or status poll. See memory.go.
-	memory   memoryManager
-	cleanup  func()
-	autoPlan string
-	// suppressAutoPlan is set when the user declines a plan approval after
-	// already switching plan mode off. It makes the next maybeAutoPlan a no-op
-	// so auto-plan cannot immediately re-enter the mode the user just left.
-	suppressAutoPlan  bool
+	memory            memoryManager
+	cleanup           func()
 	responseLanguage  string
 	reasoningLanguage string
 	// disableColdResumePrune skips stale-tool-result elision on cold resume.
 	// Zero value keeps the prune on (the cheaper default).
 	disableColdResumePrune            bool
-	shell                             sandbox.Shell // interpreter for user-invoked "!" commands; zero = auto
-	classifier                        autoPlanClassifier
+	shell                             sandbox.Shell                    // interpreter for user-invoked "!" commands; zero = auto
 	startedOnce                       bool                             // guards the one-shot SessionStart hook on first turn
 	closeOnce                         sync.Once                        // makes close idempotent under racing teardown paths
 	onRemember                        func(rule string) RememberResult // set via Options; invoked when user picks "always allow"
@@ -400,7 +394,6 @@ type Options struct {
 	// no confinement). Frontends pass the cwd they launched the session in.
 	WorkspaceRoot          string
 	ExternalFolderToolRefs externalFolderToolRefs
-	AutoPlan               string
 	// ResponseLanguage controls final-answer language preference. Empty/auto
 	// means no transient injection because the stable language policy follows the
 	// current user turn.
@@ -415,8 +408,7 @@ type Options struct {
 	DisableColdResumePrune bool
 	// Shell is the interpreter user-invoked "!" commands run under, so /shell
 	// matches the agent's configured [tools.shell] choice. Zero value = auto.
-	Shell      sandbox.Shell
-	Classifier autoPlanClassifier
+	Shell sandbox.Shell
 	// OnRemember, when set, is invoked with a new allow rule the user chose to
 	// persist to disk (e.g. "Bash(go test:*)"). The callback is wired into the
 	// permission Gate on EnableInteractiveApproval.
@@ -451,10 +443,6 @@ func New(opts Options) *Controller {
 	if nilutil.IsNil(sink) {
 		sink = event.Discard
 	}
-	classifier := opts.Classifier
-	if nilutil.IsNil(classifier) {
-		classifier = nil
-	}
 	pluginCtx := opts.PluginCtx
 	if pluginCtx == nil {
 		pluginCtx = context.Background()
@@ -487,12 +475,10 @@ func New(opts Options) *Controller {
 		hooks:                             opts.Hooks,
 		memory:                            newMemoryManager(opts.Memory),
 		cleanup:                           opts.Cleanup,
-		autoPlan:                          normalizeAutoPlan(opts.AutoPlan),
 		responseLanguage:                  config.NormalizeLanguage(opts.ResponseLanguage),
 		reasoningLanguage:                 config.NormalizeReasoningLanguage(opts.ReasoningLanguage),
 		disableColdResumePrune:            opts.DisableColdResumePrune,
 		shell:                             opts.Shell,
-		classifier:                        classifier,
 		onRemember:                        opts.OnRemember,
 		onRememberPlanModeReadOnlyCommand: opts.OnRememberPlanModeReadOnlyCommand,
 		sessionRecoveryMeta:               opts.SessionRecoveryMeta,
@@ -788,16 +774,12 @@ func turnOutcome(err error) string {
 }
 
 // Send starts a turn with an uncomposed message. The controller applies
-// auto-plan, plan-mode, memory, and background-job framing inside the async turn
-// path so frontends do not block on classifier I/O.
+// plan-mode, memory, and background-job framing inside the async turn path.
 func (c *Controller) Send(input string) {
 	c.SendWithRaw(input, input)
 }
 
-// SendWithRaw starts a turn with separate model input and raw prompt text. The
-// raw prompt is used only for auto-plan scoring; it deliberately excludes
-// resolved @-reference payloads so referenced file contents cannot inflate the
-// complexity score.
+// SendWithRaw starts a turn with separate model input and raw prompt text.
 func (c *Controller) SendWithRaw(input, raw string) {
 	c.runGuarded(func(ctx context.Context) error { return c.runGoalLoopWithRaw(ctx, input, raw) })
 }
@@ -837,7 +819,7 @@ func (c *Controller) runTurn(ctx context.Context, input string) error {
 }
 
 // RunTurn executes one foreground turn synchronously through the same lifecycle
-// used by interactive frontends: auto-plan, transient memory/background-job
+// used by interactive frontends: transient memory/background-job
 // composition, checkpoints, hooks, and plan approval. It is for transports that
 // need a blocking request/response boundary, such as ACP session/prompt.
 func (c *Controller) RunTurn(ctx context.Context, input string) error {
@@ -2070,13 +2052,6 @@ func (c *Controller) applyPlanMode(v bool) {
 	}
 }
 
-// SetAutoPlan updates the interactive auto-plan gate for subsequent turns.
-func (c *Controller) SetAutoPlan(mode string) {
-	c.mu.Lock()
-	c.autoPlan = normalizeAutoPlan(mode)
-	c.mu.Unlock()
-}
-
 // SetResponseLanguage updates the final-answer language preference for
 // subsequent turns.
 func (c *Controller) SetResponseLanguage(lang string) {
@@ -2106,7 +2081,7 @@ func (c *Controller) SetReasoningLanguage(lang string) {
 }
 
 // PlanMode reports whether outgoing turns currently receive the plan-mode
-// marker. Frontends use it after Compose because auto-plan may flip the mode.
+// marker.
 func (c *Controller) PlanMode() bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()

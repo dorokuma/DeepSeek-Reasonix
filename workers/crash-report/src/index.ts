@@ -81,8 +81,8 @@ const Ping = z.object({
 });
 
 // Opt-in aggregate desktop metrics: a per-launch snapshot of (signal, bucket)
-// counters. No install id, no content — just enumerated signals and bounded
-// buckets so the worker table can never be polluted with arbitrary keys.
+// counters. No install id, no content — unknown signals are discarded before
+// storage so older workers can accept batches from newer clients safely.
 const METRIC_SIGNALS = [
   "finish_reason",
   "empty_final",
@@ -102,7 +102,6 @@ const METRIC_SIGNALS = [
   "settings_theme_style",
   "settings_close_behavior",
   "settings_display_mode",
-  "settings_auto_plan",
   "settings_status_bar_style",
   "settings_status_bar_items_count",
   "settings_check_updates",
@@ -130,7 +129,32 @@ const METRIC_SIGNALS = [
   "settings_bot_connection_approval",
 ] as const;
 
-const Metrics = z.object({
+type MetricSignal = (typeof METRIC_SIGNALS)[number];
+
+const METRIC_SIGNAL_SET: ReadonlySet<string> = new Set(METRIC_SIGNALS);
+
+const KnownMetricCounter = z.object({
+  signal: z.enum(METRIC_SIGNALS),
+  bucket: z
+    .string()
+    .min(1)
+    .max(96)
+    .regex(/^[a-z0-9_]+$/),
+  count: z.number().int().min(1).max(1_000_000),
+});
+
+const UnknownMetricCounter = z
+  .object({
+    signal: z
+      .string()
+      .min(1)
+      .max(96)
+      .refine((signal) => !METRIC_SIGNAL_SET.has(signal)),
+  })
+  .passthrough()
+  .transform(() => null);
+
+export const Metrics = z.object({
   installId: z
     .string()
     .regex(/^[0-9a-f]{32}$/)
@@ -138,19 +162,14 @@ const Metrics = z.object({
   version: z.string().min(1).max(64),
   os: z.string().min(1).max(32),
   counters: z
-    .array(
-      z.object({
-        signal: z.enum(METRIC_SIGNALS),
-        bucket: z
-          .string()
-          .min(1)
-          .max(96)
-          .regex(/^[a-z0-9_]+$/),
-        count: z.number().int().min(1).max(1_000_000),
-      }),
-    )
+    .array(z.union([KnownMetricCounter, UnknownMetricCounter]))
     .min(1)
-    .max(128),
+    .max(128)
+    .transform((counters) =>
+      counters.filter(
+        (counter): counter is z.infer<typeof KnownMetricCounter> & { signal: MetricSignal } => counter !== null,
+      ),
+    ),
 });
 
 type FingerprintInput = {
@@ -514,6 +533,7 @@ async function handleMetrics(request: Request, env: Env): Promise<Response> {
   const parsed = Metrics.safeParse(raw);
   if (!parsed.success) return new Response("bad request", { status: 400 });
   const m = parsed.data;
+  if (m.counters.length === 0) return new Response("ok", { status: 202 });
 
   const upsert = env.DB.prepare(
     `INSERT INTO metrics (date, version, os, signal, bucket, count)

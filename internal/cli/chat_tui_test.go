@@ -2048,65 +2048,6 @@ func TestEffortCommandAutoClearsProviderEffort(t *testing.T) {
 	}
 }
 
-func TestAutoPlanCommandPersistsAndUpdatesController(t *testing.T) {
-	isolateUserConfig(t)
-
-	runner := &recordingTurnRunner{}
-	events := make(chan event.Event, 4)
-	ctrl := control.New(control.Options{
-		AutoPlan: "off",
-		Runner:   runner,
-		Sink: event.FuncSink(func(e event.Event) {
-			events <- e
-		}),
-	})
-	m := newTestChatTUI()
-	m.ctrl = ctrl
-
-	m.runAutoPlanCommand("/auto-plan on")
-
-	body, err := os.ReadFile(config.UserConfigPath())
-	if err != nil {
-		t.Fatalf("read saved config: %v", err)
-	}
-	if !strings.Contains(string(body), `auto_plan   = "on"`) {
-		t.Fatalf("saved config missing auto_plan=on:\n%s", body)
-	}
-	input := "实现 GitHub issue #2395：\n- 新增配置项\n- 自动判断复杂任务\n- 补测试和文档"
-	ctrl.Send(input)
-	waitForCLIEvent(t, events, event.TurnDone)
-	if len(runner.inputs) != 1 || !strings.HasPrefix(agent.StripTransientUserBlocks(runner.inputs[0]), control.PlanModeMarker) {
-		t.Fatalf("/auto-plan on should affect current controller, inputs=%q", runner.inputs)
-	}
-}
-
-func TestAutoPlanCommandWritesUserConfigNotProjectConfig(t *testing.T) {
-	isolateUserConfig(t)
-	projectPath := filepath.Join(mustGetwd(t), "reasonix.toml")
-	if err := os.WriteFile(projectPath, []byte("[agent]\nauto_plan = \"off\"\n"), 0o644); err != nil {
-		t.Fatalf("write project config: %v", err)
-	}
-
-	m := newTestChatTUI()
-	m.ctrl = control.New(control.Options{AutoPlan: "off"})
-	m.runAutoPlanCommand("/auto-plan on")
-
-	userBody, err := os.ReadFile(config.UserConfigPath())
-	if err != nil {
-		t.Fatalf("read user config: %v", err)
-	}
-	if !strings.Contains(string(userBody), `auto_plan   = "on"`) {
-		t.Fatalf("user config missing auto_plan=on:\n%s", userBody)
-	}
-	projectBody, err := os.ReadFile(projectPath)
-	if err != nil {
-		t.Fatalf("read project config: %v", err)
-	}
-	if string(projectBody) != "[agent]\nauto_plan = \"off\"\n" {
-		t.Fatalf("/auto-plan should not rewrite project config:\n%s", projectBody)
-	}
-}
-
 func TestReasoningLanguageCommandPersistsAndUpdatesController(t *testing.T) {
 	isolateUserConfig(t)
 
@@ -2978,9 +2919,8 @@ func TestStrongResearchPromptStaysInOrdinaryMode(t *testing.T) {
 	r := &recordingTurnRunner{}
 	events := make(chan event.Event, 8)
 	ctrl := control.New(control.Options{
-		AutoPlan: "off",
-		Runner:   r,
-		Sink:     event.FuncSink(func(e event.Event) { events <- e }),
+		Runner: r,
+		Sink:   event.FuncSink(func(e event.Event) { events <- e }),
 	})
 	m := newTestChatTUI()
 	m.ctrl = ctrl
@@ -3011,9 +2951,8 @@ func TestSlashCodeCommentSubmitStartsTurn(t *testing.T) {
 			r := &recordingTurnRunner{}
 			events := make(chan event.Event, 8)
 			ctrl := control.New(control.Options{
-				AutoPlan: "off",
-				Runner:   r,
-				Sink:     event.FuncSink(func(e event.Event) { events <- e }),
+				Runner: r,
+				Sink:   event.FuncSink(func(e event.Event) { events <- e }),
 			})
 			m := newTestChatTUI()
 			m.ctrl = ctrl
@@ -3033,9 +2972,8 @@ func TestSlashCodeCommentSubmitStartsTurn(t *testing.T) {
 func TestUnknownSlashCommandDoesNotStartTurn(t *testing.T) {
 	r := &recordingTurnRunner{}
 	ctrl := control.New(control.Options{
-		AutoPlan: "off",
-		Runner:   r,
-		Sink:     event.FuncSink(func(event.Event) {}),
+		Runner: r,
+		Sink:   event.FuncSink(func(event.Event) {}),
 	})
 	m := newTestChatTUI()
 	m.ctrl = ctrl

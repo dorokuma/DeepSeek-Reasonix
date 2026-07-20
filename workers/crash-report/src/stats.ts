@@ -185,7 +185,6 @@ const METRIC_SIGNAL_LABELS: Record<string, { en: string; zh: string }> = {
   settings_theme_style: { en: "Settings: theme style", zh: "设置：主题" },
   settings_close_behavior: { en: "Settings: close behavior", zh: "设置：关闭行为" },
   settings_display_mode: { en: "Settings: transcript mode", zh: "设置：会话展示" },
-  settings_auto_plan: { en: "Settings: auto plan", zh: "设置：自动计划" },
   settings_status_bar_style: { en: "Settings: status bar style", zh: "设置：信息栏样式" },
   settings_status_bar_items_count: { en: "Settings: status bar items", zh: "设置：信息栏项数" },
   settings_check_updates: { en: "Settings: update checks", zh: "设置：更新检查" },
@@ -264,7 +263,7 @@ const SETTINGS_METRIC_GROUPS: { en: string; zh: string; signals: string[] }[] = 
   {
     en: "Behavior toggles",
     zh: "行为开关",
-    signals: ["settings_close_behavior", "settings_auto_plan", "settings_check_updates"],
+    signals: ["settings_close_behavior", "settings_check_updates"],
   },
   {
     en: "Bots",
