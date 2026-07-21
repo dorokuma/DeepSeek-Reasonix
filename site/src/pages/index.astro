@@ -6,6 +6,9 @@ import community from '../data/community.json';
 const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 const R2_LATEST = 'https://dl.reasonix.io/latest';
 const repo = 'https://github.com/esengine/DeepSeek-Reasonix';
+const vscodeMarketplace = 'https://marketplace.visualstudio.com/items?itemName=SivanLiu.reasonix-agent';
+const openVsx = 'https://open-vsx.org/extension/SivanLiu/reasonix-agent';
+const vscodeExtensionRepo = 'https://github.com/SivanCola/reasonix-vscode';
 
 let desktopVersion = 'v1.1.0';
 let goVer = '1.1.0';
@@ -76,7 +79,32 @@ const ld = {
           <span class="install"><span class="ps1">$</span>npm i -g reasonix<button data-copy="npm i -g reasonix">Copy</button></span>
         </div>
       </div>
-      <div class="also reveal" style="--d:0.22s"><span class="l-en">Prefer package managers? Use <a href="#start" data-goto="brew">Homebrew</a>. Need a local browser UI? Run <code>reasonix serve</code>. Integrating an editor? Start <code>reasonix acp</code> and read the <a href={`${base}/docs/#acp`}>ACP guide</a>.</span><span class="l-zh">偏好包管理器? 可用 <a href="#start" data-goto="brew">Homebrew</a>。需要本地浏览器 UI? 运行 <code>reasonix serve</code>。接入编辑器时启动 <code>reasonix acp</code>，并查看 <a href={`${base}/docs/#acp`}>ACP 指南</a>。</span></div>
+      <nav class="also reveal" style="--d:0.22s" aria-label="More ways to use Reasonix / 更多使用方式">
+        <span class="l-en also-row">
+          <strong class="also-label">More ways to use Reasonix:</strong>
+          <span class="also-links">
+            <a href="?download=vscode#start" data-goto="vscode">Editor extension</a>
+            <span class="also-sep" aria-hidden="true">·</span>
+            <a href="#start" data-goto="brew">Homebrew</a>
+            <span class="also-sep" aria-hidden="true">·</span>
+            <span>Local Web UI: <code>reasonix serve</code></span>
+            <span class="also-sep" aria-hidden="true">·</span>
+            <a href={`${base}/docs/#acp`}>ACP editor integration</a>
+          </span>
+        </span>
+        <span class="l-zh also-row">
+          <strong class="also-label">更多使用方式：</strong>
+          <span class="also-links">
+            <a href="?download=vscode#start" data-goto="vscode">编辑器扩展</a>
+            <span class="also-sep" aria-hidden="true">·</span>
+            <a href="#start" data-goto="brew">Homebrew</a>
+            <span class="also-sep" aria-hidden="true">·</span>
+            <span>本地 Web UI：<code>reasonix serve</code></span>
+            <span class="also-sep" aria-hidden="true">·</span>
+            <a href={`${base}/docs/#acp`}>ACP 编辑器接入</a>
+          </span>
+        </span>
+      </nav>
 
       <div class="term-stage reveal" style="--d:0.26s">
         <div class="fig"><span class="l-en">fig. 01 — a live session, cache still warm</span><span class="l-zh">图 01 —— 一场实时会话,缓存依然温热</span></div>
@@ -127,7 +155,7 @@ const ld = {
         <div class="feat reveal" style="--d:0.1s">
           <span class="tag">06 / cli + web + acp</span>
           <h3><span class="l-en">Terminal, browser, or editor</span><span class="l-zh">终端、浏览器或编辑器</span></h3>
-          <p><span class="l-en">Use the full-screen TUI, run <code>reasonix serve</code> for a local browser UI, or launch <code>reasonix acp</code> from an ACP-compatible editor. Every surface uses the same local engine.</span><span class="l-zh">使用全屏 TUI、通过 <code>reasonix serve</code> 打开本地浏览器 UI，或从兼容 ACP 的编辑器启动 <code>reasonix acp</code>；所有入口都使用同一套本地引擎。</span></p>
+          <p><span class="l-en">Use the full-screen TUI, run <code>reasonix serve</code> for a local browser UI, <a href="?download=vscode#start" data-goto="vscode">install the Reasonix VS Code extension</a>, or connect another ACP-compatible editor through <code>reasonix acp</code>. Every surface uses the same local engine.</span><span class="l-zh">使用全屏 TUI、通过 <code>reasonix serve</code> 打开本地浏览器 UI、<a href="?download=vscode#start" data-goto="vscode">安装 Reasonix VS Code 扩展</a>，或通过 <code>reasonix acp</code> 连接其他兼容 ACP 的编辑器；所有入口都使用同一套本地引擎。</span></p>
           <code class="feat-chip">$ reasonix acp</code>
         </div>
       </div>
@@ -252,6 +280,7 @@ const ld = {
         <button class="dl-tab active" type="button" data-pane="desktop" role="tab"><span class="l-en">Desktop</span><span class="l-zh">桌面端</span></button>
         <button class="dl-tab" type="button" data-pane="npm" role="tab">npm</button>
         <button class="dl-tab" type="button" data-pane="brew" role="tab">Homebrew</button>
+        <button class="dl-tab" type="button" data-pane="vscode" role="tab"><span class="l-en">Editor extension</span><span class="l-zh">编辑器扩展</span></button>
       </div>
 
       <div class="dl-pane active" data-pane="desktop">
@@ -292,6 +321,23 @@ const ld = {
           <button type="button" data-copy="sudo xattr -rd com.apple.quarantine /Applications/Reasonix.app">Copy</button>
           <a href={`${base}/docs/#macos-quarantine`}><span class="l-en">When to use this →</span><span class="l-zh">查看适用场景 →</span></a>
         </div>
+      </div>
+
+      <div class="dl-pane" data-pane="vscode">
+        <div class="os-grid editor-grid">
+          <div class="os-card editor-card editor-card--primary">
+            <span class="os-chip"><span class="l-en">recommended</span><span class="l-zh">推荐</span></span>
+            <h4>Visual Studio Marketplace</h4>
+            <span class="meta"><span class="l-en">For Microsoft Visual Studio Code</span><span class="l-zh">适用于微软 Visual Studio Code</span></span>
+            <a class="btn btn-dark" href={vscodeMarketplace} target="_blank" rel="noreferrer"><span class="l-en">Install extension</span><span class="l-zh">安装扩展</span></a>
+          </div>
+          <div class="os-card editor-card">
+            <h4>Open VSX Registry</h4>
+            <span class="meta"><span class="l-en">For VSCodium, Eclipse Theia, and compatible editors</span><span class="l-zh">适用于 VSCodium、Eclipse Theia 及兼容编辑器</span></span>
+            <a class="btn btn-light" href={openVsx} target="_blank" rel="noreferrer"><span class="l-en">Install from Open VSX</span><span class="l-zh">从 Open VSX 安装</span></a>
+          </div>
+        </div>
+        <div class="dl-note editor-note"><span class="l-en">Extension ID <code>SivanLiu.reasonix-agent</code> · requires Reasonix 1.0+ installed and configured locally · the extension connects to <code>reasonix acp</code> and does not bundle the CLI · <a href={vscodeExtensionRepo}>source code →</a></span><span class="l-zh">扩展 ID <code>SivanLiu.reasonix-agent</code> · 需要先在本机安装并配置 Reasonix 1.0+ · 扩展连接 <code>reasonix acp</code>，不内置 CLI · <a href={vscodeExtensionRepo}>查看源码 →</a></span></div>
       </div>
 
       <div class="dl-pane" data-pane="npm">

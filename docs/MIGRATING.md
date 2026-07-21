@@ -141,7 +141,10 @@ and DeepSeek prefix-cache–oriented design.
   not write resumable transcripts, and keep writer-capable `task` / `run_skill`
   out of those explicitly read-only child registries. Ordinary writer-capable
   delegation in Plan uses Permissions/Sandbox.
-- **No web dashboard** — the v2 line is terminal + desktop (Wails), by design.
+- **Web dashboard remains available; desktop is recommended**: run
+  `reasonix serve` when a local browser UI is useful. For the primary visual
+  experience, prefer the Wails desktop app; CLI/TUI remains the terminal-native
+  path.
 - Some granular v1 tools are intentionally consolidated (e.g. file-management ops
   go through `bash`); a few v1 tools are not yet ported (tracked on Discussions).
 

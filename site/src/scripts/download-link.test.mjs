@@ -14,6 +14,7 @@ test("plain install links preserve the default pane", () => {
 test("recognized download panes are strict", () => {
   assert.equal(downloadPaneFromURL("/?download=brew#start"), "brew");
   assert.equal(downloadPaneFromURL("/?download=npm#start"), "npm");
+  assert.equal(downloadPaneFromURL("/?download=vscode#start"), "vscode");
   assert.equal(downloadPaneFromURL("/?download=DESKTOP#start"), "");
   assert.equal(downloadPaneFromURL("/?download=unknown#start"), "");
   assert.equal(downloadPaneFromURL("not a url", "not a base"), "");

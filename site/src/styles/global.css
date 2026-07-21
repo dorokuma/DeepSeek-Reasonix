@@ -231,9 +231,22 @@ body[data-lang="zh"] .hero h1 { font-size: clamp(42px, 5.6vw, 72px); line-height
 }
 .install button.copied { background: oklch(0.55 0.14 155); color: #fff; }
 
-.also { margin-top: 22px; font-size: 14px; color: var(--ink-3); }
-.also a { color: var(--accent); text-decoration: none; font-weight: 500; }
-.also a:hover { text-decoration: underline; }
+.also {
+  max-width: 940px; margin: 22px auto 0;
+  font-size: 14px; line-height: 1.8; color: var(--ink-2);
+}
+.also-row { display: flex; align-items: baseline; justify-content: center; gap: 12px; }
+.also-label { flex: none; color: var(--ink); font-weight: 600; }
+.also-links { display: flex; align-items: baseline; justify-content: center; gap: 0 11px; flex-wrap: wrap; }
+.also-sep { color: var(--ink-3); }
+.also code { color: var(--ink-2); font-size: 0.92em; }
+.also a {
+  color: var(--accent); font-weight: 500;
+  text-decoration: underline; text-decoration-color: color-mix(in oklch, var(--accent) 38%, transparent);
+  text-underline-offset: 3px;
+}
+.also a:hover { text-decoration-color: currentColor; }
+.also a:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 3px; }
 
 /* 404 — CTA row + "gone cold" cache blocks */
 .hero-cta { margin-top: 38px; display: flex; justify-content: center; gap: 14px; flex-wrap: wrap; }
@@ -610,6 +623,15 @@ body.how-flat .how-stage { position: static; min-height: 0; display: block; }
 }
 .os-card .alt a { color: var(--accent); text-decoration: none; font-weight: 500; }
 .os-card .alt a:hover { text-decoration: underline; }
+.editor-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); max-width: 760px; }
+.editor-card { min-height: 190px; }
+.editor-card--primary {
+  background: linear-gradient(180deg, color-mix(in oklch, var(--accent) 10%, var(--card)), var(--card) 82%);
+  border: 1px solid color-mix(in oklch, var(--accent) 24%, var(--line));
+}
+.editor-card .btn { margin-top: auto; align-self: flex-start; }
+.editor-note { max-width: 820px; margin-inline: auto; line-height: 1.65; }
+.editor-note code { font-family: var(--font-mono); font-size: 12px; color: var(--ink-2); }
 .btn-light { background: var(--accent-soft); color: var(--accent); }
 .btn-light:hover { background: color-mix(in oklch, var(--accent) 16%, var(--bg)); }
 .dl-help {
@@ -942,6 +964,10 @@ footer { background: var(--bg); border-top: 1px solid var(--line); margin-top: 0
   .theme-switch button { padding: 6px 9px; }
   .docs-path-grid { grid-template-columns: 1fr; }
   .docs-main h1 { font-size: 34px; }
+  .dl-tabs {
+    display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));
+    width: 100%; max-width: 360px; border-radius: var(--radius-sm);
+  }
   .hero-install { --hero-action-width: 100%; }
   .install-option { padding: 18px; }
   .hero-install .install {
@@ -951,6 +977,8 @@ footer { background: var(--bg); border-top: 1px solid var(--line); margin-top: 0
     border-radius: 24px;
   }
   .hero-install .install button { flex-basis: 100%; }
+  .also-row { align-items: center; flex-direction: column; gap: 4px; }
+  .also-links { gap: 0 8px; }
 }
 
 @media (max-width: 360px) {
