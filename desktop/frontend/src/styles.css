@@ -4809,6 +4809,159 @@ a[href] {
 .code-block__wrap {
   position: relative;
 }
+.code-block__wrap--search-open .code-block__copy {
+  top: 42px;
+}
+
+/* ── line-numbered code viewer ─────────────────────────────────────────── */
+.code--lines {
+  padding: 0;
+}
+.code--lines:focus {
+  outline: none;
+}
+.code--lines:focus-visible {
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 48%, transparent);
+}
+.code-lines-wrap {
+  font-family: var(--font-mono);
+  font-size: var(--font-code);
+  line-height: 1.55;
+  color: var(--fg);
+}
+.code-line-row {
+  display: flex;
+  align-items: flex-start;
+  min-height: calc(1em * 1.55);
+}
+.code-line-row--dim {
+  opacity: 0.35;
+}
+.code-line-row--current {
+  background: rgba(255, 193, 7, 0.22);
+  outline: 1px solid rgba(255, 193, 7, 0.35);
+  outline-offset: -1px;
+}
+.code-line-ln {
+  flex-shrink: 0;
+  padding: 0 12px 0 16px;
+  text-align: right;
+  color: var(--fg-faint);
+  user-select: none;
+  -webkit-user-select: none;
+  white-space: pre;
+  line-height: inherit;
+  border-right: 1px solid var(--border-soft);
+}
+.code-line-text {
+  flex: 1;
+  padding: 0 13px;
+  white-space: pre;
+  line-height: inherit;
+}
+
+/* ── search bar (Ctrl+F) ───────────────────────────────────────────────── */
+.code-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 5px 10px;
+  overflow-x: auto;
+  background: var(--bg-elev-1);
+  border-bottom: 1px solid var(--border-soft);
+  font-family: var(--font-sans);
+  font-size: var(--font-sm);
+}
+.code-search__input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: var(--fg);
+  font-family: var(--font-sans);
+  font-size: inherit;
+  padding: 2px 0;
+}
+.code-search__input::placeholder {
+  color: var(--fg-faint);
+}
+.code-search__count {
+  flex-shrink: 0;
+  color: var(--fg-faint);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.code-search__close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--fg-faint);
+  cursor: pointer;
+  font-size: 12px;
+  flex-shrink: 0;
+}
+.code-search__close:hover {
+  background: var(--bg-elev-2);
+  color: var(--fg);
+}
+.code-search__nav {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--fg-faint);
+  cursor: pointer;
+  padding: 0;
+  flex-shrink: 0;
+}
+.code-search__nav:hover {
+  background: var(--bg-elev-2);
+  color: var(--fg);
+}
+.code-search__toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 24px;
+  height: 22px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--fg-faint);
+  cursor: pointer;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  padding: 0 4px;
+  flex-shrink: 0;
+}
+.code-search__toggle:hover {
+  background: var(--bg-elev-2);
+  color: var(--fg);
+}
+.code-search__toggle--on {
+  background: var(--bg-elev-2);
+  color: var(--fg);
+}
+/* Inline search match highlight — bright background on the exact term */
+.code-search-hl {
+  background: rgba(255, 193, 7, 0.45);
+  color: inherit;
+  border-radius: 2px;
+}
+.code-search-hl--current {
+  background: rgba(255, 193, 7, 0.72);
+}
 
 /* ── Mermaid diagram renderer ───────────────────────────────────────────── */
 .mermaid-diagram {
@@ -8712,6 +8865,16 @@ body > .mermaid-diagram--fullscreen {
   border: 0;
   border-radius: 0;
   overflow: auto;
+}
+/* line-numbered code fills the preview body */
+.workspace-preview__body--code .code--lines {
+  padding: 0;
+  border-radius: 0;
+}
+.workspace-preview__body--code .code-block__wrap {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
 }
 .workspace-preview__body .code-block,
 .workspace-preview__body .code {
@@ -26953,6 +27116,10 @@ body > .mermaid-diagram--fullscreen {
   line-height: 1.7;
 }
 
+:root[data-theme-style] .workspace-preview__body--code .code--lines {
+  padding: 0;
+}
+
 :root[data-theme-style] .workspace-preview__body .md {
   padding: 2px 14px 18px;
   background: transparent;
@@ -26963,6 +27130,10 @@ body > .mermaid-diagram--fullscreen {
   right: 12px;
   background: var(--bg-elev);
   box-shadow: var(--app-graphite-shadow);
+}
+
+:root[data-theme-style] .workspace-preview__body .code-block__wrap--search-open .code-block__copy {
+  top: 42px;
 }
 
 :root[data-theme-style] .workspace-note,

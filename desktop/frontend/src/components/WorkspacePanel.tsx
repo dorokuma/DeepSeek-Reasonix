@@ -1727,7 +1727,12 @@ export function WorkspacePanel({
               {isMarkdown ? (
                 <Markdown text={preview.body} />
               ) : (
-                <CodeViewer value={preview.body || " "} language={languageFor(selectedPath)} />
+                <CodeViewer
+                  value={preview.body || " "}
+                  language={languageFor(selectedPath)}
+                  sourceSize={preview.size}
+                  showLineNumbers
+                />
               )}
             </>
           ) : null}

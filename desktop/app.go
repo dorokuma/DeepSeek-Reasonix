@@ -8740,7 +8740,7 @@ var workspaceNoiseDirs = map[string]bool{
 	"tmp":                      true,
 }
 
-const filePreviewLimit = 256 * 1024
+const filePreviewLimit = 2 * 1024 * 1024 // 2 MiB — full file preview for the workspace panel
 const fileRefSearchLimit = 20
 
 var previewMediaMIMEs = map[string]string{
