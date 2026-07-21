@@ -12,7 +12,7 @@ import type { InvocationRequest } from "./invocationDisplay";
 
 import { addBreadcrumb } from "./breadcrumbs";
 import { t } from "./i18n";
-import { providerRequiresKey } from "./providerModels";
+import { providerIsConfigured, providerRequiresKey } from "./providerModels";
 import { DEFAULT_STATUS_BAR_ITEMS, normalizeStatusBarItems } from "./statusBarItems";
 import { registerTrustedThemeBackgroundURLs } from "./themePack";
 import { modeHasAutoApproveTools, modeWithAutoApproveTools, modeWithPlan, normalizeCollaborationMode, normalizeMode, normalizeTokenMode, normalizeToolApprovalMode } from "./types";
@@ -4054,15 +4054,18 @@ function makeMockApp(): AppBindings {
         window.open("https://reasonix.io/?download=desktop#start", "_blank", "noopener");
       }
     },
-    // Dev seam: drives the overlay flow in the browser until ConnectKey sets the
-    // key. Matches ConnectKey on apiKeyEnv so the two stay in sync.
+    // Dev seam: match the backend's provider-agnostic onboarding predicate.
     async NeedsOnboarding() {
-      return !settings.providers.find((p) => p.apiKeyEnv === "DEEPSEEK_API_KEY")?.keySet;
+      return !settings.providers.some((p) => p.models.length > 0 && providerIsConfigured(p));
     },
     async ConnectKey(apiKey: string) {
       if (!apiKey.trim()) throw new Error("key is required");
       settings.providers.forEach((p) => {
-        if (p.apiKeyEnv === "DEEPSEEK_API_KEY") p.keySet = true;
+        if (p.apiKeyEnv === "DEEPSEEK_API_KEY") {
+          p.added = true;
+          p.keySet = true;
+          p.configured = true;
+        }
       });
       await delay(300);
       return "";

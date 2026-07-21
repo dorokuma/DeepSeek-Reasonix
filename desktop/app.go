@@ -9966,7 +9966,21 @@ func (a *App) ConfirmAction(req NativeConfirmRequest) (bool, error) {
 }
 
 func (a *App) NeedsOnboarding() bool {
-	return !config.CredentialStored(onboardingKeyEnv)
+	cfg, err := config.LoadForRootReadOnly(a.activeWorkspaceRoot())
+	if err != nil {
+		// Configuration errors already surface through the startup error banner.
+		// Do not cover their recovery path with an onboarding gate.
+		return false
+	}
+	access := providerAccessSet(cfg.Desktop.ProviderAccess)
+	for i := range cfg.Providers {
+		p := &cfg.Providers[i]
+		if !modelProviderAccessAllowed(access, p.Name) || !p.Configured() || len(p.ChatModelList()) == 0 {
+			continue
+		}
+		return false
+	}
+	return true
 }
 
 // ConnectKey validates apiKey against the balance endpoint, persists it to
@@ -9987,6 +10001,9 @@ func (a *App) ConnectKey(apiKey string) (string, error) {
 	warning, err := a.saveProviderCredential(onboardingKeyEnv, apiKey)
 	if err != nil {
 		return "", fmt.Errorf("save: %w", err)
+	}
+	if err := a.ensureProviderAccessForKey(onboardingKeyEnv); err != nil {
+		return "", fmt.Errorf("enable provider: %w", err)
 	}
 	if err := a.rebuildSetting("provider key"); err != nil {
 		if rebuildWarning, ok := a.deferredRebuildWarning("provider key", err); ok {

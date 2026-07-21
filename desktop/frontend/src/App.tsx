@@ -65,6 +65,7 @@ import { WorkspacePanel } from "./components/WorkspacePanel";
 import { Tooltip } from "./components/Tooltip";
 import { StartupSplash } from "./components/StartupSplash";
 import { OnboardingOverlay } from "./components/OnboardingOverlay";
+import { dismissOnboarding, shouldOpenOnboarding } from "./lib/onboarding";
 import { AppChrome } from "./components/AppChrome";
 import { ShortcutsCheatsheet } from "./components/ShortcutsCheatsheet";
 import { ProjectTree } from "./components/ProjectTree";
@@ -1090,10 +1091,10 @@ export default function App() {
   const [transcriptRevealSignal, setTranscriptRevealSignal] = useState(0);
   const startupSplashVisible = useOverlayStore((s) => s.startupSplashVisible);
   const setStartupSplashVisible = useOverlayStore((s) => s.setStartupSplashVisible);
-  // null until the mount probe resolves; true shows the overlay. Probed once —
-  // clearing the key mid-session is the Settings panel's job, not the gate's.
+  // null until the mount probe resolves; true shows the first-run guide.
   const needsOnboarding = useOverlayStore((s) => s.needsOnboarding);
   const setNeedsOnboarding = useOverlayStore((s) => s.setNeedsOnboarding);
+  const [providerSetupNeeded, setProviderSetupNeeded] = useState(false);
   const settingsTarget = useOverlayStore((s) => s.settingsTarget);
   const setSettingsTarget = useOverlayStore((s) => s.setSettingsTarget);
   const settingsFocus = useOverlayStore((s) => s.settingsFocus);
@@ -2208,12 +2209,21 @@ export default function App() {
     };
   }, [hydrateRemoteStatuses, setRemoteHosts]);
 
+  const refreshProviderSetupState = useCallback(async () => {
+    const needs = await app.NeedsOnboarding();
+    setProviderSetupNeeded(needs);
+    return needs;
+  }, []);
+
   useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
         const needs = await app.NeedsOnboarding();
-        if (!cancelled) setNeedsOnboarding(needs);
+        if (!cancelled) {
+          setProviderSetupNeeded(needs);
+          setNeedsOnboarding(shouldOpenOnboarding(needs));
+        }
       } catch {
         // Bridge unavailable (browser dev seam) — skip the gate; a real key
         // failure still surfaces via the topbar startupError banner.
@@ -2223,7 +2233,7 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [setNeedsOnboarding]);
 
   useEffect(() => {
     const el = footerRef.current;
@@ -4057,6 +4067,18 @@ export default function App() {
           {safeMode && (
             <div className="banner banner--warning">{t("guard.safeMode")}</div>
           )}
+          {providerSetupNeeded && !needsOnboarding && (
+            <div className="banner banner--warning banner--actionable">
+              <span className="banner__msg">{t("onboarding.inlinePrompt")}</span>
+              <span className="banner__spacer" />
+              <button type="button" className="btn btn--small" onClick={() => {
+                setSettingsFocus({ target: "model-access" });
+                setSettingsTarget("models");
+              }}>
+                {t("onboarding.configureProvider")}
+              </button>
+            </div>
+          )}
 
           <UpdateBanner
             enabled={startupUpdateChecksEnabled === true}
@@ -4435,6 +4457,7 @@ export default function App() {
             }}
             onChanged={(settings) => {
               void refreshMeta();
+              void refreshProviderSetupState().catch(() => {});
               if (settings) {
                 applyDesktopPreferences(settings);
                 void refreshSidebarImConnectionsFromSettings(settings).catch((e) => console.warn("bot sidebar refresh failed", e));
@@ -4471,7 +4494,23 @@ export default function App() {
         <StartupSplash hold={startupSplashHold} onDone={() => setStartupSplashVisible(false)} />
       )}
 
-      {needsOnboarding && <OnboardingOverlay onComplete={() => setNeedsOnboarding(false)} />}
+      {needsOnboarding && (
+        <OnboardingOverlay
+          onComplete={() => {
+            setProviderSetupNeeded(false);
+            setNeedsOnboarding(false);
+          }}
+          onChooseProvider={() => {
+            setNeedsOnboarding(false);
+            setSettingsFocus({ target: "model-access" });
+            setSettingsTarget("models");
+          }}
+          onSkip={() => {
+            dismissOnboarding();
+            setNeedsOnboarding(false);
+          }}
+        />
+      )}
 
       <HeartbeatPanel open={heartbeatOpen} onClose={() => setHeartbeatOpen(false)} onOpenTopic={(scope, workspaceRoot, topicId) => {
         void handleOpenTopic(scope, workspaceRoot, topicId);

@@ -1814,20 +1814,23 @@ export const zhTW: Record<DictKey, string> = {
   "changelog.subtitle": "依產品能力整理新功能、改進、修復與升級提醒，不再只是提交記錄。",
   "changelog.openWeb": "在網頁查看",
 
-  // onboarding — first-run API-key overlay
-  "onboarding.title": "連線 Reasonix",
-  "onboarding.tagline": "貼上一個 DeepSeek API key 即可開始。金鑰僅存於本應用的本機憑證檔案，不會傳送到任何地方。",
-  "onboarding.inputLabel": "API 金鑰",
+  // onboarding — 首次使用模型服務引導
+  "onboarding.title": "開始使用 Reasonix",
+  "onboarding.tagline": "連線模型服務後即可開始對話。推薦使用 DeepSeek。",
+  "onboarding.inputLabel": "DeepSeek API 金鑰",
   "onboarding.inputPlaceholder": "sk-…",
-  "onboarding.submit": "連線並開始",
+  "onboarding.submit": "連線 DeepSeek",
+  "onboarding.chooseProvider": "接入其他模型服務",
   "onboarding.validating": "驗證中…",
   "onboarding.getKey": "如何取得 API key？",
-  "onboarding.privacy": "僅儲存在本應用的本機憑證檔案",
+  "onboarding.privacy": "金鑰僅儲存在本機，Reasonix 不會同步",
   "onboarding.error.empty": "請先貼上金鑰。",
   "onboarding.error.invalid": "這個 key 無法使用 —— 檢查一下是否已啟用、是否開通了計費。",
   "onboarding.error.network": "無法連線 DeepSeek —— 檢查網路後再試。",
   "onboarding.error.unknown": "出錯啦：{msg}",
   "onboarding.skip": "稍後設定",
+  "onboarding.inlinePrompt": "開始對話前，請先連線一個模型服務。",
+  "onboarding.configureProvider": "設定模型服務",
 
   // 上下文面板
   "context.overview": "當前會話概覽",

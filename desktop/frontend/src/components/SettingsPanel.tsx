@@ -65,7 +65,9 @@ import { ModalCloseButton } from "./ModalCloseButton";
 import { ShortcutComboDisplay } from "./ShortcutComboDisplay";
 
 const SETTINGS_TABS: SettingsTab[] = ["general", "models", "bots", "mcp", "remote", "skills", "subagents", "plugins", "memory", "hooks", "diagnostics", "shortcuts", "permissions", "sandbox", "network", "appearance", "updates"];
-export type SettingsInitialFocus = { target: "bot-allowlist"; connectionId?: string };
+export type SettingsInitialFocus =
+  | { target: "bot-allowlist"; connectionId?: string }
+  | { target: "model-access" };
 type DesktopPlatform = "darwin" | "windows" | "linux";
 
 const MCPServersSettingsPage = lazy(() => import("./CapabilitiesPanel").then((module) => ({ default: module.MCPServersSettingsPage })));
@@ -267,7 +269,7 @@ export function SettingsPanel({
             ) : (
               <>
                 {tab === "general" && s && <SettingsPageShell key={tab} s={s} tab={tab} busy={busy} apply={apply}><GeneralSection s={s} busy={busy} apply={apply} agentRunning={agentRunning} /></SettingsPageShell>}
-                {tab === "models" && s && <SettingsPageShell key={tab} s={s} tab={tab} busy={busy} apply={apply}><ModelsSection s={s} busy={busy} apply={apply} backgroundApply={backgroundApply} /></SettingsPageShell>}
+                {tab === "models" && s && <SettingsPageShell key={tab} s={s} tab={tab} busy={busy} apply={apply}><ModelsSection s={s} busy={busy} apply={apply} backgroundApply={backgroundApply} initialFocus={initialFocus} /></SettingsPageShell>}
                 {tab === "bots" && s && <SettingsPageShell key={tab} s={s} tab={tab} busy={busy} apply={apply}><BotsSection s={s} busy={busy} apply={apply} initialFocus={initialFocus} /></SettingsPageShell>}
                 {tab === "mcp" && <SettingsPageShell key={tab} s={s} tab={tab} busy={false} apply={apply}><Suspense fallback={lazySettingsPageFallback}><MCPServersSettingsPage /></Suspense></SettingsPageShell>}
                 {tab === "remote" && <SettingsPageShell key={tab} s={s} tab={tab} busy={false} apply={apply}><Suspense fallback={lazySettingsPageFallback}><RemoteHostsPage /></Suspense></SettingsPageShell>}
@@ -486,6 +488,7 @@ type SectionProps = {
 
 type ModelsSectionProps = SectionProps & {
   backgroundApply: (fn: () => Promise<void>) => Promise<void>;
+  initialFocus?: SettingsInitialFocus;
 };
 
 function settingsTabLabel(id: SettingsTab, t: ReturnType<typeof useT>): string {
@@ -3985,9 +3988,11 @@ function botDraftWithDerivedGatewayState(draft: BotSettingsView): BotSettingsVie
   };
 }
 
-function ModelsSection({ s, busy, apply, backgroundApply }: ModelsSectionProps) {
+function ModelsSection({ s, busy, apply, backgroundApply, initialFocus }: ModelsSectionProps) {
   const t = useT();
-  const [subtab, setSubtab] = useState<"usage" | "access">("usage");
+  const [subtab, setSubtab] = useState<"usage" | "access">(
+    initialFocus?.target === "model-access" ? "access" : "usage",
+  );
   const autoRefreshKeyRef = useRef("");
   const refs = useMemo(() => allRefs(s), [s.providers]);
   const defaultRef = toRef(s.defaultModel, s);

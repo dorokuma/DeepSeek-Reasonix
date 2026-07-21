@@ -2613,20 +2613,23 @@ export const en = {
   "changelog.subtitle": "A product-focused history of new capabilities, improvements, fixes, and upgrade guidance.",
   "changelog.openWeb": "Open on web",
 
-  // onboarding — first-run API-key overlay
-  "onboarding.title": "Connect Reasonix",
-  "onboarding.tagline": "Paste a DeepSeek API key to start. Stored in Reasonix home .env and used only for provider requests.",
-  "onboarding.inputLabel": "API key",
+  // onboarding — first-run model provider guide
+  "onboarding.title": "Get started with Reasonix",
+  "onboarding.tagline": "Connect a model provider to start chatting. DeepSeek is recommended.",
+  "onboarding.inputLabel": "DeepSeek API key",
   "onboarding.inputPlaceholder": "sk-…",
-  "onboarding.submit": "Connect & start",
+  "onboarding.submit": "Connect DeepSeek",
+  "onboarding.chooseProvider": "Connect another model provider",
   "onboarding.validating": "Validating…",
   "onboarding.getKey": "How do I get a key?",
-  "onboarding.privacy": "Stored only in Reasonix home .env",
+  "onboarding.privacy": "Saved locally and never synced by Reasonix",
   "onboarding.error.empty": "Please paste a key first.",
   "onboarding.error.invalid": "That key didn't work — double-check it's active and has billing set up.",
   "onboarding.error.network": "Couldn't reach DeepSeek — check your network and try again.",
   "onboarding.error.unknown": "Something went wrong: {msg}",
   "onboarding.skip": "Skip for now",
+  "onboarding.inlinePrompt": "Connect a model provider before starting a conversation.",
+  "onboarding.configureProvider": "Configure model provider",
 
   // context panel
   "context.overview": "Session overview",

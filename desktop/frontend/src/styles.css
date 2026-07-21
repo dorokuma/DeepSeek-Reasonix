@@ -19602,6 +19602,25 @@ body > .mermaid-diagram--fullscreen {
   opacity: 0.7;
   cursor: not-allowed;
 }
+.onboarding__provider {
+  padding: 9px 14px;
+  background: var(--bg-soft);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 550;
+  font-family: inherit;
+  transition: background 120ms ease, border-color 120ms ease;
+}
+.onboarding__provider:hover:not(:disabled) {
+  background: var(--bg-hover, rgba(128, 128, 128, 0.08));
+  border-color: var(--border-strong, var(--border));
+}
+.onboarding__provider:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
 .onboarding__spinner {
   display: inline-block;
   width: 12px;
