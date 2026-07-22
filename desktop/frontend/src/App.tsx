@@ -80,6 +80,7 @@ import { ExternalOpener } from "./components/ExternalOpener";
 import { parseTodos } from "./lib/tools";
 import {
   dismissedTodoKeyForScope,
+  resolveTodoPanelTodos,
   scopedTodoBatchKey,
   scopedTodoDismissalKey,
   shouldShowTodoPanel,
@@ -1865,7 +1866,11 @@ export default function App() {
     return null;
   }, [state.items]);
   const todoItem = todoEntry?.item ?? null;
-  const todos = useMemo(() => (todoItem ? parseTodos(todoItem.args) : []), [todoItem]);
+  const metaTodos = state.meta?.canonicalTodos;
+  const todos = useMemo(
+    () => resolveTodoPanelTodos(metaTodos, todoItem ? parseTodos(todoItem.args) : []),
+    [metaTodos, todoItem],
+  );
   const [dismissedTodoKeys, setDismissedTodoKeys] = useState<Set<string>>(loadDismissedTodoKeys);
   const todoKey = useMemo(() => todoDismissalKey(todos), [todos]);
   const todoBatch = useMemo(() => todoBatchKey(todos), [todos]);
