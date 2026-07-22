@@ -22,7 +22,7 @@ require (
 	golang.org/x/image v0.43.0
 	golang.org/x/mod v0.37.0
 	golang.org/x/sys v0.46.0
-	golang.org/x/text v0.38.0
+	golang.org/x/text v0.39.0
 )
 
 require (

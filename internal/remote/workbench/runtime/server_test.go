@@ -1,6 +1,7 @@
 package runtime
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -651,6 +652,39 @@ func TestRuntimeRestoresSessionRegistryAfterProcessRestart(t *testing.T) {
 	}
 }
 
+func TestRuntimeDefersRestoreWhenControllerBuilderReturnsTypedNil(t *testing.T) {
+	workspace := t.TempDir()
+	sessionDir := t.TempDir()
+	registryPath := filepath.Join(t.TempDir(), "remote-sessions.json")
+	log := &strings.Builder{}
+	var typedNil *persistentFakeController
+	srv := New(Options{
+		Workspace: workspace, SessionDir: sessionDir, RegistryPath: registryPath, Logger: log,
+		BuildController: func(context.Context, string, *string, event.Sink) (SessionController, error) {
+			return typedNil, errors.New("provider removed")
+		},
+	})
+	srv.registryRead = true
+	record := runtimeSessionRecord{
+		ID: "session_removed_provider", Path: filepath.Join(sessionDir, "removed.jsonl"),
+		Model: "removed/model", TopicID: "topic_removed_provider",
+	}
+	srv.dormant[record.ID] = record
+
+	if err := srv.ensureSessionsRestored(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(srv.sessions) != 0 {
+		t.Fatalf("restored sessions = %d, want zero", len(srv.sessions))
+	}
+	if _, ok := srv.dormant[record.ID]; !ok {
+		t.Fatal("failed restore was not kept dormant for a later Provider catalog")
+	}
+	if !strings.Contains(log.String(), "defer session restore") {
+		t.Fatalf("restore failure was not logged: %q", log.String())
+	}
+}
+
 func TestRuntimeEarlyShutdownDoesNotOverwriteUnreadRegistry(t *testing.T) {
 	registryPath := filepath.Join(t.TempDir(), "remote-sessions.json")
 	original := []byte(`{"version":99,"workspace":"future","sessions":[{"future":true}]}` + "\n")
@@ -978,6 +1012,51 @@ func TestRuntimeWorkspaceGitQueriesAndSnapshotProjection(t *testing.T) {
 	srv.mu.Unlock()
 	if snapshot.Meta.Goal == nil || *snapshot.Meta.Goal != "ship it" || snapshot.Meta.GoalStatus != protocol.GoalRunning {
 		t.Fatalf("snapshot goal = %+v/%q", snapshot.Meta.Goal, snapshot.Meta.GoalStatus)
+	}
+}
+
+func TestRuntimeGitEmptyCollectionsEncodeAsArrays(t *testing.T) {
+	workspace := t.TempDir()
+	runGit := func(args ...string) string {
+		t.Helper()
+		cmd := exec.Command("git", append([]string{"-C", workspace}, args...)...)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v: %v: %s", args, err, out)
+		}
+		return strings.TrimSpace(string(out))
+	}
+	runGit("init")
+	runGit("config", "user.email", "remote-test@example.com")
+	runGit("config", "user.name", "Remote Test")
+	runGit("commit", "--allow-empty", "-m", "empty")
+	hash := runGit("rev-parse", "HEAD")
+	srv := New(Options{Workspace: workspace, Version: "test"})
+	target := srv.installTestSession(&fakeController{model: "local/test"})
+	query := protocol.RuntimeQuery{ExpectedHostEpoch: srv.hostEpoch, Target: target, ExpectedRuntimeEpoch: "runtime_test"}
+
+	changes, err := srv.workspaceChanges(protocol.WorkspaceChangesParams{RuntimeQuery: query})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if changes.Files == nil || len(changes.Files) != 0 {
+		t.Fatalf("clean workspace files = %#v, want allocated empty slice", changes.Files)
+	}
+	encodedChanges, err := json.Marshal(changes)
+	if err != nil || !bytes.Contains(encodedChanges, []byte(`"files":[]`)) {
+		t.Fatalf("encoded clean workspace changes = %s err=%v", encodedChanges, err)
+	}
+
+	detail, err := srv.gitCommitDetail(protocol.GitCommitDetailParams{RuntimeQuery: query, Hash: hash})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if detail.Files == nil || *detail.Files == nil || len(*detail.Files) != 0 {
+		t.Fatalf("empty commit files = %#v, want pointer to allocated empty slice", detail.Files)
+	}
+	encodedDetail, err := json.Marshal(detail)
+	if err != nil || !bytes.Contains(encodedDetail, []byte(`"files":[]`)) {
+		t.Fatalf("encoded empty commit detail = %s err=%v", encodedDetail, err)
 	}
 }
 

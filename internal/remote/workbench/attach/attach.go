@@ -16,9 +16,9 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"sync"
 	"time"
 
+	"reasonix/internal/proc"
 	"reasonix/internal/remote/protocol"
 	"reasonix/internal/remote/workbench/runtime"
 	"reasonix/internal/rpcwire"
@@ -200,10 +200,9 @@ func ensureRuntime(ctx context.Context, opts Options, home, workspace, sock stri
 		"--workspace", workspace, "--socket", sock, "--version", opts.Version)
 	cmd.Stdout = nil
 	cmd.Stderr = nil
-	if err := cmd.Start(); err != nil {
+	if _, err := startRuntimeProcess(cmd); err != nil {
 		return err
 	}
-	_ = cmd.Process.Release()
 	deadline = time.Now().Add(8 * time.Second)
 	for time.Now().Before(deadline) {
 		if c, err := dialSocket(ctx, sock, 200*time.Millisecond); err == nil {
@@ -213,6 +212,23 @@ func ensureRuntime(ctx context.Context, opts Options, home, workspace, sock stri
 		time.Sleep(100 * time.Millisecond)
 	}
 	return errors.New("runtime child did not become ready")
+}
+
+func startRuntimeProcess(cmd *exec.Cmd) (<-chan error, error) {
+	// The runtime must outlive the SSH command process during the detach grace
+	// period. A new session prevents sshd from forwarding the transport's
+	// SIGHUP to the runtime, while Wait keeps short-lived children out of the
+	// zombie state until the attach process exits.
+	proc.SetProcessGroupKill(cmd)
+	if err := cmd.Start(); err != nil {
+		return nil, err
+	}
+	done := make(chan error, 1)
+	go func() {
+		done <- cmd.Wait()
+		close(done)
+	}()
+	return done, nil
 }
 
 func dialSocket(ctx context.Context, sock string, timeout time.Duration) (net.Conn, error) {
@@ -251,11 +267,8 @@ func dialSocketUntil(ctx context.Context, sock string, timeout time.Duration) (n
 }
 
 func proxy(ctx context.Context, stdin io.ReadCloser, reader *bufio.Reader, stdout io.Writer, conn net.Conn) error {
-	var wg sync.WaitGroup
 	errCh := make(chan error, 2)
-	wg.Add(2)
 	go func() {
-		defer wg.Done()
 		// Drain buffered remainder then stdin → conn.
 		if reader.Buffered() > 0 {
 			buf := make([]byte, reader.Buffered())
@@ -271,7 +284,6 @@ func proxy(ctx context.Context, stdin io.ReadCloser, reader *bufio.Reader, stdou
 		_ = conn.Close()
 	}()
 	go func() {
-		defer wg.Done()
 		_, err := io.Copy(stdout, conn)
 		errCh <- err
 		_ = stdin.Close()
@@ -280,12 +292,10 @@ func proxy(ctx context.Context, stdin io.ReadCloser, reader *bufio.Reader, stdou
 	case <-ctx.Done():
 		_ = conn.Close()
 		_ = stdin.Close()
-		wg.Wait()
 		return ctx.Err()
 	case err := <-errCh:
 		_ = conn.Close()
 		_ = stdin.Close()
-		wg.Wait()
 		if err == nil || errors.Is(err, io.EOF) {
 			return nil
 		}

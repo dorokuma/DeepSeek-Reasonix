@@ -1,11 +1,14 @@
 package attach
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
 	"io"
+	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
 	goruntime "runtime"
 	"strings"
@@ -15,6 +18,17 @@ import (
 
 	"reasonix/internal/remote/protocol"
 )
+
+type nonInterruptibleReadCloser struct {
+	release chan struct{}
+}
+
+func (r *nonInterruptibleReadCloser) Read([]byte) (int, error) {
+	<-r.release
+	return 0, io.EOF
+}
+
+func (*nonInterruptibleReadCloser) Close() error { return nil }
 
 type responseBuffer struct {
 	mu    sync.Mutex
@@ -216,5 +230,48 @@ func TestAttachInProcessInitializeOK(t *testing.T) {
 	if err != nil && !strings.Contains(err.Error(), "EOF") {
 		// Accept connection closed after stdin EOF.
 		t.Logf("run err (may be ok): %v out=%q", err, out.String())
+	}
+}
+
+func TestProxyReturnsWhenPeerClosesAndInputCloseDoesNotUnblockRead(t *testing.T) {
+	stdin := &nonInterruptibleReadCloser{release: make(chan struct{})}
+	local, peer := net.Pipe()
+	done := make(chan error, 1)
+	go func() {
+		done <- proxy(context.Background(), stdin, bufio.NewReader(stdin), io.Discard, local)
+	}()
+	_ = peer.Close()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("proxy returned transport error after peer close: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		close(stdin.release)
+		t.Fatal("proxy waited indefinitely for the blocked stdin copy")
+	}
+	close(stdin.release)
+}
+
+func TestStartRuntimeProcessReapsExitedChild(t *testing.T) {
+	if os.Getenv("GO_WANT_ATTACH_RUNTIME_HELPER") == "1" {
+		os.Exit(0)
+	}
+	cmd := exec.Command(os.Args[0], "-test.run=^TestStartRuntimeProcessReapsExitedChild$")
+	cmd.Env = append(os.Environ(), "GO_WANT_ATTACH_RUNTIME_HELPER=1")
+	done, err := startRuntimeProcess(cmd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("runtime helper exit: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("runtime child was not reaped")
+	}
+	if cmd.ProcessState == nil || !cmd.ProcessState.Exited() {
+		t.Fatal("runtime child was not reaped")
 	}
 }

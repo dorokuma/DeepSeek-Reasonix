@@ -15,6 +15,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"reflect"
 	goruntime "runtime"
 	"sort"
 	"strings"
@@ -744,14 +745,34 @@ func (s *Server) create(ctx context.Context, p protocol.SessionCreateParams) (pr
 }
 
 func (s *Server) buildController(ctx context.Context, model string, effort *string, sink event.Sink, tokenMode protocol.TokenMode) (SessionController, error) {
+	var ctrl SessionController
+	var err error
 	if s.opts.BuildController != nil {
-		return s.opts.BuildController(ctx, model, effort, sink)
+		ctrl, err = s.opts.BuildController(ctx, model, effort, sink)
+	} else {
+		ctrl, err = boot.Build(ctx, boot.Options{
+			Model: model, EffortOverride: effort, RequireKey: false,
+			WorkspaceRoot: s.opts.Workspace, ProviderResolver: s.broker, Sink: sink, TokenMode: string(tokenMode),
+			SessionDir: s.sessionDir(),
+		})
 	}
-	return boot.Build(ctx, boot.Options{
-		Model: model, EffortOverride: effort, RequireKey: false,
-		WorkspaceRoot: s.opts.Workspace, ProviderResolver: s.broker, Sink: sink, TokenMode: string(tokenMode),
-		SessionDir: s.sessionDir(),
-	})
+	if nilSessionController(ctrl) {
+		ctrl = nil
+	}
+	return ctrl, err
+}
+
+func nilSessionController(ctrl SessionController) bool {
+	if ctrl == nil {
+		return true
+	}
+	value := reflect.ValueOf(ctrl)
+	switch value.Kind() {
+	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
+		return value.IsNil()
+	default:
+		return false
+	}
 }
 
 func (s *Server) closeSession(p protocol.SessionCloseParams) (protocol.SessionCloseResult, error) {

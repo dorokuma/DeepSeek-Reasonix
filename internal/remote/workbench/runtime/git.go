@@ -368,7 +368,7 @@ func (s *Server) gitCommitDetail(p protocol.GitCommitDetailParams) (protocol.Git
 		offset = len(filesOut)
 	}
 	end := min(offset+limit, len(filesOut))
-	page := append([]protocol.GitCommitFile(nil), filesOut[offset:end]...)
+	page := append([]protocol.GitCommitFile{}, filesOut[offset:end]...)
 	more := end < len(filesOut)
 	next := protocol.Cursor("")
 	if more {
@@ -468,7 +468,7 @@ func pageChangedFiles(all []protocol.ChangedFile, offset, limit int, kind string
 		offset = len(all)
 	}
 	end := min(offset+limit, len(all))
-	page := append([]protocol.ChangedFile(nil), all[offset:end]...)
+	page := append([]protocol.ChangedFile{}, all[offset:end]...)
 	if end == len(all) {
 		return page, false, ""
 	}
