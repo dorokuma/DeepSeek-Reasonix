@@ -102,9 +102,7 @@ func newStdioTransport(ctx context.Context, s Spec) (*stdioTransport, error) {
 		proc.LowPriority(cmd)
 	}
 	cmd.Env = env
-	if s.Dir != "" {
-		cmd.Dir = s.Dir // pin cwd-aware servers (e.g. CodeGraph) to the project root
-	}
+	cmd.Dir = stdioWorkingDir(s)
 	stderr := &tailBuffer{limit: 16 * 1024}
 	cmd.Stderr = stderr
 	if s.Stderr != nil {
@@ -250,7 +248,18 @@ func resolveStdioExecutable(ctx context.Context, s Spec, env []string) (string, 
 	env = enrichStdioShellPATH(ctx, env)
 
 	if hasPathSeparator(s.Command) {
-		return s.Command, env, nil
+		exe := s.Command
+		if !filepath.IsAbs(exe) {
+			if dir := stdioWorkingDir(s); dir != "" {
+				exe = filepath.Join(dir, exe)
+			}
+			abs, err := filepath.Abs(exe)
+			if err != nil {
+				return "", env, fmt.Errorf("stdio plugin %q: resolve command %q: %w", s.Name, s.Command, err)
+			}
+			exe = abs
+		}
+		return exe, env, nil
 	}
 	if exe, ok := lookPathInEnv(s.Command, env); ok {
 		return exe, env, nil
@@ -271,6 +280,19 @@ func resolveStdioExecutable(ctx context.Context, s Spec, env []string) (string, 
 
 	return "", env, fmt.Errorf("stdio plugin %q: command %q not found on PATH; GUI launches and non-interactive sessions may not inherit your shell PATH. Use an absolute command path or set PATH in the MCP server env. PATH=%q",
 		s.Name, s.Command, currentPath)
+}
+
+// stdioWorkingDir keeps WorkspaceRoot's roots/list role separate from process
+// execution for user-installed servers. Only repository-declared servers need
+// relative arguments to resolve against the project that supplied the config.
+func stdioWorkingDir(s Spec) string {
+	if s.Dir != "" {
+		return s.Dir
+	}
+	if s.RequireLaunchApproval {
+		return s.WorkspaceRoot
+	}
+	return ""
 }
 
 // enrichStdioShellPATH probes the user's interactive login shell for its PATH
