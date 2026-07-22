@@ -505,6 +505,8 @@ type Messages struct {
 	ProviderErrAuthRejected        string // 401 — a key was sent but the server rejected it
 	ProviderErrInsufficientBalance string // 402
 	ProviderErrUnprocessable       string // 422
+	ProviderErrInputSensitive      string // MiniMax 1026
+	ProviderErrOutputSensitive     string // MiniMax 1027
 	ProviderErrRateLimited         string // 429
 	ProviderErrServer              string // 500
 	ProviderErrServerBusy          string // 503
