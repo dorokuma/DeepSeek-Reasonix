@@ -4583,8 +4583,9 @@ func (c *Controller) HookRunner() *hook.Runner { return c.hooks }
 // tools are registered immediately and become available on the next turn (the
 // agent reads the registry per turn). The raw entry — ${VARS} intact — is what's
 // written to disk; the live connection uses the expanded form. Returns the number
-// of tools the server exposed. A save failure after a successful connect is
-// reported but non-fatal: the server still works this session.
+// of tools the server exposed. Persistence is transactional: a config or
+// activation failure removes the just-connected client so the live registry
+// never claims an install that will disappear after restart.
 func (c *Controller) AddMCPServer(e config.PluginEntry) (int, error) {
 	// AddMCPServer is an explicit user action. Mark the live entry with the same
 	// provenance it will receive when the saved user config is loaded next time,
@@ -4596,13 +4597,35 @@ func (c *Controller) AddMCPServer(e config.PluginEntry) (int, error) {
 	}
 	cfg, lerr := config.Load()
 	if lerr != nil {
-		return n, fmt.Errorf("connected, but reloading config to save failed: %w", lerr)
+		c.DisconnectMCPServer(e.Name)
+		return 0, fmt.Errorf("reloading config to save MCP server: %w", lerr)
+	}
+	var previous config.PluginEntry
+	hadPrevious := false
+	for _, configured := range cfg.Plugins {
+		if configured.Name == e.Name {
+			previous, hadPrevious = configured, true
+			break
+		}
 	}
 	if err := cfg.UpsertPlugin(e); err != nil {
-		return n, fmt.Errorf("connected, but config rejected the entry: %w", err)
+		c.DisconnectMCPServer(e.Name)
+		return 0, fmt.Errorf("config rejected MCP server: %w", err)
 	}
 	if err := cfg.Save(); err != nil {
-		return n, fmt.Errorf("connected, but saving config failed: %w", err)
+		c.DisconnectMCPServer(e.Name)
+		return 0, fmt.Errorf("saving MCP server config: %w", err)
+	}
+	// Install implies durable enable so the next session keeps the server in the
+	// catalog without a second activation step.
+	if err := config.DefaultMCPActivationStore().SetServerEnabled(e, c.WorkspaceRoot(), true); err != nil {
+		c.DisconnectMCPServer(e.Name)
+		if hadPrevious {
+			_ = cfg.UpsertPlugin(previous)
+		} else {
+			cfg.RemovePlugin(e.Name)
+		}
+		return 0, errors.Join(err, cfg.Save())
 	}
 	return n, nil
 }
@@ -4614,9 +4637,20 @@ func (c *Controller) ConnectMCPServer(e config.PluginEntry) (int, error) {
 	return c.connectMCPServer(e)
 }
 
+// RegisterMCPServerOnDemand restores a configured server's cached provider
+// surface without forcing a handshake. It is the durable-enable counterpart to
+// ConnectMCPServer, which remains the explicit install/retry operation.
+func (c *Controller) RegisterMCPServerOnDemand(e config.PluginEntry) (int, error) {
+	return c.mcp.registerSpecOnDemand(c.mcpSpec(e))
+}
+
 // connectMCPServer expands an entry's ${VARS}, applies the known-server
 // overrides scoped to the workspace, and connects it live via the mcp manager.
 func (c *Controller) connectMCPServer(e config.PluginEntry) (int, error) {
+	return c.mcp.connectSpec(c.mcpSpec(e))
+}
+
+func (c *Controller) mcpSpec(e config.PluginEntry) plugin.Spec {
 	exp := e.ExpandedPlugin()
 	configSource := strings.TrimSpace(string(exp.Source))
 	spec := plugin.ApplyKnownOverrides(plugin.Spec{
@@ -4634,11 +4668,16 @@ func (c *Controller) connectMCPServer(e config.PluginEntry) (int, error) {
 		ConfigSource:          configSource,
 		Authorized:            exp.Source.UserAuthorized(),
 		RequireLaunchApproval: exp.Source.RequiresLaunchApproval(),
+		// Explicit user installs and reconnects run as trusted host processes.
+		ProcessMode: plugin.MCPProcessHost,
 	}, c.WorkspaceRoot())
 	if c.mcpConfigureSpec != nil {
 		c.mcpConfigureSpec(&spec)
+		if spec.ProcessMode == "" {
+			spec.ProcessMode = plugin.MCPProcessHost
+		}
 	}
-	return c.mcp.connectSpec(spec)
+	return spec
 }
 
 func controllerMCPTimeout(seconds int) time.Duration {

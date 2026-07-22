@@ -4614,6 +4614,57 @@ func waitForMCPFailure(t *testing.T, h *plugin.Host, name string, timeout time.D
 	}
 }
 
+// TestBuildExtraPluginProbeKeepsSessionProcessAlive pins the lifecycle split
+// used by host-supplied ACP/session MCP servers. The five-second readiness
+// context is cancelled before Build returns; a successful stdio child must
+// still live on the session context and accept its first real tool call.
+func TestBuildExtraPluginProbeKeepsSessionProcessAlive(t *testing.T) {
+	isolateConfigHome(t)
+	workspace := robustTempDir(t)
+	t.Chdir(workspace)
+
+	sessionCtx, cancelSession := context.WithCancel(context.Background())
+	defer cancelSession()
+	ctrl, err := Build(sessionCtx, Options{
+		SessionDir: filepath.Join(t.TempDir(), "sessions"),
+		Sink:       event.Discard,
+		ExtraPlugins: []plugin.Spec{{
+			Name:    "acp-extra",
+			Command: os.Args[0],
+			Args:    []string{"-test.run=TestHelperProcess", "--"},
+			Env:     map[string]string{"GO_WANT_HELPER_PROCESS": "1"},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	defer ctrl.Close()
+
+	tools, err := ctrl.Host().ToolsFor(sessionCtx, "acp-extra")
+	if err != nil {
+		t.Fatalf("ToolsFor: %v", err)
+	}
+	var echo tool.Tool
+	for _, candidate := range tools {
+		if candidate.Name() == "mcp__acp-extra__echo" {
+			echo = candidate
+			break
+		}
+	}
+	if echo == nil {
+		t.Fatalf("extra plugin echo tool missing from %d tools", len(tools))
+	}
+	callCtx, cancelCall := context.WithTimeout(sessionCtx, 5*time.Second)
+	defer cancelCall()
+	out, err := echo.Execute(callCtx, json.RawMessage(`{"msg":"after-probe"}`))
+	if err != nil {
+		t.Fatalf("Execute after readiness context cancellation: %v", err)
+	}
+	if out != "echo: after-probe" {
+		t.Fatalf("Execute result = %q, want %q", out, "echo: after-probe")
+	}
+}
+
 // TestHelperProcess is invoked as a subprocess by TestBuildEagerStartsAtBoot
 // and TestBuildLazyDoesNotConnectAtBoot. It mirrors the minimal MCP stdio
 // server in internal/plugin/plugin_test.go so the boot package can drive an
@@ -4672,6 +4723,16 @@ func TestHelperProcess(t *testing.T) {
 				echo["annotations"] = map[string]any{"readOnlyHint": true}
 			}
 			result = map[string]any{"tools": []map[string]any{echo}}
+		case "tools/call":
+			var p struct {
+				Arguments struct {
+					Msg string `json:"msg"`
+				} `json:"arguments"`
+			}
+			_ = json.Unmarshal(req.Params, &p)
+			result = map[string]any{"content": []map[string]any{
+				{"type": "text", "text": "echo: " + p.Arguments.Msg},
+			}}
 		}
 
 		resp := map[string]any{"jsonrpc": "2.0", "id": *req.ID, "result": result}

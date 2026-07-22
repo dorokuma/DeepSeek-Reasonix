@@ -7304,6 +7304,42 @@ tier = "lazy"
 	t.Fatalf("time missing after disable: %+v", view.Servers)
 }
 
+func TestSetMCPServerEnabledRestoresOnDemandWithoutConnecting(t *testing.T) {
+	isolateDesktopUserDirs(t)
+	t.Setenv("REASONIX_CACHE_HOME", t.TempDir())
+	dir := robustTempDir(t)
+	t.Chdir(dir)
+	if err := os.WriteFile(filepath.Join(dir, "reasonix.toml"), []byte(`
+[[plugins]]
+name = "offline"
+type = "http"
+url = "http://127.0.0.1:1/mcp"
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	host := plugin.NewHost()
+	defer host.Close()
+	reg := tool.NewRegistry()
+	ctrl := control.New(control.Options{Host: host, Registry: reg, PluginCtx: context.Background(), WorkspaceRoot: dir})
+	app := NewApp()
+	app.setTestCtrl(ctrl, "")
+	app.tabs["test"].WorkspaceRoot = dir
+
+	if err := app.SetMCPServerEnabled("offline", false); err != nil {
+		t.Fatalf("SetMCPServerEnabled(false): %v", err)
+	}
+	if err := app.SetMCPServerEnabled("offline", true); err != nil {
+		t.Fatalf("SetMCPServerEnabled(true) forced an unavailable connection: %v", err)
+	}
+	if host.HasClient("offline") {
+		t.Fatal("durable enable started the disconnected MCP server")
+	}
+	if _, ok := reg.Get("mcp__offline__connect"); !ok {
+		t.Fatalf("on-demand connect stub missing after enable; names=%v", reg.Names())
+	}
+}
+
 func TestSetMCPServerEnabledSharedHostPreservesSiblingTabs(t *testing.T) {
 	isolateDesktopUserDirs(t)
 	dir := robustTempDir(t)
@@ -8455,6 +8491,7 @@ args = ["serve"]
 	app := NewApp()
 	app.setTestCtrl(control.New(control.Options{Host: plugin.NewHost()}), "")
 	defer app.activeCtrl().Close()
+	app.activeTab().disabledMCP["time"] = ServerView{Name: "time", Status: "disabled", Enabled: false}
 
 	if err := app.UpdateMCPServer("time", MCPServerInput{
 		Name:      "time",
@@ -8668,6 +8705,14 @@ func TestUpdateMCPServerEditsProjectMCPJSONEntry(t *testing.T) {
 	app := NewApp()
 	app.setTestCtrl(control.New(control.Options{Host: plugin.NewHost()}), "")
 	defer app.activeCtrl().Close()
+	entry, ok, err := desktopEffectiveMCPServer(dir, "codegraph")
+	if err != nil || !ok {
+		t.Fatalf("load codegraph entry: found=%v err=%v", ok, err)
+	}
+	if err := config.DefaultMCPActivationStore().SetServerEnabled(entry, dir, false); err != nil {
+		t.Fatal(err)
+	}
+	app.activeTab().disabledMCP["codegraph"] = ServerView{}
 
 	if err := app.UpdateMCPServer("codegraph", MCPServerInput{
 		Name:      "codegraph",
@@ -8755,6 +8800,67 @@ func TestAddMCPServerPersistsRemoteHeaders(t *testing.T) {
 		}
 	}
 	t.Fatalf("stripe MCP missing from view: %+v", view)
+}
+
+func TestInstallMCPServerHandshakeFailureDoesNotPersist(t *testing.T) {
+	isolateDesktopUserDirs(t)
+	dir := robustTempDir(t)
+	t.Chdir(dir)
+
+	app := NewApp()
+	app.setTestCtrl(control.New(control.Options{Host: plugin.NewHost()}), "")
+	defer app.activeCtrl().Close()
+
+	result, err := app.InstallMCPServer(MCPServerInput{
+		Name: "broken", Transport: "stdio", Command: "reasonix-missing-mcp-binary",
+	})
+	if err != nil {
+		t.Fatalf("InstallMCPServer returned transport error instead of structured issue: %v", err)
+	}
+	if result.State != "issue" || result.Action != "retry" {
+		t.Fatalf("install result = %+v, want retryable issue", result)
+	}
+	cfg, err := config.LoadForRoot(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := findPluginEntry(cfg.Plugins, "broken"); ok {
+		t.Fatalf("failed candidate was persisted: %+v", cfg.Plugins)
+	}
+	for _, server := range app.MCPServers() {
+		if server.Name == "broken" {
+			t.Fatalf("failed candidate leaked into the installed server list: %+v", server)
+		}
+	}
+}
+
+func TestInstallMCPServerAuthenticationRequiredPersistsForResume(t *testing.T) {
+	isolateDesktopUserDirs(t)
+	dir := robustTempDir(t)
+	t.Chdir(dir)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+	}))
+	defer srv.Close()
+
+	app := NewApp()
+	app.setTestCtrl(control.New(control.Options{Host: plugin.NewHost()}), "")
+	defer app.activeCtrl().Close()
+
+	result, err := app.InstallMCPServer(MCPServerInput{Name: "oauth", Transport: "http", URL: srv.URL})
+	if err != nil {
+		t.Fatalf("InstallMCPServer auth result: %v", err)
+	}
+	if result.State != "action_required" || result.Action != "authenticate" {
+		t.Fatalf("install result = %+v, want authentication action", result)
+	}
+	cfg, err := config.LoadForRoot(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := findPluginEntry(cfg.Plugins, "oauth"); !ok {
+		t.Fatalf("auth-pending candidate must persist for resume: %+v", cfg.Plugins)
+	}
 }
 
 func TestAddMCPServerPersistsConnectionConfiguration(t *testing.T) {
@@ -8852,6 +8958,39 @@ func TestUpdateMCPServerPreservesAbsentFieldsAndClearsExplicitOnes(t *testing.T)
 	entry, ok = findPluginEntry(cfg.Plugins, "admin")
 	if !ok || entry.CallTimeoutSeconds != 0 || len(entry.ToolTimeoutSeconds) != 0 {
 		t.Fatalf("explicit empty fields must clear persisted values, entry = %+v, found=%v", entry, ok)
+	}
+}
+
+func TestUpdateMCPServerFailedCandidateRollsBackConfigAndConnection(t *testing.T) {
+	isolateDesktopUserDirs(t)
+	dir := robustTempDir(t)
+	t.Chdir(dir)
+	srv := desktopMCPHTTPServer(t)
+	defer srv.Close()
+
+	app := NewApp()
+	app.setTestCtrl(control.New(control.Options{Host: plugin.NewHost()}), "")
+	defer app.activeCtrl().Close()
+	if _, err := app.AddMCPServer(MCPServerInput{Name: "stable", Transport: "http", URL: srv.URL}); err != nil {
+		t.Fatal(err)
+	}
+
+	err := app.UpdateMCPServer("stable", MCPServerInput{
+		Name: "stable", Transport: "stdio", Command: "reasonix-missing-mcp-binary",
+	})
+	if err == nil {
+		t.Fatal("broken update candidate should fail")
+	}
+	cfg, err := config.LoadForRoot(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry, ok := findPluginEntry(cfg.Plugins, "stable")
+	if !ok || entry.Type != "http" || entry.URL != srv.URL {
+		t.Fatalf("failed update changed durable config: %+v, found=%v", entry, ok)
+	}
+	if !app.activeCtrl().Host().HasClient("stable") {
+		t.Fatal("previous MCP connection was not restored after failed update")
 	}
 }
 
@@ -9030,6 +9169,14 @@ tier = "lazy"
 			c.Close()
 		}
 	}()
+	entry, ok, err := desktopEffectiveMCPServer(dir, "playwright")
+	if err != nil || !ok {
+		t.Fatalf("load playwright entry: found=%v err=%v", ok, err)
+	}
+	if err := config.DefaultMCPActivationStore().SetServerEnabled(entry, dir, false); err != nil {
+		t.Fatal(err)
+	}
+	app.activeTab().disabledMCP["playwright"] = ServerView{Name: "playwright", Status: "disabled", Enabled: false}
 
 	if err := app.UpdateMCPServer("playwright", MCPServerInput{
 		Name:      "playwright",
@@ -9067,8 +9214,8 @@ tier = "lazy"
 	view := app.Capabilities()
 	for _, s := range view.Servers {
 		if s.Name == "playwright" {
-			if s.Status != "failed" {
-				t.Fatalf("updated MCP status = %q, want failed after immediate reconnect attempt; server = %+v", s.Status, s)
+			if s.Status != "disabled" {
+				t.Fatalf("updated MCP status = %q, want disabled without a readiness probe; server = %+v", s.Status, s)
 			}
 			if s.Command != "node" || len(s.Args) != 1 || s.Args[0] != "server.js" {
 				t.Fatalf("server command not refreshed: %+v", s)
@@ -9117,14 +9264,14 @@ args = ["-y", "@playwright/mcp"]
 	}
 }
 
-func TestUpdateMCPServerRecordsReconnectFailure(t *testing.T) {
+func TestUpdateMCPServerRejectsReconnectFailureWithoutPersisting(t *testing.T) {
 	isolateDesktopUserDirs(t)
 	dir := robustTempDir(t)
 	t.Chdir(dir)
 	if err := os.WriteFile(filepath.Join(dir, "reasonix.toml"), []byte(`
 [[plugins]]
 name = "broken"
-command = "npx"
+command = "reasonix-old-missing-mcp-binary"
 tier = "background"
 `), 0o644); err != nil {
 		t.Fatal(err)
@@ -9138,18 +9285,18 @@ tier = "background"
 		Name:      "broken",
 		Transport: "stdio",
 		Command:   "reasonix-missing-mcp-binary",
-	}); err != nil {
-		t.Fatalf("UpdateMCPServer should persist config even when reconnect fails: %v", err)
+	}); err == nil {
+		t.Fatal("UpdateMCPServer should reject an unusable candidate")
 	}
 	cfg, err := config.Load()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := cfg.Plugins[0].Command; got != "reasonix-missing-mcp-binary" {
-		t.Fatalf("updated command = %q, want missing binary", got)
+	if got := cfg.Plugins[0].Command; got != "reasonix-old-missing-mcp-binary" {
+		t.Fatalf("failed update command = %q, want original command", got)
 	}
 	if got := cfg.Plugins[0].Tier; got != "" {
-		t.Fatalf("updated tier = %q, want migrated empty", got)
+		t.Fatalf("loaded legacy tier = %q, want normalized empty", got)
 	}
 	if !mcpFailed(app.activeCtrl(), "broken") {
 		t.Fatalf("Host.Failures() = %+v, want broken failure recorded", app.activeCtrl().Host().Failures())
@@ -9160,8 +9307,8 @@ tier = "background"
 			if s.Status != "failed" {
 				t.Fatalf("server status = %q, want failed; server = %+v", s.Status, s)
 			}
-			if s.Command != "reasonix-missing-mcp-binary" || s.Tier != "background" {
-				t.Fatalf("server config not refreshed after failed reconnect: %+v", s)
+			if s.Command != "reasonix-old-missing-mcp-binary" || s.Tier != "background" {
+				t.Fatalf("failed candidate leaked into server config: %+v", s)
 			}
 			return
 		}

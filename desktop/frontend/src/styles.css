@@ -12056,6 +12056,46 @@ body > .mermaid-diagram--fullscreen {
   width: fit-content;
   margin: 0 0 18px auto;
 }
+.cap-mcp-quick {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.cap-mcp-quick__input {
+  min-height: 126px !important;
+  resize: vertical;
+  font-family: var(--mono);
+  line-height: 1.55;
+}
+.cap-mcp-quick__hint {
+  color: var(--fg-dim);
+  font-size: var(--font-control-small);
+  line-height: 1.55;
+}
+.cap-mcp-quick__benefits {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.cap-mcp-quick__benefits span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 9px;
+  border: 1px solid var(--border-soft);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--bg-elev-2) 74%, transparent);
+  color: var(--fg-dim);
+  font-size: var(--text-xs);
+  line-height: 1.2;
+}
+.cap-mcp-quick__benefits span::before {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--ok);
+  content: "";
+}
 .cap-mcp-form-grid {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(180px, 240px);
