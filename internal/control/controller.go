@@ -1752,7 +1752,7 @@ func (c *Controller) Approve(id string, allow, session, persist bool) {
 	// Session/persist grants are intentionally ignored for recovery.
 	//
 	// Lookup must use the live waiter table (HasApproval), not Snapshot: pre-
-	// action high-risk prompts park a waiter without an armed taskRuntime, so
+	// normal-execution plan prompts park a waiter without an armed taskRuntime, so
 	// they never appear in the persistence snapshot.
 	c.mu.Lock()
 	gate := c.recoveryGate

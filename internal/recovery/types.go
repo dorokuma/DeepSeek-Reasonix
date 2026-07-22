@@ -88,6 +88,8 @@ type PendingProposal struct {
 	Diagnosis   string          `json:"diagnosis,omitempty"`
 	Failure     string          `json:"failure,omitempty"`
 	Proposed    string          `json:"proposed,omitempty"`
+	PlanBefore  string          `json:"plan_before,omitempty"`
+	PlanAfter   string          `json:"plan_after,omitempty"`
 	// TaskGrant fields are transient host-classified scope. They are deliberately
 	// omitted from snapshots and never supplied by the model or wire client.
 	TaskGrantKey       string `json:"-"`
@@ -149,6 +151,8 @@ func ToEventApproval(id string, pending PendingProposal, failure *FailureEvent) 
 		ChangeKind:      string(pending.ChangeKind),
 		ChangeRationale: pending.Rationale,
 		ReviewRationale: pending.Rationale,
+		PlanBefore:      pending.PlanBefore,
+		PlanAfter:       pending.PlanAfter,
 		CanGrantTask:    pending.TaskGrantKey != "",
 		TaskGrantScope:  pending.TaskGrantDisplay,
 	}
@@ -162,7 +166,7 @@ func ToEventApproval(id string, pending PendingProposal, failure *FailureEvent) 
 		}
 	}
 	subject := firstNonEmpty(pending.Subject, pending.Preview, pending.Tool)
-	reason := firstNonEmpty(pending.Rationale, pending.Diagnosis, "Auto Guard requires confirmation")
+	reason := firstNonEmpty(pending.Rationale, pending.Diagnosis, "Plan change requires confirmation")
 	return event.Approval{
 		ID:       id,
 		Tool:     pending.Tool,

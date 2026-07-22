@@ -14,10 +14,10 @@ import (
 // how the Controller surfaces confirmations (desktop card, bot prompt, headless
 // blocker). A nil gate means the feature is off for this agent.
 //
-// ObserveResult runs after a tool result is produced. BeforeMutation runs after
-// call resolution and mutation classification, and before permission approval
-// and workspace write-lock acquisition, so a waiting recovery prompt never holds
-// a write lease.
+// ObserveResult runs after a tool result is produced. BeforeMutation also checks
+// host-observed structured plan transitions; it runs after call resolution and
+// mutation classification, and before permission approval and workspace
+// write-lock acquisition, so a waiting decision never holds a write lease.
 type RecoveryGate interface {
 	// ObserveResult records a completed call and returns optional guidance for
 	// the same agent's active turn. The caller, not the gate, owns delivery so a
@@ -87,11 +87,19 @@ type RecoveryProposal struct {
 	ReadOnly     bool
 	Mutates      bool
 	Verification bool
+	// PlanTransition marks a structural rewrite of an already-active task plan.
+	// The host derives it from canonical todo state; it is never model-asserted.
+	PlanTransition bool
+	// PlanBefore and PlanAfter are bounded, human-readable snapshots supplied to
+	// the isolated reviewer. They are internal evidence, not persisted wire state.
+	PlanBefore string
+	PlanAfter  string
 	// SafeRetry is true when the host can prove this is a same-strategy
 	// verification/idempotent retry (e.g. re-running the same test command).
 	SafeRetry bool
-	// HighRisk marks delete/overwrite/install/config/external/cross-workspace
-	// or clearly expanded write scope; deterministic rules force confirmation.
+	// HighRisk is retained as reviewer evidence and for compatibility helpers.
+	// Auto does not turn execution risk into a user decision; permission,
+	// sandbox, and tool-specific policy own that boundary.
 	HighRisk bool
 	// ExpandedScope marks a write range wider than the failed event's range.
 	ExpandedScope bool
@@ -103,6 +111,11 @@ type RecoveryProposal struct {
 type RecoveryDecision struct {
 	// Allow continues without a user card.
 	Allow bool
+	// AuthorizePlanReplacement grants this one todo_write call permission to
+	// replace the current in_progress step. Only the active Auto Gate may issue
+	// it after reviewing a host-detected structural plan transition; it is never
+	// derived from model arguments or persisted beyond the call.
+	AuthorizePlanReplacement bool
 	// Blocked is true when the mutation must not run (reviewer/user revise, or
 	// headless blocker). Message is fed back to the model.
 	Blocked bool

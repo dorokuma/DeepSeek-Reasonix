@@ -425,17 +425,24 @@ console.log("\ndecision surface");
   dom.window.close();
 }
 
-// Revise is one-click; optional empty feedback still works.
+// A reviewer-confirmed scope/strategy transition is presented as a plan-level
+// choice rather than another low-level tool warning.
 {
   const dom = installDom();
   const root = createRoot(document.getElementById("root")!);
   const decisions: Array<{ action: string; feedback?: string }> = [];
   const approval: WireApproval = {
     id: "guard-2",
-    tool: "write_file",
-    subject: "expand to b.go",
+    tool: "todo_write",
+    subject: "Update the active execution plan",
     kind: "recovery",
-    recovery: { next_action: "edit b.go", change_kind: "scope", failed_summary: "a.go failed" },
+    recovery: {
+      next_action: "Update the active execution plan",
+      change_kind: "scope",
+      change_rationale: "Publishing the migration changes the product scope.",
+      plan_before: "1. Keep the public API [in_progress]\n2. Update the implementation [pending]",
+      plan_after: "1. Replace the public API [in_progress]\n2. Update the implementation [pending]\n3. Update the migration guide [pending]",
+    },
   };
 
   await act(async () => {
@@ -452,7 +459,19 @@ console.log("\ndecision surface");
     await flushTimers();
   });
 
-  const actions = [...document.querySelectorAll(".prompt-shelf__actions .prompt-action")] as HTMLButtonElement[];
+  let actions = [...document.querySelectorAll(".prompt-shelf__actions .prompt-action")] as HTMLButtonElement[];
+  ok(document.body.textContent?.includes("The execution plan needs your decision"), "material scope change uses a neutral plan-level title");
+  ok(document.body.textContent?.includes("Scope choice"), "plan card names the user-owned decision class");
+  ok(document.body.textContent?.includes("Removed from the previous plan"), "plan card identifies removed steps");
+  ok(document.body.textContent?.includes("Keep the public API"), "plan card shows the removed step");
+  ok(document.body.textContent?.includes("Added to the new plan"), "plan card identifies added steps");
+  ok(document.body.textContent?.includes("Replace the public API"), "plan card shows the replacement step");
+  ok(document.body.textContent?.includes("Update the migration guide"), "plan card shows newly added scope");
+  ok(!document.body.textContent?.includes("[in_progress]"), "plan delta omits progress-only status noise");
+  ok(actions[0].textContent?.includes("Adopt the new plan and continue"), "plan adoption remains explicit");
+  ok(actions[1].textContent?.includes("Do not adopt; tell Auto how to adjust"), "plan rejection opens a guided revision path");
+  ok(!actions[0].classList.contains("prompt-action--selected"), "plan adoption is not visually preselected");
+  ok(!actions[1].classList.contains("prompt-action--selected"), "plan adjustment is not visually preselected");
   ok(!document.querySelector(".recovery-task-grant"), "unbounded scope change does not offer a task grant");
   const detailsButton = document.querySelector(".prompt-shelf__header-button") as HTMLButtonElement;
   ok(detailsButton.textContent?.includes("Technical details"), "technical diagnostics are available on demand");
@@ -464,11 +483,50 @@ console.log("\ndecision surface");
   ok(document.querySelector(".recovery-details .recovery-detail-row"), "expanded diagnostics use restrained detail rows");
   ok(!document.querySelector(".recovery-details .approval-reason"), "expanded diagnostics do not render an alert wall");
   await act(async () => {
+    actions[1].click();
+    await flushTimers();
+  });
+  eq(decisions.length, 0, "opening plan adjustment does not reject or adopt the proposal");
+  const guidance = document.querySelector(".recovery-guidance__input") as HTMLTextAreaElement;
+  ok(guidance === document.activeElement, "plan adjustment opens and focuses the guidance field");
+  const feedback = "Keep the public API and update only the migration guide.";
+  await act(async () => {
+    const setter = Object.getOwnPropertyDescriptor(dom.window.HTMLTextAreaElement.prototype, "value")?.set;
+    setter?.call(guidance, feedback);
+    guidance.dispatchEvent(new dom.window.InputEvent("input", { bubbles: true, inputType: "insertText", data: feedback }));
+    guidance.dispatchEvent(new dom.window.Event("change", { bubbles: true }));
+    guidance.dispatchEvent(new dom.window.KeyboardEvent("keyup", { key: ".", bubbles: true }));
+    await flushTimers();
+  });
+  const submitGuidance = document.querySelector(".recovery-guidance__actions .btn--primary") as HTMLButtonElement;
+  ok(submitGuidance.textContent?.includes("Submit adjustment guidance"), "plan guidance uses an explicit submit action");
+  ok(!submitGuidance.disabled, "non-empty plan guidance enables submission");
+  await act(async () => {
+    submitGuidance.click();
+    await flushTimers(220);
+  });
+  eq(decisions[0]?.action, "revise", "submitted plan guidance rejects the proposed transition");
+  eq(decisions[0]?.feedback, feedback, "plan adjustment forwards the user's exact guidance");
+
+  await act(async () => {
+    root.render(
+      <LocaleProvider>
+        <ApprovalModal
+          approval={{ ...approval, id: "guard-3" }}
+          onAnswer={() => undefined}
+          onResolveRecovery={(action, nextFeedback) => decisions.push({ action, feedback: nextFeedback })}
+          onStop={() => undefined}
+        />
+      </LocaleProvider>,
+    );
+    await flushTimers();
+  });
+  actions = [...document.querySelectorAll(".prompt-shelf__actions .prompt-action")] as HTMLButtonElement[];
+  await act(async () => {
     actions[0].click();
     await flushTimers(220);
   });
-  eq(decisions[0]?.action, "revise", "try another approach rejects immediately");
-  ok(!decisions[0]?.feedback, "empty optional feedback is allowed");
+  eq(decisions[1]?.action, "continue", "adopting the plan approves the waiting transition once");
 
   await act(async () => {
     root.unmount();

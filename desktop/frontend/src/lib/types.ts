@@ -94,6 +94,8 @@ export interface WireRecoveryApproval {
   change_kind?: string;
   change_rationale?: string;
   review_rationale?: string;
+  plan_before?: string;
+  plan_after?: string;
   can_grant_task?: boolean;
   task_grant_scope?: string;
 }

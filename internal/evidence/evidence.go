@@ -910,6 +910,26 @@ func MatchTodoIdentity(todo TodoItem, todos []TodoItem) (TodoStepMatch, bool) {
 	return TodoStepMatch{Found: true, Index: found + 1, Content: candidate.Content, Status: candidate.Status, ActiveForm: candidate.ActiveForm}, true
 }
 
+// PreservesCompletedTodoPositions reports whether every previously completed
+// item remains completed at the same index in the replacement list. Completed
+// sub-steps can sit behind a pending phase header, so this checks every item
+// rather than assuming the literal list begins with completed statuses.
+func PreservesCompletedTodoPositions(previous, next []TodoItem) bool {
+	for i, todo := range previous {
+		if todoStatus(todo.Status) != "completed" {
+			continue
+		}
+		if i >= len(next) || todoStatus(next[i].Status) != "completed" {
+			return false
+		}
+		match, found := MatchTodoIdentity(todo, next)
+		if !found || match.Index != i+1 {
+			return false
+		}
+	}
+	return true
+}
+
 // HasAnySuccessfulReceipt reports whether any tool succeeded this turn — the
 // signal that the turn did real work, not pure conversation.
 func (l *Ledger) HasAnySuccessfulReceipt() bool {

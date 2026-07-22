@@ -30,7 +30,7 @@ type Options struct {
 	EmitPrompt      EmitPromptFunc
 	Reviewer        Reviewer
 	TaskSummary     func() string
-	MaxReviewBlocks int // consecutive reviewer blocks before human escalation
+	MaxReviewBlocks int // consecutive reviewer blocks before stop-and-report guidance
 	Now             func() time.Time
 	// Headless, when true, never waits for a human: blocks the mutation with a
 	// structured blocker message instead.
@@ -141,8 +141,8 @@ func (g *Gate) FlushPersistence(key string) {
 	g.persistMu.Unlock()
 }
 
-// HasApproval reports whether a live recovery waiter is parked under id.
-// Unlike Snapshot, this includes pre-action high-risk prompts that have a
+// HasApproval reports whether a live Auto decision waiter is parked under id.
+// Unlike Snapshot, this includes normal-execution plan transitions that have a
 // waiter but no armed failure/taskRuntime yet. Legacy Approve paths must use
 // this (or Resolve) instead of inferring from a persistence snapshot.
 func (g *Gate) HasApproval(id string) bool {
@@ -440,10 +440,14 @@ func (g *Gate) BeforeMutation(ctx context.Context, proposal Proposal) (Decision,
 			g.persist()
 		}
 		return Decision{Allow: true}, nil
-	case RouteAsk:
-		return g.askHuman(ctx, taskID, fp, proposal, failure, diagNotes, ChangeKindForAsk(route.AskReason), ruleRationale(ChangeKindForAsk(route.AskReason), int(facts.FailureCount)))
 	case RouteReview:
 		return g.reviewOrEscalate(ctx, taskID, fp, proposal, failure, diagNotes)
+	case RouteStop:
+		return Decision{
+			Allow:   false,
+			Blocked: true,
+			Message: repeatedFailureStopMessage(int(facts.FailureCount)),
+		}, nil
 	default:
 		return Decision{Allow: true}, nil
 	}
@@ -452,10 +456,11 @@ func (g *Gate) BeforeMutation(ctx context.Context, proposal Proposal) (Decision,
 // classify builds pure Facts for Decide. It never calls the model or UI.
 func (g *Gate) classify(proposal Proposal) (Facts, *FailureEvent, []string, string, string) {
 	facts := Facts{
-		AutoMode:     g.activeMode(),
-		ReadOnly:     proposal.ReadOnly,
-		Mutates:      proposal.Mutates,
-		Verification: proposal.Verification,
+		AutoMode:       g.activeMode(),
+		ReadOnly:       proposal.ReadOnly,
+		Mutates:        proposal.Mutates,
+		Verification:   proposal.Verification,
+		PlanTransition: proposal.PlanTransition,
 	}
 	// Deterministic boundary checks run before the failure-recovery path.
 	boundary := riskBoundaryForProposal(proposal)
@@ -530,9 +535,13 @@ func (g *Gate) reviewOrEscalate(ctx context.Context, taskID, fp string, proposal
 		}
 		g.mu.Unlock()
 		if err != nil {
-			// Deterministic hard boundaries were handled before the reviewer. If
-			// the optional reviewer is unavailable, keep low-risk Auto work moving
-			// instead of turning an infrastructure error into a user decision.
+			// A structural plan transition cannot be silently approved when its
+			// independent reviewer is unavailable. Ask once about the plan itself;
+			// ordinary recovery work still continues through infrastructure errors.
+			if proposal.PlanTransition {
+				return g.askHuman(ctx, taskID, fp, proposal, failure, diagNotes, ChangeScope,
+					"The active execution plan changed, but the independent plan reviewer is unavailable.")
+			}
 			g.mu.Lock()
 			g.metrics.RuleContinues++
 			g.mu.Unlock()
@@ -547,10 +556,21 @@ func (g *Gate) reviewOrEscalate(ctx context.Context, taskID, fp string, proposal
 			}
 			g.mu.Unlock()
 			g.persist()
-			return Decision{Allow: true}, nil
+			return Decision{
+				Allow:                    true,
+				AuthorizePlanReplacement: proposal.PlanTransition,
+			}, nil
 		}
-		// Give the exact reviewer reason back to the proposing agent first.
-		// Only repeated inability to find a safe alternative escalates.
+		// A reviewer-confirmed strategy or scope decision is a material plan
+		// boundary, not another unsafe tool attempt for the agent to reword. Ask
+		// once at the boundary so Auto supervises plan transitions while ordinary
+		// bounded implementation changes above remain interruption-free.
+		if reviewerPlanDecision(verdict) {
+			return g.askHuman(ctx, taskID, fp, proposal, failure, diagNotes, verdict.ChangeKind, verdict.Rationale)
+		}
+		// Risk and uncertainty are technical blockers, not user-owned choices.
+		// Give the exact reason back to the agent; repeated blocks stop and report
+		// instead of escalating into an execution-safety prompt.
 		blocks := g.recordReviewBlock(taskID, verdict)
 		if blocks < g.opts.MaxReviewBlocks {
 			return Decision{
@@ -559,14 +579,18 @@ func (g *Gate) reviewOrEscalate(ctx context.Context, taskID, fp string, proposal
 				Message: reviewerBlockerMessage(verdict, blocks, g.opts.MaxReviewBlocks),
 			}, nil
 		}
-		verdict.Rationale = fmt.Sprintf(
-			"Auto Guard could not verify a safe alternative after %d consecutive attempts: %s",
-			blocks, firstNonEmpty(verdict.Rationale, "needs confirmation"),
-		)
-		return g.askHuman(ctx, taskID, fp, proposal, failure, diagNotes, verdict.ChangeKind, verdict.Rationale)
+		return Decision{
+			Allow:   false,
+			Blocked: true,
+			Message: reviewerStopMessage(verdict, blocks),
+		}, nil
 	}
-	// Deterministic hard boundaries were handled before this point. A missing
-	// optional reviewer must not make ordinary, reversible Auto work interactive.
+	if proposal.PlanTransition {
+		return g.askHuman(ctx, taskID, fp, proposal, failure, diagNotes, ChangeScope,
+			"The active execution plan changed and needs your choice because no independent plan reviewer is configured.")
+	}
+	// A missing optional reviewer must not make ordinary recovery work
+	// interactive. Execution permissions remain owned by their existing gates.
 	g.mu.Lock()
 	g.metrics.RuleContinues++
 	g.mu.Unlock()
@@ -592,11 +616,8 @@ func (g *Gate) askHuman(ctx context.Context, taskID, fp string, proposal Proposa
 		Diagnosis:   strings.Join(diagNotes, "\n"),
 		Failure:     failureSummary,
 		Proposed:    firstNonEmpty(proposal.Subject, proposal.Preview, proposal.Tool),
-	}
-	if boundary := riskBoundaryForProposal(proposal); boundary.highRisk {
-		pending.TaskGrantTaskScope = taskGrantScopeKey(proposal)
-		pending.TaskGrantKey = taskGrantRuntimeKey(boundary.taskGrantKey, pending.TaskGrantTaskScope)
-		pending.TaskGrantDisplay = boundary.taskGrantDisplay
+		PlanBefore:  proposal.PlanBefore,
+		PlanAfter:   proposal.PlanAfter,
 	}
 
 	if g.opts.Headless || g.opts.EmitPrompt == nil {
@@ -672,7 +693,11 @@ func (g *Gate) askHuman(ctx context.Context, taskID, fp string, proposal Proposa
 
 	select {
 	case payload := <-reply:
-		return g.decisionFromResolve(payload)
+		decision, err := g.decisionFromResolve(payload)
+		if err == nil && decision.Allow && proposal.PlanTransition {
+			decision.AuthorizePlanReplacement = true
+		}
+		return decision, err
 	case <-ctx.Done():
 		g.mu.Lock()
 		delete(g.waiters, approvalID)
@@ -828,33 +853,17 @@ func (g *Gate) schedulePersist(snap Snapshot, async bool) {
 	write()
 }
 
-func ruleRationale(kind ChangeKind, consec int) string {
-	switch kind {
-	case ChangeRisk:
-		if consec >= 3 {
-			return "three consecutive recovery failures require confirmation before further writes"
-		}
-		return "the proposed mutation crosses a hard boundary (destructive shell action, global/system change, publish/deploy, or external write)"
-	case ChangeScope:
-		return "the proposed write expands beyond the original failure scope"
-	case ChangeStrategy:
-		return "the proposed recovery uses a different method than the failed approach"
-	default:
-		return "the host cannot prove this recovery is the same strategy and scope"
-	}
-}
-
 // userFacingReason is the short localized-friendly reason shown on the card.
 func userFacingReason(kind ChangeKind) string {
 	switch kind {
 	case ChangeRisk:
-		return "This step is higher risk and needs your confirmation."
+		return "This proposal is a technical execution-risk blocker, not a user-owned plan choice."
 	case ChangeScope:
 		return "This step would expand the change scope."
 	case ChangeStrategy:
 		return "Auto is about to try a different approach."
 	default:
-		return "Auto cannot confirm this step is as safe as the original plan."
+		return "Auto cannot establish how this proposal relates to the active task and plan."
 	}
 }
 
@@ -902,10 +911,25 @@ func (g *Gate) recordReviewBlock(taskID string, verdict ReviewVerdict) int {
 }
 
 func reviewerBlockerMessage(verdict ReviewVerdict, attempt, limit int) string {
-	reason := firstNonEmpty(verdict.Rationale, "the action could not be verified as safe")
+	reason := firstNonEmpty(verdict.Rationale, "the proposal could not be classified as a bounded plan continuation")
 	return fmt.Sprintf(
-		"blocked: Auto Guard reviewer could not verify this action (attempt %d/%d): %s. Diagnose further or propose a bounded, task-aligned workspace action before retrying.",
+		"blocked: Auto plan reviewer could not accept this transition (attempt %d/%d): %s. Continue the current plan, propose a task-aligned plan, or ask the user about a genuine product choice.",
 		attempt, limit, reason,
+	)
+}
+
+func reviewerStopMessage(verdict ReviewVerdict, attempts int) string {
+	reason := firstNonEmpty(verdict.Rationale, "the proposed transition remains technically unresolved")
+	return fmt.Sprintf(
+		"blocked: Auto stopped after %d rejected plan or recovery proposals: %s. Stop retrying mutations and report the technical blocker to the user; only use the ask tool if a genuine user-owned choice exists.",
+		attempts, reason,
+	)
+}
+
+func repeatedFailureStopMessage(failures int) string {
+	return fmt.Sprintf(
+		"blocked: Auto stopped after %d consecutive execution failures. Do not ask the user to approve execution risk; report the blocker and evidence, or ask only if resolving it requires a genuine user-owned product or plan choice.",
+		failures,
 	)
 }
 
@@ -932,9 +956,9 @@ func normalizeVerdict(v ReviewVerdict, failure *FailureEvent, proposal Proposal,
 		}
 		v.ChangeKind = ChangeUncertain
 	}
-	// Risk and uncertainty always require confirmation. Strategy/scope may
-	// continue when the reviewer established that the change remains bounded,
-	// task-aligned, and reversible workspace recovery.
+	// Risk and uncertainty cannot silently continue, but they are technical
+	// blockers rather than human approval requests. Strategy/scope may continue
+	// when the reviewer established that the change remains task-aligned.
 	if v.Outcome == ReviewContinue && !reviewerContinueKind(v.ChangeKind) {
 		v.Outcome = ReviewConfirm
 	}
@@ -958,6 +982,18 @@ func normalizeVerdict(v ReviewVerdict, failure *FailureEvent, proposal Proposal,
 func reviewerContinueKind(kind ChangeKind) bool {
 	switch kind {
 	case ChangeSameStrategy, ChangeStrategy, ChangeScope:
+		return true
+	default:
+		return false
+	}
+}
+
+func reviewerPlanDecision(verdict ReviewVerdict) bool {
+	if verdict.Outcome != ReviewConfirm {
+		return false
+	}
+	switch verdict.ChangeKind {
+	case ChangeStrategy, ChangeScope:
 		return true
 	default:
 		return false

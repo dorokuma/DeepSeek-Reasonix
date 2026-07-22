@@ -99,6 +99,10 @@ type Messages struct {
 	PlanModeReadOnlyCommandChoices         string // approval choice list for plan-mode read-only command trust
 	FreshHumanApprovalChoices              string // approval choice list for prompts that cannot be remembered
 	RecoveryApprovalChoices                string // one-shot Auto Guard decision list
+	RecoveryPlanChangeChoices              string // material Auto plan transition decision list
+	RecoveryPlanDecisionPrompt             string // neutral title for a material Auto plan transition
+	RecoveryPlanBeforeFmt                  string // compact previous-plan line, one %s
+	RecoveryPlanAfterFmt                   string // compact proposed-plan line, one %s
 	RecoveryTaskGrantChoices               string // Auto Guard list with a current-task semantic grant
 	SandboxEscapeApprovalChoices           string // approval choice list for OS sandbox escape prompts
 	ApprovalNeededFmt                      string // notification text for a pending approval, tool only

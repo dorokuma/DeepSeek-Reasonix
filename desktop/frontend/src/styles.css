@@ -8050,6 +8050,47 @@ body > .mermaid-diagram--fullscreen {
   font-family: var(--mono);
   overflow-wrap: anywhere;
 }
+.plan-change-delta {
+  display: grid;
+  gap: 8px;
+  max-height: min(240px, 32vh);
+  overflow: auto;
+  padding: 10px 12px;
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  background: var(--bg-soft);
+}
+.plan-change-delta__title {
+  color: var(--fg);
+  font-size: 12px;
+  font-weight: 650;
+}
+.plan-change-delta__group {
+  display: grid;
+  gap: 4px;
+}
+.plan-change-delta__label {
+  color: var(--fg-faint);
+  font-size: 10.5px;
+  font-weight: 600;
+}
+.plan-change-delta__line {
+  display: grid;
+  grid-template-columns: 14px minmax(0, 1fr);
+  gap: 5px;
+  color: var(--fg-dim);
+  font-family: var(--mono);
+  font-size: 11px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+.plan-change-delta__group--removed .plan-change-delta__line > span {
+  color: var(--err);
+}
+.plan-change-delta__group--added .plan-change-delta__line > span {
+  color: var(--ok);
+}
 .recovery-details {
   display: grid;
   margin: 0;

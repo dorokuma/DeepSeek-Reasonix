@@ -998,6 +998,58 @@ func TestApprovalChoicesPreserveDecisionSemantics(t *testing.T) {
 	if len(labels) != 3 || !strings.Contains(labels[1], "git push origin → feature") {
 		t.Fatalf("grantable recovery labels = %v", labels)
 	}
+	planLabels := approvalChoiceLabels(&event.Approval{Kind: "recovery", Recovery: &event.RecoveryApproval{
+		ChangeKind: "strategy",
+	}})
+	if len(planLabels) != 2 || planLabels[0] != "Adopt the new plan and continue" || planLabels[1] != "Do not adopt; let Auto adjust" {
+		t.Fatalf("plan-change recovery labels = %v", planLabels)
+	}
+}
+
+func TestPlanChangeApprovalBannerUsesNeutralCopyAndShowsPlans(t *testing.T) {
+	m := newTestChatTUI()
+	m.width = 120
+	m.pendingApproval = &event.Approval{
+		ID: "plan-change", Tool: "todo_write", Reason: "choose the public API direction", Kind: "recovery",
+		Recovery: &event.RecoveryApproval{
+			ChangeKind: "scope", PlanBefore: "1. Keep API [in_progress]", PlanAfter: "1. Replace API [in_progress]",
+		},
+	}
+	banner := ansi.Strip(m.renderApprovalBanner())
+	for _, want := range []string{"The execution plan needs your decision", "Previous plan: 1. Keep API", "Proposed plan: 1. Replace API"} {
+		if !strings.Contains(banner, want) {
+			t.Fatalf("plan-change banner missing %q:\n%s", want, banner)
+		}
+	}
+}
+
+func TestPlanChangeApprovalStartsWithoutSelection(t *testing.T) {
+	m := newTestChatTUI()
+	m.ingestEvent(event.Event{
+		Kind: event.ApprovalRequest,
+		Approval: event.Approval{
+			ID: "plan-change", Tool: "todo_write", Kind: "recovery",
+			Recovery: &event.RecoveryApproval{ChangeKind: "strategy"},
+		},
+	})
+	if m.approvalSelection != -1 {
+		t.Fatalf("plan approval selection = %d, want no default", m.approvalSelection)
+	}
+	banner := ansi.Strip(m.renderApprovalBanner())
+	if strings.Contains(banner, "❯ 1.") || strings.Contains(banner, "❯ 2.") {
+		t.Fatalf("plan approval banner preselected a choice:\n%s", banner)
+	}
+
+	next, _ := m.handleApprovalKey(tea.KeyPressMsg{Code: tea.KeyEnter})
+	m = next.(chatTUI)
+	if m.pendingApproval == nil {
+		t.Fatal("Enter without a selection resolved the plan decision")
+	}
+	next, _ = m.handleApprovalKey(tea.KeyPressMsg{Code: tea.KeyDown})
+	m = next.(chatTUI)
+	if m.approvalSelection != 0 {
+		t.Fatalf("first navigation selected %d, want first choice", m.approvalSelection)
+	}
 }
 
 func TestApprovalArrowKeysMoveVisibleSelection(t *testing.T) {

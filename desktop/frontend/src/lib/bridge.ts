@@ -2098,6 +2098,17 @@ function makeMockApp(): AppBindings {
               next_action: "Update internal/recovery/gate.go",
               change_kind: "strategy",
               change_rationale: "The proposed edit changes the recovery method and needs a fresh decision.",
+              plan_before: [
+                "1. Keep the existing Auto execution path [in_progress]",
+                "2. Add execution-risk approval prompts [pending]",
+                "3. Run the recovery regression suite [pending]",
+              ].join("\n"),
+              plan_after: [
+                "1. Keep the existing Auto execution path [in_progress]",
+                "2. Ask only when strategy or scope changes [pending]",
+                "3. Show the old and proposed plan before deciding [pending]",
+                "4. Run the recovery regression suite [pending]",
+              ].join("\n"),
             },
           },
         });

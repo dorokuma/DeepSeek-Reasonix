@@ -271,6 +271,19 @@ func TestToWireInteractionAndLifecyclePayloads(t *testing.T) {
 			},
 		},
 		{
+			name: "recovery plan transition",
+			in: event.Event{Kind: event.ApprovalRequest, Approval: event.Approval{
+				ID: "r-plan", Tool: "todo_write", Subject: "Update the active execution plan", Fresh: true, Kind: "recovery",
+				Recovery: &event.RecoveryApproval{
+					ChangeKind: "scope", PlanBefore: "1. Keep API", PlanAfter: "1. Replace API",
+				},
+			}},
+			want: []string{
+				`"kind":"recovery"`, `"change_kind":"scope"`,
+				`"plan_before":"1. Keep API"`, `"plan_after":"1. Replace API"`,
+			},
+		},
+		{
 			name: "ask",
 			in: event.Event{Kind: event.AskRequest, Ask: event.Ask{
 				ID: "ask-1",

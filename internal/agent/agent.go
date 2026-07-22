@@ -3140,24 +3140,35 @@ func (a *Agent) executeOne(ctx context.Context, call provider.ToolCall) toolOutc
 	// permission approval and workspace write-lock acquisition, so a waiting
 	// recovery card never holds a write lease.
 	verification := evidenceName == "bash" && evidence.IsDeliveryVerificationCommand(bashCommandFromArgs(evidenceArgs))
-	if a.recoveryGate != nil && (mutates || verification) {
+	planTransition, planBefore, planAfter := a.recoveryPlanTransition(evidenceName, evidenceArgs)
+	planReplacementAuthorized := false
+	if a.recoveryGate != nil && (mutates || verification || planTransition) {
 		subject := recoverySubject(evidenceName, evidenceArgs)
+		if planTransition {
+			subject = "Update the active execution plan"
+		}
 		preview := strings.TrimSpace(call.Diff)
 		if preview == "" {
 			preview = subject
 		}
+		if planTransition {
+			preview = planAfter
+		}
 		dec, rerr := a.recoveryGate.BeforeMutation(ctx, RecoveryProposal{
-			AgentID:      a.recoveryAgentID,
-			TaskID:       a.recoveryTaskID,
-			TaskScopeID:  recoveryTaskScopeID(a.deliveryScopeID, a.recoveryRunSeq.Load()),
-			TaskSummary:  a.recoveryTaskSummary,
-			Tool:         evidenceName,
-			Args:         evidenceArgs,
-			Subject:      subject,
-			Preview:      preview,
-			ReadOnly:     readOnly,
-			Mutates:      mutates,
-			Verification: verification,
+			AgentID:        a.recoveryAgentID,
+			TaskID:         a.recoveryTaskID,
+			TaskScopeID:    recoveryTaskScopeID(a.deliveryScopeID, a.recoveryRunSeq.Load()),
+			TaskSummary:    a.recoveryTaskSummary,
+			Tool:           evidenceName,
+			Args:           evidenceArgs,
+			Subject:        subject,
+			Preview:        preview,
+			ReadOnly:       readOnly,
+			Mutates:        mutates,
+			Verification:   verification,
+			PlanTransition: planTransition,
+			PlanBefore:     planBefore,
+			PlanAfter:      planAfter,
 		})
 		if rerr != nil && !dec.Blocked {
 			return toolOutcome{
@@ -3180,6 +3191,7 @@ func (a *Agent) executeOne(ctx context.Context, call provider.ToolCall) toolOutc
 				errMsg:  "blocked by Auto Guard",
 			}
 		}
+		planReplacementAuthorized = planTransition && dec.AuthorizePlanReplacement
 	}
 	if isInstalledMCPTool(execTool) {
 		if !mcpServerAuthorized(execTool) {
@@ -3289,6 +3301,9 @@ func (a *Agent) executeOne(ctx context.Context, call provider.ToolCall) toolOutc
 	if !a.planMode.Load() {
 		cctx = evidence.WithTodoState(cctx, a.CanonicalTodoState())
 	}
+	if planReplacementAuthorized {
+		cctx = tool.WithPlanReplacementAuthorization(cctx)
+	}
 	if len(a.projectChecks) > 0 {
 		cctx = instruction.WithChecks(cctx, a.projectChecks)
 	}
@@ -3395,6 +3410,61 @@ func (a *Agent) executeOne(ctx context.Context, call provider.ToolCall) toolOutc
 	}
 	body, truncMsg := truncateToolOutput(result)
 	return toolOutcome{output: body, images: images, truncated: truncMsg != "", truncMsg: truncMsg}
+}
+
+// recoveryPlanTransition detects structural rewrites of an active canonical
+// task list. Initial plans and progress-only status updates stay on the fast
+// path; changing step identity, order, or hierarchy while work remains is a
+// semantic transition for the independent Auto reviewer.
+func (a *Agent) recoveryPlanTransition(toolName string, args json.RawMessage) (bool, string, string) {
+	if a == nil || toolName != "todo_write" || a.planMode.Load() {
+		return false, "", ""
+	}
+	before := a.CanonicalTodoState()
+	if len(before) == 0 || len(evidence.IncompleteTodos(before)) == 0 {
+		return false, "", ""
+	}
+	after := evidence.ReceiptFromToolCall("todo_write", args, true, true).Todos
+	if len(after) == 0 || evidence.ValidateSerialTodos(after) != nil || !evidence.PreservesCompletedTodoPositions(before, after) {
+		// Let todo_write report malformed or invalid state directly; an invalid
+		// task list is not a meaningful plan proposal for the reviewer.
+		return false, "", ""
+	}
+	if samePlanStructure(before, after) {
+		return false, "", ""
+	}
+	return true, planReviewText(before), planReviewText(after)
+}
+
+func samePlanStructure(a, b []evidence.TodoItem) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i].Level != b[i].Level || normalizePlanStep(a[i].Content) != normalizePlanStep(b[i].Content) {
+			return false
+		}
+	}
+	return true
+}
+
+func normalizePlanStep(s string) string {
+	return strings.Join(strings.Fields(strings.TrimSpace(s)), " ")
+}
+
+func planReviewText(todos []evidence.TodoItem) string {
+	var b strings.Builder
+	for i, todo := range todos {
+		indent := ""
+		if todo.Level == 1 {
+			indent = "  "
+		}
+		fmt.Fprintf(&b, "%s%d. %s [%s]", indent, i+1, normalizePlanStep(todo.Content), canonicalTodoStatus(todo.Status))
+		if i+1 < len(todos) {
+			b.WriteByte('\n')
+		}
+	}
+	return b.String()
 }
 
 func recoveryTaskScopeID(deliveryScopeID string, runSeq uint64) string {
