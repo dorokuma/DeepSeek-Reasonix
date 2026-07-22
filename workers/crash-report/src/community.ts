@@ -14,7 +14,11 @@ const STATUS_TABS = [
 function actionForm(pkg: PackageRow, action: string, label: string, cls: string, backStatus: string, confirm?: string): string {
   const onsubmit = confirm ? ` onsubmit="return confirm('${esc(confirm)}')"` : "";
   return `<form method="post" action="/community/${esc(pkg.scope_handle)}/${esc(pkg.name)}/${action}" class="inline"${onsubmit}>
-<input type="hidden" name="status" value="${esc(backStatus)}"><button class="btn ${cls} sm" type="submit">${esc(label)}</button></form>`;
+<input type="hidden" name="status" value="${esc(backStatus)}">
+<input type="hidden" name="expectedVersion" value="${esc(pkg.latest_version)}">
+<input type="hidden" name="expectedUpdatedAt" value="${esc(pkg.updated_at)}">
+<input type="hidden" name="expectedStatus" value="${esc(pkg.status)}">
+<button class="btn ${cls} sm" type="submit">${esc(label)}</button></form>`;
 }
 
 function rowActions(pkg: PackageRow, backStatus: string): string {

@@ -34,3 +34,15 @@ test("registry copy requests preserve the reviewed package kind", async () => {
   assert.match(page, /data-copy="\$\{esc\(installRequest\(p\)\)\}"/);
   assert.doesNotMatch(page, /data-copy="\$\{esc\(p\.source\)\}"/);
 });
+
+test("admin approval is bound to the package revision shown in the review queue", async () => {
+  const page = await source();
+
+  assert.match(page, /data-version="\$\{esc\(p\.latestVersion\)\}"/);
+  assert.match(page, /data-updated-at="\$\{esc\(p\.updatedAt\)\}"/);
+  assert.match(page, /data-status="\$\{esc\(p\.status\)\}"/);
+  assert.match(page, /expectedVersion: row\.dataset\.version/);
+  assert.match(page, /expectedUpdatedAt: row\.dataset\.updatedAt/);
+  assert.match(page, /expectedStatus: row\.dataset\.status/);
+  assert.match(page, /if \(r\.status === 409\) loadReview\(\)/);
+});

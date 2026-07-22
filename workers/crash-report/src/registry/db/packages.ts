@@ -77,10 +77,11 @@ export class PackageRepo {
     return res.results ?? [];
   }
 
-  // Create a new package or append a version to an owned one. New packages from
-  // non-admins land as 'pending' (hidden until an admin approves); versions of an
-  // already-approved package stay live. Republishing an existing version is
-  // refused (409) so version history stays immutable.
+  // Create a new package or append a version to an owned one. New packages and
+  // updates from non-admins land as 'pending' (hidden until an admin approves).
+  // Every accepted update appends an immutable version, so its source, manifest,
+  // metadata, and capability kind must all cross the same moderation boundary.
+  // Republishing an existing version is refused (409).
   async publish(user: RegistryUser, input: PublishInput, now: string): Promise<PublishResult> {
     const slug = `${user.handle}/${input.name}`;
     const existing = await this.bySlug(slug);
@@ -89,12 +90,12 @@ export class PackageRepo {
       if (existing.publisher_id !== user.id && user.role !== "admin") {
         throw new ApiError(403, "not_owner", "That name belongs to another publisher.");
       }
-      // Changing an approved package's capability class changes what users
-      // consent to install. Non-admin publishers may request that change, but
-      // it must return to moderation and must not retain a verified badge.
-      const publisherChangedKind = user.role !== "admin" && existing.kind !== input.kind;
-      const status = publisherChangedKind && existing.status === "active" ? "pending" : existing.status;
-      const verified = publisherChangedKind ? 0 : existing.verified;
+      // A new version may change executable source or manifest content even
+      // when its public kind stays the same. Only trusted admin updates bypass
+      // re-review; publisher updates always lose verification until approved.
+      const publisherNeedsReview = user.role !== "admin";
+      const status = publisherNeedsReview ? "pending" : existing.status;
+      const verified = publisherNeedsReview ? 0 : existing.verified;
       const version = input.version || nextPatch(existing.latest_version);
       await this.insertVersion(existing.id, version, input, now);
       await this.db
@@ -225,6 +226,28 @@ export class PackageRepo {
       .run();
     if ((res.meta.changes ?? 0) === 0) return null;
     return this.bySlug(slug);
+  }
+
+  // Admin approval must be bound to the exact row the reviewer inspected.
+  // The version protects publisher updates, while updated_at + status also
+  // fence concurrent moderation actions. D1 evaluates the predicate and write
+  // atomically, so a package cannot change between a preflight read and approval.
+  async setStatusIfCurrent(
+    slug: string,
+    status: string,
+    expectedVersion: string,
+    expectedUpdatedAt: string,
+    expectedStatus: string,
+    now: string,
+  ): Promise<PackageRow | null> {
+    return this.db
+      .prepare(
+        `UPDATE packages SET status = ?1, updated_at = ?2
+         WHERE slug = ?3 AND latest_version = ?4 AND updated_at = ?5 AND status = ?6
+         RETURNING *`,
+      )
+      .bind(status, now, slug, expectedVersion, expectedUpdatedAt, expectedStatus)
+      .first<PackageRow>();
   }
 
   // Admin: grant or revoke the verified trust badge.

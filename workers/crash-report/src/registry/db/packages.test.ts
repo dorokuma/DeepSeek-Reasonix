@@ -112,7 +112,78 @@ describe("PackageRepo.publish", () => {
     expect(updates[0].values[11]).toBe(0);
   });
 
-  it("keeps ordinary updates to an active package live and verified", async () => {
+  it("returns a same-kind active package update to review", async () => {
+    const active: PackageRow = { ...existing, status: "active", verified: 1 };
+    const updated: PackageRow = {
+      ...active,
+      summary: "new summary",
+      source: "https://github.com/o/r2",
+      repo_url: "https://github.com/o/r2",
+      install_kind: "mcp",
+      latest_version: "2.7.1",
+      status: "pending",
+      verified: 0,
+    };
+    const { db, updates } = fakePackageDB([active, updated]);
+    const input = PublishSchema.parse({
+      kind: "mcp",
+      name: "devkit",
+      summary: "new summary",
+      source: "https://github.com/o/r2",
+      repoUrl: "https://github.com/o/r2",
+      version: "2.7.1",
+    });
+
+    const result = await new PackageRepo(db).publish(user, input, now);
+
+    expect(result.row.status).toBe("pending");
+    expect(result.row.verified).toBe(0);
+    expect(updates[0].values[4]).toBe("mcp");
+    expect(updates[0].values[10]).toBe("pending");
+    expect(updates[0].values[11]).toBe(0);
+  });
+
+  it("returns a hidden package update to review and clears verification", async () => {
+    const hidden: PackageRow = { ...existing, status: "hidden", verified: 1 };
+    const updated: PackageRow = {
+      ...hidden,
+      kind: "plugin",
+      install_kind: "plugin",
+      latest_version: "2.7.1",
+      status: "pending",
+      verified: 0,
+    };
+    const { db, updates } = fakePackageDB([hidden, updated]);
+
+    const result = await new PackageRepo(db).publish(user, pluginInput(), now);
+
+    expect(result.row.status).toBe("pending");
+    expect(result.row.verified).toBe(0);
+    expect(updates[0].values[10]).toBe("pending");
+    expect(updates[0].values[11]).toBe(0);
+  });
+
+  it("returns a rejected package update to review", async () => {
+    const rejected: PackageRow = { ...existing, status: "rejected", verified: 0 };
+    const requeued: PackageRow = { ...rejected, latest_version: "2.7.1", status: "pending" };
+    const { db, updates } = fakePackageDB([rejected, requeued]);
+    const input = PublishSchema.parse({
+      kind: "mcp",
+      name: "devkit",
+      source: "https://github.com/o/r",
+      repoUrl: "https://github.com/o/r",
+      version: "2.7.1",
+    });
+
+    const result = await new PackageRepo(db).publish(user, input, now);
+
+    expect(result.row.status).toBe("pending");
+    expect(updates[0].values[10]).toBe("pending");
+    expect(updates[0].values[11]).toBe(0);
+  });
+
+  it("preserves status and verification for trusted admin updates", async () => {
+    const admin: RegistryUser = { ...user, role: "admin" };
     const active: PackageRow = { ...existing, status: "active", verified: 1 };
     const updated: PackageRow = { ...active, install_kind: "mcp", latest_version: "2.7.1" };
     const { db, updates } = fakePackageDB([active, updated]);
@@ -124,31 +195,88 @@ describe("PackageRepo.publish", () => {
       version: "2.7.1",
     });
 
-    const result = await new PackageRepo(db).publish(user, input, now);
+    const result = await new PackageRepo(db).publish(admin, input, now);
 
     expect(result.row.status).toBe("active");
     expect(result.row.verified).toBe(1);
-    expect(updates[0].values[4]).toBe("mcp");
     expect(updates[0].values[10]).toBe("active");
     expect(updates[0].values[11]).toBe(1);
   });
+});
 
-  it("clears verification when a non-active package changes kind", async () => {
-    const hidden: PackageRow = { ...existing, status: "hidden", verified: 1 };
-    const updated: PackageRow = {
-      ...hidden,
-      kind: "plugin",
-      install_kind: "plugin",
-      latest_version: "2.7.1",
-      verified: 0,
-    };
-    const { db, updates } = fakePackageDB([hidden, updated]);
+describe("PackageRepo.setStatusIfCurrent", () => {
+  it("approves only the exact package revision the admin reviewed", async () => {
+    const approvedAt = "2026-07-22T01:00:00.000Z";
+    const approved: PackageRow = { ...existing, status: "active", updated_at: approvedAt };
+    const statements: { sql: string; values: unknown[] }[] = [];
+    const db = {
+      prepare(sql: string) {
+        let values: unknown[] = [];
+        const statement = {
+          bind(...bound: unknown[]) {
+            values = bound;
+            return statement;
+          },
+          async first<T>() {
+            statements.push({ sql, values });
+            return approved as T;
+          },
+        };
+        return statement;
+      },
+    } as unknown as D1Database;
 
-    const result = await new PackageRepo(db).publish(user, pluginInput(), now);
+    const row = await new PackageRepo(db).setStatusIfCurrent(
+      existing.slug,
+      "active",
+      existing.latest_version,
+      existing.updated_at,
+      existing.status,
+      approvedAt,
+    );
 
-    expect(result.row.status).toBe("hidden");
-    expect(result.row.verified).toBe(0);
-    expect(updates[0].values[10]).toBe("hidden");
-    expect(updates[0].values[11]).toBe(0);
+    expect(row).toEqual(approved);
+    expect(statements[0].sql).toContain("latest_version = ?4 AND updated_at = ?5 AND status = ?6");
+    expect(statements[0].sql).toContain("RETURNING *");
+    expect(statements[0].values).toEqual([
+      "active",
+      approvedAt,
+      existing.slug,
+      existing.latest_version,
+      existing.updated_at,
+      existing.status,
+    ]);
+  });
+
+  it("returns null when a newer package revision no longer matches", async () => {
+    const statements: { sql: string; values: unknown[] }[] = [];
+    const db = {
+      prepare(sql: string) {
+        let values: unknown[] = [];
+        const statement = {
+          bind(...bound: unknown[]) {
+            values = bound;
+            return statement;
+          },
+          async first<T>() {
+            statements.push({ sql, values });
+            return null as T | null;
+          },
+        };
+        return statement;
+      },
+    } as unknown as D1Database;
+
+    const row = await new PackageRepo(db).setStatusIfCurrent(
+      existing.slug,
+      "active",
+      existing.latest_version,
+      existing.updated_at,
+      existing.status,
+      "2026-07-22T01:00:00.000Z",
+    );
+
+    expect(row).toBeNull();
+    expect(statements).toHaveLength(1);
   });
 });
