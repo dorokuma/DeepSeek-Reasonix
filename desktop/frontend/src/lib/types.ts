@@ -173,7 +173,7 @@ export interface WireEvent {
   compaction?: WireCompaction;
   guardian?: WireGuardian;
   err?: string;
-  outcome?: "final_readiness";
+  outcome?: "final_readiness" | "recovery_paused";
   readiness?: WireFinalReadiness;
   retryAttempt?: number;
   retryMax?: number;

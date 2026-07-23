@@ -784,6 +784,10 @@ func turnOutcome(err error) string {
 	if errors.As(err, &readinessErr) {
 		return event.TurnOutcomeFinalReadiness
 	}
+	var pauseErr *agent.RecoveryPauseError
+	if errors.As(err, &pauseErr) {
+		return event.TurnOutcomeRecoveryPaused
+	}
 	return ""
 }
 
@@ -5009,11 +5013,37 @@ func (c *Controller) SetToolApprovalMode(mode string) {
 // posture switch resolved everything (#6432).
 func (c *Controller) ApplyToolApprovalMode(mode string) []string {
 	mode = normalizeToolApprovalMode(mode)
+	// Capture mode-change recovery dismissals before approval drain so a
+	// same-value hydrate/reconcile never rotates Episode state, while a real
+	// Auto↔Yolo/Ask switch clears temporary failure/reviewer locks and waiters
+	// without auto-approving the original mutation.
+	var recoveryDismissed []string
+	c.mu.Lock()
+	gate := c.recoveryGate
+	c.mu.Unlock()
+	if gate != nil {
+		if ctrl, ok := any(gate).(agent.RecoveryEpisodeControl); ok {
+			// Do not hold controller/approval locks while rotating the gate.
+			recoveryDismissed = ctrl.OnModeChange(mode)
+		}
+	}
 	pending := c.approval.setMode(mode)
 	if c.subagentGate != nil {
 		c.subagentGate.Update(mode)
 	}
 	c.refreshInteractiveGate()
+	// Clear recovery cards dismissed by the mode switch outside the gate lock.
+	for _, id := range recoveryDismissed {
+		p := c.approval.resolve(id)
+		if p.reply != nil {
+			// Do not approve the pending mutation; signal cancel/deny so legacy
+			// paths drop the card.
+			select {
+			case p.reply <- approvalReply{allow: false}:
+			default:
+			}
+		}
+	}
 	drained := make([]string, 0, len(pending))
 	for _, p := range pending {
 		p.reply <- approvalReply{allow: true}

@@ -76,7 +76,7 @@ func TestDesktopWireEventTypeCoversSharedPayloadFields(t *testing.T) {
 	ts := readDesktopTypes(t)
 	for _, want := range []string{
 		"detail?: string;",
-		`outcome?: "final_readiness";`,
+		`outcome?: "final_readiness" | "recovery_paused";`,
 		"retryAttempt?: number;",
 		"retryMax?: number;",
 		"memoryCitations?: MemoryCitation[];",

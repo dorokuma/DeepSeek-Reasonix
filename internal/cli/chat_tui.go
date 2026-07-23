@@ -2534,7 +2534,7 @@ func flushableMarkdownPrefix(buf string) string {
 // planApprovalTool is the Tool name the controller puts on the ApprovalRequest it
 // emits to gate a plan (mirrors control's constant). The banner, status line, and
 // approval handler key on it to render the plan-specific prompt and to keep the
-// [plan] tag in sync when the plan is approved.
+// [plan] tag in sync when the user starts execution or exits without executing.
 const planApprovalTool = "exit_plan_mode"
 
 type approvalChoice struct {
@@ -2542,6 +2542,7 @@ type approvalChoice struct {
 	allow           bool
 	allowForSession bool
 	persistToConfig bool
+	exitPlan        bool
 }
 
 func approvalChoices(a *event.Approval) []approvalChoice {
@@ -2560,7 +2561,7 @@ func approvalChoices(a *event.Approval) []approvalChoice {
 			decisions = []approvalChoice{{allow: true}, {}}
 		}
 	case a.Tool == planApprovalTool:
-		decisions = []approvalChoice{{allow: true}, {}}
+		decisions = []approvalChoice{{allow: true}, {}, {exitPlan: true}}
 	case fresh && freshApprovalAllowsSession(a.Tool):
 		decisions = []approvalChoice{{allow: true}, {allow: true, allowForSession: true}, {}}
 	case fresh:
@@ -2595,7 +2596,7 @@ func approvalChoiceLabels(a *event.Approval) []string {
 			choices = i18n.M.RecoveryTaskGrantChoices
 		}
 	} else if a.Tool == planApprovalTool {
-		choices = i18n.M.FreshHumanApprovalChoices
+		choices = i18n.M.PlanApprovalChoices
 	} else if !fresh {
 		exactSessionRule := permission.SessionGrantRuleForScope(a.Tool, a.Subject)
 		exactPersistentRule := permission.RememberRuleForScope(a.Tool, a.Subject)
@@ -2634,10 +2635,11 @@ func approvalChoiceLabels(a *event.Approval) []string {
 // listener. 1/y/Enter allows once, 2/a allows for the rest of the session,
 // 3/p writes an "always allow" rule to the config file for ordinary tool
 // approvals. Fresh two-choice prompts use 2 for deny, while n/Esc and legacy 4
-// still deny.
+// still deny. Plan prompts use 1 to execute, 2/n/Esc to keep planning, and 3 to
+// reject the pending plan and leave plan mode without executing it.
 // Ctrl-C cancels the whole turn via the run context. For a plan approval
-// (planApprovalTool), allowing also drops the local [plan] tag — the
-// controller turns plan mode off on its side.
+// (planApprovalTool), starting execution or explicitly exiting without execution
+// drops the local [plan] tag and turns plan mode off on the controller.
 func (m chatTUI) handleApprovalKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	choices := approvalChoices(m.pendingApproval)
 	answer := func(choice approvalChoice) (tea.Model, tea.Cmd) {
@@ -2654,8 +2656,9 @@ func (m chatTUI) handleApprovalKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.pendingApproval = nil
 			return m, nil
 		}
-		if allow && m.pendingApproval.Tool == planApprovalTool {
+		if m.pendingApproval.Tool == planApprovalTool && (allow || choice.exitPlan) {
 			m.planMode = false
+			m.ctrl.SetPlanMode(false)
 		}
 		m.ctrl.Approve(m.pendingApproval.ID, allow, session, persist)
 		m.pendingApproval = nil
@@ -3856,7 +3859,9 @@ func (m *chatTUI) ingestEvent(e event.Event) {
 		m.queueEditCursor = -1
 		m.queueEditDraft = ""
 		m.clearSubmittedPastes()
-		if e.Err != nil && e.Err.Error() != "" && !strings.Contains(e.Err.Error(), "context canceled") {
+		if e.Outcome == event.TurnOutcomeRecoveryPaused && e.Err != nil && e.Err.Error() != "" {
+			m.commitLine(wrapForViewport("⏸ "+e.Err.Error(), m.width, activeCLITheme.info))
+		} else if e.Err != nil && e.Err.Error() != "" && !strings.Contains(e.Err.Error(), "context canceled") {
 			m.commitLine(wrapForViewport(i18n.M.ErrorPrefix+" "+e.Err.Error(), m.width, activeCLITheme.warn))
 		}
 		// Plan-mode approval is now driven by the controller (it emits an

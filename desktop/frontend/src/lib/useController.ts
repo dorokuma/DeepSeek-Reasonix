@@ -1077,6 +1077,16 @@ function applyEvent(s: State, e: WireEvent): State {
           detail: deliveryReadinessDetail(e.readiness, e.err),
           action: "continue_delivery",
         }];
+      } else if (e.outcome === "recovery_paused") {
+        // Informational pause — not a send failure. Composer is immediately free.
+        items = [...finalized, {
+          kind: "notice",
+          id: `e${s.seq}`,
+          level: "info",
+          title: t("notice.recoveryPausedTitle"),
+          text: t("notice.recoveryPausedBody"),
+          detail: e.err || undefined,
+        }];
       } else if (e.err) {
         items = [...finalized, { kind: "notice", id: `e${s.seq}`, level: "warn", text: e.err }];
       }

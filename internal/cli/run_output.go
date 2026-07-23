@@ -104,21 +104,20 @@ func (s *runOutputSink) Finalize(sessionID string, started time.Time, runErr err
 		return s.err
 	}
 	resultText := s.final
-	subtype := "success"
+	completion := classifyRunCompletion(runErr)
 	if runErr != nil {
-		subtype = "error_during_execution"
 		if resultText == "" {
 			resultText = runErr.Error()
 		}
 	}
 	turns := s.turns
-	if turns == 0 && runErr == nil {
+	if turns == 0 && !completion.isError {
 		turns = 1
 	}
 	return s.encoder.Encode(runResult{
 		Type:         "result",
-		Subtype:      subtype,
-		IsError:      runErr != nil,
+		Subtype:      completion.subtype,
+		IsError:      completion.isError,
 		DurationMS:   time.Since(started).Milliseconds(),
 		NumTurns:     turns,
 		Result:       resultText,

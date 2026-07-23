@@ -73,13 +73,14 @@ function installDom(language = "en-US") {
 
 console.log("\ndecision surface");
 
-// Plan keeps one explicit start decision, but both visible choices are direct
-// buttons. Exit/stop remain global controls rather than extra card branches.
+// Plan exposes start, revise, and leave-without-executing as direct buttons so
+// declining the current plan never traps the user in Plan mode.
 {
   const dom = installDom();
   const root = createRoot(document.getElementById("root")!);
   const answers: Array<[boolean, boolean, boolean]> = [];
   const revisions: string[] = [];
+  let exits = 0;
   const approval: WireApproval = {
     id: "plan-1",
     tool: "exit_plan_mode",
@@ -93,6 +94,7 @@ console.log("\ndecision surface");
           approval={approval}
           onAnswer={(a, s, p) => answers.push([a, s, p])}
           onRevisePlan={(text) => revisions.push(text)}
+          onExitPlan={() => { exits += 1; }}
           onStop={() => undefined}
         />
       </LocaleProvider>,
@@ -101,11 +103,11 @@ console.log("\ndecision surface");
   });
 
   const actions = [...document.querySelectorAll(".prompt-shelf__actions .prompt-action")] as HTMLButtonElement[];
-  eq(actions.length, 2, "Plan has start and revise actions only");
+  eq(actions.length, 3, "Plan has start, revise, and exit-without-executing actions");
   eq(document.querySelector(".prompt-shelf__actions")?.getAttribute("role"), "group", "Plan actions use button-group semantics");
   ok(actions.every((action) => action.getAttribute("role") === "button"), "Plan actions are announced as buttons");
   ok(!document.querySelector(".decision-confirm-bar__confirm"), "Plan has no redundant confirm button");
-  ok(!document.body.textContent?.includes("Exit plan mode"), "Plan card hides the exit branch");
+  ok(actions[2].textContent?.includes("Exit without executing"), "Plan card exposes a clear non-executing exit");
   ok(!document.body.textContent?.includes("Stop task"), "Plan card relies on the global Stop control");
 
   await act(async () => {
@@ -114,6 +116,46 @@ console.log("\ndecision surface");
   });
   ok(document.querySelector(".plan-revision__input") != null, "Revise opens the inline editor in one click");
   eq(answers.length, 0, "Opening revision does not start execution");
+
+  await act(async () => {
+    actions[2].click();
+    actions[2].click();
+    await flushTimers(220);
+  });
+  eq(exits, 1, "Exit without executing runs once and ignores a double click");
+  eq(answers.length, 0, "Exit without executing never approves plan execution");
+  eq(revisions.length, 0, "Exit without executing does not submit a plan revision");
+
+  await act(async () => {
+    root.unmount();
+  });
+  dom.window.close();
+}
+
+{
+  const dom = installDom();
+  const root = createRoot(document.getElementById("root")!);
+  let exits = 0;
+
+  await act(async () => {
+    root.render(
+      <LocaleProvider>
+        <ApprovalModal
+          approval={{ id: "plan-exit-key", tool: "exit_plan_mode", subject: "Plan ready" }}
+          onAnswer={() => undefined}
+          onExitPlan={() => { exits += 1; }}
+          onStop={() => undefined}
+        />
+      </LocaleProvider>,
+    );
+    await flushTimers();
+  });
+
+  await act(async () => {
+    document.dispatchEvent(new window.KeyboardEvent("keydown", { key: "3", bubbles: true }));
+    await flushTimers(220);
+  });
+  eq(exits, 1, "number key 3 exits Plan without execution");
 
   await act(async () => {
     root.unmount();

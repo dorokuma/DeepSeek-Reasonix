@@ -131,8 +131,28 @@ func TestObserveRecoveryResultMarksCancellation(t *testing.T) {
 		context.Canceled,
 		false,
 		false,
+		0,
 	)
 	if !gate.observation.Cancelled {
 		t.Fatalf("observation = %+v, want cancellation marked", gate.observation)
+	}
+	if gate.observation.TaskScopeID == "" {
+		t.Fatalf("observation = %+v, want a host-owned recovery scope", gate.observation)
+	}
+}
+
+func TestRecoveryBlockSurfacesConcreteReason(t *testing.T) {
+	reg := tool.NewRegistry()
+	reg.Add(mustBuiltinTool(t, "write_file"))
+	gate := &recordingRecoveryGate{decision: RecoveryDecision{
+		Blocked: true,
+		Message: "blocked: Auto stopped repeating this operation after 3 consecutive failures: write a.go. Other operations remain available.",
+	}}
+	a := New(nil, reg, NewSession(""), Options{RecoveryGate: gate}, event.Discard)
+	out := a.executeOne(context.Background(), provider.ToolCall{
+		ID: "blocked-write", Name: "write_file", Arguments: `{"path":"a.go","content":"x"}`,
+	})
+	if !out.blocked || !strings.Contains(out.errMsg, "stopped repeating this operation") || strings.Contains(out.errMsg, "Auto Guard") {
+		t.Fatalf("recovery failure card = %+v", out)
 	}
 }

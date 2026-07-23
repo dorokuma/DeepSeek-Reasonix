@@ -98,6 +98,11 @@ const (
 
 const TurnOutcomeFinalReadiness = "final_readiness"
 
+// TurnOutcomeRecoveryPaused marks an Auto recovery Episode budget stop. New
+// clients show an informational status (not send-failed); older clients still
+// read Err text and ignore the unknown outcome.
+const TurnOutcomeRecoveryPaused = "recovery_paused"
+
 // Level classifies a Notice so sinks can style or filter it.
 type Level int
 

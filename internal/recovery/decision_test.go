@@ -95,12 +95,20 @@ func TestDecisionMatrix(t *testing.T) {
 			want: DecisionResult{Route: RouteReview},
 		},
 		{
-			name: "third failure during recovery stops",
+			name: "third repeat of the same operation stops",
+			f: Facts{
+				AutoMode: true, Mutates: true,
+				HasActiveFailure: true, FailureCount: 3, SameFailedOperation: true,
+			},
+			want: DecisionResult{Route: RouteStop, StopReason: StopReasonOperationFailures},
+		},
+		{
+			name: "different operation after three failures stays recoverable",
 			f: Facts{
 				AutoMode: true, Mutates: true,
 				HasActiveFailure: true, FailureCount: 3,
 			},
-			want: DecisionResult{Route: RouteStop},
+			want: DecisionResult{Route: RouteReview},
 		},
 		{
 			name: "ambiguous recovery mutation goes to reviewer",
@@ -152,8 +160,8 @@ func TestToEventApprovalCarriesPlanTransitionForDecisionSurfaces(t *testing.T) {
 }
 
 func TestRepeatedFailureStopMessageDoesNotAskForRiskApproval(t *testing.T) {
-	got := repeatedFailureStopMessage(3)
-	if !strings.Contains(got, "stopped after 3") || !strings.Contains(got, "Do not ask") {
+	got := repeatedFailureStopMessage(3, Proposal{Tool: "bash", Subject: "go test ./..."})
+	if !strings.Contains(got, "after 3") || !strings.Contains(got, "go test ./...") || !strings.Contains(got, "other operations remain available") {
 		t.Fatalf("stop message = %q", got)
 	}
 }
@@ -296,12 +304,12 @@ func TestBehaviorMatrixGolden(t *testing.T) {
 			t.Fatalf("got %+v", got)
 		}
 	})
-	t.Run("third recovery failure stops without prompting", func(t *testing.T) {
+	t.Run("third repeated operation stops without prompting", func(t *testing.T) {
 		got := run(t, func(g *Gate) {
 			for i := 0; i < 3; i++ {
 				g.ObserveResult(context.Background(), Observation{
 					Tool: "write_file", Mutates: true, Subject: "a.go", ErrSummary: "fail",
-					Args: json.RawMessage(`{"path":"a.go"}`),
+					Args: json.RawMessage(`{"path":"a.go","content":"x"}`),
 				})
 			}
 		}, Proposal{
@@ -309,6 +317,22 @@ func TestBehaviorMatrixGolden(t *testing.T) {
 			Args: json.RawMessage(`{"path":"a.go","content":"x"}`),
 		}, nil)
 		if got.allow || got.prompted || got.reviews != 0 || !got.blocked {
+			t.Fatalf("got %+v", got)
+		}
+	})
+	t.Run("different edit after three verification failures stays automatic", func(t *testing.T) {
+		got := run(t, func(g *Gate) {
+			for i := 0; i < 3; i++ {
+				g.ObserveResult(context.Background(), Observation{
+					Tool: "bash", Verification: true, Subject: "go test ./...", ErrSummary: "fail",
+					Args: json.RawMessage(`{"command":"go test ./..."}`),
+				})
+			}
+		}, Proposal{
+			Tool: "write_file", Mutates: true, Subject: "a.go",
+			Args: json.RawMessage(`{"path":"a.go","content":"fix"}`),
+		}, nil)
+		if !got.allow || got.prompted || got.reviews != 1 || got.blocked {
 			t.Fatalf("got %+v", got)
 		}
 	})
@@ -413,7 +437,7 @@ func TestBehaviorMatrixGolden(t *testing.T) {
 			}
 		}
 		dec, err := g.BeforeMutation(context.Background(), prop)
-		if err != nil || dec.Allow || !dec.Blocked || prompts != 0 || reviews.Load() != 3 || !strings.Contains(dec.Message, "Stop retrying") {
+		if err != nil || dec.Allow || !dec.Blocked || !dec.StopTurn || prompts != 0 || reviews.Load() != 3 || !strings.Contains(dec.Message, "paused this turn") {
 			t.Fatalf("stop = %+v %v prompts=%d reviews=%d", dec, err, prompts, reviews.Load())
 		}
 	})

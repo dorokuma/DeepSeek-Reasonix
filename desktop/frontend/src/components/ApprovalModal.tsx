@@ -223,6 +223,7 @@ export function ApprovalModal({
   onAnswer,
   onResolveRecovery,
   onRevisePlan,
+  onExitPlan,
   onStop,
   cwd,
   tabId,
@@ -385,6 +386,15 @@ export function ApprovalModal({
           desc: t("approval.revisePlanDesc"),
           kind: "toggle-revision",
         },
+        ...(onExitPlan
+          ? [{
+              key: "3",
+              label: t("approval.exitPlanWithoutExecution"),
+              desc: t("approval.exitPlanWithoutExecutionDesc"),
+              kind: "direct" as const,
+              run: () => onExitPlan(),
+            }]
+          : []),
       ]
     : [
         {
