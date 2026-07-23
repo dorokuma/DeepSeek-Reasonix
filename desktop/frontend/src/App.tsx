@@ -1548,6 +1548,9 @@ export default function App() {
       ? planRevisionInsertRequest.request
       : null;
   const composerInsertRequest = activeTabId ? composerInsertRequestsByTab[activeTabId] ?? null : null;
+  const handleRevisionActiveChange = useCallback((active: boolean) => {
+    setWorkspaceInsertTarget(active ? "planRevision" : "composer");
+  }, []);
   const selectedTextRequest = activeTabId ? selectedTextRequestsByTab[activeTabId] ?? null : null;
   const prefillSubagentCommand = useCallback((command: string) => {
     if (!activeTabId) return;
@@ -4212,7 +4215,7 @@ export default function App() {
                 tabId={activeTabId}
                 workspaceScopeKey={workspaceScopeKey}
                 insertRequest={activePlanRevisionInsertRequest}
-                onRevisionActiveChange={(active) => setWorkspaceInsertTarget(active ? "planRevision" : "composer")}
+                onRevisionActiveChange={handleRevisionActiveChange}
                 onAnswer={async (allow, session, persist) => {
                   // Approving an exit_plan_mode plan leaves plan mode; await the
                   // mode switch before sending the approval so the controller
