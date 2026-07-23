@@ -57,6 +57,11 @@ type SyncActiveTabOptions = {
   preserveCachedHistory?: boolean;
 };
 
+type ModelSwitchQueueState = {
+  tail: Promise<void>;
+  fallbackBalance?: BalanceInfo;
+};
+
 const HISTORY_PAGE_TURNS = 60;
 
 export type Item =
@@ -1707,6 +1712,10 @@ export function replayPendingPromptsForActiveTab(activeTabId: string | undefined
 
 export function useController() {
   const statesRef = useRef<TabStates>(new Map());
+  const balanceRefreshSeqByTab = useRef(new Map<string, number>());
+  const modelSwitchSeqByTab = useRef(new Map<string, number>());
+  const modelSwitchSuccessVersionByTab = useRef(new Map<string, number>());
+  const modelSwitchQueueByTab = useRef(new Map<string, ModelSwitchQueueState>());
   const lastTurnActivityAtByTab = useRef(new Map<string, number>());
   const cancelReconcileTimers = useRef(new Map<string, number>());
   const stalePromptReconcileTimers = useRef(new Map<string, number>());
@@ -1748,6 +1757,41 @@ export function useController() {
       bump();
     }
   }, [bump]);
+
+  const clearBalanceForTab = useCallback((tabId: string): void => {
+    const seq = (balanceRefreshSeqByTab.current.get(tabId) ?? 0) + 1;
+    balanceRefreshSeqByTab.current.set(tabId, seq);
+    dispatchTo(tabId, { type: "balance", balance: { available: false, display: "" } });
+  }, [dispatchTo]);
+
+  const invalidateProviderStateForTab = useCallback((tabId: string): void => {
+    balanceRefreshSeqByTab.current.set(
+      tabId,
+      (balanceRefreshSeqByTab.current.get(tabId) ?? 0) + 1,
+    );
+    modelSwitchSeqByTab.current.set(
+      tabId,
+      (modelSwitchSeqByTab.current.get(tabId) ?? 0) + 1,
+    );
+  }, []);
+
+  const refreshBalanceForTab = useCallback(async (
+    tabId: string,
+    options: { apply?: () => boolean } = {},
+  ): Promise<void> => {
+    const seq = (balanceRefreshSeqByTab.current.get(tabId) ?? 0) + 1;
+    balanceRefreshSeqByTab.current.set(tabId, seq);
+    try {
+      const balance = await app.BalanceForTab(tabId);
+      if (balanceRefreshSeqByTab.current.get(tabId) !== seq) return;
+      if (options.apply && !options.apply()) return;
+      if (balance.err?.trim()) return;
+      dispatchTo(tabId, { type: "balance", balance });
+    } catch {
+      // Balance is optional. Keep the last explicit cleared/unavailable state
+      // instead of surfacing a provider-specific wallet failure in chat.
+    }
+  }, [dispatchTo]);
 
   const confirmBackendActiveTab = useCallback((tabId: string) => {
     backendActiveTabIdRef.current = tabId;
@@ -1956,11 +2000,9 @@ export function useController() {
       }
       if (checkpoints !== undefined) dispatchTo(tabId, { type: "checkpoints", checkpoints: asArray(checkpoints) });
       addBreadcrumb("tab.hydrate", `ancillary ${reason} ${tabId} ms=${Date.now() - ancillaryStartedAt}`);
-      app.BalanceForTab(tabId)
-        .then((balance) => {
-          if (sessionLoadCurrent(tabId, seq) && stillVisible()) dispatchTo(tabId, { type: "balance", balance });
-        })
-        .catch((err) => { noteFailure("balance", err); });
+      void refreshBalanceForTab(tabId, {
+        apply: () => sessionLoadCurrent(tabId, seq) && stillVisible(),
+      });
     })();
     if (shouldTrackInFlight) {
       sessionLoadInFlight.current.set(tabId, { sessionPath, promise });
@@ -1972,7 +2014,7 @@ export function useController() {
         sessionLoadInFlight.current.delete(tabId);
       }
     }
-  }, [bumpSessionLoadSeq, dispatchTo, loadMetaForTab, sessionLoadCurrent]);
+  }, [bumpSessionLoadSeq, dispatchTo, loadMetaForTab, refreshBalanceForTab, sessionLoadCurrent]);
 
   const loadOlderHistory = useCallback(async (tabId?: string): Promise<void> => {
     const targetTabId = tabId || activeTabIdRef.current;
@@ -2094,16 +2136,15 @@ export function useController() {
       await loadSessionDataForTab(tabId, missedTurnDone, "startup");
       return tabs;
     }
-    const [jobs, effort, balance] = await Promise.all([
+    const [jobs, effort] = await Promise.all([
       app.JobsForTab(tabId).catch(() => undefined),
       app.EffortForTab(tabId).catch(() => undefined),
-      app.BalanceForTab(tabId).catch(() => undefined),
     ]);
     if (jobs) dispatchTo(tabId, { type: "jobs", jobs: asArray(jobs) });
     if (effort) dispatchTo(tabId, { type: "effort", effort });
-    if (balance) dispatchTo(tabId, { type: "balance", balance });
+    await refreshBalanceForTab(tabId);
     return tabs;
-  }, [dispatchRuntimeStatusForTab, loadSessionDataForTab]);
+  }, [dispatchRuntimeStatusForTab, loadSessionDataForTab, refreshBalanceForTab]);
 
   // Authoritative backstop for the prompt-freshness heuristic: after the reducer
   // rejects a stale idle snapshot, refetch backend state once. If the backend
@@ -2183,7 +2224,7 @@ export function useController() {
           .ContextUsageForTab(targetTabId)
           .then((context) => dispatchTo(targetTabId, { type: "context", context }))
           .catch(() => {});
-        app.BalanceForTab(targetTabId).then((balance) => dispatchTo(targetTabId, { type: "balance", balance })).catch(() => {});
+        void refreshBalanceForTab(targetTabId);
         app.EffortForTab(targetTabId).then((effort) => dispatchTo(targetTabId, { type: "effort", effort })).catch(() => {});
         void refreshCheckpoints(targetTabId);
         void refreshMetaForTab(targetTabId);
@@ -2238,7 +2279,7 @@ export function useController() {
       offReady();
       offRebuilt();
     };
-  }, [dispatchTo, loadSessionDataForTab, refreshCheckpoints, refreshMetaForTab, syncActiveTabFromBackend]);
+  }, [dispatchTo, loadSessionDataForTab, refreshBalanceForTab, refreshCheckpoints, refreshMetaForTab, syncActiveTabFromBackend]);
 
   // Keep shared all-source telemetry live between turn boundaries. Delivery
   // mode can complete dozens of provider requests inside one UI turn, while
@@ -2729,15 +2770,60 @@ export function useController() {
   }, [waitForTabReady]);
 
   const setModel = useCallback(async (name: string) => {
-    if (!activeTabId) return;
+    if (!activeTabId) return false;
+    const tabId = activeTabId;
+    const switchSeq = (modelSwitchSeqByTab.current.get(tabId) ?? 0) + 1;
+    const successVersion = modelSwitchSuccessVersionByTab.current.get(tabId) ?? 0;
+    const existingQueue = modelSwitchQueueByTab.current.get(tabId);
+    // Every attempt in one queued burst shares the balance that was visible
+    // before the first switch cleared it. Otherwise a later queued failure
+    // captures the placeholder and cannot restore the outgoing provider.
+    const fallbackBalance = existingQueue
+      ? existingQueue.fallbackBalance
+      : statesRef.current.get(tabId)?.balance;
+    modelSwitchSeqByTab.current.set(tabId, switchSeq);
+    // Hide the outgoing provider's wallet as soon as the user starts a hot
+    // switch. If the rebuild fails, the catch path re-queries the still-active
+    // provider and restores its balance.
+    clearBalanceForTab(tabId);
+    const previousSwitch = existingQueue?.tail ?? Promise.resolve();
+    const backendSwitch = previousSwitch.then(() => app.SetModelForTab(tabId, name));
+    const queueTail = backendSwitch.catch(() => {});
+    const queueState: ModelSwitchQueueState = { tail: queueTail, fallbackBalance };
+    modelSwitchQueueByTab.current.set(tabId, queueState);
     try {
-      await app.SetModelForTab(activeTabId, name);
+      await backendSwitch;
+      modelSwitchSuccessVersionByTab.current.set(
+        tabId,
+        (modelSwitchSuccessVersionByTab.current.get(tabId) ?? 0) + 1,
+      );
     } catch (err) {
-      dispatchTo(activeTabId, { type: "local_notice", level: "warn", text: modelSwitchNoticeText(err) });
-      return;
+      if (modelSwitchSeqByTab.current.get(tabId) !== switchSeq) return false;
+      dispatchTo(tabId, { type: "local_notice", level: "warn", text: modelSwitchNoticeText(err) });
+      const olderSwitchSucceeded =
+        (modelSwitchSuccessVersionByTab.current.get(tabId) ?? 0) !== successVersion;
+      // Restore the known balance only when no older overlapping switch
+      // completed after this attempt began. Otherwise the backend now owns a
+      // different provider and the refresh below must establish its balance.
+      if (fallbackBalance && !olderSwitchSucceeded) {
+        dispatchTo(tabId, { type: "balance", balance: fallbackBalance });
+      }
+      void refreshBalanceForTab(tabId);
+      // A superseded success deliberately skips its own UI reconciliation.
+      // If this latest queued switch then fails, reconcile the model metadata
+      // to the provider that actually became active in the backend.
+      if (olderSwitchSucceeded) await refreshMetaForTab(tabId);
+      return false;
+    } finally {
+      if (modelSwitchQueueByTab.current.get(tabId) === queueState) {
+        modelSwitchQueueByTab.current.delete(tabId);
+      }
     }
-    await refreshMetaForTab(activeTabId);
-  }, [activeTabId, dispatchTo, refreshMetaForTab]);
+    if (modelSwitchSeqByTab.current.get(tabId) !== switchSeq) return false;
+    void refreshBalanceForTab(tabId);
+    await refreshMetaForTab(tabId);
+    return modelSwitchSeqByTab.current.get(tabId) === switchSeq;
+  }, [activeTabId, clearBalanceForTab, dispatchTo, refreshBalanceForTab, refreshMetaForTab]);
 
   const setEffort = useCallback(async (level: string) => {
     if (!activeTabId) return;
@@ -2992,7 +3078,10 @@ export function useController() {
     // during loading, avoiding a blank/Welcome flash before history arrives.
     const prevItems = activeTabIdRef.current ? statesRef.current.get(activeTabIdRef.current)?.items : undefined;
     for (const id of Array.from(statesRef.current.keys())) {
-      if (id !== meta.id) statesRef.current.delete(id);
+      if (id !== meta.id) {
+        invalidateProviderStateForTab(id);
+        statesRef.current.delete(id);
+      }
     }
     setActiveTabId(meta.id);
     activeTabIdRef.current = meta.id;
@@ -3003,7 +3092,7 @@ export function useController() {
       .then(() => reconcileTabRuntime(meta.id, { hydrateSessionData: false }))
       .catch(() => {});
     return meta;
-  }, [beginActiveNavigation, confirmBackendActiveTab, dispatchRuntimeStatusForTab, dispatchTo, loadSessionDataForTab, reconcileTabRuntime]);
+  }, [beginActiveNavigation, confirmBackendActiveTab, dispatchRuntimeStatusForTab, dispatchTo, invalidateProviderStateForTab, loadSessionDataForTab, reconcileTabRuntime]);
 
   // Ensure a blank tab exists for the given scope — reuses an existing one
   // or creates a new tab, then loads its session data.
@@ -3028,7 +3117,10 @@ export function useController() {
     const snapshotAt = promptEventClock();
     const meta = await app.EnsureBlankSurface(scope, workspaceRoot);
     for (const id of Array.from(statesRef.current.keys())) {
-      if (id !== meta.id) statesRef.current.delete(id);
+      if (id !== meta.id) {
+        invalidateProviderStateForTab(id);
+        statesRef.current.delete(id);
+      }
     }
     setActiveTabId(meta.id);
     activeTabIdRef.current = meta.id;
@@ -3039,7 +3131,7 @@ export function useController() {
       .then(() => reconcileTabRuntime(meta.id, { hydrateSessionData: false }))
       .catch(() => {});
     return meta;
-  }, [beginActiveNavigation, confirmBackendActiveTab, dispatchRuntimeStatusForTab, dispatchTo, loadSessionDataForTab, reconcileTabRuntime]);
+  }, [beginActiveNavigation, confirmBackendActiveTab, dispatchRuntimeStatusForTab, dispatchTo, invalidateProviderStateForTab, loadSessionDataForTab, reconcileTabRuntime]);
 
   const createDeliveryWorktree = useCallback(async (workspaceRoot: string): Promise<DeliveryWorktreeOpenResult> => {
     beginActiveNavigation();
@@ -3062,11 +3154,12 @@ export function useController() {
     if (tabId === activeTabIdRef.current) beginActiveNavigation();
     try {
       await app.CloseTab(tabId);
+      invalidateProviderStateForTab(tabId);
       statesRef.current.delete(tabId);
       bump();
       if (tabId === activeTabId) await syncActiveTabFromBackend(false);
     } catch { /* ignore */ }
-  }, [activeTabId, beginActiveNavigation, bump, syncActiveTabFromBackend]);
+  }, [activeTabId, beginActiveNavigation, bump, invalidateProviderStateForTab, syncActiveTabFromBackend]);
 
   const reorderTabs = useCallback(async (tabIds: string[]) => {
     try {

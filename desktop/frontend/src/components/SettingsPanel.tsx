@@ -182,6 +182,7 @@ export function SettingsPanel({
       const result = await fn();
       const next = await reload();
       onChanged(next);
+      window.dispatchEvent(new Event("reasonix:model-catalog-changed"));
       if (typeof result === "string" && result.trim()) {
         setWarning(result.trim());
       }
@@ -198,6 +199,7 @@ export function SettingsPanel({
       await fn();
       const next = await reload();
       onChanged(next);
+      window.dispatchEvent(new Event("reasonix:model-catalog-changed"));
     } catch (e) {
       setErr(formatSettingsError(e, t));
     }

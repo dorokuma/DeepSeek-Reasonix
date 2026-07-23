@@ -573,7 +573,7 @@ export function Composer({
   onSetToolApprovalMode: (mode: ToolApprovalMode) => void;
   onToggleYoloApprovalMode: () => void;
   onClearGoal: () => void;
-  onSwitchModel: (name: string) => void;
+  onSwitchModel: (name: string) => boolean | Promise<boolean>;
   onSetEffort: (level: string) => void;
   onSetTokenMode: (mode: TokenMode) => void;
   insertRequest?: ComposerInsertRequest | null;

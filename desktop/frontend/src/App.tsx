@@ -1828,10 +1828,12 @@ export default function App() {
   // controller silently uses normal gating.
   const switchModel = useCallback(
     async (name: string) => {
-      await setModel(name);
+      const switched = await setModel(name);
+      if (!switched) return false;
       await setControllerCollaborationMode(controllerComposerProfileCollaborationMode(composerProfile));
       await setControllerToolApprovalMode(toolApprovalMode);
       if (goal.trim()) await setControllerGoal(goal);
+      return true;
     },
     [composerProfile, goal, setControllerCollaborationMode, setControllerGoal, setControllerToolApprovalMode, setModel, toolApprovalMode],
   );

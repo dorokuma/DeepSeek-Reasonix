@@ -3045,7 +3045,7 @@ func TestSetModelForTabRejectsProviderOutsideAccess(t *testing.T) {
 	}
 }
 
-func TestSetModelForTabRefreshesCarriedSystemPrompt(t *testing.T) {
+func TestSetModelForTabRefreshesCarriedSystemPromptWithoutChangingDefaults(t *testing.T) {
 	isolateDesktopUserDirs(t)
 	setDesktopTestCredential(t, "OLD_MODEL_KEY", "sk-test")
 	setDesktopTestCredential(t, "NEW_MODEL_KEY", "sk-test")
@@ -3089,8 +3089,15 @@ func TestSetModelForTabRefreshesCarriedSystemPrompt(t *testing.T) {
 		sink:        &tabEventSink{tabID: "tab_a", app: app},
 		disabledMCP: map[string]ServerView{},
 	}
-	app.tabs = map[string]*WorkspaceTab{tab.ID: tab}
-	app.tabOrder = []string{tab.ID}
+	sibling := &WorkspaceTab{
+		ID:          "tab_b",
+		Scope:       "global",
+		Ready:       true,
+		model:       "old/old-model",
+		disabledMCP: map[string]ServerView{},
+	}
+	app.tabs = map[string]*WorkspaceTab{tab.ID: tab, sibling.ID: sibling}
+	app.tabOrder = []string{tab.ID, sibling.ID}
 	app.activeTabID = tab.ID
 	t.Cleanup(func() {
 		if tab.Ctrl != nil {
@@ -3113,6 +3120,12 @@ func TestSetModelForTabRefreshesCarriedSystemPrompt(t *testing.T) {
 	}
 	if history[1].Role != provider.RoleUser || history[1].Content != "hello" {
 		t.Fatalf("carried user message changed: %+v", history[1])
+	}
+	if got := config.LoadForEdit(config.UserConfigPath()).DefaultModel; got != "old/old-model" {
+		t.Fatalf("default model after session switch = %q, want old/old-model", got)
+	}
+	if sibling.model != "old/old-model" {
+		t.Fatalf("sibling tab model after session switch = %q, want old/old-model", sibling.model)
 	}
 }
 
