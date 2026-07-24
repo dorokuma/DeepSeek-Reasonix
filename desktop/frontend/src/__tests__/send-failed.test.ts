@@ -98,12 +98,22 @@ const recoveryPaused = reducer(readinessStarted, {
   e: {
     kind: "turn_done",
     outcome: "recovery_paused",
-    err: "This automatic recovery turn paused to avoid repeated execution. Completed work is kept; send more requirements or reply continue.",
+    err: "Automatic retries paused. Reasonix stopped repeated attempts and kept completed work. Send \"continue\" to start a fresh attempt, or add instructions to change direction.",
   } as WireEvent,
 });
 const recoveryNotice = recoveryPaused.items[recoveryPaused.items.length - 1];
 eq(recoveryNotice.kind === "notice" && recoveryNotice.level, "info", "recovery_paused uses informational severity");
 eq(recoveryNotice.kind === "notice" && Boolean(recoveryNotice.title), true, "recovery_paused shows a product title");
+eq(
+  recoveryNotice.kind === "notice" && recoveryNotice.text,
+  "Reasonix stopped repeated attempts and kept completed work. Send “Continue” to start a fresh attempt, or add instructions to change direction.",
+  "recovery_paused uses the localized product copy",
+);
+eq(
+  recoveryNotice.kind === "notice" && Boolean(recoveryNotice.detail),
+  false,
+  "recovery_paused does not repeat the backend English fallback as localized detail",
+);
 const recoveryUser = recoveryPaused.items.find((it) => it.kind === "user");
 eq(recoveryUser?.kind === "user" && Boolean(recoveryUser.failed), false, "recovery_paused does not mark the user message as failed");
 eq(recoveryPaused.running, false, "recovery_paused frees the composer");

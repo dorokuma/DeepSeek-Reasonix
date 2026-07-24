@@ -51,6 +51,7 @@ type Messages struct {
 	ChatTip             string // tip line under the chat banner
 	TurnCancelled       string // shown when Ctrl-C aborts the in-flight turn but the chat keeps running
 	InterruptedRecovery string // replay notice for a durable interrupted turn
+	RecoveryPaused      string // controlled Auto retry pause; user can continue in the next message
 	NoSessionToResume   string // shown when --continue / --resume finds nothing
 	ResumeRequiresTTY   string // shown when --resume runs piped instead of on a terminal
 	PickSessionLabel    string // header on the --resume picker

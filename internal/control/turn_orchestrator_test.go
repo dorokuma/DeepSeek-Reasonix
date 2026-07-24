@@ -142,7 +142,7 @@ func (r *recoveryPauseRunner) Run(ctx context.Context, _ string) error {
 		r.scopes = append(r.scopes, scope)
 	}
 	return &agent.RecoveryPauseError{
-		Message:    "This automatic recovery turn paused to avoid repeated execution. Completed work is kept; send more requirements or reply continue.",
+		Message:    "Automatic retries paused. Reasonix stopped repeated attempts and kept completed work. Send \"continue\" to start a fresh attempt, or add instructions to change direction.",
 		StopReason: "episode_failures",
 	}
 }

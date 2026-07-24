@@ -28,6 +28,7 @@ var Chinese = Messages{
 	ChatTip:             "对话上下文将跨轮保留。输入 'exit' 或按 Ctrl-D 退出。",
 	TurnCancelled:       "已取消 — 回到提示符",
 	InterruptedRecovery: "本轮已中断。部分输出会永久保留供查看；只有完整工具调用及结果和有界恢复摘要会进入模型下一轮。继续或回滚前请先检查当前工作区。",
+	RecoveryPaused:      "已暂停自动重试。Reasonix 已停止重复尝试，并保留已完成的工作。发送“继续”即可开始新一轮，也可以补充要求来调整方向。",
 	NoSessionToResume:   "没有可恢复的会话 — 用 `reasonix` 开一个新的",
 	ResumeRequiresTTY:   "--resume 需要交互式终端；用 --continue 直接恢复最近一次",
 	PickSessionLabel:    "恢复哪个会话？",

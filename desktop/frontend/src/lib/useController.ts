@@ -1097,7 +1097,6 @@ function applyEvent(s: State, e: WireEvent): State {
           level: "info",
           title: t("notice.recoveryPausedTitle"),
           text: t("notice.recoveryPausedBody"),
-          detail: e.err || undefined,
         }];
       } else if (e.err) {
         items = [...finalized, { kind: "notice", id: `e${s.seq}`, level: "warn", text: e.err }];

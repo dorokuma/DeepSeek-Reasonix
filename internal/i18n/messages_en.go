@@ -27,6 +27,7 @@ var English = Messages{
 	ChatTip:             "Context is kept across turns. Type 'exit' or Ctrl-D to quit.",
 	TurnCancelled:       "cancelled — back to prompt",
 	InterruptedRecovery: "This turn was interrupted. Partial output is kept for reference; only completed tool pairs and a bounded recovery summary enter the next model turn. Inspect the workspace before continuing or reverting changes.",
+	RecoveryPaused:      "Automatic retries paused. Reasonix stopped repeated attempts and kept completed work. Send “Continue” to start a fresh attempt, or add instructions to change direction.",
 	NoSessionToResume:   "no saved session to resume — start a new one with `reasonix`",
 	ResumeRequiresTTY:   "--resume needs an interactive terminal; pass --continue for the most recent session",
 	PickSessionLabel:    "Resume which session?",

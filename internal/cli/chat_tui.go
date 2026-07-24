@@ -3867,8 +3867,8 @@ func (m *chatTUI) ingestEvent(e event.Event) {
 		m.queueEditCursor = -1
 		m.queueEditDraft = ""
 		m.clearSubmittedPastes()
-		if e.Outcome == event.TurnOutcomeRecoveryPaused && e.Err != nil && e.Err.Error() != "" {
-			m.commitLine(wrapForViewport("⏸ "+e.Err.Error(), m.width, activeCLITheme.info))
+		if e.Outcome == event.TurnOutcomeRecoveryPaused {
+			m.commitLine(wrapForViewport("⏸ "+i18n.M.RecoveryPaused, m.width, activeCLITheme.info))
 		} else if e.Err != nil && e.Err.Error() != "" && !strings.Contains(e.Err.Error(), "context canceled") {
 			m.commitLine(wrapForViewport(i18n.M.ErrorPrefix+" "+e.Err.Error(), m.width, activeCLITheme.warn))
 		}

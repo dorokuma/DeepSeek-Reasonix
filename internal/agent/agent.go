@@ -1325,7 +1325,7 @@ func (a *Agent) Run(ctx context.Context, input string) (runErr error) {
 					_, _ = ctrl.ConsumeFinalization(a.recoveryTaskID)
 				}
 				return &RecoveryPauseError{
-					Message:    "This automatic recovery turn paused to avoid repeated execution. Completed work is kept; send more requirements or reply continue.",
+					Message:    "Automatic retries paused. Reasonix stopped repeated attempts and kept completed work. Send \"continue\" to start a fresh attempt, or add instructions to change direction.",
 					StopReason: reason,
 				}
 			}
@@ -1427,7 +1427,7 @@ func (a *Agent) Run(ctx context.Context, input string) (runErr error) {
 			}
 			a.maybeCompact(ctx, usage)
 			return &RecoveryPauseError{
-				Message:    "This automatic recovery turn paused to avoid repeated execution. Completed work is kept; send more requirements or reply continue.",
+				Message:    "Automatic retries paused. Reasonix stopped repeated attempts and kept completed work. Send \"continue\" to start a fresh attempt, or add instructions to change direction.",
 				StopReason: reason,
 			}
 		}
@@ -1506,11 +1506,6 @@ func (a *Agent) Run(ctx context.Context, input string) (runErr error) {
 			}
 			nudge := "Auto recovery has reached its limit for this turn. Do not call any more tools. Summarize what was completed, what failed, and what the user should do next. The user can continue in the next message."
 			a.session.Add(provider.Message{Role: provider.RoleUser, Content: a.withTurnPreferences(nudge)})
-			a.sink.Emit(event.Event{
-				Kind: event.Notice, Level: event.LevelInfo,
-				Text:   "Automatic recovery paused for this turn.",
-				Detail: firstNonEmpty(batch.recoveryStopReason, "episode recovery budget exhausted"),
-			})
 			continue
 		}
 
@@ -3352,7 +3347,8 @@ func (a *Agent) executeOne(ctx context.Context, call provider.ToolCall) (out too
 	// permission approval and workspace write-lock acquisition, so a waiting
 	// recovery card never holds a write lease. Consult on mutations,
 	// verification, plan transitions, and again for every tool once an Episode
-	// is exhausted (including read-only). Ask/Yolo still bypass inside the gate.
+	// is exhausted so host-proven read-only diagnosis can remain available while
+	// further execution is quarantined. Ask/Yolo still bypass inside the gate.
 	verification := evidenceName == "bash" && evidence.IsDeliveryVerificationCommand(bashCommandFromArgs(evidenceArgs))
 	planTransition, planBefore, planAfter := a.recoveryPlanTransition(evidenceName, evidenceArgs)
 	planReplacementAuthorized := false
