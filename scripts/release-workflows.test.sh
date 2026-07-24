@@ -39,6 +39,19 @@ for workflow in release.yml release-desktop.yml; do
 	grep -Eq 'if: \$\{\{ !inputs\.orchestrated' "$repo_root/.github/workflows/$workflow"
 done
 
+# Release notes should normally reuse an existing release-bound PR instead of
+# opening one PR per version. Fork PRs and stale branches must fail closed, and
+# the dedicated release-notes PR remains the explicit fallback.
+prepare_notes="$repo_root/.github/workflows/prepare-release-notes.yml"
+grep -Eq '^      target_pr:$' "$prepare_notes"
+grep -Eq 'isCrossRepository' "$prepare_notes"
+grep -Eq 'target_pr comes from a fork' "$prepare_notes"
+grep -Eq 'git merge-base --is-ancestor origin/main-v2 HEAD' "$prepare_notes"
+grep -Eq 'RELEASE_NOTES_PR=\$TARGET_PR' "$prepare_notes"
+grep -Eq 'Updated existing release-bound PR' "$prepare_notes"
+grep -Eq 'release-notes/v\$\{VERSION#v\}' "$prepare_notes"
+grep -Eq 'GITHUB_STEP_SUMMARY' "$prepare_notes"
+
 git init --bare -q "$test_root/remote.git"
 git clone -q "$test_root/remote.git" "$test_root/repo"
 (

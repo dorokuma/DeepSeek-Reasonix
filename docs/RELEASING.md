@@ -64,14 +64,27 @@ from accidental or unauthorized invocation.
 ## The release loop
 
 1. **Develop** — PRs land on `main-v2` (branch auto-deletes on merge).
-2. **Prepare the release notes** — Actions → **Prepare release notes**. Enter the
-   intended version and, when needed, the previous desktop tag. The workflow sends
-   only public merged-PR metadata to DeepSeek, creates equivalent English and Chinese
-   product notes, validates their structure and citations, and opens a review PR.
-   Review and edit that PR like product copy. Once merged, the same catalog entry
-   drives `/changelog/` and both CLI and Desktop GitHub Releases; the desktop
-   app links to that web history from Settings → Updates. A missing catalog
-   entry blocks stable publication.
+2. **Prepare the release notes without creating a release-only PR by default** —
+   Actions → **Prepare release notes**. Enter the intended version, the previous
+   desktop tag when needed, and the number of an existing release-bound PR when
+   one is available. The reusable PR must be open, target `main-v2`, come from a
+   branch in this repository, and already include the latest `main-v2`. The
+   workflow commits the generated notes onto that branch, so product changes and
+   their release copy share one PR and one review surface. The added commit still
+   reruns that PR's required checks.
+
+   Leave `target_pr` empty only when there is no suitable PR, the candidate PR
+   comes from a fork that the repository token cannot update, or the release copy
+   needs independent editorial review. In that fallback, the workflow opens or
+   updates the dedicated `release-notes/vX.Y.Z` PR as before.
+
+   The workflow sends only public merged-PR metadata to DeepSeek, creates
+   equivalent English and Chinese product notes, validates their structure and
+   citations, and includes the rendered draft in the workflow summary. Review
+   the catalog diff like product copy. Once merged, the same entry drives
+   `/changelog/` and both CLI and Desktop GitHub Releases; the desktop app links
+   to that web history from Settings → Updates. A missing catalog entry still
+   blocks stable publication.
 3. **Cut a canary** before the intended release (e.g. heading for `1.4.0`):
    - Desktop: Actions → **Release desktop** → `channel: canary`, `base_version: 1.4.0`
    - CLI: Actions → **Release npm** → `base_version: 1.4.0`
@@ -79,8 +92,9 @@ from accidental or unauthorized invocation.
 4. **Test** — testers install `reasonix@canary` (CLI) or grab the desktop canary
    build from its R2 link, and report bugs.
 5. **Fix** on `main-v2` via PRs; re-cut the canary as needed (`canary.N` bumps).
-   Re-run **Prepare release notes** after material fixes; it updates the same branch
-   and PR without publishing anything.
+   Re-run **Prepare release notes** after material fixes. Reuse the still-open
+   release-bound PR when possible; otherwise the workflow updates the same
+   dedicated release-notes branch and PR without publishing anything.
 6. **Ship stable** when the canary is clean and the release-notes PR is merged —
    create the three tags locally, then push them atomically:
    ```sh
@@ -109,6 +123,22 @@ from accidental or unauthorized invocation.
    matches the approved version; missing artifacts can no longer produce a green
    stable run.
 7. **Next cycle** — the canary rolls on toward `1.5.0`.
+
+### Release-PR frequency rule
+
+- Do not open a dedicated PR merely because a version is being published.
+- Prefer the final same-repository product, fix, or release-infrastructure PR
+  that already defines the candidate boundary. Generate the notes into that PR
+  before its final review.
+- A dedicated release-notes PR is the safe fallback, not the default. Use it
+  when no suitable PR exists, the only candidate PR comes from a fork, or the
+  release copy needs an independent approval boundary.
+- Never bypass protected `main-v2` with a direct catalog commit. Reducing PR
+  frequency must not remove release-copy review, catalog validation, cache
+  checks, atomic tags, the single `release` environment approval, or public
+  artifact postflight.
+- Release infrastructure and release-note schema changes still require their
+  own focused PR. This rule only avoids redundant version-only PRs.
 
 ## Notes
 
