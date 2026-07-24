@@ -5274,6 +5274,10 @@ func TestSetTokenModeLeaseHeldKeepsCurrentController(t *testing.T) {
 	if got := currentTabTokenMode(tab); got != "full" {
 		t.Fatalf("token mode = %q, want full", got)
 	}
+	meta := app.MetaForTab(tab.ID)
+	if !meta.Ready || meta.Runtime.Phase != sessionRuntimeReady {
+		t.Fatalf("failed switch disabled current runtime: ready=%v phase=%q", meta.Ready, meta.Runtime.Phase)
+	}
 }
 
 func TestSetTokenModeMigratesStaleOfficialDeepSeekTabModel(t *testing.T) {

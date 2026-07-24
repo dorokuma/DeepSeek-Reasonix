@@ -182,12 +182,30 @@ export interface WireEvent {
   // Tab routing: set by the Go-side tabEventSink so multi-tab frontends
   // route each event to the correct per-tab reducer.
   tabId?: string;
+  runtimeEpoch?: string;
   sessionHitTokens?: number;
   sessionMissTokens?: number;
   sessionCost?: number;
   sessionCurrency?: string;
   // Deprecated compatibility alias. Prefer sessionCost + sessionCurrency.
   sessionCostUsd?: number;
+}
+
+export type SessionRuntimePhase = "starting" | "ready" | "lease_blocked" | "failed" | "closing";
+
+export interface SessionRuntimeIssue {
+  code: "session_lease_held" | "startup_failed";
+  message: string;
+  retryable: boolean;
+  holderPid?: number;
+  holderHost?: string;
+  acquiredAt?: string;
+}
+
+export interface SessionRuntimeView {
+  phase: SessionRuntimePhase;
+  epoch: string;
+  issue?: SessionRuntimeIssue;
 }
 
 export interface WireFinalReadiness {
@@ -213,6 +231,7 @@ export interface TabMeta {
   projectColor?: string;
   label: string;
   ready: boolean;
+  runtime?: SessionRuntimeView;
   running: boolean;
   pendingPrompt?: boolean;
   backgroundJobs?: number;
@@ -489,6 +508,7 @@ export interface ContextInfo {
 export interface Meta {
   label: string;
   ready: boolean;
+  runtime?: SessionRuntimeView;
   startupErr?: string;
   eventChannel: string;
   cwd: string;

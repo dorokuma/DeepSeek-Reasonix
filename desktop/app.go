@@ -66,19 +66,22 @@ const eventChannel = "agent:event"
 const singleInstanceIDPrefix = "com.reasonix.desktop"
 
 // singleInstanceID is used by Wails to route a second desktop launch back to the
-// running instance. It is stable for a given binary path, while allowing a dev
-// build and an installed release at different paths to run side by side.
+// process that owns the same Reasonix data home. Basing the identity on the
+// executable path let installed, portable, stable, and canary binaries write the
+// same sessions concurrently. Explicit REASONIX_HOME isolation still produces
+// an independent instance; REASONIX_DEV continues to bypass the lock entirely.
 func singleInstanceID() string {
-	abs, err := os.Executable()
-	if err != nil {
+	root := strings.TrimSpace(config.ReasonixHomeDir())
+	if root == "" {
 		return singleInstanceIDPrefix
 	}
-	if resolved, err := filepath.EvalSymlinks(abs); err == nil {
-		abs = resolved
-	} else if fallback, err := filepath.Abs(abs); err == nil {
-		abs = fallback
+	// Reuse the lease path canonicalizer so a missing home below a symlink or
+	// junction still hashes to the same physical data directory.
+	if marker := agent.CanonicalSessionPath(filepath.Join(root, ".reasonix-home.identity")); marker != "" {
+		root = filepath.Dir(marker)
 	}
-	sum := sha256.Sum256([]byte(abs))
+	root = filepath.Clean(root)
+	sum := sha256.Sum256([]byte(root))
 	return singleInstanceIDPrefix + "." + hex.EncodeToString(sum[:8])
 }
 
@@ -116,6 +119,11 @@ type App struct {
 	tabOrder    []string
 	activeTabID string
 	readyHook   func()
+
+	// runtimeByID/runtimeBySessionKey form the process-local ownership registry.
+	// App.mu guards both maps and every desktopSessionRuntime field.
+	runtimeByID         map[string]*desktopSessionRuntime
+	runtimeBySessionKey map[string]*desktopSessionRuntime
 
 	// tabsRestored is closed when restoreOrBuildTabs has finished populating
 	// a.tabs from desktop-tabs.json (or built the first-launch tab). Startup
@@ -159,6 +167,10 @@ type App struct {
 	// runtimeMutationBeforeLockHook is test-only. Set it before starting concurrent
 	// calls and never mutate it afterward.
 	runtimeMutationBeforeLockHook func(string)
+	// rebindCandidateHook is test-only. It exposes deterministic transaction
+	// boundaries without weakening the production lock order. Set it before
+	// starting a rebind and never mutate it until that rebind returns.
+	rebindCandidateHook func(string) error
 
 	// tryRunMu guards tryRunCancel — the cancel handle for the single
 	// in-flight settings-page subagent try run (TrySubagentProfile /
@@ -419,11 +431,13 @@ func (a *App) workspaceMediaMiddleware() func(http.Handler) http.Handler {
 // last session's desktop-tabs.json.
 func NewApp() *App {
 	a := &App{
-		tabs:             map[string]*WorkspaceTab{},
-		detachedSessions: map[string]*WorkspaceTab{},
-		mediaTokens:      newMediaTokenStore(),
-		botInstalls:      map[string]*botInstallSession{},
-		botRuntime:       newDesktopBotRuntime(),
+		tabs:                map[string]*WorkspaceTab{},
+		runtimeByID:         map[string]*desktopSessionRuntime{},
+		runtimeBySessionKey: map[string]*desktopSessionRuntime{},
+		detachedSessions:    map[string]*WorkspaceTab{},
+		mediaTokens:         newMediaTokenStore(),
+		botInstalls:         map[string]*botInstallSession{},
+		botRuntime:          newDesktopBotRuntime(),
 	}
 	a.botBridge = a.newBotBridge()
 	return a
@@ -838,6 +852,9 @@ func (a *App) shutdown(context.Context) {
 		}
 		it.ctrl.Close()
 		it.tab.releaseSessionLease()
+		a.mu.Lock()
+		a.releaseSessionRuntimeLocked(it.tab)
+		a.mu.Unlock()
 	}
 	if a.startupTracker != nil && a.startupReady.Load() {
 		// Only a run whose window actually became ready may reset the crash-loop
@@ -988,7 +1005,7 @@ func (a *App) beginTabTurn(tabID string, reclaim bool) (*tabTurnAdmission, contr
 	if a.tabIsReadOnly(tab) {
 		return nil, nil, readOnlyChannelErr()
 	}
-	if tab == nil || ctrl == nil {
+	if err := a.workspaceRuntimeAdmissionErr(tab, ctrl); err != nil {
 		return nil, nil, a.workspaceNotReadyErr(tab)
 	}
 	// Runtime work-admission barrier: held (shared) from here until the turn is
@@ -1010,18 +1027,18 @@ func (a *App) beginTabTurn(tabID string, reclaim bool) (*tabTurnAdmission, contr
 		a.botBridge.reclaimFromDesktop(tab.ID)
 	}
 	ctrl = a.controllerForTab(tab)
-	if ctrl == nil {
+	if err := a.workspaceRuntimeAdmissionErr(tab, ctrl); err != nil {
 		abort()
-		return nil, nil, a.workspaceNotReadyErr(tab)
+		return nil, nil, err
 	}
 	if err := a.ensureTabControllerWorkspaceAdmissionHeld(tab); err != nil {
 		abort()
 		return nil, nil, err
 	}
 	ctrl = a.controllerForTab(tab)
-	if ctrl == nil {
+	if err := a.workspaceRuntimeAdmissionErr(tab, ctrl); err != nil {
 		abort()
-		return nil, nil, a.workspaceNotReadyErr(tab)
+		return nil, nil, err
 	}
 	if ctrl.RuntimeStatus().Running || (tab.sink != nil && !tab.sink.tryBeginTurn()) {
 		abort()
@@ -1890,16 +1907,41 @@ func (a *App) CompactForTab(tabID string) error {
 // build goroutine while Submit-family calls race it, so read it under the
 // lock. Callers must not hold a.mu.
 func (a *App) workspaceNotReadyErr(tab *WorkspaceTab) error {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	return a.workspaceNotReadyErrLocked(tab)
+}
+
+func (a *App) workspaceNotReadyErrLocked(tab *WorkspaceTab) error {
 	startupErr := ""
+	var issue *SessionRuntimeIssue
 	if tab != nil {
-		a.mu.RLock()
 		startupErr = tab.StartupErr
-		a.mu.RUnlock()
+		issue = a.sessionRuntimeViewLocked(tab).Issue
 	}
 	if strings.TrimSpace(startupErr) != "" {
 		return fmt.Errorf("workspace failed to start: %s", startupErr)
 	}
+	if issue != nil && strings.TrimSpace(issue.Message) != "" {
+		return fmt.Errorf("workspace failed to start: %s", issue.Message)
+	}
 	return fmt.Errorf("workspace is still starting")
+}
+
+// workspaceRuntimeAdmissionErr is the backend half of the composer readiness
+// contract. The frontend gate avoids an optimistic bubble for known startup
+// states; this check closes the race where a rebuild or lease failure lands
+// after the last metadata refresh but before a bound Submit call.
+func (a *App) workspaceRuntimeAdmissionErr(tab *WorkspaceTab, ctrl control.SessionAPI) error {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	if tab != nil && ctrl != nil && tab.Ctrl == ctrl {
+		runtimeView := a.sessionRuntimeViewLocked(tab)
+		if runtimeView.Phase == sessionRuntimeReady {
+			return nil
+		}
+	}
+	return a.workspaceNotReadyErrLocked(tab)
 }
 
 // tabIsReadOnly reads tab.ReadOnly under a.mu; setTabReadOnly can flip it
@@ -2068,7 +2110,7 @@ func (a *App) ClearSessionForTab(tabID string) error {
 	if err := ctrl.ClearSession(); err != nil {
 		return err
 	}
-	if err := tab.ensureSessionLease(ctrl.SessionPath()); err != nil {
+	if err := a.ensureTabSessionLeaseForRebuild(tab, ctrl.SessionPath(), ""); err != nil {
 		// Wails bridge return: a raw lease error would carry the session path
 		// and holder id across to the frontend.
 		return userFacingSessionLeaseError("", err)
@@ -2190,7 +2232,7 @@ func (a *App) clearActiveSessionRuntime(tab *WorkspaceTab, oldCtrl control.Sessi
 	// Controller.ClearSession): the snapshot's goal belongs to the destroyed
 	// conversation and must not seed the replacement.
 	path := agent.NewSessionPath(newCtrl.SessionDir(), newCtrl.Label())
-	if err := tab.ensureSessionLease(path); err != nil {
+	if err := a.ensureTabSessionLeaseForRebuild(tab, path, ""); err != nil {
 		newCtrl.Close()
 		// Surfaces through ClearSession's Wails return; keep the holder's
 		// path/pid/writer id out of it.
@@ -3715,27 +3757,18 @@ func (a *App) rebindTabToLoadedSessionPath(tab *WorkspaceTab, sessionPath string
 			return err
 		}
 	}
-	// Session rebinding is a full detach/close/build/swap of the tab's
-	// controller — the same shape as rebuildSetting/SetModelForTab. Hold the
-	// shared rebuild mutex so a concurrent model/effort/settings rebuild of the
-	// same tab cannot interleave: without it both builds pass the swap-time
-	// identity check, the loser's controller leaks un-closed, and the old
-	// controller can be double-closed.
+	// Session rebinding is a candidate transaction. Keep the source controller,
+	// lease, runtime key, epoch, and profile live until the target controller has
+	// built, restored, validated, and acquired its own lease. The lifecycle
+	// barrier blocks new turns and startup publication across the transaction.
 	a.runtimeRebuildMu.Lock()
 	defer a.runtimeRebuildMu.Unlock()
-	tab.turnStartMu.Lock()
-	defer tab.turnStartMu.Unlock()
 
-	// Validate the tab, compare session keys, invalidate any in-flight async
-	// build, and snapshot the controller in ONE a.mu critical section.
-	// runtimeRebuildMu does not cover startTabControllerBuild's goroutine, so
-	// observing ctrl == nil and bumping the generation later would leave a
-	// window where the async build passes its swap-time generation check,
-	// installs its controller after the observation, and the loaded build
-	// below silently overwrites it — leaking the runtime and its shared-host
-	// reference. Bump-before-snapshot makes the snapshot authoritative: after
-	// the bump the async build can only fall into its superseded branches,
-	// which release exactly what it acquired (abandonSupersededBuild).
+	// Fence an in-flight startup before waiting for the admission barrier. The
+	// startup build holds the barrier's read side for its whole build; cancelling
+	// its generation first lets it retire instead of making this writer wait on
+	// a build that still believes it can publish. App.mu is released before the
+	// barrier acquisition, so no inverted lock nesting is introduced.
 	a.mu.Lock()
 	if tab.removed || a.tabs[tab.ID] != tab {
 		a.mu.Unlock()
@@ -3754,80 +3787,312 @@ func (a *App) rebindTabToLoadedSessionPath(tab *WorkspaceTab, sessionPath string
 		a.mu.Unlock()
 		return nil
 	}
-	tab.buildGeneration++
-	if tab.buildCancel != nil {
-		tab.buildCancel()
-		tab.buildCancel = nil
-	}
-	ctrl := tab.Ctrl
+	a.supersedeTabBuildLocked(tab)
+	source := snapshotTabRuntimeLocked(tab)
 	a.mu.Unlock()
+
+	a.runtimeAdmissionMu.Lock()
+	defer a.runtimeAdmissionMu.Unlock()
+	tab.turnStartMu.Lock()
+	defer tab.turnStartMu.Unlock()
+	a.mu.Lock()
+	if tab.removed || a.tabs[tab.ID] != tab || tab.Ctrl != source.ctrl {
+		a.mu.Unlock()
+		return fmt.Errorf("tab changed while preparing to switch sessions; retry")
+	}
+	source = snapshotTabRuntimeLocked(tab)
+	a.mu.Unlock()
+
+	if source.ctrl != nil {
+		if err := a.snapshotTabForAction(tab, "switching sessions"); err != nil {
+			return err
+		}
+		if oldPath := a.reconciledSessionPathForTab(tab); oldPath != "" {
+			if err := a.saveTabSessionMeta(tab, oldPath); err != nil {
+				return fmt.Errorf("save current session metadata before switching sessions: %w", err)
+			}
+		}
+	}
+
+	// Snapshot recovery may have retargeted the source controller and runtime.
+	// Refresh the identity before reserving the target alias.
+	a.mu.Lock()
+	if tab.removed || a.tabs[tab.ID] != tab || tab.Ctrl != source.ctrl {
+		a.mu.Unlock()
+		return fmt.Errorf("tab changed while preparing to switch sessions; retry")
+	}
+	source = snapshotTabRuntimeLocked(tab)
+	a.mu.Unlock()
+
+	transition, err := a.reserveSessionRuntimePath(tab, sessionPath)
+	if err != nil {
+		return userFacingSessionLeaseError("", err)
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			a.rollbackSessionRuntimePath(transition)
+		}
+	}()
 
 	profile := loadTabSessionProfile(sessionPath)
-
-	if ctrl == nil {
-		a.mu.Lock()
-		tab.SessionPath = sessionPath
-		applyTabSessionProfile(tab, profile)
-		tab.Ready = false
-		clearTabStartupError(tab)
-		tab.ActivityStatus = ""
-		tab.sink = &tabEventSink{tabID: tab.ID, app: a, ctx: a.ctx}
-		a.saveTabsLocked()
-		a.mu.Unlock()
-		a.buildTabControllerWithLoadedSession(tab, loadedTabSession{Path: sessionPath, Session: loaded})
-		a.mu.RLock()
-		builtCtrl, startupErr := tab.Ctrl, tab.StartupErr
-		a.mu.RUnlock()
-		if builtCtrl == nil {
-			if startupErr != "" {
-				return fmt.Errorf("resume session: %s", startupErr)
-			}
-			return fmt.Errorf("resume session: controller was not built")
-		}
-		return nil
+	detachSource := controllerHasActiveRuntimeWork(source.ctrl)
+	candidateNeedsHostRef := detachSource || source.ctrl == nil
+	candidate, err := a.buildSessionRebindCandidate(tab, source, sessionPath, loaded, profile, candidateNeedsHostRef)
+	if err != nil {
+		return fmt.Errorf("resume session: %w", err)
 	}
+	defer func() {
+		if !committed {
+			candidate.close()
+		}
+	}()
 
-	if err := a.snapshotTabForAction(tab, "switching sessions"); err != nil {
+	targetLease, err := a.acquireCandidateSessionLease(tab, sessionPath)
+	if err != nil {
 		return err
 	}
-	if oldPath := a.reconciledSessionPathForTab(tab); oldPath != "" {
-		if err := a.saveTabSessionMeta(tab, oldPath); err != nil {
-			return fmt.Errorf("save current session metadata before switching sessions: %w", err)
+	defer func() {
+		if !committed {
+			targetLease.Release()
 		}
+	}()
+	if err := a.runRebindCandidateHook("lease_acquired"); err != nil {
+		return fmt.Errorf("resume session: %w", err)
 	}
-	if controllerHasActiveRuntimeWork(ctrl) {
-		if !a.detachRuntimeForReplacement(tab) {
+
+	// All fallible candidate work is complete. Revalidate the source runtime
+	// generation, atomically publish the target controller/lease/profile/path,
+	// and advance the epoch in the same App.mu commit.
+	a.mu.Lock()
+	if tab.removed ||
+		a.tabs[tab.ID] != tab ||
+		tab.Ctrl != source.ctrl ||
+		a.runtimeForTabLocked(tab) != transition.runtime ||
+		!a.sessionRuntimePathTransitionValidLocked(transition) {
+		a.mu.Unlock()
+		return fmt.Errorf("tab runtime changed while switching sessions; retry")
+	}
+	var oldLease *agent.SessionLease
+	oldCtrl := tab.Ctrl
+	oldSink := tab.sink
+	if detachSource {
+		if !a.detachRuntimeForReplacementLocked(tab) {
+			a.mu.Unlock()
 			return fmt.Errorf("current session runtime cannot be detached")
 		}
+		if a.runtimeBySessionKey[transition.targetKey] == transition.runtime {
+			delete(a.runtimeBySessionKey, transition.targetKey)
+		}
 	} else {
-		ctrl.Close()
-		tab.releaseSessionLease()
+		if !a.commitSessionRuntimePathLocked(transition) {
+			a.mu.Unlock()
+			return fmt.Errorf("tab runtime changed while switching sessions; retry")
+		}
+		oldLease = tab.takeSessionLease()
 	}
-
-	a.mu.Lock()
-	// The generation was already bumped (and any async build cancelled) in
-	// the validation section above; only retarget the tab here.
-	tab.Ctrl = nil
+	tab.adoptSessionLease(targetLease)
+	targetLease = nil
+	tab.Ctrl = candidate.ctrl
+	tab.sink = candidate.sink
 	tab.SessionPath = sessionPath
-	applyTabSessionProfile(tab, profile)
-	tab.Ready = false
+	tab.model = candidate.model
+	tab.Label = candidate.ctrl.Label()
+	applyNormalizedRuntimeToTabLocked(tab, candidate.runtime)
+	tab.Ready = true
 	clearTabStartupError(tab)
 	tab.ActivityStatus = ""
-	tab.sink = &tabEventSink{tabID: tab.ID, app: a, ctx: a.ctx}
-	a.saveTabsLocked()
-	a.mu.Unlock()
-
-	a.buildTabControllerWithLoadedSession(tab, loadedTabSession{Path: sessionPath, Session: loaded})
-	a.mu.RLock()
-	builtCtrl, startupErr := tab.Ctrl, tab.StartupErr
-	a.mu.RUnlock()
-	if builtCtrl == nil {
-		if startupErr != "" {
-			return fmt.Errorf("resume session: %s", startupErr)
-		}
-		return fmt.Errorf("resume session: controller was not built")
+	tab.telemMu.Lock()
+	tab.readTelemetry = append([]readFileRecord(nil), candidate.telemetry.ReadFiles...)
+	tab.usageTelemetry = cloneSessionUsageStats(candidate.telemetry.Usage)
+	tab.telemetrySessionKey = sessionRuntimeKey(sessionPath)
+	tab.telemMu.Unlock()
+	if tab.sink != nil {
+		tab.sink.setBinding(tab.ID, a)
+		tab.sink.setContext(a.ctx)
 	}
+	if detachSource {
+		a.newSessionRuntimeLocked(tab, transition.targetKey)
+	}
+	newEpoch := a.advanceSessionRuntimeEpochLocked(tab)
+	a.saveTabsLocked()
+	candidate.ctrl = nil
+	candidate.sink = nil
+	committed = true
+	a.mu.Unlock()
+	// Test-only observation point: the replacement is committed but the retired
+	// sink still carries its old epoch. Production has no hook and immediately
+	// fences that sink below.
+	_ = a.runRebindCandidateHook("committed")
+
+	// Teardown happens after publication and outside App.mu. The old lease is
+	// released only now, so every target failure above leaves source ownership
+	// intact. Fence the retired sink before closing the old controller so a
+	// close-time event cannot mutate or autosave the replacement runtime.
+	if !detachSource {
+		if oldSink != nil {
+			oldSink.setBinding("", nil)
+			oldSink.clearContext()
+		}
+		if oldCtrl != nil {
+			oldCtrl.Close()
+		}
+		if oldLease != nil {
+			oldLease.Release()
+		}
+	}
+	a.persistTabSessionPath(tab, sessionPath)
+	a.clearDeferredRebuild(tab.ID)
+	a.notifyTabRuntimeRebuiltAtEpoch(tab, newEpoch)
+	a.emitReady(a.ctx, tab.ID)
 	return nil
+}
+
+type sessionRebindCandidate struct {
+	app               *App
+	ctrl              control.SessionAPI
+	sink              *tabEventSink
+	model             string
+	runtime           normalizedTabRuntime
+	telemetry         tabTelemetrySnapshot
+	sharedHostKey     string
+	ownsSharedHostRef bool
+}
+
+func (c *sessionRebindCandidate) close() {
+	if c == nil {
+		return
+	}
+	if c.sink != nil {
+		c.sink.clearContext()
+	}
+	if c.ctrl != nil {
+		c.ctrl.Close()
+		c.ctrl = nil
+	}
+	if c.ownsSharedHostRef && c.app != nil && c.sharedHostKey != "" {
+		c.app.releaseSharedHost(c.sharedHostKey)
+		c.ownsSharedHostRef = false
+	}
+}
+
+func normalizedRuntimeForSessionProfile(profile tabSessionProfile) normalizedTabRuntime {
+	temp := &WorkspaceTab{}
+	applyTabSessionProfile(temp, profile)
+	return snapshotTabRuntimeLocked(temp).normalizedRuntime()
+}
+
+func (a *App) runRebindCandidateHook(stage string) error {
+	if a == nil || a.rebindCandidateHook == nil {
+		return nil
+	}
+	return a.rebindCandidateHook(stage)
+}
+
+func (a *App) buildSessionRebindCandidate(
+	tab *WorkspaceTab,
+	source tabRuntimeSnapshot,
+	sessionPath string,
+	loaded *agent.Session,
+	profile tabSessionProfile,
+	separateRuntime bool,
+) (*sessionRebindCandidate, error) {
+	root := strings.TrimSpace(source.workspaceRoot)
+	if root == "" {
+		if wd, err := os.Getwd(); err == nil {
+			root = wd
+		}
+	}
+	_ = config.MigrateLegacyCredentialsForRoot(root)
+	cfg, err := config.LoadForRoot(root)
+	if err != nil {
+		return nil, err
+	}
+
+	model := strings.TrimSpace(source.model)
+	if sessionModel, ok := agent.LoadSessionModel(sessionPath); ok {
+		config.NormalizeLegacyMimoCustomProvidersForRefs(cfg, sessionModel)
+		if _, ok := cfg.ResolveModel(sessionModel); ok {
+			model = sessionModel
+		}
+	}
+	if model == "" {
+		model = cfg.DefaultModel
+	}
+	config.NormalizeLegacyMimoCustomProvidersForRefs(cfg, model)
+	if resolved, _, ok := cfg.ResolveModelWithFallback(model); ok {
+		model = resolved
+	}
+
+	sessionDir := controllerSessionDir(source.ctrl)
+	if strings.TrimSpace(sessionDir) == "" {
+		sessionDir = filepath.Dir(sessionPath)
+	}
+	sink := &tabEventSink{tabID: tab.ID, app: a}
+	runtimeProfile := normalizedRuntimeForSessionProfile(profile)
+	sharedHost := a.lookupSharedHost(source.sharedHostKey)
+	ownsSharedHostRef := false
+	if separateRuntime && source.sharedHostKey != "" {
+		sharedHost = a.acquireSharedHost(source.sharedHostKey)
+		ownsSharedHostRef = true
+	}
+	ctrl, err := boot.Build(a.bootContext(), boot.Options{
+		Model:                    model,
+		RequireKey:               false,
+		Sink:                     a.desktopControllerSink(sink, cfg.Notifications),
+		WorkspaceRoot:            root,
+		SessionDir:               sessionDir,
+		EffortOverride:           cloneStringPtr(source.effort),
+		TokenMode:                runtimeProfile.tokenMode,
+		SharedHost:               sharedHost,
+		CleanupPendingReconciler: reconcileDesktopCleanupPending,
+		SessionRecoveryMeta:      a.tabSessionRecoveryMeta(tab),
+		OnSessionRecovered:       a.handleTabSessionRecovered(tab),
+	})
+	if err != nil {
+		sink.clearContext()
+		if ownsSharedHostRef {
+			a.releaseSharedHost(source.sharedHostKey)
+		}
+		return nil, err
+	}
+	candidate := &sessionRebindCandidate{
+		app: a, ctrl: ctrl, sink: sink, model: model, runtime: runtimeProfile,
+		sharedHostKey: source.sharedHostKey, ownsSharedHostRef: ownsSharedHostRef,
+	}
+	a.bindControllerDisplayRecorder(ctrl)
+	configureControllerRuntime(ctrl, nil, runtimeProfile)
+	if err := a.runRebindCandidateHook("built"); err != nil {
+		candidate.close()
+		return nil, err
+	}
+	restoredRuntime, err := resumeControllerRuntimeWithSession(ctrl, loaded, sessionPath, runtimeProfile)
+	if err != nil {
+		candidate.close()
+		return nil, err
+	}
+	candidate.runtime = restoredRuntime
+	candidate.telemetry = loadTelemetry(sessionPath + ".telemetry.json")
+	if err := a.runRebindCandidateHook("restored"); err != nil {
+		candidate.close()
+		return nil, err
+	}
+	return candidate, nil
+}
+
+func (a *App) acquireCandidateSessionLease(tab *WorkspaceTab, path string) (*agent.SessionLease, error) {
+	lease, err := agent.TryAcquireSessionLease(path)
+	if err == nil {
+		return lease, nil
+	}
+	if a.canReclaimCurrentProcessSessionLease(tab, path, err) {
+		if reclaimed, reclaimErr := agent.TryReclaimCurrentProcessSessionLease(path); reclaimErr == nil {
+			return reclaimed, nil
+		} else {
+			err = reclaimErr
+		}
+	}
+	return nil, userFacingSessionLeaseError("", err)
 }
 
 func loadResumableSession(sessionPath string) (*agent.Session, error) {
@@ -5870,6 +6135,7 @@ func (a *App) jobsForCtrl(ctrl control.SessionAPI, out []JobView) []JobView {
 type Meta struct {
 	Label             string                   `json:"label"`
 	Ready             bool                     `json:"ready"`
+	Runtime           SessionRuntimeView       `json:"runtime"`
 	StartupErr        string                   `json:"startupErr,omitempty"`
 	EventChannel      string                   `json:"eventChannel"`
 	Cwd               string                   `json:"cwd"`
@@ -5983,6 +6249,7 @@ func (a *App) MetaForTab(tabID string) Meta {
 	a.mu.RLock()
 	tab := a.tabByIDLocked(tabID)
 	snap := snapshotTabRuntimeLocked(tab)
+	runtimeView := a.sessionRuntimeViewLocked(tab)
 	a.mu.RUnlock()
 	if tab == nil {
 		return Meta{EventChannel: eventChannel}
@@ -5999,7 +6266,8 @@ func (a *App) MetaForTab(tabID string) Meta {
 	goalStatus := snap.currentGoalStatus()
 	return Meta{
 		Label:             snap.label,
-		Ready:             snap.ready,
+		Ready:             runtimeView.Phase == sessionRuntimeReady && snap.ctrl != nil,
+		Runtime:           runtimeView,
 		StartupErr:        snap.startupErr,
 		EventChannel:      eventChannel,
 		Cwd:               cwd,
@@ -8769,17 +9037,24 @@ func sessionPathAfterSnapshot(ctrl control.SessionAPI, fallback string) string {
 }
 
 func (a *App) ensureTabSessionLeaseForRebuild(tab *WorkspaceTab, path, setting string) error {
+	transition, reserveErr := a.reserveSessionRuntimePath(tab, path)
+	if reserveErr != nil {
+		return userFacingSessionLeaseError(setting, reserveErr)
+	}
 	if err := tab.ensureSessionLease(path); err != nil {
 		if a.canReclaimCurrentProcessSessionLease(tab, path, err) {
 			if lease, reclaimErr := agent.TryReclaimCurrentProcessSessionLease(path); reclaimErr == nil {
 				tab.adoptSessionLease(lease)
+				a.commitSessionRuntimePath(transition)
 				return nil
 			} else {
 				err = reclaimErr
 			}
 		}
+		a.rollbackSessionRuntimePath(transition)
 		return userFacingSessionLeaseError(setting, err)
 	}
+	a.commitSessionRuntimePath(transition)
 	return nil
 }
 

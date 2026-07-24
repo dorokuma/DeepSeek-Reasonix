@@ -3,7 +3,7 @@
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { initialState, reducer, replayPendingPromptsForActiveTab } from "../lib/useController";
+import { acceptsRuntimeEventEpoch, initialState, reducer, replayPendingPromptsForActiveTab, runtimeReadyForSubmit } from "../lib/useController";
 import { continueDelivery } from "../lib/deliveryContinue";
 import type { WireEvent } from "../lib/types";
 
@@ -21,6 +21,15 @@ function eq(a: unknown, b: unknown, label: string) {
 }
 
 console.log("\nsend failure feedback");
+
+eq(runtimeReadyForSubmit({ label: "", ready: false, eventChannel: "", cwd: "", runtime: { phase: "starting", epoch: "e1" } }), false, "starting runtime cannot submit");
+eq(runtimeReadyForSubmit({ label: "", ready: false, eventChannel: "", cwd: "", runtime: { phase: "lease_blocked", epoch: "e1" } }), false, "lease-blocked runtime cannot submit");
+eq(runtimeReadyForSubmit({ label: "", ready: false, eventChannel: "", cwd: "", runtime: { phase: "failed", epoch: "e1" } }), false, "failed runtime cannot submit");
+eq(runtimeReadyForSubmit({ label: "", ready: true, eventChannel: "", cwd: "", runtime: { phase: "ready", epoch: "e1" } }), true, "ready runtime can submit");
+eq(acceptsRuntimeEventEpoch("e2", "e1"), false, "old runtime epoch is rejected");
+eq(acceptsRuntimeEventEpoch("e2", "e2"), true, "current runtime epoch is accepted");
+eq(acceptsRuntimeEventEpoch(undefined, "e1"), true, "first runtime epoch can establish the fence");
+eq(acceptsRuntimeEventEpoch("e2", undefined), true, "legacy events remain compatible");
 
 const sent = reducer({ ...initialState }, { type: "user", text: "hello", seq: 0 });
 eq(sent.items.length, 1, "submit appends the user bubble immediately");
@@ -177,7 +186,7 @@ eq(
   "failed runtime profile transitions roll back the optimistic token mode",
 );
 eq(
-  appSource.includes("!state.backendActivationPending && !runtimeTransitioning"),
+  appSource.includes("!state.backendActivationPending &&") && appSource.includes("!runtimeTransitioning"),
   true,
   "runtime profile transitions keep submit behind the controller-ready gate",
 );

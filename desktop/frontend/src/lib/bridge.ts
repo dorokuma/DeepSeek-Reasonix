@@ -698,9 +698,14 @@ export function onFilesDropped(cb: (paths: string[]) => void): () => void {
 // onRuntimeRebuilt fires when a tab's controller is replaced in place
 // (model/effort/token-mode switch, clear-while-running). The rebuilt
 // controller restarts prompt ids, so per-tab id-keyed state must reset.
-export function onRuntimeRebuilt(cb: (tabId?: string) => void): () => void {
+export function onRuntimeRebuilt(cb: (tabId?: string, runtimeEpoch?: string) => void): () => void {
   if (realApp() && typeof window !== "undefined" && window.runtime) {
-    return window.runtime.EventsOn("runtime:rebuilt", (tabId?: unknown) => cb(typeof tabId === "string" ? tabId : undefined));
+    return window.runtime.EventsOn("runtime:rebuilt", (tabId?: unknown, runtimeEpoch?: unknown) =>
+      cb(
+        typeof tabId === "string" ? tabId : undefined,
+        typeof runtimeEpoch === "string" ? runtimeEpoch : undefined,
+      )
+    );
   }
   return () => {};
 }
